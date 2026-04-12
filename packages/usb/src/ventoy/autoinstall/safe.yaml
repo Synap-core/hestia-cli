@@ -1,0 +1,125 @@
+#cloud-config
+# Ubuntu Server 24.04 - Safe Install (Interactive)
+# This configuration starts an interactive Ubuntu installation
+# with Hestia setup prompts
+
+autoinstall:
+  version: 1
+  
+  # Interactive sections - these will prompt the user
+  interactive-sections:
+    - network
+    - storage
+    - identity
+    - locale
+  
+  # Locale settings
+  locale: en_US.UTF-8
+  keyboard:
+    layout: us
+  
+  # Source configuration
+  source:
+    id: ubuntu-server
+    channel: stable
+  
+  # Network - interactive
+  network:
+    network:
+      version: 2
+      ethernets:
+        all-en:
+          match:
+            name: "en*"
+          dhcp4: true
+        all-eth:
+          match:
+            name: "eth*"
+          dhcp4: true
+  
+  # Proxy
+  proxy: ""
+  
+  # Mirror
+  mirror:
+    uri: "http://archive.ubuntu.com/ubuntu"
+  
+  # Storage - interactive (will prompt for disk selection)
+  storage:
+    layout:
+      name: lvm
+  
+  # Identity - interactive (will prompt for user setup)
+  identity:
+    hostname: hestia-node
+    username: hestia
+    password: $6$rounds=4096$saltsalt$encryptedpasswordplaceholder
+  
+  # SSH - enable
+  ssh:
+    install-server: true
+    allow-pw: true
+    authorized-keys: []
+  
+  # Snaps
+  snaps:
+    - name: snapd
+      channel: stable
+  
+  # Debian packages
+  packages:
+    - curl
+    - wget
+    - git
+    - vim
+    - htop
+    - net-tools
+    - ufw
+    - fail2ban
+    - docker.io
+    - docker-compose
+    - whiptail
+    - dialog
+  
+  # Late commands - run after installation
+  late-commands:
+    # Enable Docker service
+    - curtin in-target --target=/target -- systemctl enable docker
+    
+    # Add user to docker group
+    - curtin in-target --target=/target -- usermod -aG docker hestia
+    
+    # Create Hestia directory structure
+    - curtin in-target --target=/target -- mkdir -p /opt/hestia
+    - curtin in-target --target=/target -- chown hestia:hestia /opt/hestia
+    
+    # Copy Hestia installer if available
+    - cp -r /cdrom/hestia /target/opt/hestia/ || true
+    
+    # Set permissions
+    - curtin in-target --target=/target -- chown -R hestia:hestia /opt/hestia
+    
+    # Create welcome message
+    - |
+      cat > /target/etc/update-motd.d/99-hestia << 'EOF'
+#!/bin/bash
+echo ""
+echo "═══════════════════════════════════════════════════════════════"
+echo "  🔥 Hestia - Sovereign AI Infrastructure"
+echo "═══════════════════════════════════════════════════════════════"
+echo ""
+echo "  Your node is installed but not configured yet."
+echo ""
+echo "  To complete setup, run as root:"
+echo "    /opt/hestia/install.sh all"
+echo ""
+echo "  Or start with the CLI:"
+echo "    hestia init"
+echo ""
+echo "  Documentation: https://docs.hestia.dev"
+echo "═══════════════════════════════════════════════════════════════"
+EOF
+    - chmod +x /target/etc/update-motd.d/99-hestia
+    
+    # Reboot message
+    - echo "Installation complete. System will reboot to Hestia setup."

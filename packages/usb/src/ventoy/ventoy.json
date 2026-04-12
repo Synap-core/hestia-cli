@@ -1,0 +1,44 @@
+{
+  "control": [
+    {
+      "VTOY_DEFAULT_MENU_MODE": "0",
+      "VTOY_FILT_DOT_UNDERSCORE_FILE": "1",
+      "VTOY_DEFAULT_SEARCH_ROOT": "/",
+      "VTOY_MENU_TIMEOUT": "10",
+      "VTOY_DEFAULT_IMAGE": "",
+      "VTOY_THEME_FILE": "",
+      "VTOY_HELP_TXT_FILE": ""
+    }
+  ],
+  "menu_alias": [
+    {
+      "image": "/ubuntu-24.04-live-server-amd64.iso",
+      "alias": "Ubuntu Server 24.04 LTS"
+    }
+  ],
+  "menu_tip": [
+    {
+      "image": "/ubuntu-24.04-live-server-amd64.iso",
+      "tip": "Ubuntu Server LTS with Hestia AI infrastructure"
+    }
+  ],
+  "auto_install": [
+    {
+      "image": "/ubuntu-24.04-live-server-amd64.iso",
+      "template": [
+        "/ventoy/autoinstall/safe.yaml",
+        "/ventoy/autoinstall/wipe.yaml"
+      ],
+      "menu_alias": [
+        "Safe Install (Interactive)",
+        "Wipe Install (Automatic - DESTROYS DATA)"
+      ]
+    }
+  ],
+  "injection": [
+    {
+      "image": "/ubuntu-24.04-live-server-amd64.iso",
+      "archive": "/ventoy/hestia-injection.tar.gz"
+    }
+  ]
+}

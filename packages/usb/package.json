@@ -1,0 +1,22 @@
+{
+  "name": "@hestia/usb",
+  "version": "0.1.0",
+  "description": "Hestia USB creation tools and Ventoy configuration",
+  "type": "module",
+  "scripts": {
+    "build": "echo 'No build step required'",
+    "create-usb": "bash src/create-usb.sh"
+  },
+  "files": [
+    "src/",
+    "README.md"
+  ],
+  "keywords": [
+    "hestia",
+    "usb",
+    "ventoy",
+    "installer"
+  ],
+  "author": "Synap",
+  "license": "MIT"
+}

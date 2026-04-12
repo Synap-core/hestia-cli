@@ -1,0 +1,214 @@
+#cloud-config
+# Ubuntu Server 24.04 - Wipe Install (Unattended)
+# WARNING: This WILL DESTROY ALL DATA on the first available disk
+# Use with extreme caution - only for fresh systems or testing
+
+autoinstall:
+  version: 1
+  
+  # Early commands - confirm disk wipe (safety check)
+  early-commands:
+    - echo "=== HESTIA WIPE INSTALL ==="
+    - echo "This will DESTROY ALL DATA on the target disk"
+    - echo "Starting in 10 seconds... (Ctrl+C to cancel)"
+    - sleep 10
+  
+  # Locale settings
+  locale: en_US.UTF-8
+  keyboard:
+    layout: us
+  
+  # Source configuration
+  source:
+    id: ubuntu-server
+    channel: stable
+  
+  # Network
+  network:
+    version: 2
+    ethernets:
+      all-en:
+        match:
+          name: "en*"
+        dhcp4: true
+      all-eth:
+        match:
+          name: "eth*"
+        dhcp4: true
+  
+  # Proxy
+  proxy: ""
+  
+  # Mirror
+  mirror:
+    uri: "http://archive.ubuntu.com/ubuntu"
+  
+  # Storage - automatically wipe and install
+  storage:
+    config:
+      # Wipe and use the first disk
+      - type: disk
+        id: disk0
+        match:
+          size: largest
+        wipe: superblock
+      
+      # Partition table
+      - type: partition
+        id: partition-0
+        device: disk0
+        size: 1GB
+        wipe: superblock
+        flag: boot
+        grub_device: true
+      
+      - type: partition
+        id: partition-1
+        device: disk0
+        size: -1
+        wipe: superblock
+      
+      # Format partitions
+      - type: format
+        id: format-0
+        volume: partition-0
+        fstype: ext4
+        label: boot
+      
+      - type: format
+        id: format-1
+        volume: partition-1
+        fstype: ext4
+        label: root
+      
+      # Mount points
+      - type: mount
+        id: mount-0
+        device: format-1
+        path: /
+      
+      - type: mount
+        id: mount-1
+        device: format-0
+        path: /boot
+  
+  # Identity - auto-generated
+  identity:
+    hostname: hestia-node
+    username: hestia
+    # Generated password: Change immediately after first login!
+    # Password is 'hestia-setup-CHANGE-ME'
+    password: "$6$rounds=4096$hestiasalt$1qQQrL.vxL7jQ1x.q7x9qOqOxOxOxOxOxOxOxOxOxOxOxOxOxOxOxOxOxOxOxO."
+  
+  # SSH - enable with key auth only (no password)
+  ssh:
+    install-server: true
+    allow-pw: false
+    authorized-keys: []
+  
+  # Snaps
+  snaps:
+    - name: snapd
+      channel: stable
+  
+  # Debian packages - full Hestia stack
+  packages:
+    - curl
+    - wget
+    - git
+    - vim
+    - htop
+    - net-tools
+    - ufw
+    - fail2ban
+    - docker.io
+    - docker-compose
+    - whiptail
+    - dialog
+    - nginx
+    - certbot
+    - python3-certbot-nginx
+  
+  # User data - post-installation script
+  user-data:
+    runcmd:
+      # Enable Docker
+      - systemctl enable docker
+      - systemctl start docker
+      
+      # Add hestia to docker group
+      - usermod -aG docker hestia
+      
+      # Create Hestia directory
+      - mkdir -p /opt/hestia
+      - chown hestia:hestia /opt/hestia
+      
+      # Copy installer
+      - cp -r /cdrom/hestia /opt/hestia/
+      - chown -R hestia:hestia /opt/hestia
+      
+      # Run Phase 1 automatically
+      - bash /opt/hestia/install.sh phase1
+      
+      # Configure firewall
+      - ufw --force reset
+      - ufw default deny incoming
+      - ufw default allow outgoing
+      - ufw limit 22/tcp
+      - ufw allow 80/tcp
+      - ufw allow 443/tcp
+      - ufw allow 3000/tcp
+      - ufw allow 4000/tcp
+      - ufw --force enable
+      
+      # Create completion marker
+      - |
+        cat > /opt/hestia/.install-phase1-complete << 'EOF'
+Phase 1 installation completed at: $(date -Iseconds)
+Node: $(hostname)
+EOF
+      
+      # Create MOTD
+      - |
+        cat > /etc/update-motd.d/99-hestia << 'EOF'
+#!/bin/bash
+echo ""
+echo "═══════════════════════════════════════════════════════════════"
+echo "  🔥 Hestia - Sovereign AI Infrastructure (UNATTENDED INSTALL)"
+echo "═══════════════════════════════════════════════════════════════"
+echo ""
+echo "  ⚠️  IMPORTANT SECURITY NOTES:"
+echo ""
+echo "  1. Change the default password immediately:"
+echo "       sudo passwd hestia"
+echo ""
+echo "  2. Add SSH keys for secure access:"
+echo "       mkdir -p ~/.ssh"
+echo "       echo 'your-ssh-key' >> ~/.ssh/authorized_keys"
+echo ""
+echo "  3. Continue installation:"
+echo "       sudo /opt/hestia/install.sh all"
+echo ""
+echo "  4. Or run the CLI wizard:"
+echo "       hestia init"
+echo ""
+echo "  Documentation: https://docs.hestia.dev"
+echo "═══════════════════════════════════════════════════════════════"
+EOF
+      - chmod +x /etc/update-motd.d/99-hestia
+      
+      # Disable password login after first SSH key setup
+      # echo "PasswordAuthentication no" >> /etc/ssh/sshd_config
+      
+      # Reboot to apply all changes
+      - echo "Installation complete. Rebooting..."
+      - sleep 5
+      - reboot
+  
+  # Late commands
+  late-commands:
+    # Ensure all changes are written
+    - sync
+    
+    # Log completion
+    - echo "Hestia unattended install completed" >> /var/log/hestia-install.log

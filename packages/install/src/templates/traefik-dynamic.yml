@@ -1,0 +1,175 @@
+# Hestia Traefik Dynamic Configuration
+# Middlewares, routers, and services defined here
+# Auto-generated - safe to re-run
+
+http:
+  # Middlewares
+  middlewares:
+    # Redirect HTTP to HTTPS
+    redirect-to-https:
+      redirectScheme:
+        scheme: https
+        permanent: true
+        port: "443"
+    
+    # Security Headers
+    security-headers:
+      headers:
+        # Security
+        frameDeny: true
+        sslRedirect: true
+        browserXssFilter: true
+        contentTypeNosniff: true
+        forceSTSHeader: true
+        stsIncludeSubdomains: true
+        stsPreload: true
+        stsSeconds: 31536000
+        # Custom headers
+        customFrameOptionsValue: "SAMEORIGIN"
+        customRequestHeaders:
+          X-Forwarded-Proto: "https"
+        customResponseHeaders:
+          X-Frame-Options: "SAMEORIGIN"
+          X-Content-Type-Options: "nosniff"
+          X-XSS-Protection: "1; mode=block"
+          Referrer-Policy: "strict-origin-when-cross-origin"
+          Permissions-Policy: "geolocation=(), microphone=(), camera=()"
+    
+    # Compression (gzip/brotli)
+    compression:
+      compress:
+        excludedContentTypes:
+          - text/event-stream  # SSE shouldn't be compressed
+        minResponseBodyBytes: 1024
+    
+    # Rate Limiting
+    rate-limit:
+      rateLimit:
+        average: 100
+        burst: 50
+        period: 1m
+    
+    # IP Allowlist (for admin/dashboard access)
+    ip-allowlist:
+      ipAllowList:
+        sourceRange:
+          - "127.0.0.1/32"
+          - "10.0.0.0/8"
+          - "172.16.0.0/12"
+          - "192.168.0.0/16"
+    
+    # Basic Auth (for dashboard protection)
+    basic-auth:
+      basicAuth:
+        users:
+          # Default: admin / admin (change in production!)
+          # Generate with: htpasswd -nbB admin "yourpassword"
+          - "admin:$2y$10$MIjx9V4p2Z3z8wIqyM72Uu7Cq/1oM97FMQ6V6R9VzZ9Q4vJlT2"
+        realm: "Hestia Dashboard"
+        headerField: "X-User"
+    
+    # Strip prefix middleware
+    stripprefix-api:
+      stripPrefix:
+        prefixes:
+          - "/api"
+        forceSlash: false
+    
+    stripprefix-gateway:
+      stripPrefix:
+        prefixes:
+          - "/gateway"
+        forceSlash: false
+    
+    # Add prefix middleware
+    addprefix-api:
+      addPrefix:
+        prefix: "/api"
+    
+    # Circuit Breaker
+    circuit-breaker:
+      circuitBreaker:
+        expression: "LatencyAtQuantileMS(50.0) > 100"
+        checkPeriod: 10s
+        fallbackDuration: 10s
+        recoveryDuration: 10s
+    
+    # Retry
+    retry:
+      retry:
+        attempts: 3
+        initialInterval: 100ms
+    
+    # Buffering (for large uploads)
+    buffering:
+      buffering:
+        maxRequestBodyBytes: 10485760  # 10MB
+        maxResponseBodyBytes: 10485760  # 10MB
+        memRequestBodyBytes: 2097152    # 2MB
+        memResponseBodyBytes: 2097152   # 2MB
+    
+    # Error Pages
+    errors:
+      errors:
+        status:
+          - "400-599"
+        service: error-pages
+        query: "/{status}.html"
+    
+    # CORS
+    cors:
+      headers:
+        accessControlAllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        accessControlAllowHeaders:
+          - "*"
+        accessControlAllowOriginList:
+          - "*"
+        accessControlMaxAge: 100
+        addVaryHeader: true
+
+  # Routers (can be defined here for non-Docker services)
+  routers: {}
+
+  # Services (can be defined here for non-Docker services)
+  services: {}
+
+# TCP Configuration (for database, etc. if needed)
+tcp:
+  middlewares: {}
+  routers: {}
+  services: {}
+
+# UDP Configuration
+udp:
+  routers: {}
+  services: {}
+
+# TLS Configuration (for custom certificates)
+tls:
+  certificates: []
+  
+  options:
+    default:
+      minVersion: VersionTLS12
+      cipherSuites:
+        - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305
+        - TLS_AES_128_GCM_SHA256
+        - TLS_AES_256_GCM_SHA384
+        - TLS_CHACHA20_POLY1305_SHA256
+      curvePreferences:
+        - CurveP521
+        - CurveP384
+        - CurveP256
+      sniStrict: true
+
+# Plugin Configuration (for custom plugins)
+experimental:
+  localPlugins: {}
+  plugins: {}

@@ -1,0 +1,165 @@
+# Pangolin Docker Compose Configuration for Hestia
+# 
+# Pangolin is a self-hosted tunneling solution using WireGuard.
+# It provides secure remote access to your Hestia node without relying on
+# third-party services like Cloudflare or ngrok.
+#
+# Use Cases:
+# - Access your home Hestia from anywhere (works behind CGNAT)
+# - Securely expose services without opening firewall ports
+# - Self-hosted alternative to Cloudflare Tunnel
+# - Multiple tunnel endpoints with identity-aware access control
+#
+# Architecture:
+# - Pangolin Server: Runs on a VPS with public IP (acts as relay)
+# - Pangolin Client: Runs on your home server (connects to server)
+# - WireGuard: Provides the underlying secure tunnel
+#
+# For more information: https://github.com/fosrl/pangolin
+
+version: '3.8'
+
+services:
+  # ============================================================================
+  # PANGOLIN SERVER MODE (Run this on a VPS with public IP)
+  # ============================================================================
+  pangolin-server:
+    image: fosrl/pangolin:latest
+    container_name: hestia-pangolin-server
+    restart: unless-stopped
+    # Only enable if TUNNEL_MODE=server in .env
+    profiles:
+      - pangolin-server
+    environment:
+      # Server configuration
+      PANGOLIN_MODE: server
+      PANGOLIN_SERVER_PORT: 3000
+      PANGOLIN_WG_PORT: 51820
+      PANGOLIN_WG_PRIVATE_KEY: ${PANGOLIN_WG_PRIVATE_KEY}
+      PANGOLIN_WG_PUBLIC_KEY: ${PANGOLIN_WG_PUBLIC_KEY}
+      
+      # Database (using existing postgres if available, or internal)
+      DATABASE_URL: ${DATABASE_URL:-postgresql://hestia:${POSTGRES_PASSWORD:-hestia}@postgres:5432/hestia}
+      
+      # Authentication
+      JWT_SECRET: ${JWT_SECRET}
+      API_KEY: ${PANGOLIN_API_KEY}
+      
+      # Domain configuration
+      PANGOLIN_DOMAIN: ${PANGOLIN_DOMAIN:-tunnel.${DOMAIN:-localhost}}
+      PANGOLIN_BASE_URL: ${PANGOLIN_BASE_URL:-https://tunnel.${DOMAIN:-localhost}}
+      
+      # Logging
+      LOG_LEVEL: ${PANGOLIN_LOG_LEVEL:-info}
+      
+    ports:
+      # Web UI and API
+      - "${PANGOLIN_SERVER_PORT:-3000}:3000"
+      # WireGuard UDP port
+      - "${PANGOLIN_WG_PORT:-51820}:51820/udp"
+    volumes:
+      - ${DATA_DIR}/pangolin/server:/app/data
+      - ${DATA_DIR}/pangolin/certs:/app/certs
+      - ${LOGS_DIR}/pangolin:/app/logs
+    networks:
+      - hestia-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ============================================================================
+  # PANGOLIN CLIENT MODE (Run this on home server behind CGNAT)
+  # ============================================================================
+  pangolin-client:
+    image: fosrl/pangolin:latest
+    container_name: hestia-pangolin-client
+    restart: unless-stopped
+    # Only enable if TUNNEL_MODE=client in .env
+    profiles:
+      - pangolin-client
+    environment:
+      # Client configuration
+      PANGOLIN_MODE: client
+      PANGOLIN_CLIENT_NAME: ${HEARTH_NAME:-hestia-client}
+      
+      # Server connection details
+      PANGOLIN_SERVER_URL: ${PANGOLIN_SERVER_URL}
+      PANGOLIN_SERVER_TOKEN: ${PANGOLIN_CLIENT_TOKEN}
+      
+      # WireGuard configuration (auto-generated from server)
+      PANGOLIN_WG_PRIVATE_KEY: ${PANGOLIN_WG_PRIVATE_KEY}
+      PANGOLIN_WG_PUBLIC_KEY: ${PANGOLIN_WG_PUBLIC_KEY}
+      PANGOLIN_WG_SERVER_PUBLIC_KEY: ${PANGOLIN_WG_SERVER_PUBLIC_KEY}
+      PANGOLIN_WG_ENDPOINT: ${PANGOLIN_WG_ENDPOINT}
+      PANGOLIN_WG_ALLOWED_IPS: ${PANGOLIN_WG_ALLOWED_IPS:-0.0.0.0/0, ::/0}
+      PANGOLIN_WG_PERSISTENT_KEEPALIVE: ${PANGOLIN_WG_KEEPALIVE:-25}
+      
+      # Local services to expose (comma-separated: name:port:name:port...)
+      PANGOLIN_TUNNELS: ${PANGOLIN_TUNNELS:-synap:4000,openclaw:8080}
+      
+      # Logging
+      LOG_LEVEL: ${PANGOLIN_LOG_LEVEL:-info}
+      
+    cap_add:
+      # Required for WireGuard
+      - NET_ADMIN
+      - SYS_MODULE
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+      - net.ipv4.ip_forward=1
+    volumes:
+      - ${DATA_DIR}/pangolin/client:/app/data
+      - ${LOGS_DIR}/pangolin:/app/logs
+    networks:
+      - hestia-network
+    # Run in network mode for direct access to host services
+    # Uncomment if you need to access services on host directly
+    # network_mode: host
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ============================================================================
+  # PANGOLIN TRAEFIK PLUGIN (Optional - for advanced routing)
+  # ============================================================================
+  pangolin-traefik:
+    image: traefik:v3.0
+    container_name: hestia-pangolin-traefik
+    restart: unless-stopped
+    # Only enable if using Pangolin with Traefik integration
+    profiles:
+      - pangolin-traefik
+    command:
+      - --api.insecure=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.wireguard.address=:51820/udp
+      - --certificatesresolvers.letsencrypt.acme.tlschallenge=true
+      - --certificatesresolvers.letsencrypt.acme.email=${ADMIN_EMAIL:-admin@localhost}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --pilot.token=${TRAEFIK_PILOT_TOKEN:-}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "51820:51820/udp"
+      - "8080:8080"  # Traefik dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${DATA_DIR}/traefik/letsencrypt:/letsencrypt
+      - ${DATA_DIR}/pangolin/traefik:/etc/traefik
+    networks:
+      - hestia-network
+
+# Reuse existing network from main docker-compose.yml
+networks:
+  hestia-network:
+    external: true
+    name: hestia-network

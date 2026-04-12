@@ -1,0 +1,21 @@
+{
+  "name": "@hestia/install",
+  "version": "0.1.0",
+  "description": "Hestia system installer scripts",
+  "type": "module",
+  "scripts": {
+    "build": "echo 'No build step for shell scripts'",
+    "test": "bash test/install-test.sh"
+  },
+  "files": [
+    "src/",
+    "scripts/"
+  ],
+  "keywords": [
+    "hestia",
+    "install",
+    "setup"
+  ],
+  "author": "Synap",
+  "license": "MIT"
+}

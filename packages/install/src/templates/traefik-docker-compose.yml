@@ -1,0 +1,259 @@
+# Hestia Docker Compose - Traefik Edition
+# Dynamic reverse proxy with automatic SSL and container discovery
+# Auto-generated - safe to re-run
+
+version: '3.8'
+
+services:
+  # Traefik Reverse Proxy
+  traefik:
+    image: traefik:v3.0
+    container_name: hestia-traefik
+    restart: unless-stopped
+    command:
+      - "--api.dashboard=true"
+      - "--api.insecure=true"
+      - "--ping=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=hestia-network"
+      - "--providers.file.filename=/etc/traefik/dynamic.yml"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.traefik.address=:8080"
+      - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.email=${HESTIA_ACME_EMAIL:-admin@localhost}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.letsencrypt.acme.caserver=${HESTIA_ACME_SERVER:-https://acme-v02.api.letsencrypt.org/directory}"
+      - "--log.level=${TRAEFIK_LOG_LEVEL:-INFO}"
+      - "--log.filepath=/var/log/traefik/traefik.log"
+      - "--accesslog=true"
+      - "--accesslog.filepath=/var/log/traefik/access.log"
+      - "--accesslog.bufferingsize=100"
+      - "--serverstransport.insecureskipverify=false"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${HESTIA_HOME}/config/traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - ${HESTIA_HOME}/data/traefik/letsencrypt:/letsencrypt
+      - ${HESTIA_HOME}/logs/traefik:/var/log/traefik
+    networks:
+      - hestia-network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.${HESTIA_DOMAIN:-localhost}`)"
+      - "traefik.http.routers.traefik.entrypoints=websecure"
+      - "traefik.http.routers.traefik.service=api@internal"
+      - "traefik.http.routers.traefik.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.traefik.middlewares=security-headers,compression"
+      - "traefik.http.routers.traefik-http.rule=Host(`traefik.${HESTIA_DOMAIN:-localhost}`)"
+      - "traefik.http.routers.traefik-http.entrypoints=web"
+      - "traefik.http.routers.traefik-http.middlewares=redirect-to-https"
+
+  # PostgreSQL with pgvector
+  postgres:
+    image: ankane/pgvector:latest
+    container_name: hestia-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hestia}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-hestia}
+    volumes:
+      - ${DATA_DIR}/postgres:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    networks:
+      - hestia-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    labels:
+      - "traefik.enable=false"
+
+  # Typesense (search engine)
+  typesense:
+    image: typesense/typesense:0.25.1
+    container_name: hestia-typesense
+    restart: unless-stopped
+    environment:
+      TYPESENSE_API_KEY: ${TYPESENSE_API_KEY:-typesense-api-key}
+      TYPESENSE_DATA_DIR: /data
+    volumes:
+      - ${DATA_DIR}/typesense:/data
+    networks:
+      - hestia-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8108/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "traefik.enable=false"
+
+  # Redis (caching, sessions, job queue)
+  redis:
+    image: redis:7-alpine
+    container_name: hestia-redis
+    restart: unless-stopped
+    volumes:
+      - ${DATA_DIR}/redis:/data
+    networks:
+      - hestia-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    labels:
+      - "traefik.enable=false"
+
+  # Synap Backend (temporal knowledge graph)
+  synap-backend:
+    image: ghcr.io/synap/synap-backend:latest
+    container_name: hestia-synap-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      typesense:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: redis://redis:6379
+      TYPESENSE_API_KEY: ${TYPESENSE_API_KEY:-typesense-api-key}
+      TYPESENSE_NODES: http://typesense:8108
+      JWT_SECRET: ${JWT_SECRET}
+      API_KEY: ${API_KEY}
+      PORT: 4000
+      NODE_ENV: production
+      HESTIA_MODE: true
+    volumes:
+      - ${DATA_DIR}/uploads:/app/uploads
+      - ${LOGS_DIR}/backend:/app/logs
+    networks:
+      - hestia-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.synap-backend.rule=Host(`${HESTIA_DOMAIN:-localhost}`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.synap-backend.entrypoints=websecure"
+      - "traefik.http.routers.synap-backend.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.synap-backend.service=synap-backend"
+      - "traefik.http.routers.synap-backend.middlewares=security-headers,compression,stripprefix-api"
+      - "traefik.http.routers.synap-backend-http.rule=Host(`${HESTIA_DOMAIN:-localhost}`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.synap-backend-http.entrypoints=web"
+      - "traefik.http.routers.synap-backend-http.middlewares=redirect-to-https"
+      - "traefik.http.services.synap-backend.loadbalancer.server.port=4000"
+      - "traefik.http.services.synap-backend.loadbalancer.healthcheck.path=/health"
+      - "traefik.http.services.synap-backend.loadbalancer.healthcheck.interval=10s"
+      - "traefik.http.middlewares.stripprefix-api.stripprefix.prefixes=/api"
+
+  # OpenClaw (multi-channel gateway)
+  openclaw:
+    image: ghcr.io/synap/openclaw:latest
+    container_name: hestia-openclaw
+    restart: unless-stopped
+    depends_on:
+      synap-backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      SYNAP_BACKEND_URL: http://synap-backend:4000
+      SYNAP_API_KEY: ${API_KEY}
+      REDIS_URL: redis://redis:6379
+      PORT: 8080
+      NODE_ENV: production
+    volumes:
+      - ${DATA_DIR}/openclaw:/app/data
+      - ${LOGS_DIR}/openclaw:/app/logs
+    networks:
+      - hestia-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.openclaw.rule=Host(`${HESTIA_DOMAIN:-localhost}`) && PathPrefix(`/gateway`)"
+      - "traefik.http.routers.openclaw.entrypoints=websecure"
+      - "traefik.http.routers.openclaw.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.openclaw.service=openclaw"
+      - "traefik.http.routers.openclaw.middlewares=security-headers,compression,stripprefix-gateway"
+      - "traefik.http.routers.openclaw-http.rule=Host(`${HESTIA_DOMAIN:-localhost}`) && PathPrefix(`/gateway`)"
+      - "traefik.http.routers.openclaw-http.entrypoints=web"
+      - "traefik.http.routers.openclaw-http.middlewares=redirect-to-https"
+      - "traefik.http.services.openclaw.loadbalancer.server.port=8080"
+      - "traefik.http.services.openclaw.loadbalancer.healthcheck.path=/health"
+      - "traefik.http.services.openclaw.loadbalancer.healthcheck.interval=10s"
+      - "traefik.http.middlewares.stripprefix-gateway.stripprefix.prefixes=/gateway"
+
+  # Frontend (Synap Browser/Web App) - Optional
+  synap-frontend:
+    image: ghcr.io/synap/synap-frontend:latest
+    container_name: hestia-synap-frontend
+    restart: unless-stopped
+    depends_on:
+      synap-backend:
+        condition: service_healthy
+    environment:
+      SYNAP_BACKEND_URL: http://synap-backend:4000
+      NODE_ENV: production
+      PORT: 3000
+    networks:
+      - hestia-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.synap-frontend.rule=Host(`${HESTIA_DOMAIN:-localhost}`)"
+      - "traefik.http.routers.synap-frontend.entrypoints=websecure"
+      - "traefik.http.routers.synap-frontend.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.synap-frontend.service=synap-frontend"
+      - "traefik.http.routers.synap-frontend.middlewares=security-headers,compression"
+      - "traefik.http.routers.synap-frontend.priority=1"
+      - "traefik.http.routers.synap-frontend-http.rule=Host(`${HESTIA_DOMAIN:-localhost}`)"
+      - "traefik.http.routers.synap-frontend-http.entrypoints=web"
+      - "traefik.http.routers.synap-frontend-http.middlewares=redirect-to-https"
+      - "traefik.http.services.synap-frontend.loadbalancer.server.port=3000"
+      - "traefik.http.services.synap-frontend.loadbalancer.healthcheck.path=/health"
+      - "traefik.http.services.synap-frontend.loadbalancer.healthcheck.interval=10s"
+    profiles:
+      - frontend
+
+networks:
+  hestia-network:
+    driver: bridge
+    labels:
+      - "hestia.network=true"
+      - "traefik.enable=true"
+
+volumes:
+  postgres-data:
+  typesense-data:
+  redis-data:
+  traefik-certs:

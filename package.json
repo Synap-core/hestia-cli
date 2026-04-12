@@ -1,0 +1,27 @@
+{
+  "name": "hestia-cli",
+  "version": "0.1.0",
+  "description": "Sovereign AI infrastructure management CLI workspace",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "pnpm --filter @hestia/cli build",
+    "test": "pnpm --filter @hestia/cli test",
+    "validate": "pnpm --filter @hestia/cli validate",
+    "verify": "bash verify.sh"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "hestia",
+    "synap",
+    "ai",
+    "infrastructure",
+    "cli"
+  ],
+  "author": "Synap",
+  "license": "MIT"
+}

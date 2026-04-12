@@ -1,0 +1,92 @@
+# WhoDB Docker Compose Template
+# 
+# WhoDB is a lightweight, AI-powered database visualization and management tool.
+# It provides a web UI for exploring database schemas, running queries, and 
+# visualizing data relationships.
+#
+# Features:
+# - Visual schema topology with interactive diagrams
+# - AI-powered natural language queries (requires Ollama)
+# - Support for PostgreSQL, MySQL, Redis, and more
+# - Lightweight (<50MB Docker image)
+# - Web-based interface (no client installation needed)
+#
+# When to use:
+# - Debugging database issues without SQL knowledge
+# - Exploring unfamiliar database schemas
+# - Visualizing entity relationships in Synap
+# - Quick ad-hoc queries during development
+# - Teaching/learning database concepts
+#
+# Profile: db-viewer (optional service, not required for core functionality)
+
+services:
+  # WhoDB - AI-powered database viewer
+  whodb:
+    image: clidey/whodb:latest
+    container_name: hestia-whodb
+    restart: unless-stopped
+    profiles:
+      - db-viewer
+    ports:
+      - "${WHODB_PORT:-8081}:8081"
+    environment:
+      # Server configuration
+      PORT: "8081"
+      
+      # PostgreSQL connection (Synap Backend database)
+      # Automatically configured from Hestia's database settings
+      POSTGRES_HOST: ${SYNAP_DB_HOST:-postgres}
+      POSTGRES_PORT: ${SYNAP_DB_PORT:-5432}
+      POSTGRES_USER: ${SYNAP_DB_USER:-synap}
+      POSTGRES_PASSWORD: ${SYNAP_DB_PASSWORD:-}
+      POSTGRES_DB: ${SYNAP_DB_NAME:-synap}
+      POSTGRES_SSL_MODE: ${SYNAP_DB_SSL_MODE:-disable}
+      
+      # Redis connection (Synap Realtime/Cache)
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DB: ${REDIS_DB:-0}
+      
+      # AI/Ollama integration for natural language queries
+      # When enabled, users can ask questions in plain English
+      OLLAMA_ENABLED: ${WHODB_AI_ENABLED:-false}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
+      OLLAMA_MODEL: ${WHODB_OLLAMA_MODEL:-llama3.2}
+      
+      # Session and security
+      SESSION_SECRET: ${WHODB_SESSION_SECRET:-hestia-whodb-session}
+      
+      # Logging
+      LOG_LEVEL: ${WHODB_LOG_LEVEL:-info}
+      
+      # Custom queries directory (mounted volume)
+      CUSTOM_QUERIES_PATH: /app/queries
+    
+    volumes:
+      # Persist custom queries and user settings
+      - ${HESTIA_HOME:-/opt/hestia}/data/whodb/queries:/app/queries
+      - ${HESTIA_HOME:-/opt/hestia}/data/whodb/settings:/app/settings
+    
+    networks:
+      - hestia-network
+    
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    labels:
+      - "hestia.service=whodb"
+      - "hestia.profile=db-viewer"
+      - "hestia.optional=true"
+      - "hestia.description=AI-powered database visualization"
+
+# Use the same network as other Hestia services
+networks:
+  hestia-network:
+    external: true
+    name: hestia-network

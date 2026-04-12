@@ -1,0 +1,156 @@
+# Hestia Traefik Static Configuration
+# This is the main Traefik configuration file
+# Auto-generated - safe to re-run
+
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+# API and Dashboard Configuration
+api:
+  dashboard: true
+  insecure: true  # Only for local access, uses middleware in production
+  debug: false
+
+# Ping endpoint for health checks
+ping:
+  entryPoint: "traefik"
+
+# Log configuration
+log:
+  level: INFO
+  format: json
+  filePath: /var/log/traefik/traefik.log
+
+# Access logs
+accessLog:
+  format: json
+  filePath: /var/log/traefik/access.log
+  bufferingSize: 100
+  filters:
+    statusCodes:
+      - "200-299"
+      - "300-399"
+      - "400-499"
+      - "500-599"
+    retryAttempts: true
+    minDuration: "10ms"
+
+# Entry points (ports)
+entryPoints:
+  # HTTP (redirects to HTTPS)
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+          priority: 100
+  
+  # HTTPS (secure)
+  websecure:
+    address: ":443"
+    http:
+      tls:
+        certResolver: letsencrypt
+        options: default
+      middlewares:
+        - security-headers@file
+        - compression@file
+    transport:
+      respondingTimeouts:
+        readTimeout: 60s
+        writeTimeout: 60s
+        idleTimeout: 10m
+      lifeCycle:
+        requestAcceptGraceTimeout: 10s
+        graceTimeOut: 10s
+  
+  # Traefik Dashboard/API (internal)
+  traefik:
+    address: ":8080"
+
+# Certificate Resolvers (Let's Encrypt)
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: admin@localhost
+      storage: /letsencrypt/acme.json
+      tlsChallenge: {}
+      httpChallenge:
+        entryPoint: web
+      # Use staging server for testing (uncomment for production)
+      # caServer: https://acme-v02.api.letsencrypt.org/directory
+      caServer: https://acme-staging-v02.api.letsencrypt.org/directory
+  
+  # Self-signed certificate resolver for local development
+  local:
+    tls:
+      certFile: /etc/traefik/ssl/cert.pem
+      keyFile: /etc/traefik/ssl/key.pem
+
+# Providers configuration
+providers:
+  # Docker provider - discovers containers with labels
+  docker:
+    exposedByDefault: false
+    network: hestia-network
+    watch: true
+    defaultRule: "Host(`{{ normalize .Name }}.localhost`)"
+  
+  # File provider - loads dynamic configuration
+  file:
+    filename: /etc/traefik/dynamic.yml
+    watch: true
+
+# TLS Options
+tls:
+  options:
+    default:
+      minVersion: VersionTLS12
+      cipherSuites:
+        - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305
+        - TLS_AES_128_GCM_SHA256
+        - TLS_AES_256_GCM_SHA384
+        - TLS_CHACHA20_POLY1305_SHA256
+      curvePreferences:
+        - CurveP521
+        - CurveP384
+        - CurveP256
+      sniStrict: true
+    
+    modern:
+      minVersion: VersionTLS13
+      sniStrict: true
+
+# Server Transport (backend connections)
+serversTransport:
+  insecureSkipVerify: false
+  rootCAs:
+    - /etc/ssl/certs/ca-certificates.crt
+  forwardingTimeouts:
+    dialTimeout: 30s
+    responseHeaderTimeout: 30s
+    idleConnTimeout: 90s
+
+# Metrics (optional - Prometheus)
+metrics:
+  prometheus:
+    addEntryPointsLabels: true
+    addServicesLabels: true
+    addRoutersLabels: true
+    buckets:
+      - 0.1
+      - 0.3
+      - 1.2
+      - 5.0
+
+# Tracing (optional - Jaeger/Zipkin)
+tracing: {}
+
+# Certificate stores (for custom certificates)
+certificates: []
