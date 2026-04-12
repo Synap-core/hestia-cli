@@ -5,10 +5,10 @@
 import { logger, section } from '../lib/logger.js';
 import { spinner } from '../lib/spinner.js';
 import chalk from 'chalk';
-import { spawn } from 'child_process';
+import { spawn, exec } from 'child_process';
 import { promisify } from 'util';
 import { access, constants } from 'fs/promises';
-const execAsync = promisify(require('child_process').exec);
+const execAsync = promisify(exec);
 export function installCommand(program) {
     program
         .command('install [phase]')
@@ -168,6 +168,9 @@ async function runPhase(phase, options) {
     });
 }
 function getPhaseScript(phase) {
+    if (phase === 'all') {
+        return '/opt/hestia/install/phases/phase1.sh';
+    }
     const scriptMap = {
         phase1: '/opt/hestia/install/phases/phase1.sh',
         phase2: '/opt/hestia/install/phases/phase2.sh',

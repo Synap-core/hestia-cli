@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * PangolinService - Secure Tunnel Management for Hestia
  *

@@ -3,7 +3,7 @@
  *
  * Handles loading, validation, and saving of Hestia configuration.
  */
-import type { HestiaConfig, PackageConfig, IntelligenceConfig } from "./types.js";
+import type { HestiaConfig, PackageConfig, IntelligenceConfig } from "../types.js";
 export declare const defaultConfig: HestiaConfig;
 export declare function getConfigPaths(): {
     configDir: string;
@@ -18,6 +18,8 @@ export declare function loadConfig(customPath?: string): Promise<{
     config: HestiaConfig;
     path: string;
 }>;
+export declare const getConfig: typeof loadConfig;
+export declare function getConfigValue(customPath?: string): Promise<HestiaConfig>;
 export declare function loadSystemConfig(): Promise<Partial<HestiaConfig>>;
 export declare function mergeConfigs(...configs: Array<Partial<HestiaConfig> | undefined>): HestiaConfig;
 export declare function saveConfig(config: HestiaConfig, customPath?: string): Promise<void>;
@@ -33,6 +35,7 @@ export declare function createInitialConfig(options: {
     role?: "primary" | "backup";
     domain?: string;
     intelligence?: IntelligenceConfig;
+    aiPlatform?: "opencode" | "openclaude" | "later";
 }, customPath?: string): Promise<HestiaConfig>;
 export declare function getConfigSummary(config: HestiaConfig): string;
 export declare function expandEnvVars(str: string): string;
@@ -40,4 +43,9 @@ export declare function loadCredentials(configDir?: string): Promise<Record<stri
 export declare function saveCredentials(credentials: Record<string, string>, configDir?: string): Promise<void>;
 export declare function getCredential(key: string): Promise<string | undefined>;
 export declare function setCredential(key: string, value: string): Promise<void>;
+export { loadCredentials as getCredentials };
+export type { HestiaConfig as UserConfig };
+export type { HestiaConfig as Credentials };
+export type ConfigPaths = ReturnType<typeof getConfigPaths>;
+export type ConfigPath = string;
 //# sourceMappingURL=config.d.ts.map

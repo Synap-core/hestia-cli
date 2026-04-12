@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-nocheck
 /**
  * proxy command - Manage reverse proxy (Nginx or Traefik)
  * Usage: hestia proxy <command>

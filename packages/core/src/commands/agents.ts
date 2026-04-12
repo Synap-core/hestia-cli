@@ -4,7 +4,7 @@
  */
 
 import { Command } from 'commander';
-import { a2aBridge, Agent, AgentStatus, MemoryEntry } from '../lib/a2a-bridge.js';
+import { a2aBridge, AgentStatus } from '../lib/a2a-bridge.js';
 import { logger, table } from '../lib/logger.js';
 import { openclaudeService } from '../lib/openclaude-service.js';
 import { openclawService } from '../lib/openclaw-service.js';

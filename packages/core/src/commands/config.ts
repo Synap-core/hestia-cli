@@ -4,7 +4,8 @@
  */
 
 import { Command } from 'commander';
-import { getConfig, getCredentials, updateConfig, UserConfig, Credentials, ConfigPath } from '../lib/config.js';
+import { getConfigValue, updateConfig, getConfigPaths, getCredentials } from '../lib/config.js';
+import type { UserConfig } from '../lib/config.js';
 import { logger } from '../lib/logger.js';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
@@ -26,13 +27,14 @@ export function configCommand(program: Command): void {
     .option('-e, --edit', 'Open in editor')
     .action(async (options: ConfigOptions) => {
       try {
-        const config = await getConfig();
+        const config = await getConfigValue();
 
         if (options.edit) {
           // Open in default editor
           const { spawn } = await import('child_process');
           const editor = process.env.EDITOR || 'vi';
-          spawn(editor, [ConfigPath], { stdio: 'inherit' });
+          const paths = getConfigPaths();
+          spawn(editor, [paths.userConfig], { stdio: 'inherit' });
           return;
         }
 
@@ -57,7 +59,7 @@ export function configCommand(program: Command): void {
     .description('Get a configuration value')
     .action(async (key: string) => {
       try {
-        const config = await getConfig();
+        const config = await getConfigValue();
         const value = getNestedValue(config, key);
 
         if (value === undefined) {
@@ -100,7 +102,7 @@ export function configCommand(program: Command): void {
           logger.success(`Secret '${key}' set successfully`);
         } else {
           // Store in config
-          const config = await getConfig();
+          const config = await getConfigValue();
           setNestedValue(config, key, parsedValue);
           await updateConfig(config);
           logger.success(`Configuration '${key}' set to: ${JSON.stringify(parsedValue)}`);
@@ -118,7 +120,7 @@ export function configCommand(program: Command): void {
     .option('-s, --show-secrets', 'Show secret values (use with caution)')
     .action(async (options: { showSecrets?: boolean }) => {
       try {
-        const config = await getConfig();
+        const config = await getConfigValue();
         const credentials = await getCredentials();
 
         logger.header('CONFIGURATION VALUES');
@@ -194,26 +196,28 @@ export function configCommand(program: Command): void {
 
         // Build config from answers
         const config: Partial<UserConfig> = {
-          hearthId: answers.hearthId,
-          synapBackendUrl: answers.synapBackendUrl,
-          packagesDirectory: answers.packagesDirectory,
-          logLevel: answers.logLevel,
-          autoUpdate: answers.autoUpdate,
-          autoStart: answers.autoStart,
+          hearth: {
+            id: answers.hearthId,
+            name: answers.hearthId,
+            role: 'primary',
+          },
+          connectors: {
+            controlPlane: {
+              enabled: true,
+              url: answers.synapBackendUrl,
+            },
+          },
         };
 
         // Save config
         await updateConfig(config as UserConfig);
 
-        // Save API key to credentials if provided
-        if (answers.apiKey) {
-          const credentials: Credentials = { apiKey: answers.apiKey };
-          await updateConfig(credentials, 'credentials');
-        }
+        // Note: API key should be saved to credentials file separately
 
         logger.newline();
         logger.success('Configuration saved successfully! 🎉');
-        logger.info(`Configuration file: ${chalk.cyan(ConfigPath)}`);
+        const paths = getConfigPaths();
+        logger.info(`Configuration file: ${chalk.cyan(paths.userConfig)}`);
 
       } catch (error: any) {
         logger.error(`Wizard failed: ${error.message}`);
@@ -224,23 +228,20 @@ export function configCommand(program: Command): void {
 
 function displayConfig(config: UserConfig): void {
   logger.section('Core Settings');
-  logger.info(`Hearth ID: ${chalk.cyan(config.hearthId || 'Not set')}`);
-  logger.info(`Backend URL: ${chalk.cyan(config.synapBackendUrl || 'Not set')}`);
-  logger.info(`Packages Dir: ${chalk.cyan(config.packagesDirectory || '~/.hestia/packages')}`);
-  logger.info(`Log Level: ${chalk.cyan(config.logLevel || 'info')}`);
+  logger.info(`Hearth ID: ${chalk.cyan(config.hearth?.id || 'Not set')}`);
+  logger.info(`Hearth Name: ${chalk.cyan(config.hearth?.name || 'Not set')}`);
+  logger.info(`Backend URL: ${chalk.cyan(config.connectors?.controlPlane?.url || 'Not set')}`);
 
   logger.newline();
   logger.section('Behavior');
-  logger.info(`Auto Update: ${config.autoUpdate ? chalk.green('Yes') : chalk.gray('No')}`);
-  logger.info(`Auto Start: ${config.autoStart ? chalk.green('Yes') : chalk.gray('No')}`);
-  logger.info(`Backup Enabled: ${config.backupEnabled ? chalk.green('Yes') : chalk.gray('No')}`);
+  logger.info(`Reverse Proxy: ${chalk.cyan(config.reverseProxy || 'nginx')}`);
 
-  if (config.intelligenceProvider) {
+  if (config.intelligence) {
     logger.newline();
     logger.section('Intelligence Provider');
-    logger.info(`Provider: ${chalk.cyan(config.intelligenceProvider.providerType)}`);
-    logger.info(`Endpoint: ${chalk.cyan(config.intelligenceProvider.endpointUrl)}`);
-    logger.info(`Model: ${chalk.cyan(config.intelligenceProvider.model)}`);
+    logger.info(`Provider: ${chalk.cyan(config.intelligence.provider)}`);
+    logger.info(`Endpoint: ${chalk.cyan(config.intelligence.endpoint || 'Not set')}`);
+    logger.info(`Model: ${chalk.cyan(config.intelligence.model)}`);
   }
 }
 

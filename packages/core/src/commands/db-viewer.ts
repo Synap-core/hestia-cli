@@ -30,11 +30,9 @@
 import { Command } from "commander";
 import { WhoDBService } from "../lib/whodb-service.js";
 import { logger, table } from "../lib/logger.js";
-import { spinner, withSpinner } from "../lib/spinner.js";
+import { withSpinner } from "../lib/spinner.js";
 import { loadConfig, updateConfig } from "../lib/config.js";
 import chalk from "chalk";
-import * as path from "path";
-import * as os from "os";
 
 // Options interface for commands
 interface DBViewerOptions {

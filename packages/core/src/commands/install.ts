@@ -4,16 +4,14 @@
  */
 
 import { Command } from 'commander';
-import { logger, header, section } from '../lib/logger.js';
+import { logger, section } from '../lib/logger.js';
 import { spinner } from '../lib/spinner.js';
-import { runTasks } from '../lib/task-list.js';
 import chalk from 'chalk';
-import inquirer from 'inquirer';
-import { spawn } from 'child_process';
+import { spawn, exec } from 'child_process';
 import { promisify } from 'util';
 import { access, constants } from 'fs/promises';
 
-const execAsync = promisify(require('child_process').exec);
+const execAsync = promisify(exec);
 
 interface InstallOptions {
   target?: string;
@@ -21,6 +19,7 @@ interface InstallOptions {
   unattended?: boolean;
   skipPhases?: string[];
   dryRun?: boolean;
+  skip?: string[];
 }
 
 type InstallPhase = 'phase1' | 'phase2' | 'phase3' | 'all';
@@ -205,7 +204,10 @@ async function runPhase(phase: InstallPhase, options: InstallOptions): Promise<v
 }
 
 function getPhaseScript(phase: InstallPhase): string {
-  const scriptMap: Record<InstallPhase, string> = {
+  if (phase === 'all') {
+    return '/opt/hestia/install/phases/phase1.sh';
+  }
+  const scriptMap: Record<Exclude<InstallPhase, 'all'>, string> = {
     phase1: '/opt/hestia/install/phases/phase1.sh',
     phase2: '/opt/hestia/install/phases/phase2.sh',
     phase3: '/opt/hestia/install/phases/phase3.sh',

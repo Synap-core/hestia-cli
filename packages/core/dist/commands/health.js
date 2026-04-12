@@ -323,7 +323,7 @@ function generateScoreBar(score) {
     const empty = 20 - filled;
     return '█'.repeat(filled) + '░'.repeat(empty);
 }
-function displayCategoryResults(category, results) {
+function displayCategoryResults(_category, results) {
     const tableData = Object.entries(results).map(([name, result]) => ({
         SERVICE: formatServiceName(name),
         STATUS: formatStatus(result.status),

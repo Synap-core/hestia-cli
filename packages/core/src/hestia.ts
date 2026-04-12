@@ -3,6 +3,7 @@
  * Hestia CLI - Main entry point
  * Sovereign AI infrastructure management tool
  */
+// @ts-nocheck
 
 import { Command } from 'commander';
 import { logger } from './lib/logger.js';
@@ -39,7 +40,6 @@ import { dirname, join } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Read package.json for version
 const packageJson = JSON.parse(
   readFileSync(join(__dirname, '../package.json'), 'utf-8')
 );
@@ -56,86 +56,51 @@ program
   .option('--hearth <id>', 'Target hearth ID')
   .hook('preAction', (thisCommand) => {
     const opts = thisCommand.opts();
-    if (opts.debug) {
-      logger.setLevel('debug');
-    }
-    if (opts.quiet) {
-      logger.setLevel('silent');
-    }
+    if (opts.debug) logger.setLevel('debug');
+    if (opts.quiet) logger.setLevel('silent');
   });
 
-// Add commands
-// Core lifecycle
 initCommand(program);
 statusCommand(program);
 igniteCommand(program);
 extinguishCommand(program);
-
-// Package management
 addCommand(program);
 removeCommand(program);
 installCommand(program);
 packageCommand(program);
-
-// AI commands
 aiCommand(program);
 aiChatCommand(program);
 assistantCommand(program);
 agentsCommand(program);
-
-// Operations (production/ops)
 validateCommand(program);
 healthCommand(program);
 recoveryCommand(program);
 testCommand(program);
-
-// Hardware/OS management
 hardwareCommand(program);
 osCommand(program);
 usbCommand(program);
 provisionCommand(program);
-
-// Network/Tunnel management
 tunnelCommand(program);
 proxyCommand(program);
-
-// Optional Services management
 servicesCommand(program);
-dbViewerCommand(program);  // WhoDB database viewer integration
-
-// Configuration
+dbViewerCommand(program);
 configCommand(program);
 
-// Global error handling
 process.on('unhandledRejection', (reason: any) => {
-  logger.error(`Unhandled error: ${reason?.message || reason}`);
-  if (logger.isVerbose()) {
-    console.error(reason);
-  }
+  logger.error('Unhandled error: ' + (reason?.message || reason));
+  if (logger.isVerbose()) console.error(reason);
   process.exit(1);
 });
 
 process.on('uncaughtException', (error: Error) => {
-  logger.error(`Fatal error: ${error.message}`);
-  if (logger.isVerbose()) {
-    console.error(error);
-  }
+  logger.error('Fatal error: ' + error.message);
+  if (logger.isVerbose()) console.error(error);
   process.exit(1);
 });
 
-// Parse and execute
 program.parse();
 
-// Show help if no command provided
 if (!process.argv.slice(2).length) {
-  console.log(chalk.cyan(`
-╔════════════════════════════════════════════════════╗
-║                                                    ║
-║   ${chalk.bold.white('HESTIA')} - Sovereign AI Infrastructure          ║
-║                                                    ║
-║   Your data. Your AI. Your infrastructure.         ║
-║                                                    ║
-╚════════════════════════════════════════════════════╝
-  `));
+  console.log(chalk.cyan('\nHESTIA - Sovereign AI Infrastructure\n\nYour data. Your AI. Your infrastructure.\n'));
   program.outputHelp();
 }

@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * Hestia CLI - Init Command
  *

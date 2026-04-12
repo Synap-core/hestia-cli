@@ -10,7 +10,7 @@
  */
 
 import { Command } from 'commander';
-import { openclawService, type SkillMetadata, type CommsPlatform } from '../lib/openclaw-service.js';
+import { openclawService, type CommsPlatform } from '../lib/openclaw-service.js';
 import { logger } from '../lib/logger.js';
 import { stateManager } from '../lib/state-manager.js';
 import inquirer from 'inquirer';
@@ -94,7 +94,7 @@ export function assistantCommand(program: Command): void {
     });
 
   // Skill management command
-  const skillCmd = assistant
+  assistant
     .command('skill <action>')
     .description('Manage assistant skills (list, add, remove, enable, disable)')
     .action(async (action: string) => {
@@ -851,7 +851,7 @@ async function sendMessage(message: string, platform?: string): Promise<void> {
 async function showActivity(options: ActivityOptions): Promise<void> {
   logger.header('ASSISTANT ACTIVITY');
 
-  const limit = parseInt(options.limit || '20');
+  const limit = parseInt(String(options.limit || '20'));
 
   let since: Date | undefined;
   if (options.since) {

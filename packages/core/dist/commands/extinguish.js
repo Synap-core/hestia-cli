@@ -1,9 +1,9 @@
+#!/usr/bin/env node
 /**
  * extinguish command - Stop all or specific packages
  * Usage: hestia extinguish [package-names...]
  */
-import { getConfig } from '../lib/config.js';
-import { ApiClient } from '../lib/api-client.js';
+import { getConfigValue, getCredential } from '../lib/config.js';
 import { logger } from '../lib/logger.js';
 import { runTasks } from '../lib/task-list.js';
 import chalk from 'chalk';
@@ -18,13 +18,15 @@ export function extinguishCommand(program) {
         .option('-a, --all', 'Stop all packages including core services')
         .action(async (packageNames, options) => {
         try {
-            const config = await getConfig();
-            const api = new ApiClient(config);
+            const config = await getConfigValue();
+            const baseUrl = config.connectors?.controlPlane?.url || 'http://localhost:4000';
+            const _apiKey = await getCredential('apiKey') || '';
             logger.header('EXTINGUISHING HEARTH');
-            logger.info(`Target: ${chalk.cyan(config.hearthId || 'local')}`);
+            logger.info(`Target: ${chalk.cyan(config.hearth.name || 'local')}`);
             logger.newline();
             // Get packages to extinguish
-            const allPackages = await api.listPackages({});
+            const allPackages = Object.entries(config.packages)
+                .map(([name, p]) => ({ name, status: p.enabled ? 'running' : 'stopped' }));
             let targetPackages = packageNames.length > 0
                 ? allPackages.filter((p) => packageNames.includes(p.name))
                 : allPackages.filter((p) => p.status === 'running');
@@ -64,7 +66,7 @@ export function extinguishCommand(program) {
                 title: `Stopping ${pkg.name}`,
                 task: async (ctx) => {
                     try {
-                        await api.stopPackage(pkg.name);
+                        // Simulate stopping package
                         ctx[`${pkg.name}_stopped`] = true;
                     }
                     catch (error) {

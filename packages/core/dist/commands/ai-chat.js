@@ -128,7 +128,7 @@ export function aiChatCommand(program) {
         .description("Install a specific AI chat UI")
         .option("-p, --port <port>", "Custom port (optional)")
         .option("-y, --yes", "Skip confirmation", false)
-        .action(async (provider, options) => {
+        .action(async (provider, _options) => {
         if (!validateProvider(provider)) {
             console.log(chalk.red(`Invalid provider: ${provider}`));
             console.log(chalk.gray(`Valid providers: ${PROVIDERS.join(", ")}`));
@@ -148,7 +148,7 @@ export function aiChatCommand(program) {
         .alias("rm")
         .description("Remove an installed AI chat UI")
         .option("-f, --force", "Force removal without confirmation", false)
-        .action(async (provider, options) => {
+        .action(async (provider, _options) => {
         if (!validateProvider(provider)) {
             console.log(chalk.red(`Invalid provider: ${provider}`));
             console.log(chalk.gray(`Valid providers: ${PROVIDERS.join(", ")}`));

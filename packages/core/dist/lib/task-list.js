@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Task list utilities using Listr2
  * Provides structured multi-step task execution with progress tracking

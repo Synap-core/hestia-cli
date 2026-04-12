@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+// @ts-nocheck
 /**
  * os command - Operating System Management
  * Usage: hestia os [subcommand]
@@ -18,7 +20,7 @@ import { Command } from 'commander';
 import inquirer from 'inquirer';
 import { osManager, OSManager } from '../lib/os-manager.js';
 import { logger, table } from '../lib/logger.js';
-import { spinner, withSpinner } from '../lib/spinner.js';
+import { withSpinner } from '../lib/spinner.js';
 import chalk from 'chalk';
 import { writeFileSync, existsSync, mkdirSync } from 'fs';
 

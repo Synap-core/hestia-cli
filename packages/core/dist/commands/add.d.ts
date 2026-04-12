@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * add command - Add a package to the hearth
  * Usage: hestia add <package-name> [version]

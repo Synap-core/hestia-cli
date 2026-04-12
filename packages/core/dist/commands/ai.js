@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * ai command - OpenClaude integration for Hestia
  *
@@ -326,7 +327,7 @@ export function aiCommand(program) {
                         },
                     ]);
                     const name = options.name || answers.name;
-                    const transport = options.transport || answers.transport;
+                    const _transport = options.transport || answers.transport;
                     const command = options.command || answers.command || 'npx';
                     const args = answers.args || [];
                     const url = options.url || answers.url;
@@ -336,6 +337,7 @@ export function aiCommand(program) {
                     }
                     spinner.start('add-mcp', `Installing MCP server: ${name}...`);
                     await openclaudeService.installMCPServer(name, {
+                        name,
                         command,
                         args,
                         url,
@@ -442,6 +444,7 @@ async function runSetup(options) {
         try {
             spinner.start('mcp-hearth', 'Installing hestia MCP server...');
             await openclaudeService.installMCPServer('hestia', {
+                name: 'hestia',
                 command: 'npx',
                 args: ['-y', '@synap/mcp-hearth', 'start'],
                 env: {},
@@ -455,6 +458,7 @@ async function runSetup(options) {
         try {
             spinner.start('mcp-synap', 'Installing synap MCP server...');
             await openclaudeService.installMCPServer('synap', {
+                name: 'synap',
                 command: 'npx',
                 args: ['-y', '@synap/mcp'],
                 env: {},
@@ -561,7 +565,6 @@ async function installOpenClaude() {
     }
 }
 async function syncHestiaToOpenClaude() {
-    const state = await stateManager.getNormalState();
     await stateManager.syncAll();
 }
 async function syncConfigToHestia(config) {

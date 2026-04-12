@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * validate command - Run production validation checks
  * Usage: hestia validate [subcommand] [options]

@@ -28,6 +28,7 @@
  */
 
 import { Command } from 'commander';
+import { randomBytes } from 'crypto';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import { pangolinService, PangolinService, type TunnelMode, type TunnelInfo, type PangolinStatus } from '../lib/pangolin-service.js';
@@ -841,8 +842,7 @@ async function detectNetworkType(): Promise<'public' | 'cgmat' | 'private' | 'un
 
 function generateSecureToken(): string {
   try {
-    const crypto = require('crypto');
-    return crypto.randomBytes(32).toString('hex');
+    return randomBytes(32).toString('hex');
   } catch {
     // Fallback
     return Math.random().toString(36).substring(2, 15) + 

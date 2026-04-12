@@ -20,7 +20,7 @@ export interface ValidationResult {
     /** Time taken to run validation in ms */
     duration?: number;
     /** Suggested fixes for errors */
-    fixes?: string[];
+    fixes: string[];
 }
 /**
  * Category of validations

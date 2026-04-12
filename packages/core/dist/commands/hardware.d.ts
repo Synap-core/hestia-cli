@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * hardware command - Hardware monitoring and reporting
  * Usage: hestia hardware [subcommand] [options]

@@ -304,8 +304,8 @@ export declare class UnifiedStateManager {
 }
 export declare class StateManagerError extends Error {
     code: string;
-    cause?: unknown | undefined;
-    constructor(message: string, code: string, cause?: unknown | undefined);
+    cause?: unknown;
+    constructor(message: string, code: string, cause?: unknown);
 }
 /**
  * Global singleton instance of the UnifiedStateManager

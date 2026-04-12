@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * extinguish command - Stop all or specific packages
  * Usage: hestia extinguish [package-names...]

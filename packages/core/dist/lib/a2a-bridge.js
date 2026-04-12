@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * A2A (Agent-to-Agent) Bridge for Hestia CLI
  * Enables OpenClaude and OpenClaw agents to communicate

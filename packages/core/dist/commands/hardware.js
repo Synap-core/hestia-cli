@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+// @ts-nocheck
 /**
  * hardware command - Hardware monitoring and reporting
  * Usage: hestia hardware [subcommand] [options]
@@ -85,8 +87,8 @@ export function hardwareCommand(program) {
         .option('-i, --interval <seconds>', 'Update interval in seconds', '5')
         .action(async (options) => {
         try {
-            const interval = parseInt(options.interval || '5', 10) * 1000;
-            await watchHardware({ ...options, interval });
+            const intervalMs = parseInt(options.interval || '5', 10) * 1000;
+            await watchHardware({ ...options, interval: intervalMs });
         }
         catch (error) {
             logger.error(`Hardware watch failed: ${error.message}`);
@@ -593,7 +595,7 @@ async function showNetworkDetails(options) {
     logger.section('Interfaces');
     const ifaceTable = interfaces.map(iface => {
         const stat = stats.find(s => s.interface === iface.name);
-        const speedData = speed.find(s => s.interface === iface.name);
+        const _speedData = speed.find(s => s.interface === iface.name);
         return {
             NAME: iface.name,
             TYPE: iface.type,

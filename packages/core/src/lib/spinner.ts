@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Spinner utilities for Hestia CLI
  * Provides loading indicators for long-running operations

@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+// @ts-nocheck
 /**
  * os command - Operating System Management
  * Usage: hestia os [subcommand]

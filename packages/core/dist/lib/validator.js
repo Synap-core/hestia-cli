@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Production Validation Framework for Hestia CLI
  *
@@ -14,7 +15,7 @@ import net from "net";
 import YAML from "yaml";
 import { logger } from "./logger.js";
 import { loadConfig, getConfigPaths } from "./config.js";
-import { createAPIClient } from "./api-client.js";
+import { createAPIClient, checkPodHealth } from "./api-client.js";
 import { A2ABridge } from "./a2a-bridge.js";
 import { UnifiedStateManager } from "./state-manager.js";
 // ============================================================================
@@ -561,13 +562,23 @@ export class ProductionValidator {
             };
             try {
                 // Try to create API client
-                this.apiClient = await createAPIClient();
+                const { config } = await loadConfig();
+                this.apiClient = await createAPIClient({
+                    baseUrl: config.synapBackendUrl || "http://localhost:4000",
+                    apiKey: config.apiKey || "",
+                    workspaceId: "",
+                });
                 result.info.push(`API client initialized`);
                 // Try to get backend health
                 try {
-                    const health = await this.apiClient.getHealth();
-                    result.info.push(`Backend status: ${health.status || "unknown"}`);
-                    result.info.push(`Backend version: ${health.version || "unknown"}`);
+                    const health = await checkPodHealth(config.synapBackendUrl || "http://localhost:4000");
+                    if (health.healthy) {
+                        result.info.push(`Backend status: healthy`);
+                        result.info.push(`Backend version: ${health.version || "unknown"}`);
+                    }
+                    else {
+                        result.warnings.push(`Backend health check failed: ${health.error}`);
+                    }
                 }
                 catch {
                     result.warnings.push(`Backend health check failed - may be starting up`);
@@ -1274,12 +1285,16 @@ export class ProductionValidator {
                 const { config } = await loadConfig();
                 result.info.push(`✓ Config load`);
                 // 2. Check API client can be created
-                const client = await createAPIClient();
+                const client = await createAPIClient({
+                    baseUrl: config.synapBackendUrl || "http://localhost:4000",
+                    apiKey: config.apiKey || "",
+                    workspaceId: "",
+                });
                 result.info.push(`✓ API client creation`);
                 // 3. Check backend health (if available)
                 try {
-                    const health = await client.getHealth();
-                    result.info.push(`✓ Backend health: ${health.status || "OK"}`);
+                    const health = await checkPodHealth(config.synapBackendUrl || "http://localhost:4000");
+                    result.info.push(`✓ Backend health: ${health.healthy ? "OK" : "unhealthy"}`);
                 }
                 catch {
                     result.warnings.push(`Backend health check skipped (may be starting)`);

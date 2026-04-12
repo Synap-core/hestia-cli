@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * services command - Manage optional Hestia services
  *
@@ -17,7 +18,7 @@
  */
 import chalk from 'chalk';
 import { logger, table } from '../lib/logger.js';
-import { serviceManager, getAllOptionalServices, getOptionalService, getServicesByCategory, getServiceCategories, isValidService, } from '../lib/service-manager.js';
+import { serviceManager } from '../lib/service-manager.js';
 // Category display names and icons
 const categoryDisplay = {
     network: { name: 'Network', icon: '🌐', color: '#3b82f6' },

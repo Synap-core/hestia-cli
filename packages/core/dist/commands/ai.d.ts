@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * ai command - OpenClaude integration for Hestia
  *

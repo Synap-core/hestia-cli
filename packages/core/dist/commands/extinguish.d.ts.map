@@ -1,1 +1,1 @@
-{"version":3,"file":"extinguish.d.ts","sourceRoot":"","sources":["../../src/commands/extinguish.ts"],"names":[],"mappings":"AAAA;;;GAGG;AAEH,OAAO,EAAE,OAAO,EAAE,MAAM,WAAW,CAAC;AAepC,wBAAgB,iBAAiB,CAAC,OAAO,EAAE,OAAO,GAAG,IAAI,CA0HxD"}
+{"version":3,"file":"extinguish.d.ts","sourceRoot":"","sources":["../../src/commands/extinguish.ts"],"names":[],"mappings":";AACA;;;GAGG;AAEH,OAAO,EAAE,OAAO,EAAE,MAAM,WAAW,CAAC;AAcpC,wBAAgB,iBAAiB,CAAC,OAAO,EAAE,OAAO,GAAG,IAAI,CA4HxD"}

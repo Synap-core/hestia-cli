@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * ignite command - Start all or specific packages
  * Usage: hestia ignite [package-names...]

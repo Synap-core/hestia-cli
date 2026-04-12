@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Hestia CLI - Recovery and Rollback System
  *

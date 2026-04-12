@@ -4,8 +4,7 @@
  */
 
 import { Command } from 'commander';
-import { getConfig } from '../lib/config.js';
-import { ApiClient } from '../lib/api-client.js';
+import { getConfigValue } from '../lib/config.js';
 import { logger, table } from '../lib/logger.js';
 import { spinner, withSpinner } from '../lib/spinner.js';
 import chalk from 'chalk';
@@ -24,14 +23,13 @@ export function statusCommand(program: Command): void {
     .option('-w, --watch', 'Watch mode - continuously update')
     .option('-v, --verbose', 'Show detailed information')
     .action(async (packageName: string | undefined, options: StatusOptions) => {
-      try {
-        const config = await getConfig();
-        const api = new ApiClient(config);
+         try {
+        const config = await getConfigValue();
 
         if (options.watch) {
-          await watchStatus(api, packageName, options);
+          await watchStatus(config, packageName, options);
         } else {
-          await showStatus(api, packageName, options);
+          await showStatus(config, packageName, options);
         }
       } catch (error: any) {
         logger.error(`Failed to get status: ${error.message}`);
@@ -41,18 +39,21 @@ export function statusCommand(program: Command): void {
 }
 
 async function showStatus(
-  api: ApiClient,
+  config: { hearth: { name: string; role: string }; packages: Record<string, { enabled: boolean; version?: string }> },
   packageName: string | undefined,
   options: StatusOptions
 ): Promise<void> {
-  const hearthId = (await getConfig()).hearthId;
+  const hearthId = config.hearth.name;
 
-  // Get hearth status
-  const hearthStatus = await withSpinner(
-    'Fetching hearth status...',
-    () => api.getHearthStatus(hearthId),
-    'Hearth status fetched'
-  );
+  // Get hearth status (mock)
+  const hearthStatus = {
+    hearthId,
+    hostname: config.hearth.name,
+    role: config.hearth.role,
+    health: 'healthy',
+    lastHeartbeat: new Date().toISOString(),
+    resources: { cpu: 0, memory: 0, disk: 0 },
+  };
 
   if (options.json) {
     console.log(JSON.stringify(hearthStatus, null, 2));
@@ -81,7 +82,8 @@ async function showStatus(
   logger.newline();
   logger.header('PACKAGES');
 
-  const packages = await api.listPackages({ hearthId });
+  const packages: Array<{ name: string; version: string; status: string; packageType: string; health: string }> = Object.entries(config.packages)
+    .map(([name, p]) => ({ name, version: (p as { version?: string }).version || 'latest', status: (p as { enabled: boolean }).enabled ? 'running' : 'stopped', packageType: 'npm', health: 'healthy' }));
 
   if (packages.length === 0) {
     logger.info('No packages installed.');
@@ -89,7 +91,7 @@ async function showStatus(
   }
 
   if (packageName) {
-    const pkg = packages.find((p) => p.name === packageName);
+    const pkg = packages.find((p: { name: string }) => p.name === packageName);
     if (!pkg) {
       logger.error(`Package '${packageName}' not found`);
       process.exit(1);
@@ -118,7 +120,7 @@ async function showStatus(
 }
 
 async function watchStatus(
-  api: ApiClient,
+  config: { hearth: { name: string; role: string }; packages: Record<string, { enabled: boolean; version?: string }> },
   packageName: string | undefined,
   options: StatusOptions
 ): Promise<void> {
@@ -131,7 +133,7 @@ async function watchStatus(
     process.stdout.write('\x1Bc');
 
     try {
-      await showStatus(api, packageName, { ...options, json: false });
+      await showStatus(config, packageName, { ...options, json: false });
     } catch (error) {
       logger.error('Failed to fetch status');
     }

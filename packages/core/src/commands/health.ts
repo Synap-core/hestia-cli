@@ -381,7 +381,7 @@ function generateScoreBar(score: number): string {
   return '█'.repeat(filled) + '░'.repeat(empty);
 }
 
-function displayCategoryResults(category: CheckCategory, results: Record<string, HealthCheckResult>): void {
+function displayCategoryResults(_category: CheckCategory, results: Record<string, HealthCheckResult>): void {
   const tableData = Object.entries(results).map(([name, result]) => ({
     SERVICE: formatServiceName(name),
     STATUS: formatStatus(result.status),

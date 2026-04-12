@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * ai command - OpenClaude integration for Hestia
  *
@@ -19,7 +20,7 @@ import chalk from 'chalk';
 import inquirer from 'inquirer';
 import { promisify } from 'util';
 import { exec } from 'child_process';
-import { readFile, access } from 'fs/promises';
+import { readFile } from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 
@@ -33,9 +34,7 @@ interface AIStatusOptions {
   json?: boolean;
 }
 
-interface AIMCPOptions {
-  json?: boolean;
-}
+
 
 interface AISetupOptions {
   force?: boolean;
@@ -403,7 +402,7 @@ export function aiCommand(program: Command): void {
             ]);
 
             const name = options.name || answers.name;
-            const transport = options.transport || answers.transport;
+            const _transport = options.transport || answers.transport;
             const command = options.command || answers.command || 'npx';
             const args = answers.args || [];
             const url = options.url || answers.url;
@@ -416,6 +415,7 @@ export function aiCommand(program: Command): void {
             spinner.start('add-mcp', `Installing MCP server: ${name}...`);
 
             await openclaudeService.installMCPServer(name, {
+              name,
               command,
               args,
               url,
@@ -545,6 +545,7 @@ async function runSetup(options: AISetupOptions): Promise<void> {
     try {
       spinner.start('mcp-hearth', 'Installing hestia MCP server...');
       await openclaudeService.installMCPServer('hestia', {
+        name: 'hestia',
         command: 'npx',
         args: ['-y', '@synap/mcp-hearth', 'start'],
         env: {},
@@ -558,6 +559,7 @@ async function runSetup(options: AISetupOptions): Promise<void> {
     try {
       spinner.start('mcp-synap', 'Installing synap MCP server...');
       await openclaudeService.installMCPServer('synap', {
+        name: 'synap',
         command: 'npx',
         args: ['-y', '@synap/mcp'],
         env: {},
@@ -674,7 +676,6 @@ async function installOpenClaude(): Promise<void> {
 }
 
 async function syncHestiaToOpenClaude(): Promise<void> {
-  const state = await stateManager.getNormalState();
   await stateManager.syncAll();
 }
 

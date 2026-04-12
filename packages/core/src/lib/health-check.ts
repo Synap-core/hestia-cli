@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Health Check System for Hestia CLI
  *

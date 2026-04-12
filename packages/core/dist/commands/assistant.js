@@ -78,7 +78,7 @@ export function assistantCommand(program) {
         }
     });
     // Skill management command
-    const skillCmd = assistant
+    assistant
         .command('skill <action>')
         .description('Manage assistant skills (list, add, remove, enable, disable)')
         .action(async (action) => {
@@ -752,7 +752,7 @@ async function sendMessage(message, platform) {
  */
 async function showActivity(options) {
     logger.header('ASSISTANT ACTIVITY');
-    const limit = parseInt(options.limit || '20');
+    const limit = parseInt(String(options.limit || '20'));
     let since;
     if (options.since) {
         const now = new Date();

@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+// @ts-nocheck
 /**
  * Hestia CLI - Init Command
  *
@@ -7,6 +9,7 @@ import { Command } from "commander";
 import inquirer from "inquirer";
 import { createInitialConfig, configExists, updateConfig } from "../lib/config.js";
 import { checkPodHealth } from "../lib/api-client.js";
+import { getOrCreateHestiaWorkspace } from "../lib/workspace-setup.js";
 import { serviceManager } from "../lib/service-manager.js";
 export const initCommand = new Command("init")
     .description("Initialize a new Hestia hearth")
@@ -17,8 +20,10 @@ export const initCommand = new Command("init")
     .option("--endpoint <url>", "Intelligence endpoint URL")
     .option("--model <model>", "Default model", "llama3.1:8b")
     .option("--pod-url <url>", "Synap Backend URL", "http://localhost:4000")
+    .option("--api-key <key>", "Synap Data Pod API key (Bearer token)")
     .option("--skip-registration", "Skip registering with backend")
     .option("--quick", "Quick setup with defaults")
+    .option("--ai-platform <platform>", "AI platform (opencode|openclaude|later)", "opencode")
     .action(async (options, command) => {
     const { verbose, dryRun } = command.parent?.opts() || {};
     const logger = {
@@ -46,6 +51,7 @@ export const initCommand = new Command("init")
     // Quick setup
     if (options.quick) {
         logger.info("Using quick setup with defaults...\n");
+        const aiPlatform = "opencode";
         const config = await createInitialConfig({
             hearthName: options.name || "My Digital Hearth",
             role: options.role,
@@ -55,11 +61,29 @@ export const initCommand = new Command("init")
                 endpoint: options.endpoint,
                 model: options.model,
             },
+            aiPlatform,
         });
         logger.info("\n✓ Hestia initialized successfully!");
         logger.info(`\nHearth ID: ${config.hearth.id}`);
         logger.info(`Name: ${config.hearth.name}`);
         logger.info(`Role: ${config.hearth.role}`);
+        logger.info(`AI Platform: ${aiPlatform}`);
+        // Platform-specific guidance
+        if (aiPlatform === "opencode") {
+            logger.info(`\n📝 OpenCode setup:`);
+            logger.info(`   • Get your API key at: https://opencode.ai/api-keys`);
+            logger.info(`   • Configure: hestia config set ai.platform.opencode.apiKey <your-key>`);
+        }
+        else if (aiPlatform === "openclaude") {
+            logger.info(`\n🤖 OpenClaude setup:`);
+            logger.info(`   • Get your API key at: https://openclaude.ai/settings/api-keys`);
+            logger.info(`   • Configure: hestia config set ai.platform.openclaude.apiKey <your-key>`);
+        }
+        else if (aiPlatform === "later") {
+            logger.info(`\n⏳ AI Platform setup:`);
+            logger.info(`   • Choose OpenCode or OpenClaude when ready`);
+            logger.info(`   • Configure: hestia config set ai.platform <opencode|openclaude>`);
+        }
         logger.info(`\nNext steps:`);
         logger.info("  1. hestia ignite          # Start the hearth");
         logger.info("  2. hestia status          # Check status");
@@ -161,6 +185,17 @@ export const initCommand = new Command("init")
             ],
             default: [],
         },
+        {
+            type: "list",
+            name: "aiPlatform",
+            message: "Which AI platform would you like to use?",
+            choices: [
+                { name: "OpenCode (recommended) - Claude Code IDE for development", value: "opencode" },
+                { name: "OpenClaude - AI builder for creating apps", value: "openclaude" },
+                { name: "I'll configure this later", value: "later" },
+            ],
+            default: "opencode",
+        },
     ]);
     const config = {
         name: options.name || answers.name,
@@ -171,6 +206,7 @@ export const initCommand = new Command("init")
         model: options.model || answers.model,
         podUrl: options.podUrl || answers.podUrl,
         optionalServices: answers.optionalServices || [],
+        aiPlatform: answers.aiPlatform || "opencode",
     };
     logger.info("\n🔧 Creating your hearth...\n");
     if (dryRun) {
@@ -200,6 +236,7 @@ export const initCommand = new Command("init")
             endpoint: config.endpointUrl,
             model: config.model,
         },
+        aiPlatform: config.aiPlatform,
     });
     // Setup optional services if selected
     if (config.optionalServices.length > 0) {
@@ -234,18 +271,45 @@ export const initCommand = new Command("init")
             },
         });
     }
-    // Register with backend if available
+    // Create Hestia workspace on the pod if API key is available
     if (health.healthy && !options.skipRegistration) {
-        logger.info("Registering hearth with backend...");
-        try {
-            // For now, we'll need a provisioning token or API key
-            // In the real implementation, this would handle auth
-            logger.info("\nℹ️  To complete registration, you'll need a PROVISIONING_TOKEN.");
-            logger.info("   Run: hestia connect --token <token>\n");
+        // Resolve API key: flag > env > prompt
+        let apiKey = options.apiKey || process.env.HESTIA_API_KEY || "";
+        if (!apiKey) {
+            const { apiKeyAnswer } = await inquirer.prompt([
+                {
+                    type: "password",
+                    name: "apiKeyAnswer",
+                    message: "Synap Data Pod API key (leave blank to skip workspace setup):",
+                    default: "",
+                },
+            ]);
+            apiKey = apiKeyAnswer.trim();
         }
-        catch (error) {
-            logger.warn("Could not register with backend:");
-            logger.warn(error instanceof Error ? error.message : String(error));
+        if (apiKey) {
+            logger.info("\n🏗️  Setting up Hestia workspace on your data pod...");
+            const wsResult = await getOrCreateHestiaWorkspace({
+                podUrl: config.podUrl,
+                apiKey,
+            });
+            if (wsResult.success) {
+                hestiaConfig = await updateConfig({
+                    pod: {
+                        url: config.podUrl,
+                        apiKey,
+                        workspaceId: wsResult.workspaceId,
+                    },
+                });
+                logger.info(`✓ Workspace ready: ${wsResult.workspaceId}\n`);
+            }
+            else {
+                logger.warn(`⚠️  Workspace setup failed: ${wsResult.error}`);
+                logger.warn("   Run: hestia connect --api-key <key>  to retry later.\n");
+            }
+        }
+        else {
+            logger.info("\nℹ️  Skipping workspace setup (no API key provided).");
+            logger.info("   Run: hestia connect --api-key <key>  when ready.\n");
         }
     }
     // Success!
@@ -253,11 +317,31 @@ export const initCommand = new Command("init")
     logger.info(`Hearth ID: ${hestiaConfig.hearth.id}`);
     logger.info(`Name: ${hestiaConfig.hearth.name}`);
     logger.info(`Role: ${hestiaConfig.hearth.role}`);
+    if (hestiaConfig.pod?.workspaceId) {
+        logger.info(`Workspace: ${hestiaConfig.pod.workspaceId}`);
+        logger.info(`Pod: ${hestiaConfig.pod.url}`);
+    }
+    // AI Platform guidance
+    if (hestiaConfig.aiPlatform === "opencode") {
+        logger.info(`\n📝 OpenCode setup:`);
+        logger.info(`   • Get your API key at: https://opencode.ai/api-keys`);
+        logger.info(`   • Configure: hestia config set ai.platform.opencode.apiKey <your-key>`);
+    }
+    else if (hestiaConfig.aiPlatform === "openclaude") {
+        logger.info(`\n🤖 OpenClaude setup:`);
+        logger.info(`   • Get your API key at: https://openclaude.ai/settings/api-keys`);
+        logger.info(`   • Configure: hestia config set ai.platform.openclaude.apiKey <your-key>`);
+    }
+    else if (hestiaConfig.aiPlatform === "later") {
+        logger.info(`\n⏳ AI Platform setup:`);
+        logger.info(`   • Choose OpenCode or OpenClaude when ready`);
+        logger.info(`   • Configure: hestia config set ai.platform <opencode|openclaude>`);
+    }
     logger.info(`\nNext steps:`);
     logger.info(`  1. hestia ignite           # Start the hearth`);
-    logger.info(`  2. hestia status             # Check status`);
-    logger.info(`  3. hestia add gateway        # Add OpenClaw gateway`);
-    logger.info(`  4. hestia add builder        # Add OpenClaude builder`);
+    logger.info(`  2. hestia status           # Check status`);
+    logger.info(`  3. hestia add gateway      # Add OpenClaw gateway`);
+    logger.info(`  4. hestia add builder      # Add OpenClaude builder`);
     logger.info(`\nFor help: hestia --help`);
     logger.info(`Documentation: https://hestia.sh/docs`);
 });

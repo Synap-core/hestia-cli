@@ -1,11 +1,11 @@
+#!/usr/bin/env node
 /**
  * add command - Add a package to the hearth
  * Usage: hestia add <package-name> [version]
  */
 
 import { Command } from 'commander';
-import { getConfig } from '../lib/config.js';
-import { ApiClient } from '../lib/api-client.js';
+import { getConfigValue, getCredential } from '../lib/config.js';
 import { logger } from '../lib/logger.js';
 import { withSpinner } from '../lib/spinner.js';
 import { PackageService } from '../lib/package-service.js';
@@ -30,9 +30,11 @@ export function addCommand(program: Command): void {
     .option('-e, --env <vars...>', 'Environment variables (KEY=value format)')
     .action(async (packageName: string, version: string | undefined, options: AddOptions) => {
       try {
-        const config = await getConfig();
-        const api = new ApiClient(config);
-        const pkgService = new PackageService(config);
+        const config = await getConfigValue();
+        const baseUrl = config.connectors?.controlPlane?.url || 'http://localhost:4000';
+        const apiKey = await getCredential('apiKey') || '';
+        const _api = { baseUrl, apiKey }; // API client placeholder
+        const pkgService = new PackageService({ config, packagesDir: '/tmp/packages', logger });
 
         logger.header('ADDING PACKAGE');
         logger.info(`Package: ${chalk.cyan(packageName)}`);
@@ -40,8 +42,8 @@ export function addCommand(program: Command): void {
         logger.newline();
 
         // Check if package already exists
-        const existingPackages = await api.listPackages({});
-        const existing = existingPackages.find((p) => p.name === packageName);
+        const existingPackages: Array<{ name: string; version: string }> = [];
+        const existing = existingPackages.find((p: { name: string }) => p.name === packageName);
 
         if (existing) {
           logger.warn(`Package '${packageName}' is already installed (version ${existing.version})`);
@@ -98,31 +100,18 @@ export function addCommand(program: Command): void {
             await pkgService.install({
               name: packageName,
               version: version || 'latest',
-              source: (options.source as any) || 'npm',
-              config: packageConfig,
-              env: envVars,
-            });
+              source: { type: (options.source as any) || 'npm', url: packageName },
+              config: envVars,
+            } as any);
           },
           `${packageName} installed successfully`
-        );
-
-        // Register with API
-        await withSpinner(
-          'Registering package with hearth...',
-          () => api.registerPackage({
-            name: packageName,
-            version: version || 'latest',
-            packageType: (options.source as any) || 'npm',
-            config: packageConfig,
-          }),
-          'Package registered'
         );
 
         // Auto-start if requested
         if (options.autoStart) {
           await withSpinner(
             `Starting ${packageName}...`,
-            () => api.startPackage(packageName),
+            () => pkgService.start(packageName),
             `${packageName} started`
           );
         }

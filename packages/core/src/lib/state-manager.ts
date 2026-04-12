@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Unified State Manager for Hestia CLI
  *

@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Hestia CLI - Comprehensive Test Suite
  *

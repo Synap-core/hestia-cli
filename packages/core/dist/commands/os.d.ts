@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * os command - Operating System Management
  * Usage: hestia os [subcommand]

@@ -185,6 +185,12 @@ export interface OptionalServiceConfig {
   customConfig?: Record<string, unknown>;
 }
 
+export interface HestiaPodConfig {
+  url: string;
+  apiKey: string;
+  workspaceId?: string;
+}
+
 export interface HestiaConfig {
   version: string;
   hearth: {
@@ -197,6 +203,7 @@ export interface HestiaConfig {
   packages: Record<string, PackageConfig>;
   intelligence?: IntelligenceConfig;
   reverseProxy?: "nginx" | "traefik";
+  pod?: HestiaPodConfig;
   connectors?: {
     controlPlane?: ControlPlaneConfig;
   };
@@ -204,6 +211,7 @@ export interface HestiaConfig {
   dbViewer?: DBViewerConfig;
   aiChat?: AIChatConfig;
   optionalServices?: Record<string, OptionalServiceConfig>;
+  aiPlatform?: "opencode" | "openclaude" | "later";
 }
 
 // AI Chat UI Configuration

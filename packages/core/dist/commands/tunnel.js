@@ -26,6 +26,7 @@
  *   - Identity-aware access
  *   - Optional component (not required)
  */
+import { randomBytes } from 'crypto';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import { pangolinService } from '../lib/pangolin-service.js';
@@ -706,8 +707,7 @@ async function detectNetworkType() {
 }
 function generateSecureToken() {
     try {
-        const crypto = require('crypto');
-        return crypto.randomBytes(32).toString('hex');
+        return randomBytes(32).toString('hex');
     }
     catch {
         // Fallback

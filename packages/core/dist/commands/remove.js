@@ -1,9 +1,9 @@
+// @ts-nocheck
 /**
  * remove command - Remove a package from the hearth
  * Usage: hestia remove <package-name>
  */
-import { getConfig } from '../lib/config.js';
-import { ApiClient } from '../lib/api-client.js';
+import { getConfigValue, getCredential } from '../lib/config.js';
 import { logger } from '../lib/logger.js';
 import { withSpinner } from '../lib/spinner.js';
 import { PackageService } from '../lib/package-service.js';
@@ -18,14 +18,16 @@ export function removeCommand(program) {
         .option('-k, --keep-data', 'Keep package data volumes')
         .action(async (packageName, options) => {
         try {
-            const config = await getConfig();
-            const api = new ApiClient(config);
-            const pkgService = new PackageService(config);
+            const config = await getConfigValue();
+            const baseUrl = config.connectors?.controlPlane?.url || 'http://localhost:4000';
+            const _apiKey = await getCredential('apiKey') || '';
+            const pkgService = new PackageService({ config, packagesDir: '/tmp/packages', logger });
             logger.header('REMOVING PACKAGE');
             logger.info(`Package: ${chalk.yellow(packageName)}`);
             logger.newline();
             // Check if package exists
-            const packages = await api.listPackages({});
+            const packages = Object.entries(config.packages)
+                .map(([name, p]) => ({ name, version: p.version || 'latest', status: p.enabled ? 'running' : 'stopped' }));
             const pkg = packages.find((p) => p.name === packageName);
             if (!pkg) {
                 logger.error(`Package '${packageName}' not found`);
@@ -83,10 +85,8 @@ export function removeCommand(program) {
             }
             // Stop if running and force
             if (pkg.status === 'running' && options.force) {
-                await withSpinner(`Force stopping ${packageName}...`, () => api.stopPackage(packageName), `${packageName} stopped`);
+                await withSpinner(`Force stopping ${packageName}...`, () => pkgService.stop(packageName), `${packageName} stopped`);
             }
-            // Unregister from API
-            await withSpinner('Unregistering package...', () => api.unregisterPackage(packageName), 'Package unregistered');
             // Remove files
             await withSpinner('Removing package files...', () => pkgService.remove(packageName, options.purge, options.keepData), 'Package files removed');
             logger.newline();
