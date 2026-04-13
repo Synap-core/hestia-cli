@@ -1,0 +1,4 @@
+packages:
+  - "packages/@hestia/*"
+  - "packages/hestia-cli"
+  - "packages/cli-consolidated"

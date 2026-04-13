@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "bin": {
+    "eve": "./dist/index.js",
     "hestia": "./dist/index.js"
   },
   "scripts": {

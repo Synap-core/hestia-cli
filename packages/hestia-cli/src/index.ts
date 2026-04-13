@@ -8,8 +8,8 @@ import { growCommand } from './commands/grow.js'
 const program = new Command()
 
 program
-  .name('hestia')
-  .description('Hestia - Entity Creation System')
+  .name('eve')
+  .description('Eve - Entity Creation System')
   .version('0.1.0')
 
 // Register organ commands

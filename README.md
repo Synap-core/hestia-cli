@@ -1,332 +1,184 @@
-# Hestia CLI
+# Eve - Entity Creation System
 
-Command-line interface for Hestia - Sovereign AI Infrastructure
+> **Create your sovereign digital entity.**
+> 
+> Eve transforms a bare server into a living digital being with intelligence, memory, and capabilities.
 
-## 🚀 **New Features - April 2025**
+## What is Eve?
 
-### 🔥 **AI Platform Integration**
-- **OpenCode/OpenClaude choice** during `hestia init`
-- **Interactive guidance** for API key setup
-- **Type-safe configuration** with AI platform preferences
-. **OpenCode (recommended)**: Claude Code IDE for development
-. **OpenClaude**: AI builder for creating apps
-. **Configure later**: Flexible setup options
+Eve is an **Entity Creation System**. It takes a bare server (physical or virtual) and transforms it into a sovereign digital entity with:
 
-### 💾 **One-Command USB Deployment - Transform Any USB Key into a Bootable AI System**
+- 🧠 **Brain** - Core intelligence and memory
+- 🦾 **Arms** - Action and execution capabilities  
+- 🏗️ **Builder** - Creation and deployment tools
+- 👁️ **Eyes** - Perception and knowledge intake
+- 🦿 **Legs** - Presence and exposure to the world
 
-**Create a complete bootable Hestia AI system on any USB drive:**
-
-```bash
-# Generate the USB bundle (creates directory structure)
-hestia usb generate --output ./hestia-usb --bundle-all
-
-# For complete production deployment with all components:
-hestia usb generate --output ./production-usb --bundle-all --include-docker --include-backend
-```
-
-**What's included in the USB bundle:**
-```
-📁 hestia-usb/
-├── 📁 bin/                    # Hestia CLI executable
-├── 📁 scripts/               # Automatic installation scripts
-│   └── install.sh           # One-command setup (run as root)
-├── 📁 config/                # Production configurations
-├── 📁 docker/                # Docker Compose files
-├── 📁 docs/                  # Complete documentation
-├── 📁 iso/                   # Bootable ISO configuration  
-├── 📁 autoinstall/           # Automated deployment (Ubuntu/Debian)
-└── 📁 cloud-init/            # Cloud initialization configs
-```
-
-**🚀 Three Ways to Deploy:**
-
-1. **Direct USB Boot** (Recommended for bare metal):
-   ```bash
-   # Copy to USB drive
-   sudo cp -r hestia-usb/* /media/USB/
-   
-   # Boot from USB, then run:
-   sudo ./scripts/install.sh
-   ```
-
-2. **Network Boot/PXE** (Data centers, labs):
-   ```bash
-   # Extract to TFTP/NFS server
-   tar -czf hestia-boot.tar.gz hestia-usb/
-   
-   # Configure PXE to boot and auto-run install.sh
-   ```
-
-3. **Virtual Machine** (Testing/development):
-   ```bash
-   # Create VM with USB content as virtual disk
-   qemu-img create -f qcow2 hestia-vm.qcow2 20G
-   # Mount hestia-usb/ as CD-ROM or secondary disk
-   ```
-
-**⚡ Installation Process (automated):**
-- Detects Linux distribution (Ubuntu/Debian/RHEL/Arch)
-- Installs dependencies (Docker, Node.js, PostgreSQL, Redis)
-- Creates systemd services for auto-start
-- Configures networking and security
-- Sets up Hestia with your AI platform choice
-
-**🔧 Customization Options:**
-```bash
-# Specific output format
-hestia usb generate --format iso          # Creates bootable ISO
-hestia usb generate --format both         # Directory + ISO
-
-# Custom volume label  
-hestia usb generate --label "HESTIA_AI"
-
-# Include specific components
-hestia usb generate --include-docker      # Docker files
-hestia usb generate --include-backend     # Synap backend services
-
-# Use existing base ISO
-hestia usb generate --iso-path ./ubuntu-22.04.iso
-```
-
-**📋 System Requirements for USB Boot:**
-- **USB drive**: 8GB+ (16GB recommended)
-- **Target system**: x86_64 or ARM64
-- **Memory**: 4GB RAM minimum, 8GB+ recommended
-- **Storage**: 20GB+ free disk space
-- **Network**: Internet access for package installation
-
-**🎯 Use Cases:**
-- **Field deployment**: Boot on any compatible hardware
-- **Disaster recovery**: Complete system restore from USB
-- **Demo/POC kits**: Portable AI demonstrations
-- **Air-gapped networks**: Offline installation
-- **Training environments**: Consistent setup for workshops
-
-**🔒 Security Features:**
-- Signed installation scripts
-- Secure default configurations
-- No external telemetry
-- Local-first operation
-- Encrypted credential storage
-
-## Packages
-
-This monorepo contains the following packages:
-
-| Package | Description | Path |
-|---------|-------------|------|
-| `@hestia/cli` | Main CLI application | `packages/core/` |
-| `@hestia/install` | System installer scripts | `packages/install/` |
-| `@hestia/usb` | USB creation tools | `packages/usb/` |
+Unlike traditional server setups, Eve creates a **cohesive entity** where all components work together as a unified system.
 
 ## Quick Start
 
-```bash
-# Install CLI globally
-npm install -g @hestia/cli
-
-# Initialize Hestia with AI platform choice
-hestia init
-
-# Check status
-hestia status
-
-# Start all services
-hestia ignite
-
-# Generate bootable USB for field deployment
-hestia usb generate --bundle-all --output ./hestia-usb
-```
-
-## Installation Methods
-
-### 1. **Direct Script Install** (Simplest)
-```bash
-curl -fsSL https://get.hestia.dev | bash
-```
-
-### 2. **One-Command USB Deployment** (Production Ready)
-```bash
-# Generate complete bootable USB
-hestia usb generate --bundle-all --output ./synap-usb
-
-# Options:
-# --format iso          # Create bootable ISO
-# --label HESTIA_BOOT   # Custom volume label
-# --include-backend     # Include backend services
-# --include-docker     # Include Docker configuration
-```
-
-**Creates:**
-```
-synap-usb/
-├── bin/hestia          # CLI executable
-├── scripts/install.sh  # Automatic installer
-├── config/            # Production configs
-├── docker/            # Docker compose files
-├── docs/README.md     # Complete documentation
-└── iso/              # Bootable ISO config (if --format iso)
-```
-
-### 3. **Advanced USB Install** (Legacy)
-```bash
-cd packages/usb
-sudo bash src/create-usb.sh
-```
-
-### 3. Manual Package Install
-```bash
-# Clone repository
-git clone https://github.com/synap/hestia.git
-cd hestia-cli
-
-# Install dependencies
-pnpm install
-
-# Build all packages
-pnpm build
-
-# Link CLI globally
-pnpm link --global
-
-## 🎯 **What Makes Hestia Unique**
-
-### 🔐 **Sovereign AI Infrastructure**
-- **Your data stays yours** - No cloud lock-in
-- **OpenAI-compatible API** - Use any AI model
-- **Multi-tenant pods** - Shared or dedicated deployment
-- **Proposal governance** - AI actions require human approval
-
-### 🚀 **Production Deployment Features**
-- **One-command USB generation** - Deploy anywhere
-- **Auto-install with cloud-init** - Zero-touch provisioning
-- **Docker Compose production configs** - Battle-tested
-- **Systemd service management** - Enterprise reliability
-
-### 🤖 **AI Platform Integration**
-- **OpenCode + OpenClaude support** - Best of both worlds
-- **Interactive setup wizard** - Guided configuration
-- **API key management** - Secure credential handling
-- **Intelligent defaults** - Works out of the box
-
-### 🔧 **Developer Experience**
-- **TypeScript-first** - Full type safety
-- **Modular monorepo** - Clean separation of concerns
-- **Centralized type system** - Verified at build time
-- **Zero-config testing** - Integrated test suite
-
-## Development
+### Path 1: Fresh Server (Physical or VM)
 
 ```bash
-# Install dependencies
-pnpm install
+# 1. Create bootable USB (for physical servers)
+eve birth create-usb --device /dev/sdb
 
-# Build all packages
-pnpm build
+# Boot from USB, then:
+# 2. Initialize the Brain
+eve brain init --with-ai
 
-# Run CLI in development
-pnpm --filter @hestia/cli dev -- status
+# 3. Add Arms (AI assistant)
+eve arms install
 
-# Type check
-pnpm typecheck
+# 4. Setup Builder (creation tools)
+eve builder init my-project
 
-# Lint
-pnpm lint
-
-# Test
-pnpm test
+# 5. Check entity status
+eve status
 ```
 
-## Project Structure
+### Path 2: Existing Server
 
-```
-hestia-cli/
-├── packages/
-│   ├── core/           # CLI application
-│   │   ├── src/
-│   │   │   ├── commands/    # CLI commands
-│   │   │   ├── lib/         # Utilities
-│   │   │   └── types.ts     # TypeScript definitions
-│   │   └── package.json
-│   ├── install/        # System installer
-│   │   └── src/
-│   │       ├── install.sh
-│   │       ├── phases/
-│   │       │   ├── phase1.sh
-│   │       │   ├── phase2.sh
-│   │       │   └── phase3.sh
-│   │       └── wizard/
-│   │           └── first-fire.sh
-│   └── usb/            # USB creation tools
-│       └── src/
-│           ├── create-usb.sh
-│           └── ventoy/
-├── package.json        # Workspace root
-└── pnpm-workspace.yaml
+```bash
+# Run on any Ubuntu/Debian server
+curl -fsSL https://eve.sh/install.sh | bash
+
+# Initialize
+eve brain init --with-ai
+eve arms install
+eve builder init my-project
+eve legs setup
 ```
 
-## Commands
+### Path 3: Proxmox VM
 
-### Core Commands
-- `hestia init` - Initialize Hestia configuration
-- `hestia status` - Check system status
-- `hestia ignite` - Start all packages
-- `hestia extinguish` - Stop all packages
-- `hestia install [phase]` - Run installation phases
+```bash
+# In Proxmox:
+# 1. Download Ubuntu 24.04 ISO
+# 2. Create VM (4+ cores, 8+ GB RAM, 50+ GB disk)
+# 3. Install Ubuntu
+# 4. SSH into VM and run:
 
-### Package Management
-- `hestia add <name>` - Add a package
-- `hestia remove <name>` - Remove a package
-- `hestia package list` - List installed packages
-- `hestia package info <name>` - Show package details
-- `hestia package logs <name>` - Show package logs
-- `hestia package update [name]` - Update packages
+curl -fsSL https://eve.sh/install.sh | bash
+eve brain init --with-ai
+eve status
+```
 
-### Configuration
-- `hestia config` - View configuration
-- `hestia config get <key>` - Get value
-- `hestia config set <key> <value>` - Set value
-- `hestia config wizard` - Interactive configuration
+## Entity Anatomy
 
-## Architecture
+```
+Your Digital Entity
+├── 🧠 BRAIN (Core Intelligence)
+│   ├── Synap Backend - API, identity, knowledge graph
+│   ├── Ollama - Local AI model (Llama 3.1, etc.)
+│   ├── PostgreSQL - Long-term memory
+│   └── Redis - Working memory
+│
+├── 🦾 ARMS (Action)
+│   └── OpenClaw - AI coding assistant with MCP servers
+│       └── Connects to Brain's Ollama for intelligence
+│
+├── 🏗️ BUILDER (Creation Suite)
+│   ├── OpenCode - Generate websites and docs
+│   ├── OpenClaude - AI-assisted coding (uses Brain AI)
+│   └── Dokploy - Deploy to production
+│
+├── 👁️ EYES (Perception)
+│   └── RSSHub - Consume RSS feeds, APIs
+│       └── Feeds knowledge into Brain
+│
+└── 🦿 LEGS (Exposure)
+    └── Traefik - Reverse proxy, SSL, domain routing
+        └── Exposes your entity to the internet
+```
 
-### Entity-First Design
-All Hestia concepts are stored as entities in Synap Backend:
-- `hearth_node` - Node configuration and status
-- `intelligence_provider` - AI provider settings
-- `package_instance` - Installed packages
-- `hearth_deployment` - Deployment history
+## Core Commands
 
-### Installation Phases
-1. **Phase 1** - Foundation: Docker, firewall, SSH hardening
-2. **Phase 2** - Core: Synap Backend, OpenClaw gateway
-3. **Phase 3** - Builder: OpenClaude agent, A2A bridge
+```bash
+# Entity lifecycle
+eve birth create-usb     # Create bootable USB
+eve brain init           # Initialize core
+eve brain init --with-ai # Include local AI
+eve status               # Check entity health
+eve doctor               # Diagnose issues
+eve grow                 # Expand capabilities
 
-### Intelligence Agnostic
-Works with any OpenAI-compatible provider:
-- **Ollama** (local, free)
-- **OpenRouter** (multi-provider)
-- **Anthropic Claude**
-- **OpenAI**
-- **Custom endpoints**
+# Organs
+eve arms install         # Install AI assistant
+eve builder init <name>  # Create project
+eve builder deploy       # Deploy to production
+eve eyes install         # Add RSS aggregation
+eve legs setup           # Configure domain/SSL
+```
 
-## Environment Variables
+## Why Eve?
 
-- `HESTIA_HOME` - Installation directory (default: `/opt/hestia`)
-- `HESTIA_TARGET` - Target directory for installs
-- `HESTIA_SAFE_MODE` - Preserve existing data
-- `HESTIA_UNATTENDED` - Non-interactive mode
+### vs Traditional Server Setup
+
+| Traditional | Eve |
+|-------------|-----|
+| Install apps individually | Unified entity with connected organs |
+| Manual configuration | Automated, opinionated setup |
+| Apps don't talk to each other | All organs connect to Brain |
+| Cloud dependencies | Fully self-hosted, private |
+| Complex maintenance | Entity state tracking, self-healing |
+
+### vs Cloud Platforms
+
+| Cloud (Vercel, Railway, etc.) | Eve |
+|-------------------------------|-----|
+| Vendor lock-in | You own everything |
+| Monthly costs | One-time server cost |
+| Data on their servers | Data stays on your server |
+| Limited customization | Full control, open source |
+| Internet required | Works offline (local AI) |
+
+## Technology Stack
+
+Eve is built on proven open-source technologies:
+
+- **Container Runtime**: Docker + Docker Compose
+- **AI Engine**: Ollama (local LLM inference)
+- **AI Assistants**: OpenClaw, OpenClaude
+- **Database**: PostgreSQL (data), Redis (cache)
+- **Reverse Proxy**: Traefik (automatic SSL)
+- **Deployment**: Dokploy (self-hosted PaaS)
+- **RSS Aggregation**: RSSHub
+
+See [docs/technology-choices.md](docs/technology-choices.md) for detailed comparison of each technology choice.
 
 ## Documentation
 
-- [CLI Documentation](packages/core/README.md)
-- [Installer Guide](packages/install/README.md)
-- [USB Creation](packages/usb/README.md)
+- [Getting Started](docs/getting-started.md) - First steps
+- [Architecture](docs/architecture.md) - Entity anatomy
+- [Technology Choices](docs/technology-choices.md) - Why we chose each tool
+- [Deployment Guide](docs/deployment.md) - Deploy your entity
+- [Configuration](docs/configuration.md) - Customize your entity
 
-## Contributing
+## Requirements
 
-See [CONTRIBUTING.md](../../CONTRIBUTING.md)
+### Minimum (Basic Entity)
+- 2 CPU cores
+- 4 GB RAM
+- 20 GB storage
+- Ubuntu 22.04+ / Debian 12+
+
+### Recommended (Full AI Entity)
+- 4+ CPU cores
+- 8+ GB RAM (16+ for larger AI models)
+- 50+ GB storage (SSD recommended)
+- Ubuntu 24.04 LTS
+
+### For Local AI
+- GPU optional (accelerates AI inference)
+- Without GPU: CPU inference works fine
 
 ## License
 
-MIT
+MIT - See [LICENSE](LICENSE)
+
+---
+
+**Create your digital self.**
+

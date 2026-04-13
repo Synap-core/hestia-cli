@@ -1,7 +1,7 @@
 {
-  "name": "hestia",
+  "name": "eve",
   "version": "0.1.0",
-  "description": "Hestia - Entity Creation System",
+  "description": "Eve - Entity Creation System (formerly Hestia)",
   "private": true,
   "workspaces": [
     "packages/@hestia/*",
@@ -22,12 +22,14 @@
     "node": ">=18.0.0"
   },
   "keywords": [
+    "eve",
     "hestia",
     "synap",
     "ai",
     "infrastructure",
     "cli",
-    "entity"
+    "entity",
+    "sovereign"
   ],
   "author": "Synap",
   "license": "MIT"
