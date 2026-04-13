@@ -16,7 +16,7 @@ import { promisify } from "util";
 import * as YAML from "yaml";
 import { z } from "zod";
 import { logger } from '../../../utils/index.js';
-import type { HestiaConfig, IntelligenceConfig } from '../../../lib/types/index.js';
+import type { HestiaConfig, IntelligenceConfig } from '../../../../lib/types/index.js';
 import { loadConfig, getConfigPaths, saveConfig } from '../../../utils/index.js';
 
 const execAsync = promisify(exec);
@@ -626,7 +626,7 @@ export class OpenClawService {
 
     await fs.writeFile(
       path.join(skillDir, "meta.yaml"),
-      YAML.dump(metadata),
+      YAML.stringify(metadata),
       "utf-8"
     );
 
@@ -634,7 +634,7 @@ export class OpenClawService {
     if (code.config) {
       await fs.writeFile(
         path.join(skillDir, "config.yaml"),
-        YAML.dump(code.config),
+        YAML.stringify(code.config),
         "utf-8"
       );
     }
@@ -713,7 +713,7 @@ export class OpenClawService {
           path.join(skillDir, "config.yaml"),
           "utf-8"
         );
-        skillConfig = YAML.load(configContent);
+        skillConfig = YAML.parse(configContent);
       } catch {
         // No config file
       }
@@ -760,7 +760,7 @@ export class OpenClawService {
       };
       await fs.writeFile(
         path.join(skillDir, "meta.yaml"),
-        YAML.dump(newMetadata),
+        YAML.stringify(newMetadata),
         "utf-8"
       );
     }
@@ -769,7 +769,7 @@ export class OpenClawService {
     if (updates.config) {
       await fs.writeFile(
         path.join(skillDir, "config.yaml"),
-        YAML.dump(updates.config),
+        YAML.stringify(updates.config),
         "utf-8"
       );
     }
@@ -813,7 +813,7 @@ export class OpenClawService {
     const skillDir = path.join(this.skillsDir, name);
     await fs.writeFile(
       path.join(skillDir, "meta.yaml"),
-      YAML.dump(config.skills[skillIndex]),
+      YAML.stringify(config.skills[skillIndex]),
       "utf-8"
     );
 
@@ -1059,7 +1059,7 @@ export class OpenClawService {
   private async loadOpenClawConfig(): Promise<OpenClawConfig> {
     try {
       const content = await fs.readFile(this.configPath, "utf-8");
-      const parsed = YAML.load(content);
+      const parsed = YAML.parse(content);
       return openClawConfigSchema.parse(parsed) as OpenClawConfig;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -1079,7 +1079,7 @@ export class OpenClawService {
   private async saveOpenClawConfig(config: OpenClawConfig): Promise<void> {
     await fs.mkdir(this.openClawDir, { recursive: true });
 
-    const yaml = YAML.dump(config, {
+    const yaml = YAML.stringify(config, {
       indent: 2,
       lineWidth: 120,
       sortMapEntries: true,

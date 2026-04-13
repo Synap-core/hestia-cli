@@ -15,7 +15,7 @@ import { execa } from "execa";
 import { z } from "zod";
 import { logger } from '../../../utils/index.js';
 import { loadConfig, updateConfig, getConfigPaths } from '../../../utils/index.js';
-import type { AIChatProvider, AIChatConfig, AIChatProviderStatus, AIChatProviderInfo } from '../../../lib/types/index.js';
+import type { AIChatProvider, AIChatConfig, AIChatProviderStatus, AIChatProviderInfo } from '../../../../lib/types/index.js';
 
 // Provider configuration schema
 const providerConfigSchema = z.object({

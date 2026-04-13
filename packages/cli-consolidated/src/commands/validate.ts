@@ -4,7 +4,7 @@
  */
 
 import { Command } from 'commander';
-import { productionValidator, type ValidationCategory, type ValidationReport } from '../lib/domains/shared/lib/validator.js';
+import { productionValidator, type ValidationCategory, type ValidationReport, type ValidationResult, type SystemInfo } from '../lib/domains/shared/lib/validator.js';
 import { logger } from '../lib/utils/index.js';
 import { withSpinner } from '../lib/utils/index.js';
 import chalk from 'chalk';
@@ -23,7 +23,7 @@ interface ValidateOptions {
 /**
  * Collect system information for reports
  */
-function collectSystemInfo(): import('../lib/validator.js').SystemInfo {
+function collectSystemInfo(): SystemInfo {
   const totalMem = os.totalmem();
   const freeMem = os.freemem();
 
@@ -224,7 +224,7 @@ async function runValidation(
         // Convert single result to report format
         return {
           valid: result.valid,
-          categories: { [mappedCategory]: result } as Record<ValidationCategory, import('../lib/validator.js').ValidationResult>,
+          categories: { [mappedCategory]: result } as Record<ValidationCategory, ValidationResult>,
           timestamp: new Date(),
           totalDuration: result.duration || 0,
           systemInfo: collectSystemInfo(),
@@ -535,7 +535,7 @@ function displayResults(report: ValidationReport, verbose?: boolean): void {
  */
 function displayCategoryResult(
   category: string,
-  result: import('../lib/validator.js').ValidationResult,
+  result: ValidationResult,
   verbose?: boolean
 ): void {
   const icon = result.valid

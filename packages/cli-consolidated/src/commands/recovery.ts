@@ -98,7 +98,7 @@ export function recoveryCommand(program: Command): void {
         }
 
         // Get current system state for comparison
-        const { config } = await (await import('../../../lib/utils/index.js')).loadConfig();
+        const { config } = await (await import('../lib/utils/index.js')).loadConfig();
         const currentVersion = config.version;
 
         const tableData = backups.map((backup) => ({

@@ -14,7 +14,7 @@ import { promisify } from "util";
 import { exec } from "child_process";
 import { logger, createLogger } from '../../../utils/index.js';
 import { loadConfig, getConfigPaths, saveConfig, loadCredentials } from '../../../utils/index.js';
-import type { HestiaConfig, IntelligenceConfig, Logger } from '../../../lib/types/index.js';
+import type { HestiaConfig, IntelligenceConfig, Logger } from '../../../../lib/types/index.js';
 
 const execAsync = promisify(exec);
 

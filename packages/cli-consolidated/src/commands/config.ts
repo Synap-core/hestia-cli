@@ -4,7 +4,7 @@
  */
 
 import { Command } from 'commander';
-import { getConfigValue, updateConfig, getConfigPaths, getCredentials } from '../lib/utils/index.js';
+import { getConfigValue, updateConfig, getConfigPaths } from '../lib/utils/index.js';
 import type { UserConfig } from '../lib/utils/index.js';
 import { logger } from '../lib/utils/index.js';
 import chalk from 'chalk';
@@ -96,9 +96,10 @@ export function configCommand(program: Command): void {
 
         if (options.secret) {
           // Store in credentials
-          const credentials = await getCredentials();
+          const { loadCredentials, saveCredentials } = await import('../lib/utils/credentials.js');
+          const credentials = await loadCredentials();
           setNestedValue(credentials, key, parsedValue);
-          await updateConfig(credentials, 'credentials');
+          await saveCredentials(credentials);
           logger.success(`Secret '${key}' set successfully`);
         } else {
           // Store in config
@@ -121,7 +122,8 @@ export function configCommand(program: Command): void {
     .action(async (options: { showSecrets?: boolean }) => {
       try {
         const config = await getConfigValue();
-        const credentials = await getCredentials();
+        const { loadCredentials } = await import('../lib/utils/credentials.js');
+        const credentials = await loadCredentials();
 
         logger.header('CONFIGURATION VALUES');
         displayFlatConfig(config, 'config');

@@ -16,7 +16,7 @@ import type {
   HestiaConfig,
   Logger,
   ProgressReporter,
-} from '../../lib/types/index';
+} from '../../../../lib/types/index.js';
 
 const execAsync = promisify(exec);
 

@@ -27,7 +27,7 @@ import { promisify } from "util";
 import * as YAML from "js-yaml";
 import { logger } from '../../../utils/index.js';
 import { loadConfig, getConfigPaths, updateConfig, saveConfig } from '../../../utils/index.js';
-import type { HestiaConfig } from '../../lib/types/index';
+import type { HestiaConfig } from '../../../../lib/types/index.js';
 
 const execAsync = promisify(exec);
 

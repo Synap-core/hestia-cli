@@ -47,6 +47,9 @@ export async function isDockerRunning(): Promise<boolean> {
 export async function startPackage(packageName: string): Promise<{ success: boolean; message: string }> {
   try {
     const config = await getConfigValue();
+    if (!config._packagesDir) {
+      throw new Error('Packages directory not configured');
+    }
     const composeFile = path.join(config._packagesDir, packageName, 'docker-compose.yml');
     
     // Check if compose file exists
@@ -98,6 +101,9 @@ export async function startPackage(packageName: string): Promise<{ success: bool
 export async function stopPackage(packageName: string): Promise<{ success: boolean; message: string }> {
   try {
     const config = await getConfigValue();
+    if (!config._packagesDir) {
+      throw new Error('Packages directory not configured');
+    }
     const composeFile = path.join(config._packagesDir, packageName, 'docker-compose.yml');
     
     // Check if compose file exists
@@ -132,6 +138,9 @@ export async function stopPackage(packageName: string): Promise<{ success: boole
 export async function restartPackage(packageName: string): Promise<{ success: boolean; message: string }> {
   try {
     const config = await getConfigValue();
+    if (!config._packagesDir) {
+      throw new Error('Packages directory not configured');
+    }
     const composeFile = path.join(config._packagesDir, packageName, 'docker-compose.yml');
     
     try {
@@ -164,13 +173,16 @@ export async function restartPackage(packageName: string): Promise<{ success: bo
 /**
  * Get status of a package's containers
  */
-export async function getPackageStatus(packageName: string): Promise<{ 
-  running: boolean; 
+export async function getPackageStatus(packageName: string): Promise<{
+  running: boolean;
   containers: ContainerInfo[];
   message?: string;
 }> {
   try {
     const config = await getConfigValue();
+    if (!config._packagesDir) {
+      throw new Error('Packages directory not configured');
+    }
     const composeFile = path.join(config._packagesDir, packageName, 'docker-compose.yml');
     
     try {
@@ -269,8 +281,11 @@ export async function getLogs(
 ): Promise<{ success: boolean; logs?: string; error?: string }> {
   try {
     const config = await getConfigValue();
+    if (!config._packagesDir) {
+      throw new Error('Packages directory not configured');
+    }
     const composeFile = path.join(config._packagesDir, packageName, 'docker-compose.yml');
-    
+
     await fs.access(composeFile);
     
     const follow = options.follow ? '-f' : '';
