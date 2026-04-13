@@ -33,11 +33,26 @@ interface AIStatusOptions {
   json?: boolean;
 }
 
-
-
 interface AISetupOptions {
   force?: boolean;
   unattended?: boolean;
+}
+
+interface ProviderConfig {
+  provider: "ollama" | "openrouter" | "anthropic" | "openai" | "custom";
+  model: string;
+  endpoint?: string;
+  apiKey?: string;
+  temperature?: number;
+  maxTokens?: number;
+}
+
+interface MCPInstalledServer {
+  name: string;
+  enabled: boolean;
+  command: string;
+  args: string[];
+  transport: "stdio" | "sse";
 }
 
 // ============================================================================
@@ -155,7 +170,7 @@ export function aiCommand(program: Command): void {
           logger.info('No MCP servers installed.');
           logger.info(`Use ${chalk.cyan('hestia ai:mcp add')} to install servers.`);
         } else {
-          const mcpTable = mcpServers.map((server) => ({
+          const mcpTable = mcpServers.map((server: MCPInstalledServer) => ({
             NAME: server.name,
             TRANSPORT: server.transport,
             STATUS: server.enabled ? chalk.green('enabled') : chalk.gray('disabled'),
@@ -214,14 +229,7 @@ export function aiCommand(program: Command): void {
       try {
         logger.header('CONFIGURE AI PROVIDER');
 
-        let config: {
-          provider: 'ollama' | 'openrouter' | 'anthropic' | 'openai' | 'custom';
-          model: string;
-          apiKey?: string;
-          endpoint?: string;
-          temperature?: number;
-          maxTokens?: number;
-        };
+        let config: ProviderConfig;
 
         // Interactive wizard if no options provided
         if (!options.provider) {
@@ -342,7 +350,7 @@ export function aiCommand(program: Command): void {
               logger.info('No MCP servers installed.');
               logger.info(`Use ${chalk.cyan('hestia ai:mcp add')} to install a server.`);
             } else {
-              const tableData = servers.map((server) => ({
+              const tableData = servers.map((server: MCPInstalledServer) => ({
                 NAME: server.name,
                 TRANSPORT: server.transport,
                 ENABLED: server.enabled ? chalk.green('✓') : chalk.gray('✗'),

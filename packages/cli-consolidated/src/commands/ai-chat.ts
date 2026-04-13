@@ -26,7 +26,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { aiChatService } from "../lib/services/ai-chat-service.js";
 import { logger } from '../lib/utils/index.js';
-import type { AIChatProvider } from '../lib/types/index.js';
+import type { AIChatProvider, AIChatProviderInfo, AIChatProviderStatus } from '../lib/types/index.js';
 
 // Valid provider names
 const PROVIDERS: AIChatProvider[] = ["lobechat", "openwebui", "librechat"];
@@ -41,7 +41,7 @@ function validateProvider(provider: string): provider is AIChatProvider {
 /**
  * Display provider information in formatted output
  */
-function displayProviderInfo(providers: ReturnType<typeof aiChatService.listAvailable>): void {
+function displayProviderInfo(providers: AIChatProviderInfo[]): void {
   console.log(chalk.cyan("\nAvailable AI Chat UIs:\n"));
   
   for (const provider of providers) {
@@ -104,8 +104,8 @@ export function aiChatCommand(program: Command): void {
   const aiChat = program
     .command("ai:chat")
     .description("Manage AI chat UI interfaces")
-    .action(async () => {
-      console.log(chalk.cyan(`
+.action(async () => {
+    console.log(chalk.cyan(`
 ╔════════════════════════════════════════════════════╗
 ║          AI Chat Interfaces for Hestia           ║
 ╚════════════════════════════════════════════════════╝

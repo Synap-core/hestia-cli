@@ -15,7 +15,7 @@ import { execa } from "execa";
 import { z } from "zod";
 import { logger } from '../../../utils/index.js';
 import { loadConfig, updateConfig, getConfigPaths } from '../../../utils/index.js';
-import type { AIChatProvider, AIChatConfig, AIChatProviderStatus } from '../../../lib/types/index.js';
+import type { AIChatProvider, AIChatConfig, AIChatProviderStatus, AIChatProviderInfo } from '../../../lib/types/index.js';
 
 // Provider configuration schema
 const providerConfigSchema = z.object({
@@ -383,14 +383,7 @@ export class AIChatService {
   /**
    * List all available AI chat UI providers (not just installed)
    */
-  listAvailable(): Array<{
-    name: AIChatProvider;
-    displayName: string;
-    description: string;
-    features: string[];
-    bestFor: string;
-    port: number;
-  }> {
+  listAvailable(): AIChatProviderInfo[] {
     return Object.entries(PROVIDER_DEFINITIONS).map(([key, def]) => ({
       name: key as AIChatProvider,
       displayName: def.name,
