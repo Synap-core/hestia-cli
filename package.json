@@ -1,17 +1,20 @@
 {
-  "name": "hestia-cli",
+  "name": "hestia",
   "version": "0.1.0",
-  "description": "Sovereign AI infrastructure management CLI workspace",
+  "description": "Hestia - Entity Creation System",
   "private": true,
   "workspaces": [
-    "packages/*",
-    "plugins/*"
+    "packages/@hestia/*",
+    "packages/hestia-cli",
+    "packages/cli-consolidated"
   ],
   "scripts": {
     "build": "pnpm -r run build",
+    "build:new": "pnpm --filter @hestia/* --filter hestia-cli build",
     "typecheck": "pnpm -r run typecheck",
     "lint": "pnpm -r run lint",
     "test": "pnpm -r run test",
+    "cli": "pnpm --filter hestia-cli",
     "validate": "pnpm --filter @hestia/cli validate",
     "verify": "bash verify.sh"
   },
@@ -23,7 +26,8 @@
     "synap",
     "ai",
     "infrastructure",
-    "cli"
+    "cli",
+    "entity"
   ],
   "author": "Synap",
   "license": "MIT"
