@@ -3,11 +3,15 @@
   "version": "0.1.0",
   "description": "Hestia USB creation tools and Ventoy configuration",
   "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "scripts": {
-    "build": "echo 'No build step required'",
-    "create-usb": "bash src/create-usb.sh"
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
   },
+  "dependencies": {},
   "files": [
+    "dist/",
     "src/",
     "README.md"
   ],

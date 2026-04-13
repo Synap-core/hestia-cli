@@ -6,32 +6,31 @@
 // @ts-nocheck
 
 import { Command } from 'commander';
-import { logger } from './lib/logger.js';
-import { initCommand } from './commands/init.js';
-import { statusCommand } from './commands/status.js';
-import { igniteCommand } from './commands/ignite.js';
-import { extinguishCommand } from './commands/extinguish.js';
-import { addCommand } from './commands/add.js';
-import { removeCommand } from './commands/remove.js';
-import { configCommand } from './commands/config.js';
-import { packageCommand } from './commands/package.js';
-import { installCommand } from './commands/install.js';
-import { aiCommand } from './commands/ai.js';
-import { aiChatCommand } from './commands/ai-chat.js';
-import { assistantCommand } from './commands/assistant.js';
-import { agentsCommand } from './commands/agents.js';
-import { validateCommand } from './commands/validate.js';
-import { healthCommand } from './commands/health.js';
-import { testCommand } from './commands/test.js';
-import { recoveryCommand } from './commands/recovery.js';
-import { hardwareCommand } from './commands/hardware.js';
-import { osCommand } from './commands/os.js';
-import { usbCommand } from './commands/usb.js';
-import { provisionCommand } from './commands/provision.js';
-import { tunnelCommand } from './commands/tunnel.js';
-import { proxyCommand } from './commands/proxy.js';
-import { servicesCommand } from './commands/services.js';
-import { dbViewerCommand } from './commands/db-viewer.js';
+import { logger } from './lib/utils/index';
+import {
+  initCommand,
+  statusCommand,
+  igniteCommand,
+  extinguishCommand,
+  addCommand,
+  removeCommand,
+  configCommand,
+  packageCommand,
+  installCommand,
+  aiCommand,
+  aiChatCommand,
+  validateCommand,
+  healthCommand,
+  testCommand,
+  recoveryCommand,
+  hardwareCommand,
+  osCommand,
+  usbCommand,
+  provisionCommand,
+  tunnelCommand,
+  servicesCommand,
+  dbViewerCommand
+} from './commands/index.js';
 import chalk from 'chalk';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -70,8 +69,6 @@ installCommand(program);
 packageCommand(program);
 aiCommand(program);
 aiChatCommand(program);
-assistantCommand(program);
-agentsCommand(program);
 validateCommand(program);
 healthCommand(program);
 recoveryCommand(program);
@@ -81,7 +78,6 @@ osCommand(program);
 usbCommand(program);
 provisionCommand(program);
 tunnelCommand(program);
-proxyCommand(program);
 servicesCommand(program);
 dbViewerCommand(program);
 configCommand(program);

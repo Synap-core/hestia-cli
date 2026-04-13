@@ -2,6 +2,31 @@
 
 **Sovereign AI Infrastructure Management CLI**
 
+## 🆕 **Latest Features (April 2025)**
+
+### 🎯 **AI Platform Choice**
+- **Interactive wizard** in `hestia init` for AI platform selection
+- **OpenCode (recommended)** - Claude Code IDE for development
+- **OpenClaude** - AI builder for creating apps
+- **API key guidance** with direct setup links
+
+### 💾 **One-Command USB Deployment**
+```bash
+hestia usb generate --bundle-all --format iso
+```
+- **Bootable USB** with complete Hestia stack
+- **Production installation** scripts
+- **Docker Compose** production configurations
+- **Cloud-init & autoinstall** for zero-touch deployment
+
+### 🔧 **Architecture Improvements**
+- **Centralized type system** with proper enums
+- **TypeScript-first** with full type safety
+- **Zero build errors** after comprehensive fixes
+- **Enhanced developer experience**
+
+---
+
 ---
 
 ## 📋 Package Role

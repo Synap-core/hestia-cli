@@ -9,8 +9,8 @@
  *        hestia test:ci
  */
 import chalk from "chalk";
-import { HestiaTestSuite } from "../lib/test-suite.js";
-import { logger } from "../lib/logger.js";
+import { HestiaTestSuite } from '../domains/shared/lib/test-suite.js';
+import { logger } from '../lib/utils/index';
 /**
  * Format test name for display
  */

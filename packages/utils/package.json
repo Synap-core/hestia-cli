@@ -1,0 +1,24 @@
+{
+  "name": "@hestia/utils",
+  "version": "0.1.0",
+  "description": "Common utilities for Hestia CLI",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hestia/types": "file:../types",
+    "chalk": "^5.3.0",
+    "ora": "^8.0.1"
+  },
+  "keywords": [
+    "hestia",
+    "utils",
+    "utilities"
+  ],
+  "author": "Synap",
+  "license": "MIT"
+}

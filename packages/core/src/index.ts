@@ -4,7 +4,7 @@
  */
 
 // Types
-export * from './types.js';
+export * from './lib/types/index';
 
 // Commands
 export * from './commands/index.js';

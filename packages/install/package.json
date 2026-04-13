@@ -1,20 +1,22 @@
 {
   "name": "@hestia/install",
   "version": "0.1.0",
-  "description": "Hestia system installer scripts",
+  "description": "OS/server installation for Hestia CLI",
   "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "scripts": {
-    "build": "echo 'No build step for shell scripts'",
-    "test": "bash test/install-test.sh"
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
-  "files": [
-    "src/",
-    "scripts/"
-  ],
+  "dependencies": {},
   "keywords": [
     "hestia",
     "install",
-    "setup"
+    "os",
+    "server",
+    "hardware"
   ],
   "author": "Synap",
   "license": "MIT"

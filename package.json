@@ -4,11 +4,14 @@
   "description": "Sovereign AI infrastructure management CLI workspace",
   "private": true,
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "plugins/*"
   ],
   "scripts": {
-    "build": "pnpm --filter @hestia/cli build",
-    "test": "pnpm --filter @hestia/cli test",
+    "build": "pnpm -r run build",
+    "typecheck": "pnpm -r run typecheck",
+    "lint": "pnpm -r run lint",
+    "test": "pnpm -r run test",
     "validate": "pnpm --filter @hestia/cli validate",
     "verify": "bash verify.sh"
   },

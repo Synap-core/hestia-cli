@@ -5,10 +5,10 @@
   "type": "module",
   "main": "./dist/hestia.js",
   "bin": {
-    "hestia": "./dist/hestia.js"
+    "hestia": "dist/hestia.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/fix-imports.js",
     "dev": "tsc --watch",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts",
@@ -28,6 +28,9 @@
     "recovery:diagnose": "node dist/hestia.js recovery:diagnose"
   },
   "dependencies": {
+    "@hestia/types": "file:../types",
+    "@hestia/utils": "file:../utils",
+    "@hestia/ai": "file:../ai",
     "@gitlawb/openclaude": "^0.1.8",
     "chalk": "^5.3.0",
     "commander": "^12.0.0",
@@ -40,11 +43,17 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/inquirer": "^9.0.7",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.12.0",
-    "eslint": "^9.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.58.1",
+    "@typescript-eslint/parser": "^8.58.1",
+    "eslint": "^9.39.4",
+    "eslint-plugin-prettier": "^5.5.5",
+    "prettier": "^3.8.2",
     "typescript": "^5.4.5",
+    "typescript-eslint": "^8.58.1",
     "vitest": "^1.5.0"
   },
   "engines": {
@@ -58,5 +67,6 @@
     "cli"
   ],
   "author": "Synap",
-  "license": "MIT"
+  "license": "MIT",
+  "types": "./dist/hestia.d.ts"
 }

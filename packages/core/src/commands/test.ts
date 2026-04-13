@@ -11,8 +11,8 @@
 
 import { Command } from "commander";
 import chalk from "chalk";
-import { HestiaTestSuite, TestCategory, TestSuiteConfig, TestSuiteReport } from "../lib/test-suite.js";
-import { logger } from "../lib/logger.js";
+import { HestiaTestSuite, TestCategory, TestSuiteConfig, TestSuiteReport } from '../domains/shared/lib/test-suite.js';
+import { logger } from '../lib/utils/index';
 
 interface TestOptions {
   category?: string;
