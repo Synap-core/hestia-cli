@@ -838,6 +838,43 @@ export class UnifiedStateManager {
   }
 
   /**
+   * Sync configuration to local state (OpenClaude/OpenClaw)
+   * Used by deploy command to push config to AI platforms
+   */
+  async syncToLocal(config: { config: Partial<HestiaConfig> }): Promise<void> {
+    try {
+      this.logger.info("StateManager: Syncing config to local state");
+      
+      // Get current normal state
+      const normalState = await this.getNormalState();
+      
+      // Merge with provided config
+      const mergedState: NormalState = {
+        ...normalState,
+        ...config.config,
+        lastSynced: new Date(),
+      };
+      
+      // Create a result object for pushToLocal
+      const result: SyncResult = {
+        success: true,
+        direction: "to-local",
+        conflicts: [],
+        changes: { synap: [], local: [] },
+        errors: [],
+      };
+      
+      // Push to local configs
+      await this.pushToLocal(mergedState, result);
+      
+      this.logger.success("StateManager: Config synced to local state");
+    } catch (error) {
+      this.logger.error("StateManager: Failed to sync to local", error);
+      throw error;
+    }
+  }
+
+  /**
    * Detect conflicts between normal and local state
    */
   private detectConflicts(normalState: NormalState, localState: LocalState): SyncResult["conflicts"] {

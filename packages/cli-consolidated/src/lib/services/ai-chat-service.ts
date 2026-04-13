@@ -1,20 +1,11 @@
 /**
- * AI Chat Service - Placeholder
- * Service pour gérer les interfaces de chat AI
+ * AI Chat Service - Re-export from domains
  */
 
-export const aiChatService = {
-  listAvailable: () => [],
-  listInstalled: async () => [],
-  install: async () => {},
-  remove: async () => {},
-  start: async () => {},
-  stop: async () => {},
-  getStatus: async () => ({ running: false }),
-  getUrl: async () => "",
-  open: async () => {},
-  configure: async () => {},
-  logs: async () => {},
-  enableAll: async () => {},
-  connectToAI: async () => {},
-};
+export { aiChatService } from '../domains/ai/lib/ai-chat-service.js';
+export type { 
+  AIChatProvider,
+  AIChatProviderConfig,
+  AIChatProviderStatus,
+  AIChatProviderInfo
+} from '../types/index.js';

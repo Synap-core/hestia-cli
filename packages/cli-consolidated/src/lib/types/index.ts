@@ -234,6 +234,8 @@ export interface HestiaConfig {
   registryUrl?: string;
   synapBackendUrl?: string;
   apiKey?: string;
+  _packagesDir?: string;
+  _configDir?: string;
 }
 
 export interface OptionalServiceConfig {

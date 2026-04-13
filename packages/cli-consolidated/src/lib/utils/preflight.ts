@@ -187,7 +187,7 @@ async function checkConfig(): Promise<{ ok: boolean; message: string }> {
       };
     }
     
-    const config = await loadConfig();
+    const { config } = await loadConfig();
     if (!config.hearth?.id) {
       return { 
         ok: false, 

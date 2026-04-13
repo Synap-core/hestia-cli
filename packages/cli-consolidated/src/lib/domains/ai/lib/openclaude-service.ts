@@ -439,7 +439,7 @@ export class OpenClaudeService {
   /**
    * Execute a command via OpenClaude
    */
-  async executeCommand(command: string, timeout = 60000): Promise<ExecuteResult> {
+  async execute(command: string, timeout = 60000): Promise<ExecuteResult> {
     if (!this.isRunning()) {
       return {
         success: false,
@@ -483,6 +483,60 @@ export class OpenClaudeService {
         });
       }, 5000);
     });
+  }
+
+  /**
+   * Open a directory in OpenClaude
+   */
+  async open(directory?: string): Promise<void> {
+    this.logger.info(`Opening directory in OpenClaude: ${directory || process.cwd()}`);
+
+    try {
+      const targetDir = directory || process.cwd();
+      const args = ["open", targetDir];
+
+      await execAsync(`openclaude ${args.join(" ")}`);
+      this.logger.success(`Opened: ${targetDir}`);
+    } catch (error) {
+      this.handleError("Failed to open directory", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Check if OpenClaude is installed
+   */
+  async checkInstallation(): Promise<boolean> {
+    try {
+      await execAsync("which openclaude");
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Sync configuration with Hestia
+   */
+  async syncWithHestia(config: HestiaConfig): Promise<void> {
+    this.logger.info("Syncing with Hestia...");
+
+    try {
+      this.hestiaConfig = config;
+      await this.syncProfile();
+
+      this.logger.success("Synced with Hestia");
+
+      // Restart if running to apply changes
+      if (this.isRunning()) {
+        this.logger.info("Restarting OpenClaude to apply sync changes...");
+        await this.stop();
+        await this.start();
+      }
+    } catch (error) {
+      this.handleError("Failed to sync with Hestia", error);
+      throw error;
+    }
   }
 
   // ==========================================================================

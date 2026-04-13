@@ -14,7 +14,19 @@
     "allowSyntheticDefaultImports": true,
     "allowImportingTsExtensions": true,
     "outDir": "./dist",
-    "rootDir": "./src"
+    "rootDir": "./src",
+    "baseUrl": ".",
+    "paths": {
+      "../lib/types/index.js": ["./src/lib/types/index.ts"],
+      "../../lib/types/index.js": ["./src/lib/types/index.ts"],
+      "../../../lib/types/index.js": ["./src/lib/types/index.ts"],
+      "../../../../lib/types/index.js": ["./src/lib/types/index.ts"],
+      "../lib/utils/index.js": ["./src/lib/utils/index.ts"],
+      "../../lib/utils/index.js": ["./src/lib/utils/index.ts"],
+      "../../../lib/utils/index.js": ["./src/lib/utils/index.ts"],
+      "../lib/validator.js": ["./src/lib/validator.ts"],
+      "../../lib/validator.js": ["./src/lib/validator.ts"]
+    }
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]

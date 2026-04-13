@@ -125,3 +125,6 @@ export async function clearAllCredentials(): Promise<void> {
   await saveCredentials({});
   logger.info('All credentials cleared');
 }
+
+// Export alias for backward compatibility
+export { getCredential as getCredentials };

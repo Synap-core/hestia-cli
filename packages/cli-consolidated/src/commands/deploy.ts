@@ -32,9 +32,9 @@ import { stateManager } from '../lib/domains/services/lib/state-manager.js';
 
 interface DeployOptions {
   domain?: string;
-  provider?: 'opencode' | 'openclaude' | 'both';
+  provider: 'opencode' | 'openclaude' | 'both';
   website?: boolean;
-  profile?: 'minimal' | 'full' | 'ai-heavy';
+  profile: 'minimal' | 'full' | 'ai-heavy';
   verbose?: boolean;
   dryRun?: boolean;
 }
@@ -51,6 +51,10 @@ export function deployCommand(program: Command): void {
     .option('-v, --verbose', 'Verbose output')
     .action(async (options: DeployOptions) => {
       try {
+        // Set defaults
+        if (!options.profile) options.profile = 'full';
+        if (!options.provider) options.provider = 'opencode';
+
         // Pre-flight checks
         logger.header('🚀 HESTIA DEPLOYMENT');
         logger.info('One-click deployment of your digital infrastructure\n');
@@ -91,7 +95,8 @@ export function deployCommand(program: Command): void {
         }
 
         // Execute deployment phases
-        const deployDir = path.join(os.homedir(), '.hestia', 'deployments', config.domain);
+        const domain = config.domain || 'default';
+        const deployDir = path.join(os.homedir(), '.hestia', 'deployments', domain);
         await fs.mkdir(deployDir, { recursive: true });
 
         // Phase 1: Generate configurations
@@ -121,7 +126,7 @@ export function deployCommand(program: Command): void {
         logger.info(`Your digital infrastructure is ready!\n`);
         logger.info(`🧠 Brain (Synap): ${chalk.cyan(`https://${config.domain}`)}`);
         
-        if (config.provider === 'opencode' || config.provider === 'both') {
+  if (config.provider === 'both') {
           logger.info(`💻 Dev (OpenCode): ${chalk.cyan(`https://dev.${config.domain}`)}`);
         }
         
@@ -202,6 +207,11 @@ async function runDeployWizard(options: DeployOptions): Promise<DeployOptions> {
   }
 
   const answers = await inquirer.prompt(questions);
+
+  // Ensure required values have defaults
+  if (!answers.profile) answers.profile = 'full';
+  if (!answers.provider) answers.provider = 'opencode';
+
   return { ...options, ...answers };
 }
 
@@ -270,11 +280,11 @@ async function phase3DeployServices(config: DeployOptions, deployDir: string): P
 }
 
 async function phase4SetupAI(config: DeployOptions, deployDir: string): Promise<void> {
-  if (config.provider === 'none') return;
+  if (!config.provider || config.provider === 'opencode') return;
   
   logger.header('🤖 CONFIGURING AI PLATFORM');
   
-  if (config.provider === 'opencode' || config.provider === 'both') {
+  if (config.provider === 'both') {
     await withSpinner('Setting up OpenCode...', async () => {
       // Configure OpenCode service
       await execa('docker', ['compose', '--profile', 'opencode', 'up', '-d'], {
@@ -299,22 +309,9 @@ async function phase4SetupAI(config: DeployOptions, deployDir: string): Promise<
     await withSpinner('Setting up OpenClaude...', async () => {
       // Configure OpenClaude CLI profile
       await stateManager.syncToLocal({
-        openclaude: {
-          profile: {
-            name: config.domain!,
-            preferences: { theme: 'dark', language: 'en' },
-            ai: {
-              provider: 'anthropic',
-              model: 'claude-sonnet-4-6'
-            },
-            integrations: {
-              synap: {
-                enabled: true,
-                podUrl: `https://${config.domain}`,
-                workspaceId: 'default'
-              }
-            }
-          }
+        config: {
+          aiPlatform: 'openclaude',
+          hearth: { name: config.domain!, role: 'primary' }
         }
       });
     });
