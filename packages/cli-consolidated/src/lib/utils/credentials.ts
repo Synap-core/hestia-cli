@@ -1,6 +1,7 @@
 /**
  * Credentials Management
  * Secure storage of sensitive configuration
+ * Implements ICredentialsService for contract clarity and testability
  */
 
 import * as fs from 'fs/promises';
@@ -8,6 +9,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as YAML from 'js-yaml';
 import { logger } from './logger.js';
+import type { ICredentialsService } from '../services/interfaces.js';
 
 const CONFIG_DIR = process.env.HESTIA_CONFIG_DIR || path.join(os.homedir(), '.hestia');
 const CREDENTIALS_FILE = path.join(CONFIG_DIR, 'credentials.yaml');
@@ -128,3 +130,69 @@ export async function clearAllCredentials(): Promise<void> {
 
 // Export alias for backward compatibility
 export { getCredential as getCredentials };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CredentialsService Class - Implements ICredentialsService
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Credentials Service
+ * Provides a class-based interface for credential management
+ * Implements ICredentialsService for contract clarity and testability
+ */
+export class CredentialsService implements ICredentialsService {
+  private credentialsPath: string;
+
+  constructor(customPath?: string) {
+    this.credentialsPath = customPath || CREDENTIALS_FILE;
+  }
+
+  /**
+   * Load all credentials from secure storage
+   * Implements ICredentialsService.load()
+   */
+  async load(): Promise<Record<string, string>> {
+    try {
+      await fs.access(this.credentialsPath);
+      const content = await fs.readFile(this.credentialsPath, 'utf-8');
+      const parsed = YAML.load(content) as Record<string, string>;
+      return parsed || {};
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * Save all credentials to secure storage
+   * Implements ICredentialsService.save()
+   */
+  async save(credentials: Record<string, string>): Promise<void> {
+    const configDir = path.dirname(this.credentialsPath);
+    await fs.mkdir(configDir, { recursive: true });
+    const yaml = YAML.dump(credentials, { indent: 2 });
+    await fs.writeFile(this.credentialsPath, yaml, { mode: 0o600 });
+  }
+
+  /**
+   * Get a specific credential by key
+   * Implements ICredentialsService.get()
+   */
+  async get(key: string): Promise<string | undefined> {
+    const credentials = await this.load();
+    return credentials[key];
+  }
+
+  /**
+   * Set a specific credential
+   * Implements ICredentialsService.set()
+   */
+  async set(key: string, value: string): Promise<void> {
+    const credentials = await this.load();
+    credentials[key] = value;
+    await this.save(credentials);
+    logger.debug(`Credential ${key} saved`);
+  }
+}
+
+// Singleton instance for convenience
+export const credentialsService = new CredentialsService();

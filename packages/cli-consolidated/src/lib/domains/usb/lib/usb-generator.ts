@@ -9,6 +9,7 @@
  * - Autoinstall configuration generation
  * - Progress tracking and logging
  * - Dry-run mode for safety
+ * Implements IUSBService for contract clarity and testability
  */
 
 import { spawn, exec } from 'child_process';
@@ -22,6 +23,7 @@ import { logger, createLogger } from '../../../utils/index.js';
 import { spinner } from '../../../utils/index.js';
 import { EventEmitter } from 'eventemitter3';
 import * as YAML from 'js-yaml';
+import type { IUSBService } from '../../../services/interfaces.js';
 
 const execAsync = promisify(exec);
 
@@ -570,7 +572,7 @@ export interface USBOperationResult<T = void> {
 
 // ============== USB Generator Class ==============
 
-export class USBGenerator extends EventEmitter {
+export class USBGenerator extends EventEmitter implements IUSBService {
   private readonly cacheDir: string;
   private readonly isoDir: string;
   private readonly ventoyDir: string;
@@ -2853,6 +2855,44 @@ d-i preseed/late_command string \\
         duration: Date.now() - startTime,
       };
     }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // IUSBService Implementation
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * List all available USB devices
+   * Implements IUSBService.listDevices()
+   */
+  async listDevices(): Promise<USBDevice[]> {
+    return this.listUSBDevices();
+  }
+
+  /**
+   * Create a bootable USB device from an ISO
+   * Implements IUSBService.createBootable()
+   */
+  async createBootable(device: USBDevice, iso: string): Promise<void> {
+    const isoInfo = await this.getISOInfo(iso);
+    const options: USBOptions = {
+      device,
+      iso: isoInfo,
+      mode: 'both',
+      installType: 'local',
+    };
+    const result = await this.createUSB(options);
+    if (!result.success) {
+      throw new USBError(result.error || 'Failed to create bootable USB', 'CREATE_FAILED');
+    }
+  }
+
+  /**
+   * Validate if a device is suitable for operations
+   * Implements IUSBService.validateDevice()
+   */
+  validateDevice(device: USBDevice): boolean {
+    return this.isDeviceUSB(device) && !device.readonly && device.size >= 4 * 1024 ** 3;
   }
 }
 

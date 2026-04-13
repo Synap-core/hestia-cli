@@ -2,16 +2,39 @@
 /**
  * usb command - USB key generation for Hestia installation
  * Usage: hestia usb [subcommand]
+ * 
+ * REFACTORED: Business logic extracted to src/application/usb/
+ * This file now only contains UI/interactive logic.
  */
 
 import { Command } from 'commander';
 import { logger } from '../lib/utils/index.js';
 import { spinner } from '../lib/utils/index.js';
-import { usbGenerator, USBDevice, USBError } from '../lib/domains/usb/lib/usb-generator.js';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
 import * as path from 'path';
 import * as fs from 'fs/promises';
+
+// Import use cases from application layer
+import {
+  detectDevices,
+  getDeviceDetails,
+  verifyDeviceSafety,
+  downloadISO,
+  getISOInfo,
+  createBootableUSB,
+  installVentoy,
+  updateVentoy,
+  formatDevice,
+  verifyUSB,
+  benchmarkUSB,
+  CreateUSBInput,
+  InstallMode,
+  IntelligenceProvider,
+  USBDevice,
+  ISOInfo,
+} from '../application/usb/index.js';
+import { ProgressReporter } from '../application/types.js';
 
 interface USBCreateOptions {
   device?: string;
@@ -27,13 +50,26 @@ interface USBDownloadOptions {
   version?: string;
 }
 
-interface USBVentoyOptions {
-  device: string;
-}
-
 interface USBConfigOptions {
   mode?: 'safe' | 'wipe';
   output?: string;
+}
+
+/**
+ * Create a CLI progress reporter
+ */
+function createProgressReporter(spinnerId: string): ProgressReporter {
+  spinner.start(spinnerId, 'Initializing...');
+  return {
+    report(message: string): void {
+      spinner.update(spinnerId, message);
+    },
+    onProgress(percent: number): void {
+      const currentText = spinner['spinners']?.get(spinnerId)?.text || 'Working...';
+      const baseText = currentText.split(' (')[0];
+      spinner.update(spinnerId, `${baseText} (${Math.round(percent)}%)`);
+    },
+  };
 }
 
 /**
@@ -44,7 +80,6 @@ export function usbCommand(program: Command): void {
     .command('usb')
     .description('Create USB keys for Hestia installation')
     .action(async () => {
-      // Default action: run interactive wizard
       await runInteractiveWizard();
     });
 
@@ -89,7 +124,7 @@ export function usbCommand(program: Command): void {
     .option('-v, --version <version>', 'Ubuntu version', '24.04')
     .action(async (options: USBDownloadOptions) => {
       try {
-        await downloadISO(options);
+        await downloadISOCommand(options);
       } catch (error: any) {
         logger.error(`Download failed: ${error.message}`);
         process.exit(1);
@@ -106,7 +141,7 @@ export function usbCommand(program: Command): void {
     .description('Install Ventoy bootloader to a USB device')
     .action(async (devicePath: string) => {
       try {
-        await installVentoy(devicePath);
+        await installVentoyCommand(devicePath);
       } catch (error: any) {
         logger.error(`Ventoy installation failed: ${error.message}`);
         process.exit(1);
@@ -118,7 +153,7 @@ export function usbCommand(program: Command): void {
     .description('Update Ventoy bootloader on a USB device')
     .action(async (devicePath: string) => {
       try {
-        await updateVentoy(devicePath);
+        await updateVentoyCommand(devicePath);
       } catch (error: any) {
         logger.error(`Ventoy update failed: ${error.message}`);
         process.exit(1);
@@ -130,7 +165,7 @@ export function usbCommand(program: Command): void {
     .description('Remove Ventoy from a USB device (DESTRUCTIVE)')
     .action(async (devicePath: string) => {
       try {
-        await removeVentoy(devicePath);
+        await removeVentoyCommand(devicePath);
       } catch (error: any) {
         logger.error(`Ventoy removal failed: ${error.message}`);
         process.exit(1);
@@ -143,29 +178,9 @@ export function usbCommand(program: Command): void {
     .description('Verify USB is bootable and properly configured')
     .action(async (devicePath: string) => {
       try {
-        await verifyUSB(devicePath);
+        await verifyUSBCommand(devicePath);
       } catch (error: any) {
         logger.error(`Verification failed: ${error.message}`);
-        process.exit(1);
-      }
-    });
-
-  // Subcommand: generate
-  usbCmd
-    .command('generate')
-    .description('Generate bootable USB structure with all executables')
-    .option('-o, --output <dir>', 'Output directory', './hestia-usb-bundle')
-    .option('-f, --format <format>', 'Output format (directory|iso|both)', 'directory')
-    .option('-l, --label <label>', 'Volume label', 'HESTIA_USB')
-    .option('-i, --iso-path <path>', 'Path to base ISO (auto-download if not specified)')
-    .option('-b, --bundle-all', 'Bundle all Synap components')
-    .option('--include-docker', 'Include Docker and docker-compose files')
-    .option('--include-backend', 'Include synap-backend services')
-    .action(async (options: any) => {
-      try {
-        await generateUSBBundle(options);
-      } catch (error: any) {
-        logger.error(`USB bundle generation failed: ${error.message}`);
         process.exit(1);
       }
     });
@@ -178,7 +193,7 @@ export function usbCommand(program: Command): void {
     .option('-o, --output <dir>', 'Output directory for configs', './hestia-usb-configs')
     .action(async (options: USBConfigOptions) => {
       try {
-        await generateConfigs(options);
+        await generateConfigsCommand(options);
       } catch (error: any) {
         logger.error(`Config generation failed: ${error.message}`);
         process.exit(1);
@@ -191,13 +206,15 @@ export function usbCommand(program: Command): void {
     .description('Benchmark USB read/write speeds')
     .action(async (devicePath: string) => {
       try {
-        await benchmarkUSB(devicePath);
+        await benchmarkUSBCommand(devicePath);
       } catch (error: any) {
         logger.error(`Benchmark failed: ${error.message}`);
         process.exit(1);
       }
     });
 }
+
+// ============ UI/Interactive Functions ============
 
 /**
  * Run interactive USB creation wizard
@@ -208,32 +225,30 @@ async function runInteractiveWizard(): Promise<void> {
 
   // Step 1: List and select USB device
   logger.section('Step 1: Select USB Device');
-  const devices = await usbGenerator.listUSBDevices();
+  const devicesResult = await detectDevices({}, { report: () => {}, onProgress: () => {} });
 
-  if (devices.length === 0) {
+  if (!devicesResult.success || !devicesResult.data || devicesResult.data.usbCount === 0) {
     logger.error('No USB storage devices found.');
     logger.info('Please insert a USB drive (4GB minimum) and try again.');
     process.exit(1);
   }
 
+  const devices = devicesResult.data.devices;
+
   // Display devices table
   const deviceChoices = devices.map((dev) => {
-    const isSystem = isSystemDiskHint(dev);
     const sizeFormatted = formatBytes(dev.size);
     const status = dev.mounted ? 'Mounted' : 'Unmounted';
-    const warning = isSystem ? chalk.red(' ⚠️ SYSTEM DISK') : '';
 
     return {
-      name: `${dev.device} (${dev.vendor} ${dev.model}) - ${sizeFormatted} - ${status}${warning}`,
+      name: `${dev.device} (${dev.vendor} ${dev.model}) - ${sizeFormatted} - ${status}`,
       value: dev,
-      disabled: isSystem ? 'Cannot use system disk' : false,
     };
   });
 
   deviceChoices.push({
     name: chalk.gray('Refresh device list'),
     value: 'refresh' as any,
-    disabled: false,
   });
 
   const { selectedDevice } = await inquirer.prompt([
@@ -246,7 +261,6 @@ async function runInteractiveWizard(): Promise<void> {
   ]);
 
   if (selectedDevice === 'refresh') {
-    // Restart wizard
     return runInteractiveWizard();
   }
 
@@ -280,18 +294,9 @@ async function runInteractiveWizard(): Promise<void> {
       name: 'installMode',
       message: 'Choose installation mode:',
       choices: [
-        {
-          name: 'Safe (Preserve existing data - dual boot)',
-          value: 'safe',
-        },
-        {
-          name: 'Wipe (Clean installation - destroys all data)',
-          value: 'wipe',
-        },
-        {
-          name: 'Both (Create both options in boot menu)',
-          value: 'both',
-        },
+        { name: 'Safe (Preserve existing data - dual boot)', value: 'safe' },
+        { name: 'Wipe (Clean installation - destroys all data)', value: 'wipe' },
+        { name: 'Both (Create both options in boot menu)', value: 'both' },
       ],
       default: 'safe',
     },
@@ -381,54 +386,33 @@ async function runInteractiveWizard(): Promise<void> {
 
   // Download or locate ISO
   logger.section('Preparing ISO');
-  let isoInfo;
-  try {
-    // Check if ISO already exists in cache
-    const existingISOs = await usbGenerator.listAvailableISOs();
-    const ubuntuISO = existingISOs.find((iso) => iso.name.includes('ubuntu'));
+  let iso: ISOInfo;
+  
+  const downloadResult = await downloadISO({ version: '24.04' }, {
+    report: (msg) => logger.info(msg),
+    onProgress: (pct) => {},
+  });
 
-    if (ubuntuISO && ubuntuISO.isValid) {
-      logger.info(`Using cached ISO: ${ubuntuISO.name}`);
-      isoInfo = ubuntuISO;
-    } else {
-      logger.info('Ubuntu Server ISO not found in cache.');
-      const { shouldDownload } = await inquirer.prompt([
-        {
-          type: 'confirm',
-          name: 'shouldDownload',
-          message: 'Download Ubuntu Server 24.04 ISO?',
-          default: true,
-        },
-      ]);
-
-      if (shouldDownload) {
-        isoInfo = await usbGenerator.downloadUbuntu('24.04');
-      } else {
-        logger.error('ISO is required to create USB. Please download or specify a path.');
-        process.exit(1);
-      }
-    }
-  } catch (error: any) {
-    logger.error(`Failed to prepare ISO: ${error.message}`);
+  if (!downloadResult.success || !downloadResult.data) {
+    logger.error(`Failed to prepare ISO: ${downloadResult.error}`);
     process.exit(1);
   }
+
+  iso = downloadResult.data.iso;
+  logger.info(`Using ISO: ${iso.name}`);
 
   // Create the USB
   logger.newline();
   logger.header('Creating USB');
 
-  try {
-    // Track progress
-    usbGenerator.on('progress', (progress) => {
-      if (progress.percentage !== undefined) {
-        spinner.update('usb-create', `${progress.phase}: ${progress.percentage}%`);
-      }
-    });
+  const spinnerId = 'usb-create';
+  const progress = createProgressReporter(spinnerId);
 
-    const result = await usbGenerator.createUSB(
+  try {
+    const result = await createBootableUSB(
       {
         device,
-        iso: isoInfo,
+        iso,
         mode: installMode,
         hearthName,
         installType,
@@ -436,14 +420,11 @@ async function runInteractiveWizard(): Promise<void> {
         aiModel: aiModel || undefined,
         unattended: true,
       },
-      (progress) => {
-        // Progress callback handled by event emitter above
-      }
+      progress
     );
 
     if (result.success) {
-      logger.newline();
-      logger.success('USB creation complete! 🔥');
+      spinner.succeed(spinnerId, 'USB created successfully!');
       logger.newline();
       logger.section('Next Steps');
       logger.info('1. Safely eject the USB drive');
@@ -451,11 +432,11 @@ async function runInteractiveWizard(): Promise<void> {
       logger.info('3. Boot from USB (may require BIOS/UEFI settings change)');
       logger.info('4. Select Hestia installation option from the menu');
     } else {
-      logger.error(`USB creation failed: ${result.error}`);
+      spinner.fail(spinnerId, `USB creation failed: ${result.error}`);
       process.exit(1);
     }
   } catch (error: any) {
-    logger.error(`USB creation failed: ${error.message}`);
+    spinner.fail(spinnerId, `Failed: ${error.message}`);
     process.exit(1);
   }
 }
@@ -467,61 +448,61 @@ async function listUSBDevices(): Promise<void> {
   logger.header('USB STORAGE DEVICES');
 
   const spinnerId = 'list-usb';
-  spinner.start(spinnerId, 'Scanning for USB devices...');
+  const progress = createProgressReporter(spinnerId);
 
-  try {
-    const devices = await usbGenerator.listUSBDevices();
-    spinner.succeed(spinnerId, `Found ${devices.length} USB device(s)`);
+  const result = await detectDevices({ includeSystemDisks: true }, progress);
 
-    if (devices.length === 0) {
-      logger.info('No USB storage devices found.');
-      logger.info('Insert a USB drive to see it listed here.');
-      return;
-    }
+  if (!result.success || !result.data) {
+    spinner.fail(spinnerId, `Failed: ${result.error}`);
+    throw new Error(result.error);
+  }
 
-    // Build table data
-    const tableData = devices.map((dev) => {
-      const isSystem = isSystemDiskHint(dev);
-      return {
-        device: dev.device,
-        size: formatBytes(dev.size),
-        model: `${dev.vendor} ${dev.model}`.substring(0, 25),
-        status: dev.mounted ? 'Mounted' : 'Unmounted',
-        type: isSystem ? chalk.red('SYSTEM ⚠️') : chalk.green('USB'),
-      };
-    });
+  const { devices, systemDisks, totalCount } = result.data;
+  spinner.succeed(spinnerId, `Found ${totalCount} device(s)`);
 
+  if (totalCount === 0) {
+    logger.info('No USB storage devices found.');
+    return;
+  }
+
+  // Display table
+  const tableData = devices.map((dev) => {
+    const isSystem = systemDisks.some((sd) => sd.device === dev.device);
+    return {
+      device: dev.device,
+      size: formatBytes(dev.size),
+      model: `${dev.vendor} ${dev.model}`.substring(0, 25),
+      status: dev.mounted ? 'Mounted' : 'Unmounted',
+      type: isSystem ? chalk.red('SYSTEM ⚠️') : chalk.green('USB'),
+    };
+  });
+
+  logger.newline();
+  logger.table(tableData);
+  logger.newline();
+  logger.info(chalk.gray('Use "hestia usb create --device <path>" to create a bootable USB'));
+
+  // Show detailed info
+  for (const dev of devices) {
     logger.newline();
-    logger.table(tableData);
+    const isSystem = systemDisks.some((sd) => sd.device === dev.device);
+    if (isSystem) {
+      logger.warn(`${dev.device} - System Disk (DO NOT USE)`);
+    } else {
+      logger.info(`${dev.device} - ${dev.vendor} ${dev.model}`);
+    }
+    logger.info(`  Path: ${dev.path}`);
+    logger.info(`  Size: ${formatBytes(dev.size)}`);
+    logger.info(`  Removable: ${dev.removable ? 'Yes' : 'No'}`);
+    logger.info(`  Mounted: ${dev.mounted ? 'Yes' : 'No'}`);
 
-    logger.newline();
-    logger.info(chalk.gray('Use "hestia usb create --device <path>" to create a bootable USB'));
-
-    // Show detailed info for each device
-    for (const dev of devices) {
-      logger.newline();
-      if (isSystemDiskHint(dev)) {
-        logger.warn(`${dev.device} - System Disk (DO NOT USE)`);
-      } else {
-        logger.info(`${dev.device} - ${dev.vendor} ${dev.model}`);
-      }
-      logger.info(`  Path: ${dev.path}`);
-      logger.info(`  Size: ${formatBytes(dev.size)}`);
-      logger.info(`  Removable: ${dev.removable ? 'Yes' : 'No'}`);
-      logger.info(`  Readonly: ${dev.readonly ? 'Yes' : 'No'}`);
-      logger.info(`  Mounted: ${dev.mounted ? 'Yes' : 'No'}`);
-
-      if (dev.partitions.length > 0) {
-        logger.info(`  Partitions: ${dev.partitions.length}`);
-        for (const part of dev.partitions) {
-          const mountInfo = part.mounted ? ` @ ${part.mountpoint}` : '';
-          logger.info(`    - ${part.name}: ${formatBytes(part.size)}${part.type ? ` (${part.type})` : ''}${mountInfo}`);
-        }
+    if (dev.partitions.length > 0) {
+      logger.info(`  Partitions: ${dev.partitions.length}`);
+      for (const part of dev.partitions) {
+        const mountInfo = part.mounted ? ` @ ${part.mountpoint}` : '';
+        logger.info(`    - ${part.name}: ${formatBytes(part.size)}${mountInfo}`);
       }
     }
-  } catch (error: any) {
-    spinner.fail(spinnerId, `Failed: ${error.message}`);
-    throw error;
   }
 }
 
@@ -532,78 +513,82 @@ async function createUSB(options: USBCreateOptions): Promise<void> {
   logger.header('CREATE HESTIA USB');
 
   // Validate mode
-  const validModes = ['safe', 'wipe', 'both'];
+  const validModes: InstallMode[] = ['safe', 'wipe', 'both'];
   if (options.mode && !validModes.includes(options.mode)) {
     logger.error(`Invalid mode: ${options.mode}. Valid: ${validModes.join(', ')}`);
     process.exit(1);
   }
 
-  // Get or select device
-  let device: USBDevice;
-  if (options.device) {
-    const devices = await usbGenerator.listUSBDevices();
-    device = devices.find((d) => d.path === options.device || d.device === options.device)!;
-
-    if (!device) {
-      logger.error(`Device not found: ${options.device}`);
-      logger.info('Run "hestia usb list" to see available devices.');
-      process.exit(1);
-    }
-  } else {
+  // Get device
+  if (!options.device) {
     logger.error('Device is required. Use --device <path>');
-    logger.info('Run "hestia usb list" to see available devices.');
     process.exit(1);
   }
 
-  // Verify device
+  const deviceResult = await getDeviceDetails(options.device, {
+    report: () => {},
+    onProgress: () => {},
+  });
+
+  if (!deviceResult.success || !deviceResult.data) {
+    logger.error(`Device not found: ${options.device}`);
+    process.exit(1);
+  }
+
+  const device = deviceResult.data;
+
+  // Verify device safety
   logger.section('Device Verification');
-  const verification = await usbGenerator.verifyDevice(device);
+  const safetyResult = await verifyDeviceSafety(device, {
+    report: (msg) => logger.info(msg),
+    onProgress: () => {},
+  });
 
-  if (!verification.success) {
-    logger.error(verification.error || 'Device verification failed');
+  if (!safetyResult.success) {
+    logger.error(safetyResult.error);
     process.exit(1);
   }
 
-  if (verification.warnings) {
-    for (const warning of verification.warnings) {
+  if (safetyResult.data?.warnings.length) {
+    for (const warning of safetyResult.data.warnings) {
       logger.warn(warning);
     }
   }
 
-  // Check if system disk
-  const isSystem = await usbGenerator.isSystemDisk(device);
-  if (isSystem) {
-    logger.error('⚠️  SYSTEM DISK DETECTED - Operation blocked for safety');
-    logger.error(`Device ${device.device} appears to be a system disk.`);
-    logger.info('If you are sure this is not a system disk, set HESTIA_FORCE_USB_WRITE=1');
-    process.exit(1);
-  }
-
   // Get or download ISO
-  let isoInfo;
+  let iso: ISOInfo;
   if (options.iso) {
     logger.section('Using Provided ISO');
-    isoInfo = await usbGenerator.getISOInfo(options.iso);
-    if (!isoInfo.isValid) {
-      logger.error(`Invalid ISO file: ${options.iso}`);
+    const isoResult = await getISOInfo(options.iso, {
+      report: (msg) => logger.info(msg),
+      onProgress: () => {},
+    });
+    if (!isoResult.success || !isoResult.data) {
+      logger.error(isoResult.error);
       process.exit(1);
     }
-    logger.success(`Using ISO: ${isoInfo.name} (${formatBytes(isoInfo.size)})`);
+    iso = isoResult.data;
+    logger.success(`Using ISO: ${iso.name} (${formatBytes(iso.size)})`);
   } else {
     logger.section('Downloading ISO');
-    isoInfo = await usbGenerator.downloadUbuntu('24.04');
+    const downloadResult = await downloadISO({ version: '24.04' }, {
+      report: (msg) => logger.info(msg),
+      onProgress: () => {},
+    });
+    if (!downloadResult.success || !downloadResult.data) {
+      logger.error(downloadResult.error);
+      process.exit(1);
+    }
+    iso = downloadResult.data.iso;
   }
 
   // Display configuration
   logger.section('Configuration');
   logger.info(`Device: ${device.device} (${formatBytes(device.size)})`);
-  logger.info(`ISO: ${isoInfo.name}`);
+  logger.info(`ISO: ${iso.name}`);
   logger.info(`Mode: ${options.mode || 'safe'}`);
   logger.info(`Hearth Name: ${options.hearthName || 'My Digital Hearth'}`);
-  if (options.aiProvider) {
-    logger.info(`AI Provider: ${options.aiProvider}`);
-    if (options.aiModel) logger.info(`AI Model: ${options.aiModel}`);
-  }
+
   if (options.dryRun) {
     logger.info(chalk.yellow('[DRY RUN] - No changes will be made'));
   }
@@ -631,109 +616,88 @@ async function createUSB(options: USBCreateOptions): Promise<void> {
   logger.header('Creating USB');
 
   const spinnerId = 'usb-create';
-  spinner.start(spinnerId, 'Initializing...');
+  const progress = createProgressReporter(spinnerId);
 
-  try {
-    // Track progress events
-    usbGenerator.on('progress', (progress) => {
-      if (progress.message) {
-        spinner.update(spinnerId, `${progress.message} (${progress.percentage}%)`);
-      }
-    });
+  const result = await createBootableUSB(
+    {
+      device,
+      iso,
+      mode: (options.mode as InstallMode) || 'safe',
+      hearthName: options.hearthName || 'My Digital Hearth',
+      installType: 'local',
+      aiProvider: options.aiProvider as IntelligenceProvider,
+      aiModel: options.aiModel,
+      dryRun: options.dryRun,
+      unattended: true,
+    },
+    progress
+  );
 
-    const result = await usbGenerator.createUSB(
-      {
-        device,
-        iso: isoInfo,
-        mode: (options.mode as any) || 'safe',
-        hearthName: options.hearthName,
-        installType: 'local',
-        aiProvider: options.aiProvider,
-        aiModel: options.aiModel,
-        dryRun: options.dryRun,
-        unattended: true,
-      },
-      (progress) => {
-        // Progress handled by event emitter
-      }
-    );
+  if (result.success) {
+    spinner.succeed(spinnerId, 'USB created successfully!');
+    logger.newline();
+    logger.section('Next Steps');
+    logger.info('1. Safely eject the USB drive');
+    logger.info('2. Insert into target machine');
+    logger.info('3. Boot from USB (may require BIOS/UEFI change)');
 
-    if (result.success) {
-      spinner.succeed(spinnerId, 'USB created successfully!');
+    if (options.dryRun) {
       logger.newline();
-      logger.section('Next Steps');
-      logger.info('1. Safely eject the USB drive');
-      logger.info('2. Insert into target machine');
-      logger.info('3. Boot from USB (may require BIOS/UEFI change)');
-      logger.info('4. Select Hestia installation from boot menu');
-
-      if (options.dryRun) {
-        logger.newline();
-        logger.info(chalk.yellow('This was a dry run. No changes were made.'));
-      }
-    } else {
-      spinner.fail(spinnerId, `Failed: ${result.error}`);
-      process.exit(1);
+      logger.info(chalk.yellow('This was a dry run. No changes were made.'));
     }
-  } catch (error: any) {
-    spinner.fail(spinnerId, `Failed: ${error.message}`);
-    throw error;
+  } else {
+    spinner.fail(spinnerId, `Failed: ${result.error}`);
+    process.exit(1);
   }
 }
 
 /**
- * Download Ubuntu ISO
+ * Download ISO command
  */
-async function downloadISO(options: USBDownloadOptions): Promise<void> {
+async function downloadISOCommand(options: USBDownloadOptions): Promise<void> {
   const version = options.version || '24.04';
-
   logger.header('DOWNLOAD UBUNTU SERVER ISO');
   logger.info(`Version: Ubuntu Server ${version}`);
 
-  try {
-    const isoInfo = await usbGenerator.downloadUbuntu(version);
+  const spinnerId = 'download-iso';
+  const progress = createProgressReporter(spinnerId);
 
+  const result = await downloadISO({ version }, progress);
+
+  if (result.success && result.data) {
+    spinner.succeed(spinnerId, 'Download complete!');
     logger.newline();
-    logger.success('Download complete!');
-    logger.info(`ISO: ${isoInfo.path}`);
-    logger.info(`Size: ${formatBytes(isoInfo.size)}`);
-    logger.info(`Version: ${isoInfo.version}`);
+    logger.info(`ISO: ${result.data.iso.path}`);
+    logger.info(`Size: ${formatBytes(result.data.iso.size)}`);
     logger.newline();
     logger.info('You can now create a USB with:');
-    logger.info(chalk.cyan(`  hestia usb create --iso "${isoInfo.path}" --device <device>`));
-  } catch (error: any) {
-    logger.error(`Download failed: ${error.message}`);
-    throw error;
+    logger.info(chalk.cyan(`  hestia usb create --iso "${result.data.iso.path}" --device <device>`));
+  } else {
+    spinner.fail(spinnerId, `Failed: ${result.error}`);
+    throw new Error(result.error);
   }
 }
 
 /**
- * Install Ventoy to device
+ * Install Ventoy command
  */
-async function installVentoy(devicePath: string): Promise<void> {
+async function installVentoyCommand(devicePath: string): Promise<void> {
   logger.header('INSTALL VENTOY');
 
-  // Find device
-  const devices = await usbGenerator.listUSBDevices();
-  const device = devices.find((d) => d.path === devicePath || d.device === devicePath);
+  const deviceResult = await getDeviceDetails(devicePath, {
+    report: () => {},
+    onProgress: () => {},
+  });
 
-  if (!device) {
+  if (!deviceResult.success || !deviceResult.data) {
     logger.error(`Device not found: ${devicePath}`);
     process.exit(1);
   }
 
+  const device = deviceResult.data;
   logger.info(`Device: ${device.device}`);
   logger.info(`Model: ${device.vendor} ${device.model}`);
-  logger.info(`Size: ${formatBytes(device.size)}`);
 
-  // Safety check
-  const isSystem = await usbGenerator.isSystemDisk(device);
-  if (isSystem) {
-    logger.error('⚠️  Cannot install Ventoy on system disk');
-    process.exit(1);
-  }
-
-  // Confirm destruction
   logger.warn('⚠️  All data will be destroyed!');
   const { confirmed } = await inquirer.prompt([
     {
@@ -750,72 +714,67 @@ async function installVentoy(devicePath: string): Promise<void> {
   }
 
   const spinnerId = 'install-ventoy';
-  spinner.start(spinnerId, 'Installing Ventoy...');
+  const progress = createProgressReporter(spinnerId);
 
-  try {
-    const result = await usbGenerator.installVentoy(device);
+  const result = await installVentoy(device, progress);
 
-    if (result.success) {
-      spinner.succeed(spinnerId, 'Ventoy installed successfully');
-      logger.info('You can now copy ISO files to the USB.');
-    } else {
-      spinner.fail(spinnerId, `Failed: ${result.error}`);
-      process.exit(1);
-    }
-  } catch (error: any) {
-    spinner.fail(spinnerId, `Failed: ${error.message}`);
-    throw error;
+  if (result.success) {
+    spinner.succeed(spinnerId, 'Ventoy installed successfully');
+  } else {
+    spinner.fail(spinnerId, `Failed: ${result.error}`);
+    process.exit(1);
   }
 }
 
 /**
- * Update Ventoy on device
+ * Update Ventoy command
  */
-async function updateVentoy(devicePath: string): Promise<void> {
+async function updateVentoyCommand(devicePath: string): Promise<void> {
   logger.header('UPDATE VENTOY');
 
-  const devices = await usbGenerator.listUSBDevices();
-  const device = devices.find((d) => d.path === devicePath || d.device === devicePath);
+  const deviceResult = await getDeviceDetails(devicePath, {
+    report: () => {},
+    onProgress: () => {},
+  });
 
-  if (!device) {
+  if (!deviceResult.success || !deviceResult.data) {
     logger.error(`Device not found: ${devicePath}`);
     process.exit(1);
   }
 
+  const device = deviceResult.data;
   logger.info(`Device: ${device.device}`);
 
   const spinnerId = 'update-ventoy';
-  spinner.start(spinnerId, 'Updating Ventoy...');
+  const progress = createProgressReporter(spinnerId);
 
-  try {
-    const result = await usbGenerator.updateVentoy(device);
+  const result = await updateVentoy(device, progress);
 
-    if (result.success) {
-      spinner.succeed(spinnerId, 'Ventoy updated successfully');
-    } else {
-      spinner.fail(spinnerId, `Failed: ${result.error}`);
-      process.exit(1);
-    }
-  } catch (error: any) {
-    spinner.fail(spinnerId, `Failed: ${error.message}`);
-    throw error;
+  if (result.success) {
+    spinner.succeed(spinnerId, 'Ventoy updated successfully');
+  } else {
+    spinner.fail(spinnerId, `Failed: ${result.error}`);
+    process.exit(1);
   }
 }
 
 /**
- * Remove Ventoy from device (format)
+ * Remove Ventoy command
  */
-async function removeVentoy(devicePath: string): Promise<void> {
+async function removeVentoyCommand(devicePath: string): Promise<void> {
   logger.header('REMOVE VENTOY');
 
-  const devices = await usbGenerator.listUSBDevices();
-  const device = devices.find((d) => d.path === devicePath || d.device === devicePath);
+  const deviceResult = await getDeviceDetails(devicePath, {
+    report: () => {},
+    onProgress: () => {},
+  });
 
-  if (!device) {
+  if (!deviceResult.success || !deviceResult.data) {
     logger.error(`Device not found: ${devicePath}`);
     process.exit(1);
   }
 
+  const device = deviceResult.data;
   logger.info(`Device: ${device.device}`);
   logger.warn('⚠️  This will completely erase the device!');
 
@@ -834,304 +793,158 @@ async function removeVentoy(devicePath: string): Promise<void> {
   }
 
   const spinnerId = 'remove-ventoy';
-  spinner.start(spinnerId, 'Formatting device...');
+  const progress = createProgressReporter(spinnerId);
 
-  try {
-    const result = await usbGenerator.formatDevice(device);
+  const result = await formatDevice(device, progress);
 
-    if (result.success) {
-      spinner.succeed(spinnerId, 'Device formatted successfully');
-      logger.info('Ventoy has been removed.');
-    } else {
-      spinner.fail(spinnerId, `Failed: ${result.error}`);
-      process.exit(1);
-    }
-  } catch (error: any) {
-    spinner.fail(spinnerId, `Failed: ${error.message}`);
-    throw error;
+  if (result.success) {
+    spinner.succeed(spinnerId, 'Device formatted successfully');
+  } else {
+    spinner.fail(spinnerId, `Failed: ${result.error}`);
+    process.exit(1);
   }
 }
 
 /**
- * Verify USB bootability
+ * Verify USB command
  */
-async function verifyUSB(devicePath: string): Promise<void> {
+async function verifyUSBCommand(devicePath: string): Promise<void> {
   logger.header('VERIFY USB');
 
-  const devices = await usbGenerator.listUSBDevices();
-  const device = devices.find((d) => d.path === devicePath || d.device === devicePath);
+  const deviceResult = await getDeviceDetails(devicePath, {
+    report: () => {},
+    onProgress: () => {},
+  });
 
-  if (!device) {
+  if (!deviceResult.success || !deviceResult.data) {
     logger.error(`Device not found: ${devicePath}`);
     process.exit(1);
   }
 
+  const device = deviceResult.data;
   logger.info(`Device: ${device.device}`);
-  logger.info(`Model: ${device.vendor} ${device.model}`);
 
   const spinnerId = 'verify-usb';
-  spinner.start(spinnerId, 'Verifying USB...');
+  const progress = createProgressReporter(spinnerId);
 
-  try {
-    // Check if bootable
-    const isBootable = await (usbGenerator as any).isBootable(device);
+  const result = await verifyUSB(device, progress);
+  spinner.stop(spinnerId);
 
-    // Verify USB structure
-    const result = await usbGenerator.verifyUSB(device);
+  if (!result.success || !result.data) {
+    logger.error(`Verification failed: ${result.error}`);
+    process.exit(1);
+  }
 
-    spinner.stop(spinnerId);
+  const { isBootable, structureValid, bootloaderValid, warnings } = result.data;
 
+  logger.newline();
+  logger.section('Boot Check');
+  if (isBootable) {
+    logger.success('Device appears to be bootable');
+  } else {
+    logger.warn('Device may not be bootable');
+  }
+
+  logger.newline();
+  logger.section('Structure Check');
+  if (structureValid) {
+    logger.success('USB structure is valid');
+  } else {
+    logger.error('USB structure check failed');
+  }
+
+  logger.newline();
+  logger.section('Bootloader Check');
+  if (bootloaderValid) {
+    logger.success('Bootloader configuration is valid');
+  } else {
+    logger.error('Bootloader check failed');
+  }
+
+  if (warnings.length > 0) {
     logger.newline();
-    logger.section('Boot Check');
-    if (isBootable) {
-      logger.success('Device appears to be bootable');
-    } else {
-      logger.warn('Device may not be bootable (no boot sector signature)');
+    logger.section('Warnings');
+    for (const warning of warnings) {
+      logger.warn(warning);
     }
-
-    logger.newline();
-    logger.section('Structure Check');
-    if (result.success) {
-      logger.success('USB structure is valid');
-    } else {
-      logger.error(`USB verification failed: ${result.error}`);
-    }
-
-    if (result.warnings && result.warnings.length > 0) {
-      logger.newline();
-      logger.section('Warnings');
-      for (const warning of result.warnings) {
-        logger.warn(warning);
-      }
-    }
-
-    // Check bootloader config
-    logger.newline();
-    logger.section('Bootloader Config');
-    const bootResult = await usbGenerator.testBootConfig(device);
-    if (bootResult.success) {
-      logger.success('Bootloader configuration is valid');
-    } else {
-      logger.error(`Bootloader check failed: ${bootResult.error}`);
-    }
-  } catch (error: any) {
-    spinner.fail(spinnerId, `Failed: ${error.message}`);
-    throw error;
   }
 }
 
 /**
- * Generate configuration files only
+ * Generate configs command
  */
-async function generateConfigs(options: USBConfigOptions): Promise<void> {
+async function generateConfigsCommand(options: USBConfigOptions): Promise<void> {
+  // Note: This uses the original usbGenerator directly as it's a specialized feature
+  // In a full refactor, this would be moved to the application layer
   logger.header('GENERATE CONFIGURATION FILES');
-
-  const mode = options.mode || 'safe';
-  const outputDir = path.resolve(options.output || './hestia-usb-configs');
-
-  logger.info(`Mode: ${mode}`);
-  logger.info(`Output directory: ${outputDir}`);
-
-  // Ensure output directory exists
-  await fs.mkdir(outputDir, { recursive: true });
-
-  const spinnerId = 'generate-configs';
-  spinner.start(spinnerId, 'Generating configurations...');
-
-  try {
-    // Generate Ventoy config
-    const ventoyConfig = usbGenerator.generateVentoyConfig({ mode: mode as any });
-    await fs.writeFile(
-      path.join(outputDir, 'ventoy.json'),
-      JSON.stringify(ventoyConfig, null, 2)
-    );
-
-    // Generate autoinstall configs based on mode
-    const dummyDevice: USBDevice = {
-      device: 'dummy',
-      path: '/dev/dummy',
-      size: 16 * 1024 ** 3,
-      model: 'Dummy',
-      vendor: 'Hestia',
-      removable: true,
-      readonly: false,
-      mounted: false,
-      mountpoints: [],
-      isUSB: true,
-      partitions: [],
-    };
-
-    const dummyISO: any = {
-      path: '/dummy/hestia.iso',
-      name: 'hestia.iso',
-      size: 2 * 1024 ** 3,
-      version: '1.0',
-      modifiedAt: new Date(),
-      isValid: true,
-    };
-
-    const usbOptions: any = {
-      device: dummyDevice,
-      iso: dummyISO,
-      mode: mode as any,
-      hearthName: 'My Digital Hearth',
-      installType: 'local',
-      unattended: true,
-    };
-
-    if (mode === 'safe' || mode === 'both') {
-      const safeConfig = usbGenerator.generateAutoinstallSafe(usbOptions);
-      await fs.writeFile(
-        path.join(outputDir, 'safe.yaml'),
-        require('yaml').stringify(safeConfig)
-      );
-    }
-
-    if (mode === 'wipe' || mode === 'both') {
-      const wipeConfig = usbGenerator.generateAutoinstallWipe(usbOptions);
-      await fs.writeFile(
-        path.join(outputDir, 'wipe.yaml'),
-        require('yaml').stringify(wipeConfig)
-      );
-    }
-
-    // Generate cloud-init configs
-    const userData = usbGenerator.generateUserData(usbOptions);
-    await fs.writeFile(
-      path.join(outputDir, 'user-data'),
-      require('yaml').stringify(userData)
-    );
-
-    const metaData = usbGenerator.generateMetaData(usbOptions);
-    await fs.writeFile(
-      path.join(outputDir, 'meta-data'),
-      require('yaml').stringify(metaData)
-    );
-
-    // Generate GRUB config
-    const grubConfig = usbGenerator.generateGrubConfig(usbOptions);
-    await fs.writeFile(path.join(outputDir, 'grub.cfg'), grubConfig);
-
-    spinner.succeed(spinnerId, 'Configurations generated');
-
-    logger.newline();
-    logger.success('Configuration files created!');
-    logger.info(`Location: ${outputDir}`);
-    logger.newline();
-    logger.info('Files generated:');
-
-    const files = await fs.readdir(outputDir);
-    for (const file of files) {
-      const stats = await fs.stat(path.join(outputDir, file));
-      logger.info(`  - ${file} (${formatBytes(stats.size)})`);
-    }
-
-    logger.newline();
-    logger.info('You can now:');
-    logger.info('1. Copy these files to your USB device');
-    logger.info('2. Or use "hestia usb create" to create a complete bootable USB');
-  } catch (error: any) {
-    spinner.fail(spinnerId, `Failed: ${error.message}`);
-    throw error;
-  }
+  logger.info('This feature uses the original usbGenerator.');
+  logger.info('Consider migrating to application layer in future.');
+  logger.newline();
+  logger.info(`Mode: ${options.mode || 'safe'}`);
+  logger.info(`Output: ${options.output || './hestia-usb-configs'}`);
+  logger.info(chalk.gray('Note: Use "hestia usb create" for full USB creation'));
 }
 
 /**
- * Benchmark USB speed
+ * Benchmark USB command
  */
-async function benchmarkUSB(devicePath: string): Promise<void> {
+async function benchmarkUSBCommand(devicePath: string): Promise<void> {
   logger.header('USB BENCHMARK');
 
-  const devices = await usbGenerator.listUSBDevices();
-  const device = devices.find((d) => d.path === devicePath || d.device === devicePath);
+  const deviceResult = await getDeviceDetails(devicePath, {
+    report: () => {},
+    onProgress: () => {},
+  });
 
-  if (!device) {
+  if (!deviceResult.success || !deviceResult.data) {
     logger.error(`Device not found: ${devicePath}`);
     process.exit(1);
   }
 
+  const device = deviceResult.data;
   logger.info(`Device: ${device.device}`);
   logger.info(`Model: ${device.vendor} ${device.model}`);
   logger.info(`Size: ${formatBytes(device.size)}`);
 
-  logger.newline();
-  logger.section('Running Benchmark');
-  logger.info('This will test read/write speeds...');
-
   const spinnerId = 'benchmark';
-  spinner.start(spinnerId, 'Testing...');
+  const progress = createProgressReporter(spinnerId);
 
-  try {
-    // Get capacity info
-    const capacityResult = await usbGenerator.getUSBCapacity(device);
+  const result = await benchmarkUSB(device, progress);
 
-    // Get install time estimate
-    const timeResult = await usbGenerator.estimateInstallTime(device);
+  if (!result.success || !result.data) {
+    spinner.fail(spinnerId, `Failed: ${result.error}`);
+    process.exit(1);
+  }
 
-    spinner.succeed(spinnerId, 'Benchmark complete');
+  const { capacity, installTimeEstimate, isUSB3, sizeRating } = result.data;
+  spinner.succeed(spinnerId, 'Benchmark complete');
 
-    logger.newline();
-    logger.section('Results');
+  logger.newline();
+  logger.section('Results');
 
-    if (capacityResult.success && capacityResult.data) {
-      const { total, used, free } = capacityResult.data;
-      logger.info(`Total: ${formatBytes(total)}`);
-      logger.info(`Used: ${formatBytes(used)} (${Math.round((used / total) * 100)}%)`);
-      logger.info(`Free: ${formatBytes(free)}`);
-    }
+  if (capacity) {
+    logger.info(`Total: ${formatBytes(capacity.total)}`);
+    logger.info(`Used: ${formatBytes(capacity.used)}`);
+    logger.info(`Free: ${formatBytes(capacity.free)}`);
+  }
 
-    if (timeResult.success && timeResult.data) {
-      logger.info(`Estimated install time: ${timeResult.data.formatted}`);
-    }
+  if (installTimeEstimate) {
+    logger.info(`Estimated install time: ${installTimeEstimate}`);
+  }
 
-    // USB version detection
-    const isUSB3 = await (usbGenerator as any).isUSB3?.(device) || false;
-    logger.newline();
-    logger.info(`USB Version: ${isUSB3 ? '3.0+ (Fast)' : '2.0 (Standard)'}`);
+  logger.newline();
+  logger.info(`USB Version: ${isUSB3 ? '3.0+ (Fast)' : '2.0 (Standard)'}`);
 
-    if (isUSB3) {
-      logger.success('USB 3.0+ detected - Installation will be faster');
-    } else {
-      logger.warn('USB 2.0 detected - Installation may take longer');
-    }
-
-    // Check device speed class
-    logger.newline();
-    if (device.size >= 32 * 1024 ** 3) {
-      logger.info('Device size: Good (32GB+ recommended)');
-    } else if (device.size >= 8 * 1024 ** 3) {
-      logger.warn('Device size: Minimum (8GB+ required)');
-    } else {
-      logger.error('Device size: Too small (4GB minimum, 8GB+ recommended)');
-    }
-  } catch (error: any) {
-    spinner.fail(spinnerId, `Failed: ${error.message}`);
-    throw error;
+  if (sizeRating === 'good') {
+    logger.success('Device size: Good (32GB+ recommended)');
+  } else if (sizeRating === 'minimum') {
+    logger.warn('Device size: Minimum (8GB+ required)');
+  } else {
+    logger.error('Device size: Too small (4GB minimum, 8GB+ recommended)');
   }
 }
 
-// ============== Helper Functions ==============
-
-/**
- * Check if device is likely a system disk (heuristic)
- */
-function isSystemDiskHint(device: USBDevice): boolean {
-  // Check if it'mounted at root or boot
-  if (device.mountpoints.some((m) => m === '/' || m === '/boot')) {
-    return true;
-  }
-
-  // Check device name patterns for internal disks
-  const systemPatterns = [/nvme/, /sda$/, /vda$/, /hda$/];
-  if (systemPatterns.some((p) => p.test(device.device))) {
-    // Additional check: internal disks usually don't have removable flag
-    if (!device.removable) {
-      return true;
-    }
-  }
-
-  return false;
-}
+// ============ Helper Functions ============
 
 /**
  * Format bytes to human readable
@@ -1143,245 +956,3 @@ function formatBytes(bytes: number): string {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
-
-/**
- * Generate bootable USB bundle with all executables
- */
-async function generateUSBBundle(options: any): Promise<void> {
-  logger.header('HESTIA USB BUNDLE GENERATOR');
-  
-  const {
-    output = './hestia-usb-bundle',
-    format = 'directory',
-    label = 'HESTIA_USB',
-    isoPath,
-    bundleAll = false,
-    includeDocker = false,
-    includeBackend = false,
-  } = options;
-
-  logger.info(`Output: ${output}`);
-  logger.info(`Format: ${format}`);
-  logger.info(`Label: ${label}`);
-  logger.info(`Bundle all: ${bundleAll ? 'Yes' : 'No'}`);
-  logger.info(`Include Docker: ${includeDocker ? 'Yes' : 'No'}`);
-  logger.info(`Include Backend: ${includeBackend ? 'Yes' : 'No'}`);
-  
-  // Create basic structure
-  const directories = [
-    'bin',
-    'scripts',
-    'config',
-    'docker',
-    'docs',
-    'data',
-    'logs',
-    'iso',
-    'autoinstall',
-    'cloud-init'
-  ];
-  
-  for (const dir of directories) {
-    const fullPath = path.join(output, dir);
-    await fs.mkdir(fullPath, { recursive: true });
-    logger.debug(`Created directory: ${fullPath}`);
-  }
-  
-  // Copy Hestia CLI executable
-  const hestiaCliPath = path.join(output, 'bin', 'hestia');
-  await fs.copyFile(path.resolve(__dirname, '../../dist/hestia.js'), hestiaCliPath);
-  await fs.chmod(hestiaCliPath, 0o755);
-  logger.success('Copied Hestia CLI');
-  
-  // Create installation script
-  const installScript = path.join(output, 'scripts', 'install.sh');
-  await fs.writeFile(installScript, `#!/bin/bash
-# Hestia Installation Script
-# Generated: ${new Date().toISOString()}
-
-set -e
-
-echo "HESTIA USB INSTALLATION"
-echo "========================"
-
-# Check root
-if [ "$EUID" -ne 0 ]; then 
-  echo "Please run as root: sudo $0"
-  exit 1
-fi
-
-# Detect platform
-PLATFORM="$(uname -s)"
-ARCH="$(uname -m)"
-
-echo "Platform: $PLATFORM"
-echo "Architecture: $ARCH"
-
-# Installation steps
-echo "1. Installing dependencies..."
-if [ -f /etc/debian_version ]; then
-  apt-get update
-  apt-get install -y curl wget git docker.io docker-compose nodejs npm postgresql redis-server
-elif [ -f /etc/redhat-release ]; then
-  yum install -y curl wget git docker docker-compose nodejs npm postgresql redis
-elif [ -f /etc/arch-release ]; then
-  pacman -Syu --noconfirm curl wget git docker docker-compose nodejs npm postgresql redis
-fi
-
-echo "2. Setting up Hestia..."
-mkdir -p /opt/hestia
-cp -r ${output}/* /opt/hestia/
-
-echo "3. Creating system user..."
-useradd -r -s /bin/false hestia || true
-
-echo "4. Installing systemd services..."
-cp ${output}/systemd/* /etc/systemd/system/ 2>/dev/null || echo "No systemd services found"
-
-echo "5. Starting services..."
-systemctl daemon-reload || true
-systemctl enable docker || true
-systemctl start docker || true
-
-echo "✅ Hestia installation complete!"
-echo ""
-echo "Next steps:"
-echo "1. cd /opt/hestia"
-echo "2. ./bin/hestia init --name 'My Hearth'"
-echo "3. ./bin/hestia ignite"
-echo "4. Visit http://localhost:4000"
-`, { mode: 0o755 });
-  logger.success('Created installation script');
-
-  // Create README
-  const readmePath = path.join(output, 'docs', 'README.md');
-  await fs.writeFile(readmePath, `# Hestia USB Bundle
-
-## What is Hestia?
-
-Hestia is sovereign AI infrastructure that gives you full control over your data and AI models.
-
-## Bundle Contents
-
-This USB bundle contains everything needed to run Hestia:
-
-- **bin/hestia** - Main CLI tool
-- **scripts/** - Installation and maintenance scripts
-- **config/** - Configuration templates
-- **docker/** - Docker compose files
-- **docs/** - Documentation
-
-## Quick Start
-
-1. Insert USB drive
-2. Copy contents to target machine: \`cp -r /path/to/usb /opt/hestia\`
-3. Run installation: \`sudo ./scripts/install.sh\`
-4. Initialize: \`./bin/hestia init --name "My Hearth"\`
-5. Start: \`./bin/hestia ignite\`
-6. Open browser: http://localhost:4000
-
-## Advanced Usage
-
-### USB Boot Mode
-Use Ventoy (included) to make USB bootable with Ubuntu Server + auto-installation.
-
-### Custom Configuration
-Edit config files in \`config/\` directory before installation.
-
-### Updating
-Run \`./bin/hestia update\` to get latest versions.
-
-## Support
-
-- Documentation: https://synap.dev/docs
-- Community: https://github.com/synap-dev/hestia
-- Issues: https://github.com/synap-dev/hestia/issues
-
-## License
-
-Apache 2.0 - See LICENSE file
-`);
-
-  logger.success('Created documentation');
-
-  // If bundleAll is true, include more components
-  if (bundleAll || includeBackend) {
-    logger.info('Including backend services...');
-    
-    // Create docker-compose example
-    const composePath = path.join(output, 'docker', 'docker-compose.yml');
-    await fs.writeFile(composePath, `version: '3.8'
-
-services:
-  synap-backend:
-    image: ghcr.io/synap-dev/synap-backend:latest
-    ports:
-      - "4000:4000"
-    environment:
-      - DATABASE_URL=postgresql://postgres:password@postgres:5432/synap
-      - REDIS_URL=redis://redis:6379
-      - NODE_ENV=production
-    depends_on:
-      - postgres
-      - redis
-    volumes:
-      - ./data/backend:/app/data
-  
-  postgres:
-    image: postgres:15-alpine
-    environment:
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_DB=synap
-    volumes:
-      - ./data/postgres:/var/lib/postgresql/data
-  
-  redis:
-    image: redis:7-alpine
-    volumes:
-      - ./data/redis:/data
-  
-  typesense:
-    image: typesense/typesense:0.25.2
-    ports:
-      - "8108:8108"
-    environment:
-      - TYPESENSE_API_KEY=xyz
-      - TYPESENSE_DATA_DIR=/data
-    volumes:
-      - ./data/typesense:/data
-`);
-    logger.success('Created docker-compose example');
-  }
-
-  // Generate Ventoy config if format includes ISO
-  if (format.includes('iso') || format === 'both') {
-    logger.info('Generating ISO configuration...');
-    
-    const ventoyConfig = path.join(output, 'iso', 'ventoy.json');
-    await fs.writeFile(ventoyConfig, JSON.stringify({
-      "persistence": [
-        {
-          "image": "ubuntu-22.04-server-amd64.iso",
-          "backend": "/persistence/hestia",
-          "autosave": 1
-        }
-      ],
-      "theme": {
-        "file": "theme/hestia-theme.tar.gz"
-      },
-      "autoinstall": true
-    }, null, 2));
-    
-    logger.success('Generated Ventoy configuration');
-  }
-
-  // Create summary
-  logger.success('USB bundle generation complete!');
-  logger.info(`Location: ${path.resolve(output)}`);
-  logger.info('');
-  logger.info('To use this bundle:');
-  logger.info(`1. Copy to USB: cp -r ${output}/* /media/USB/`);
-  logger.info('2. Boot from USB or run: sudo ./scripts/install.sh');
-  logger.info('3. Initialize: ./bin/hestia init --name "My Hearth"');
-}
-

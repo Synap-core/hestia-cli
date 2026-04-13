@@ -24,7 +24,7 @@
 
 import { Command } from "commander";
 import chalk from "chalk";
-import { aiChatService } from "../lib/services/ai-chat-service.js";
+import { aiChatService } from "../lib/domains/ai/lib/ai-chat-service.js";
 import { logger } from '../lib/utils/index.js';
 import type { AIChatProvider, AIChatProviderInfo, AIChatProviderStatus } from '../lib/types/index.js';
 
@@ -193,7 +193,7 @@ export function aiChatCommand(program: Command): void {
       }
 
       try {
-        await aiChatService.start(provider);
+        await aiChatService.startProvider(provider);
         const url = await aiChatService.getUrl(provider);
         console.log(chalk.green(`\n${provider} is running!`));
         console.log(chalk.blue(`Access at: ${url}`));
@@ -216,7 +216,7 @@ export function aiChatCommand(program: Command): void {
       }
 
       try {
-        await aiChatService.stop(provider);
+        await aiChatService.stopProviderService(provider);
       } catch (error) {
         logger.error(`Failed to stop ${provider}: ${error}`);
         process.exit(1);
@@ -235,13 +235,13 @@ export function aiChatCommand(program: Command): void {
       }
 
       try {
-        const status = await aiChatService.getStatus(provider);
+        const status = await aiChatService.getProviderStatus(provider);
         if (!status.running) {
           console.log(chalk.yellow(`${provider} is not running.`));
           console.log(chalk.gray(`Run 'hestia ai:chat:start ${provider}' first.`));
           process.exit(1);
         }
-        
+
         await aiChatService.open(provider);
       } catch (error) {
         logger.error(`Failed to open ${provider}: ${error}`);

@@ -7,6 +7,7 @@
  * - LibreChat: ChatGPT-like interface with multi-model support
  *
  * All services are optional and connect to Hestia's AI backend (Ollama/OpenClaude).
+ * Implements IAIService for contract clarity and testability.
  */
 
 import * as fs from "fs/promises";
@@ -15,7 +16,8 @@ import { execa } from "execa";
 import { z } from "zod";
 import { logger } from '../../../utils/index.js';
 import { loadConfig, updateConfig, getConfigPaths } from '../../../utils/index.js';
-import type { AIChatProvider, AIChatConfig, AIChatProviderStatus, AIChatProviderInfo } from '../../../../lib/types/index.js';
+import type { AIChatProvider, AIChatConfig, AIChatProviderStatus, AIChatProviderInfo, HestiaConfig } from '../../../../lib/types/index.js';
+import type { IAIService, ServiceStatus } from '../../../services/interfaces.js';
 
 // Provider configuration schema
 const providerConfigSchema = z.object({
@@ -93,13 +95,62 @@ const PROVIDER_DEFINITIONS: Record<AIChatProvider, {
   },
 };
 
-export class AIChatService {
+export class AIChatService implements IAIService {
   private configPath: string;
   private dockerComposePath: string;
+  private _status: ServiceStatus = { isRunning: false, errors: [] };
 
   constructor(configPath?: string) {
     this.configPath = configPath || getConfigPaths().userConfig;
     this.dockerComposePath = process.env.HESTIA_TARGET || "/opt/hestia";
+  }
+
+  /**
+   * Start the AI service
+   * Implements IAIService.start()
+   */
+  async start(): Promise<void> {
+    // Start all providers by default
+    await this.enableAll();
+    this._status = { isRunning: true, errors: [] };
+  }
+
+  /**
+   * Stop the AI service
+   * Implements IAIService.stop()
+   */
+  async stop(): Promise<void> {
+    const providers: AIChatProvider[] = ["lobechat", "openwebui", "librechat"];
+    for (const provider of providers) {
+      try {
+        await this.stopProviderService(provider);
+      } catch {
+        // Ignore errors during stop
+      }
+    }
+    this._status = { isRunning: false, errors: [] };
+  }
+
+  /**
+   * Get current service status
+   * Implements IAIService.getStatus()
+   */
+  getStatus(): ServiceStatus {
+    return { ...this._status };
+  }
+
+  /**
+   * Sync AI configuration with Hestia
+   * Implements IAIService.syncWithHestia()
+   */
+  async syncWithHestia(config: HestiaConfig): Promise<void> {
+    if (config.aiChat) {
+      for (const provider of config.aiChat.providers) {
+        if (provider.enabled) {
+          await this.configure(provider.name, provider.config || {});
+        }
+      }
+    }
   }
 
   /**
@@ -196,8 +247,9 @@ export class AIChatService {
 
   /**
    * Start a specific AI chat UI service
+   * Renamed from start() to avoid conflict with IAIService.start()
    */
-  async start(provider: AIChatProvider): Promise<void> {
+  async startProvider(provider: AIChatProvider): Promise<void> {
     const definition = PROVIDER_DEFINITIONS[provider];
     logger.info(`Starting ${definition.name}...`);
 
@@ -248,8 +300,9 @@ export class AIChatService {
 
   /**
    * Stop a specific AI chat UI service
+   * Renamed from stop() to avoid conflict with IAIService.stop()
    */
-  async stop(provider: AIChatProvider): Promise<void> {
+  async stopProviderService(provider: AIChatProvider): Promise<void> {
     const definition = PROVIDER_DEFINITIONS[provider];
     logger.info(`Stopping ${definition.name}...`);
 
@@ -283,8 +336,9 @@ export class AIChatService {
 
   /**
    * Get status of a specific AI chat UI service
+   * Renamed from getStatus() to avoid conflict with IAIService.getStatus()
    */
-  async getStatus(provider: AIChatProvider): Promise<AIChatProviderStatus> {
+  async getProviderStatus(provider: AIChatProvider): Promise<AIChatProviderStatus> {
     const definition = PROVIDER_DEFINITIONS[provider];
     
     try {
@@ -373,7 +427,7 @@ export class AIChatService {
     const statuses: AIChatProviderStatus[] = [];
     
     for (const provider of config.aiChat.providers) {
-      const status = await this.getStatus(provider.name);
+      const status = await this.getProviderStatus(provider.name);
       statuses.push(status);
     }
 
@@ -405,7 +459,7 @@ export class AIChatService {
     // Install all if not already installed
     for (const provider of providers) {
       try {
-        const status = await this.getStatus(provider);
+        const status = await this.getProviderStatus(provider);
         if (!status.installed) {
           await this.install(provider);
         }
@@ -467,7 +521,7 @@ export class AIChatService {
 
     // Stop if running
     try {
-      await this.stop(provider);
+      await this.stopProviderService(provider);
     } catch {
       // Ignore stop errors
     }
@@ -549,11 +603,11 @@ export class AIChatService {
     const providers: AIChatProvider[] = ["lobechat", "openwebui", "librechat"];
     
     for (const provider of providers) {
-      const status = await this.getStatus(provider);
+      const status = await this.getProviderStatus(provider);
       if (status.running) {
         logger.info(`Restarting ${provider} with new backend configuration...`);
-        await this.stop(provider);
-        await this.start(provider);
+        await this.stopProviderService(provider);
+        await this.startProvider(provider);
       }
     }
 

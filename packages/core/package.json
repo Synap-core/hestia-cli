@@ -1,5 +1,5 @@
 {
-  "name": "@hestia/cli",
+  "name": "@hestia/core",
   "version": "0.1.0",
   "description": "Sovereign AI infrastructure management CLI",
   "type": "module",

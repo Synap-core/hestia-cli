@@ -1,15 +1,28 @@
 /**
  * install command - Phase-based installation
  * Usage: hestia install [phase]
+ * 
+ * REFACTORED: Business logic extracted to src/application/install/
+ * This file now only contains UI/interactive logic.
  */
 
 import { Command } from 'commander';
 import { logger, section } from '../lib/utils/index.js';
 import { spinner } from '../lib/utils/index.js';
 import chalk from 'chalk';
-import { spawn, exec } from 'child_process';
+import { exec } from 'child_process';
 import { promisify } from 'util';
-import { access, constants } from 'fs/promises';
+
+// Import use cases from application layer
+import {
+  runPhase1,
+  runPhase2,
+  runPhase3,
+  type Phase1Input,
+  type Phase2Input,
+  type Phase3Input,
+} from '../application/install/index.js';
+import { ProgressReporter } from '../application/types.js';
 
 const execAsync = promisify(exec);
 
@@ -23,6 +36,23 @@ interface InstallOptions {
 }
 
 type InstallPhase = 'phase1' | 'phase2' | 'phase3' | 'all';
+
+/**
+ * Create a CLI progress reporter
+ */
+function createProgressReporter(spinnerId: string): ProgressReporter {
+  spinner.start(spinnerId, 'Initializing...');
+  return {
+    report(message: string): void {
+      spinner.update(spinnerId, message);
+    },
+    onProgress(percent: number): void {
+      const currentText = spinner['spinners']?.get(spinnerId)?.text || 'Working...';
+      const baseText = currentText.split(' (')[0];
+      spinner.update(spinnerId, `${baseText} (${Math.round(percent)}%)`);
+    },
+  };
+}
 
 export function installCommand(program: Command): void {
   program
@@ -96,6 +126,68 @@ export function installCommand(program: Command): void {
     });
 }
 
+/**
+ * Run a single installation phase
+ */
+async function runPhase(phase: InstallPhase, options: InstallOptions): Promise<void> {
+  section(`Running ${phase.toUpperCase()}`);
+
+  if (options.dryRun) {
+    logger.info(chalk.gray('[DRY RUN] Would execute phase'));
+    return;
+  }
+
+  const spinnerId = `phase-${phase}`;
+  const progress = createProgressReporter(spinnerId);
+
+  let result;
+  
+  switch (phase) {
+    case 'phase1': {
+      const input: Phase1Input = {
+        targetDir: options.target || '/opt/hestia',
+        safeMode: options.safeMode,
+        unattended: options.unattended,
+        dryRun: options.dryRun,
+      };
+      result = await runPhase1(input, progress);
+      break;
+    }
+    case 'phase2': {
+      const input: Phase2Input = {
+        targetDir: options.target || '/opt/hestia',
+        safeMode: options.safeMode,
+        unattended: options.unattended,
+        dryRun: options.dryRun,
+      };
+      result = await runPhase2(input, progress);
+      break;
+    }
+    case 'phase3': {
+      const input: Phase3Input = {
+        targetDir: options.target || '/opt/hestia',
+        safeMode: options.safeMode,
+        unattended: options.unattended,
+        dryRun: options.dryRun,
+      };
+      result = await runPhase3(input, progress);
+      break;
+    }
+    default:
+      throw new Error(`Unknown phase: ${phase}`);
+  }
+
+  if (result.success) {
+    spinner.succeed(spinnerId, `${phase} completed successfully`);
+  } else {
+    spinner.fail(spinnerId, `${phase} failed: ${result.error}`);
+    throw new Error(result.error || `${phase} failed`);
+  }
+}
+
+/**
+ * Run pre-flight checks
+ */
 async function runPreflightChecks(options: InstallOptions): Promise<boolean> {
   section('Pre-flight Checks');
 
@@ -128,92 +220,7 @@ async function runPreflightChecks(options: InstallOptions): Promise<boolean> {
   return allPassed;
 }
 
-async function runPhase(phase: InstallPhase, options: InstallOptions): Promise<void> {
-  section(`Running ${phase.toUpperCase()}`);
-
-  if (options.dryRun) {
-    logger.info(chalk.gray('[DRY RUN] Would execute:'));
-    logger.info(chalk.gray(`  ${getPhaseScript(phase)}`));
-    return;
-  }
-
-  const scriptPath = getPhaseScript(phase);
-
-  // Check if script exists
-  try {
-    await access(scriptPath, constants.X_OK);
-  } catch {
-    // Try to find script in different locations
-    const altPaths = [
-      `/opt/hestia/install/${phase}.sh`,
-      `./packages/install/src/phases/${phase}.sh`,
-      `${process.env.HOME}/.hestia/install/${phase}.sh`,
-    ];
-
-    let found = false;
-    for (const alt of altPaths) {
-      try {
-        await access(alt, constants.X_OK);
-        logger.debug(`Found phase script at: ${alt}`);
-        found = true;
-        break;
-      } catch {
-        continue;
-      }
-    }
-
-    if (!found) {
-      throw new Error(`Phase script not found: ${scriptPath}`);
-    }
-  }
-
-  // Execute phase script
-  const env = {
-    ...process.env,
-    HESTIA_TARGET: options.target || '/opt/hestia',
-    HESTIA_SAFE_MODE: options.safeMode ? '1' : '0',
-    HESTIA_UNATTENDED: options.unattended ? '1' : '0',
-  };
-
-  return new Promise((resolve, reject) => {
-    const child = spawn('bash', [scriptPath], {
-      stdio: options.unattended ? 'pipe' : 'inherit',
-      env,
-    });
-
-    let output = '';
-    if (options.unattended && child.stdout) {
-      child.stdout.on('data', (data) => {
-        output += data.toString();
-      });
-    }
-
-    child.on('close', (code) => {
-      if (code === 0) {
-        logger.success(`${phase} completed successfully`);
-        resolve();
-      } else {
-        reject(new Error(`${phase} failed with exit code ${code}`));
-      }
-    });
-
-    child.on('error', (err) => {
-      reject(new Error(`Failed to execute ${phase}: ${err.message}`));
-    });
-  });
-}
-
-function getPhaseScript(phase: InstallPhase): string {
-  if (phase === 'all') {
-    return '/opt/hestia/install/phases/phase1.sh';
-  }
-  const scriptMap: Record<Exclude<InstallPhase, 'all'>, string> = {
-    phase1: '/opt/hestia/install/phases/phase1.sh',
-    phase2: '/opt/hestia/install/phases/phase2.sh',
-    phase3: '/opt/hestia/install/phases/phase3.sh',
-  };
-  return scriptMap[phase];
-}
+// ============ Check Functions ============
 
 async function checkSudo(): Promise<boolean> {
   try {

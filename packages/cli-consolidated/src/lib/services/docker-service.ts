@@ -1,6 +1,7 @@
 /**
  * Docker Service - Real container management
  * Handles Docker container lifecycle for Hestia packages
+ * Implements IDockerService for contract clarity and testability
  */
 
 import { exec, spawn } from 'child_process';
@@ -9,6 +10,7 @@ import * as path from 'path';
 import * as fs from 'fs/promises';
 import { logger } from '../utils/logger.js';
 import { getConfigValue } from '../utils/config.js';
+import type { IDockerService, ComposeConfig, ServiceStatus } from './interfaces.js';
 
 const execAsync = promisify(exec);
 
@@ -436,3 +438,69 @@ export async function getDockerInfo(): Promise<{
     };
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DockerService Class - Implements IDockerService
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Docker Service Class
+ * Provides a class-based interface for Docker operations
+ * Implements IDockerService for contract clarity and testability
+ */
+export class DockerService implements IDockerService {
+  private packagesDir: string | undefined;
+
+  constructor(packagesDir?: string) {
+    this.packagesDir = packagesDir;
+  }
+
+  /**
+   * Start a Docker service
+   * Implements IDockerService.startService()
+   */
+  async startService(name: string): Promise<void> {
+    const result = await startPackage(name);
+    if (!result.success) {
+      throw new Error(result.message);
+    }
+  }
+
+  /**
+   * Stop a Docker service
+   * Implements IDockerService.stopService()
+   */
+  async stopService(name: string): Promise<void> {
+    const result = await stopPackage(name);
+    if (!result.success) {
+      throw new Error(result.message);
+    }
+  }
+
+  /**
+   * Get status of a Docker service
+   * Implements IDockerService.getStatus()
+   */
+  async getStatus(name: string): Promise<ServiceStatus> {
+    const status = await getPackageStatus(name);
+    return {
+      isRunning: status.running,
+      errors: status.message ? [status.message] : []
+    };
+  }
+
+  /**
+   * Generate docker-compose.yml content
+   * Implements IDockerService.generateCompose()
+   */
+  async generateCompose(config: ComposeConfig): Promise<string> {
+    const yaml = await import('js-yaml');
+    return yaml.dump(config, {
+      indent: 2,
+      lineWidth: 120,
+    });
+  }
+}
+
+// Singleton instance for convenience
+export const dockerService = new DockerService();

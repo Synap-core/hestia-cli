@@ -2,9 +2,9 @@
  * @hestia/ai - AI/Ollama handling and routing for Hestia CLI
  */
 
-export * from './lib/ai-chat-service.js';
-export * from './lib/openclaude-service.js';
-export * from './lib/openclaw-service.js';
+export { aiChatService } from './lib/ai-chat-service.js';
+export { openclaudeService } from './lib/openclaude-service.js';
+export { openclawService } from './lib/openclaw-service.js';
 
 // Commands
 export { aiCommand } from '../../../commands/ai.js';

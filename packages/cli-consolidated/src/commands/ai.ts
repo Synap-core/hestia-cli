@@ -12,7 +12,7 @@
  */
 
 import { Command } from 'commander';
-import { openclaudeService } from '../lib/services/openclaude-service.js';
+import { openclaudeService } from '../lib/domains/ai/lib/openclaude-service.js';
 import { logger, spinner } from '../lib/utils/index.js';
 import { stateManager } from '../lib/domains/services/lib/state-manager.js';
 import chalk from 'chalk';
