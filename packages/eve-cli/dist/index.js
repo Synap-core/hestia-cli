@@ -723,7 +723,7 @@ function setupCommand(program2) {
           console.log(colors.muted("Cancelled."));
           return;
         }
-        aiMode = m;
+        aiMode = parseAiMode(String(m));
       }
       if (!defaultProvider && aiMode !== "local") {
         const p = await select2({
@@ -739,7 +739,7 @@ function setupCommand(program2) {
           console.log(colors.muted("Cancelled."));
           return;
         }
-        defaultProvider = p;
+        defaultProvider = parseAiProvider(String(p));
       }
       const askFallback = await confirm2({
         message: "Add a fallback provider?",
@@ -765,7 +765,7 @@ function setupCommand(program2) {
           console.log(colors.muted("Cancelled."));
           return;
         }
-        fallbackProvider = fp === "none" ? void 0 : fp;
+        fallbackProvider = fp === "none" ? void 0 : parseAiProvider(String(fp));
       }
     }
     if (!aiMode) aiMode = "hybrid";
@@ -795,7 +795,7 @@ function setupCommand(program2) {
           console.log(colors.muted("Cancelled."));
           return;
         }
-        tunnelProvider = t === "none" ? void 0 : t;
+        tunnelProvider = t === "none" ? void 0 : parseTunnel(String(t));
       }
       if (tunnelProvider && !tunnelDomain) {
         const d = await text({
