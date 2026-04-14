@@ -6,7 +6,7 @@
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "rootDir": "src",
+    "rootDir": ".",
     "types": ["node"]
   },
   "include": ["src/**/*.ts", "vitest.config.ts"]

@@ -4,13 +4,38 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 
+const AiProviderSchema = z.enum(['ollama', 'openrouter', 'anthropic', 'openai']);
+const AiModeSchema = z.enum(['local', 'provider', 'hybrid']);
+
 const SecretsSchema = z.object({
   version: z.literal('1'),
   updatedAt: z.string(),
+  ai: z
+    .object({
+      mode: AiModeSchema.optional(),
+      defaultProvider: AiProviderSchema.optional(),
+      fallbackProvider: AiProviderSchema.optional(),
+      providers: z
+        .array(
+          z.object({
+            id: AiProviderSchema,
+            enabled: z.boolean().optional(),
+            apiKey: z.string().optional(),
+            baseUrl: z.string().optional(),
+            defaultModel: z.string().optional(),
+          }),
+        )
+        .optional(),
+      /** Sync intent flag used by explicit `eve ai sync --workspace <id>` command. */
+      syncToSynap: z.boolean().optional(),
+    })
+    .optional(),
   synap: z
     .object({
       apiUrl: z.string().optional(),
       apiKey: z.string().optional(),
+      /** Full Hub base URL; if unset, Eve derives `${apiUrl}/api/hub` */
+      hubBaseUrl: z.string().optional(),
     })
     .optional(),
   inference: z
@@ -23,10 +48,13 @@ const SecretsSchema = z.object({
     .optional(),
   builder: z
     .object({
+      codeEngine: z.enum(['opencode', 'openclaude', 'claudecode']).optional(),
       openclaudeUrl: z.string().optional(),
       dokployApiUrl: z.string().optional(),
       dokployApiKey: z.string().optional(),
+      dokployWebhookUrl: z.string().optional(),
       workspaceDir: z.string().optional(),
+      skillsDir: z.string().optional(),
     })
     .optional(),
   arms: z
@@ -74,6 +102,10 @@ export async function writeEveSecrets(
     version: '1' as const,
     updatedAt: new Date().toISOString(),
   };
+  const mergedAi = mergeNested(
+    current.ai as Record<string, unknown> | undefined,
+    partial.ai as Record<string, unknown> | undefined,
+  );
   const mergedSynap = mergeNested(
     current.synap as Record<string, unknown> | undefined,
     partial.synap as Record<string, unknown> | undefined,
@@ -94,6 +126,7 @@ export async function writeEveSecrets(
   const next: EveSecrets = {
     ...current,
     ...partial,
+    ai: mergedAi as EveSecrets['ai'],
     synap: mergedSynap as EveSecrets['synap'],
     inference: mergedInference as EveSecrets['inference'],
     builder: mergedBuilder as EveSecrets['builder'],

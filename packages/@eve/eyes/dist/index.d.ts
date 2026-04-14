@@ -65,6 +65,8 @@ declare function stopCommand(program: Command): void;
 
 declare function syncCommand(program: Command): void;
 
+declare function databaseCommand(program: Command): void;
+
 /**
  * Register Eyes leaf commands on an existing `eve eyes` Commander node
  */
@@ -74,4 +76,4 @@ declare function registerEyesCommands(eyes: Command): void;
  */
 declare function createRSSHubService(config?: ConstructorParameters<typeof RSSHubService>[0]): RSSHubService;
 
-export { type Feed, type RSSHubConfig, RSSHubService, addFeedCommand, createRSSHubService, installCommand, listFeedsCommand, registerEyesCommands, removeFeedCommand, startCommand, stopCommand, syncCommand };
+export { type Feed, type RSSHubConfig, RSSHubService, addFeedCommand, createRSSHubService, databaseCommand, installCommand, listFeedsCommand, registerEyesCommands, removeFeedCommand, startCommand, stopCommand, syncCommand };

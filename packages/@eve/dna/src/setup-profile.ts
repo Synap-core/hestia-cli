@@ -7,6 +7,10 @@ export const SetupProfileKindSchema = z.enum(['inference_only', 'data_pod', 'ful
 export type SetupProfileKind = z.infer<typeof SetupProfileKindSchema>;
 
 const TunnelProviderSchema = z.enum(['pangolin', 'cloudflare']);
+export const BuilderEngineSchema = z.enum(['opencode', 'openclaude', 'claudecode']);
+export const AiModeSchema = z.enum(['local', 'provider', 'hybrid']);
+export const AiProviderSchema = z.enum(['ollama', 'openrouter', 'anthropic', 'openai']);
+export type BuilderEngine = z.infer<typeof BuilderEngineSchema>;
 
 export const SetupProfileSchema = z.object({
   version: z.literal('1'),
@@ -18,6 +22,12 @@ export const SetupProfileSchema = z.object({
   /** If set, `eve setup` runs `eve legs setup` with this tunnel after Data Pod / full stack steps. */
   tunnelProvider: TunnelProviderSchema.optional(),
   tunnelDomain: z.string().optional(),
+  /** Default builder codegen surface for `eve builder init` */
+  builderEngine: BuilderEngineSchema.optional(),
+  /** AI foundation mode selected during setup */
+  aiMode: AiModeSchema.optional(),
+  aiDefaultProvider: AiProviderSchema.optional(),
+  aiFallbackProvider: AiProviderSchema.optional(),
 });
 
 export type SetupProfile = z.infer<typeof SetupProfileSchema>;

@@ -83,11 +83,14 @@ export class DokployService {
         updatedAt: new Date().toISOString(),
       }, null, 2)
     );
+    const secrets = await readEveSecrets(process.cwd());
     await writeEveSecrets(
       {
         builder: {
           dokployApiUrl: this.apiUrl ?? undefined,
           dokployApiKey: this.apiKey ?? undefined,
+          dokployWebhookUrl:
+            secrets?.builder?.dokployWebhookUrl ?? process.env.DOKPLOY_WEBHOOK_URL ?? undefined,
         },
       },
       process.cwd(),

@@ -24,8 +24,19 @@ export function deployCommand(program: Command): void {
         let projectId: string | null = null;
 
         if (existsSync(statePath)) {
-          const state = JSON.parse(readFileSync(statePath, 'utf-8'));
-          
+          const state = JSON.parse(readFileSync(statePath, 'utf-8')) as {
+            components?: { dokploy?: { skipped?: boolean; projectName?: string } };
+          };
+
+          if (!projectName && state.components?.dokploy?.skipped) {
+            console.log(
+              'This workspace was initialized without Dokploy (--with-dokploy not used).\n' +
+                'Deploy using DOKPLOY_WEBHOOK_URL from .env, your CI, or re-run:\n' +
+                '  eve builder init <name> --with-dokploy\n',
+            );
+            process.exit(1);
+          }
+
           // Find project by name or use the current project
           if (projectName) {
             // Look for project with matching name
@@ -38,7 +49,7 @@ export function deployCommand(program: Command): void {
             // Use current project's dokploy project
             const status = await dokploy.getStatus();
             const found = status.projects.find(
-              p => p.name === state.components.dokploy.projectName
+              p => p.name === state.components?.dokploy?.projectName
             );
             if (found) {
               projectId = found.id;

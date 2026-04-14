@@ -1,10 +1,10 @@
 #!/bin/bash
-# Main Hestia Installer
+# Main eve Installer
 # Usage: ./install.sh [phase1|phase2|phase3|all] [--force] [--resume] [--dry-run] [--reset]
 # Environment variables:
-#   HESTIA_TARGET - Installation directory (default: /opt/hestia)
-#   HESTIA_SAFE_MODE - Preserve existing data (default: false)
-#   HESTIA_UNATTENDED - No prompts (default: false)
+#   eve_TARGET - Installation directory (default: /opt/eve)
+#   eve_SAFE_MODE - Preserve existing data (default: false)
+#   eve_UNATTENDED - No prompts (default: false)
 
 set -euo pipefail
 
@@ -17,14 +17,14 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Configuration
-HESTIA_TARGET="${HESTIA_TARGET:-/opt/hestia}"
-HESTIA_SAFE_MODE="${HESTIA_SAFE_MODE:-0}"
-HESTIA_UNATTENDED="${HESTIA_UNATTENDED:-0}"
+eve_TARGET="${eve_TARGET:-/opt/eve}"
+eve_SAFE_MODE="${eve_SAFE_MODE:-0}"
+eve_UNATTENDED="${eve_UNATTENDED:-0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # State file location
-INSTALL_STATE_FILE="${HESTIA_TARGET}/.install-state"
-INSTALL_STATE_DIR="${HESTIA_TARGET}/.install-state.d"
+INSTALL_STATE_FILE="${eve_TARGET}/.install-state"
+INSTALL_STATE_DIR="${eve_TARGET}/.install-state.d"
 
 # Command-line flags
 FORCE_MODE=false
@@ -70,7 +70,7 @@ log_dryrun() {
 init_state() {
     mkdir -p "$INSTALL_STATE_DIR"
     if [[ ! -f "$INSTALL_STATE_FILE" ]]; then
-        echo "# Hestia Installation State" > "$INSTALL_STATE_FILE"
+        echo "# eve Installation State" > "$INSTALL_STATE_FILE"
         echo "# Created: $(date -Iseconds)" >> "$INSTALL_STATE_FILE"
         echo "INSTALL_VERSION=1.0" >> "$INSTALL_STATE_FILE"
         echo "INSTALL_STARTED=$(date +%s)" >> "$INSTALL_STATE_FILE"
@@ -254,7 +254,7 @@ parse_args() {
 # Show help
 show_help() {
     cat << 'EOF'
-Hestia Installer - Sovereign AI Infrastructure
+eve Installer - Sovereign AI Infrastructure
 
 Usage: ./install.sh [phase] [options]
 
@@ -273,9 +273,9 @@ Options:
   --help           Show this help message
 
 Environment Variables:
-  HESTIA_TARGET      - Installation directory (default: /opt/hestia)
-  HESTIA_SAFE_MODE   - Preserve existing data (default: false)
-  HESTIA_UNATTENDED  - No prompts (default: false)
+  eve_TARGET      - Installation directory (default: /opt/eve)
+  eve_SAFE_MODE   - Preserve existing data (default: false)
+  eve_UNATTENDED  - No prompts (default: false)
 
 Examples:
   ./install.sh                               # Run all phases
@@ -295,7 +295,7 @@ show_header() {
     echo -e "${BLUE}"
     echo "╔═══════════════════════════════════════════════════════════════╗"
     echo "║                                                               ║"
-    echo "║              HESTIA - Sovereign AI Infrastructure             ║"
+    echo "║              eve - Sovereign AI Infrastructure             ║"
     echo "║                                                               ║"
     echo "║              Your data. Your AI. Your infrastructure.           ║"
     echo "║                                                               ║"
@@ -368,7 +368,7 @@ create_directories() {
     fi
     
     if [[ "$DRY_RUN_MODE" == true ]]; then
-        log_dryrun "Would create directory structure at $HESTIA_TARGET"
+        log_dryrun "Would create directory structure at $eve_TARGET"
         mark_step_completed "$step_name"
         return 0
     fi
@@ -376,14 +376,14 @@ create_directories() {
     log_info "Creating directory structure..."
     
     local dirs=(
-        "$HESTIA_TARGET"
-        "$HESTIA_TARGET/bin"
-        "$HESTIA_TARGET/config"
-        "$HESTIA_TARGET/data"
-        "$HESTIA_TARGET/logs"
-        "$HESTIA_TARGET/packages"
-        "$HESTIA_TARGET/backups"
-        "$HESTIA_TARGET/temp"
+        "$eve_TARGET"
+        "$eve_TARGET/bin"
+        "$eve_TARGET/config"
+        "$eve_TARGET/data"
+        "$eve_TARGET/logs"
+        "$eve_TARGET/packages"
+        "$eve_TARGET/backups"
+        "$eve_TARGET/temp"
     )
     
     for dir in "${dirs[@]}"; do
@@ -411,9 +411,9 @@ run_phase() {
     log_info "Running ${phase}..."
     
     # Export environment variables for the phase
-    export HESTIA_TARGET
-    export HESTIA_SAFE_MODE
-    export HESTIA_UNATTENDED
+    export eve_TARGET
+    export eve_SAFE_MODE
+    export eve_UNATTENDED
     export INSTALL_STATE_FILE
     export INSTALL_STATE_DIR
     export FORCE_MODE
@@ -449,7 +449,7 @@ run_phase() {
 run_wizard() {
     local step_name="first_fire_wizard"
     
-    if [[ "$HESTIA_UNATTENDED" == "1" ]]; then
+    if [[ "$eve_UNATTENDED" == "1" ]]; then
         log_info "Skipping wizard (unattended mode)"
         
         # Check if we should install optional services in unattended mode
@@ -477,7 +477,7 @@ run_wizard() {
         
         # Pass optional services to wizard
         if [[ -n "$WITH_SERVICES" ]]; then
-            export HESTIA_PRESELECTED_SERVICES="$WITH_SERVICES"
+            export eve_PRESELECTED_SERVICES="$WITH_SERVICES"
         fi
         
         bash "$wizard_script"
@@ -504,10 +504,10 @@ install_optional_services() {
         return 0
     fi
     
-    # Ensure hestia CLI is available
-    if ! command -v hestia &> /dev/null; then
-        log_warn "hestia CLI not found in PATH. Skipping optional services installation."
-        log_info "You can install services later with: hestia services:install <name>"
+    # Ensure eve CLI is available
+    if ! command -v eve &> /dev/null; then
+        log_warn "eve CLI not found in PATH. Skipping optional services installation."
+        log_info "You can install services later with: eve services:install <name>"
         return 0
     fi
     
@@ -517,8 +517,8 @@ install_optional_services() {
         service=$(echo "$service" | xargs)  # Trim whitespace
         log_step "Installing $service..."
         
-        if hestia services:install "$service" --yes 2>/dev/null; then
-            hestia services:enable "$service" 2>/dev/null || true
+        if eve services:install "$service" --yes 2>/dev/null; then
+            eve services:enable "$service" 2>/dev/null || true
             log_success "$service installed and enabled"
         else
             log_warn "Failed to install $service"
@@ -621,11 +621,11 @@ main() {
     # Show final progress
     show_full_progress
     
-    log_info "Installation directory: $HESTIA_TARGET"
+    log_info "Installation directory: $eve_TARGET"
     log_info "Next steps:"
-    log_info "  1. Initialize Hestia: hestia init"
-    log_info "  2. Configure packages: hestia add <package>"
-    log_info "  3. Start services: hestia ignite"
+    log_info "  1. Initialize eve: eve init"
+    log_info "  2. Configure packages: eve add <package>"
+    log_info "  3. Start services: eve ignite"
 }
 
 # Run main function

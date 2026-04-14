@@ -1,7 +1,7 @@
 import { execSync } from 'child_process';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { readEveSecrets } from '@eve/dna';
+import { readEveSecrets, resolveHubBaseUrl, defaultSkillsDir } from '@eve/dna';
 
 interface OpenClaudeConfig {
   brainUrl: string;
@@ -10,6 +10,10 @@ interface OpenClaudeConfig {
   temperature: number;
   maxTokens: number;
   enabled: boolean;
+  synapApiUrl?: string;
+  synapApiKey?: string;
+  hubBaseUrl?: string;
+  skillsDir?: string;
 }
 
 export class OpenClaudeService {
@@ -64,6 +68,9 @@ export class OpenClaudeService {
       console.log('Configuration will be saved but may need adjustment');
     }
 
+    const hubBaseUrl = resolveHubBaseUrl(secrets);
+    const skillsDir = secrets?.builder?.skillsDir ?? defaultSkillsDir();
+
     this.config = {
       brainUrl: resolvedBrainUrl,
       basicAuth,
@@ -71,6 +78,10 @@ export class OpenClaudeService {
       temperature: 0.7,
       maxTokens: 2048,
       enabled: true,
+      synapApiUrl: secrets?.synap?.apiUrl,
+      synapApiKey: secrets?.synap?.apiKey,
+      hubBaseUrl: hubBaseUrl ?? undefined,
+      skillsDir,
     };
 
     // Save config

@@ -409,10 +409,88 @@ Routes (${status.routes.length}):`);
   });
 }
 
-// src/lib/inference-gateway.ts
-import { execSync as execSync3, spawnSync } from "child_process";
-import { mkdirSync as mkdirSync3, writeFileSync as writeFileSync3 } from "fs";
+// src/commands/newt.ts
+import { existsSync as existsSync3, mkdirSync as mkdirSync3, writeFileSync as writeFileSync3 } from "fs";
 import { join as join3 } from "path";
+import { execSync as execSync3 } from "child_process";
+var COMPOSE = `services:
+  newt:
+    image: fosrl/newt:latest
+    container_name: eve-legs-newt
+    restart: unless-stopped
+    env_file:
+      - \${NEWT_ENV_FILE}
+    networks:
+      - eve-network
+
+networks:
+  eve-network:
+    external: true
+`.trim();
+function composePath(cwd) {
+  return join3(cwd, ".eve", "legs", "newt-compose.yml");
+}
+function envPath(cwd) {
+  return join3(cwd, ".eve", "legs", "newt.env");
+}
+function writeNewtEnvTemplate(cwd) {
+  const dir = join3(cwd, ".eve", "legs");
+  mkdirSync3(dir, { recursive: true });
+  const p = envPath(cwd);
+  if (!existsSync3(p)) {
+    writeFileSync3(
+      p,
+      [
+        "# Pangolin Newt site connector \u2014 https://docs.pangolin.net/manage/sites/install-site",
+        "PANGOLIN_ENDPOINT=https://your-pangolin-host.example",
+        "NEWT_ID=",
+        "NEWT_SECRET=",
+        "LOG_LEVEL=INFO",
+        "# Optional: Docker discovery (read-only socket)",
+        "# DOCKER_SOCKET=unix:///var/run/docker.sock",
+        ""
+      ].join("\n"),
+      "utf-8"
+    );
+  }
+  return p;
+}
+function newtCommand(program) {
+  const n = program.command("newt").description("Pangolin Newt (site connector) on eve-network \u2014 fosrl/newt");
+  n.command("init").description("Write .eve/legs/newt.env template if missing").action(() => {
+    const cwd = process.cwd();
+    const p = writeNewtEnvTemplate(cwd);
+    console.log(`Newt env template: ${p}
+Edit PANGOLIN_ENDPOINT, NEWT_ID, NEWT_SECRET then run: eve legs newt up`);
+  });
+  n.command("up").description("Start Newt container (requires filled newt.env + eve-network)").action(() => {
+    const cwd = process.cwd();
+    writeNewtEnvTemplate(cwd);
+    const envFile = envPath(cwd);
+    mkdirSync3(join3(cwd, ".eve", "legs"), { recursive: true });
+    writeFileSync3(composePath(cwd), COMPOSE, "utf-8");
+    try {
+      execSync3("docker network create eve-network", { stdio: "ignore" });
+    } catch {
+    }
+    const env = { ...process.env, NEWT_ENV_FILE: envFile };
+    execSync3(`docker compose -f "${composePath(cwd)}" up -d`, { stdio: "inherit", cwd, env });
+    console.log("\nNewt running. See Pangolin dashboard for site status.\n");
+  });
+  n.command("down").description("Stop Newt container").action(() => {
+    const cwd = process.cwd();
+    if (!existsSync3(composePath(cwd))) {
+      console.log("No newt compose. Run: eve legs newt up");
+      return;
+    }
+    execSync3(`docker compose -f "${composePath(cwd)}" down`, { stdio: "inherit", cwd, env: { ...process.env, NEWT_ENV_FILE: envPath(cwd) } });
+  });
+}
+
+// src/lib/inference-gateway.ts
+import { execSync as execSync4, spawnSync } from "child_process";
+import { mkdirSync as mkdirSync4, writeFileSync as writeFileSync4 } from "fs";
+import { join as join4 } from "path";
 import { randomBytes } from "crypto";
 import { readEveSecrets, writeEveSecrets } from "@eve/dna";
 var GATEWAY_CONTAINER = "eve-inference-gateway";
@@ -423,7 +501,7 @@ var InferenceGateway = class {
   cwd;
   constructor(cwd = process.cwd(), hostPort = DEFAULT_HOST_PORT) {
     this.cwd = cwd;
-    this.baseDir = join3(cwd, ".eve", "inference-gateway");
+    this.baseDir = join4(cwd, ".eve", "inference-gateway");
     this.hostPort = process.env.EVE_INFERENCE_GATEWAY_PORT?.trim() || hostPort;
   }
   /** APR1 hash line for Traefik usersFile (user:hash). */
@@ -436,7 +514,7 @@ var InferenceGateway = class {
     return `${username}:${hash}`;
   }
   async ensure(ollamaHost = "http://eve-brain-ollama:11434") {
-    mkdirSync3(join3(this.baseDir, "dynamic"), { recursive: true });
+    mkdirSync4(join4(this.baseDir, "dynamic"), { recursive: true });
     const username = "eve";
     const password = randomBytes(18).toString("base64url").slice(0, 24);
     const userLine = this.htpasswdLine(username, password);
@@ -453,7 +531,7 @@ providers:
 log:
   level: INFO
 `.trim();
-    writeFileSync3(join3(this.baseDir, "dynamic", "ollama-users"), `${userLine}
+    writeFileSync4(join4(this.baseDir, "dynamic", "ollama-users"), `${userLine}
 `, { mode: 384 });
     const dynamicYaml = [
       "http:",
@@ -475,10 +553,10 @@ log:
       "        servers:",
       `          - url: "${ollamaHost}"`
     ].join("\n");
-    writeFileSync3(join3(this.baseDir, "traefik.yml"), staticYaml);
-    writeFileSync3(join3(this.baseDir, "dynamic", "ollama.yml"), dynamicYaml);
-    const secretsFile = join3(this.baseDir, "..", "secrets", "ollama-gateway.txt");
-    mkdirSync3(join3(this.baseDir, "..", "secrets"), { recursive: true });
+    writeFileSync4(join4(this.baseDir, "traefik.yml"), staticYaml);
+    writeFileSync4(join4(this.baseDir, "dynamic", "ollama.yml"), dynamicYaml);
+    const secretsFile = join4(this.baseDir, "..", "secrets", "ollama-gateway.txt");
+    mkdirSync4(join4(this.baseDir, "..", "secrets"), { recursive: true });
     const secretBody = `# Eve inference gateway (Basic auth for Ollama)
 URL=http://127.0.0.1:${this.hostPort}
 USER=${username}
@@ -487,7 +565,7 @@ PASS=${password}
 Example:
   curl -u '${username}:${password}' http://127.0.0.1:${this.hostPort}/api/tags
 `;
-    writeFileSync3(secretsFile, secretBody, { mode: 384 });
+    writeFileSync4(secretsFile, secretBody, { mode: 384 });
     const prevSecrets = await readEveSecrets(this.cwd);
     await writeEveSecrets(
       {
@@ -502,15 +580,15 @@ Example:
       this.cwd
     );
     try {
-      execSync3("docker network create eve-network", { stdio: "ignore" });
+      execSync4("docker network create eve-network", { stdio: "ignore" });
     } catch {
     }
     const running = this.isGatewayRunning();
     if (!running) {
       if (this.gatewayContainerExists()) {
-        execSync3(`docker start ${GATEWAY_CONTAINER}`, { stdio: "inherit" });
+        execSync4(`docker start ${GATEWAY_CONTAINER}`, { stdio: "inherit" });
       } else {
-        execSync3(
+        execSync4(
           [
             "docker",
             "run",
@@ -545,7 +623,7 @@ Example:
   }
   gatewayContainerExists() {
     try {
-      execSync3(`docker container inspect ${GATEWAY_CONTAINER}`, { stdio: "ignore" });
+      execSync4(`docker container inspect ${GATEWAY_CONTAINER}`, { stdio: "ignore" });
       return true;
     } catch {
       return false;
@@ -553,7 +631,7 @@ Example:
   }
   isGatewayRunning() {
     try {
-      const out = execSync3(`docker inspect -f '{{.State.Running}}' ${GATEWAY_CONTAINER}`, {
+      const out = execSync4(`docker inspect -f '{{.State.Running}}' ${GATEWAY_CONTAINER}`, {
         encoding: "utf-8"
       }).trim();
       return out === "true";
@@ -567,6 +645,7 @@ Example:
 function registerLegsCommands(legs) {
   setupCommand(legs);
   domainCommand(legs);
+  newtCommand(legs);
 }
 function registerCommands(program) {
   const legs = program.command("legs").description("Traefik, domains, and tunnels");
@@ -582,6 +661,7 @@ export {
   TunnelService,
   index_default as default,
   domainCommand,
+  newtCommand,
   registerCommands,
   registerLegsCommands,
   runLegsProxySetup,

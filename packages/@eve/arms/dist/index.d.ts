@@ -8,6 +8,9 @@ interface MCPConfig {
 interface OpenClawConfig {
     ollamaUrl: string;
     model?: string;
+    synapApiUrl?: string;
+    synapApiKey?: string;
+    dokployApiUrl?: string;
     mcpServers?: Record<string, MCPConfig>;
 }
 declare class OpenClawService {
@@ -20,6 +23,11 @@ declare class OpenClawService {
      * Configure OpenClaw to use Ollama
      */
     configure(ollamaUrl: string): Promise<void>;
+    setIntegration(integration: {
+        synapApiUrl?: string;
+        synapApiKey?: string;
+        dokployApiUrl?: string;
+    }): void;
     /**
      * Start OpenClaw container
      */

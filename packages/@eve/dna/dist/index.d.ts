@@ -28,9 +28,9 @@ interface OrganConfig {
 /** Available services organized by organ */
 type BrainService = 'synap' | 'ollama' | 'postgres' | 'redis';
 type ArmsService = 'openclaw';
-type BuilderService = 'opencode' | 'openclaude' | 'dokploy';
+type BuilderService = 'opencode' | 'openclaude' | 'claudecode' | 'dokploy';
 type EyesService = 'rsshub';
-type LegsService = 'traefik' | 'cloudflared' | 'pangolin';
+type LegsService = 'traefik' | 'cloudflared' | 'pangolin' | 'newt';
 type Service = BrainService | ArmsService | BuilderService | EyesService | LegsService;
 /** Service configuration for Docker containers */
 interface ServiceConfig {
@@ -445,6 +445,10 @@ declare function createDockerComposeGenerator(): DockerComposeGenerator;
 
 declare const SetupProfileKindSchema: z.ZodEnum<["inference_only", "data_pod", "full"]>;
 type SetupProfileKind = z.infer<typeof SetupProfileKindSchema>;
+declare const BuilderEngineSchema: z.ZodEnum<["opencode", "openclaude", "claudecode"]>;
+declare const AiModeSchema: z.ZodEnum<["local", "provider", "hybrid"]>;
+declare const AiProviderSchema: z.ZodEnum<["ollama", "openrouter", "anthropic", "openai"]>;
+type BuilderEngine = z.infer<typeof BuilderEngineSchema>;
 declare const SetupProfileSchema: z.ZodObject<{
     version: z.ZodLiteral<"1">;
     profile: z.ZodEnum<["inference_only", "data_pod", "full"]>;
@@ -455,6 +459,12 @@ declare const SetupProfileSchema: z.ZodObject<{
     /** If set, `eve setup` runs `eve legs setup` with this tunnel after Data Pod / full stack steps. */
     tunnelProvider: z.ZodOptional<z.ZodEnum<["pangolin", "cloudflare"]>>;
     tunnelDomain: z.ZodOptional<z.ZodString>;
+    /** Default builder codegen surface for `eve builder init` */
+    builderEngine: z.ZodOptional<z.ZodEnum<["opencode", "openclaude", "claudecode"]>>;
+    /** AI foundation mode selected during setup */
+    aiMode: z.ZodOptional<z.ZodEnum<["local", "provider", "hybrid"]>>;
+    aiDefaultProvider: z.ZodOptional<z.ZodEnum<["ollama", "openrouter", "anthropic", "openai"]>>;
+    aiFallbackProvider: z.ZodOptional<z.ZodEnum<["ollama", "openrouter", "anthropic", "openai"]>>;
 }, "strip", z.ZodTypeAny, {
     version: "1";
     updatedAt: string;
@@ -464,6 +474,10 @@ declare const SetupProfileSchema: z.ZodObject<{
     source?: "wizard" | "usb_manifest" | "cli" | undefined;
     tunnelProvider?: "pangolin" | "cloudflare" | undefined;
     tunnelDomain?: string | undefined;
+    builderEngine?: "opencode" | "openclaude" | "claudecode" | undefined;
+    aiMode?: "local" | "provider" | "hybrid" | undefined;
+    aiDefaultProvider?: "ollama" | "openai" | "anthropic" | "openrouter" | undefined;
+    aiFallbackProvider?: "ollama" | "openai" | "anthropic" | "openrouter" | undefined;
 }, {
     version: "1";
     updatedAt: string;
@@ -473,6 +487,10 @@ declare const SetupProfileSchema: z.ZodObject<{
     source?: "wizard" | "usb_manifest" | "cli" | undefined;
     tunnelProvider?: "pangolin" | "cloudflare" | undefined;
     tunnelDomain?: string | undefined;
+    builderEngine?: "opencode" | "openclaude" | "claudecode" | undefined;
+    aiMode?: "local" | "provider" | "hybrid" | undefined;
+    aiDefaultProvider?: "ollama" | "openai" | "anthropic" | "openrouter" | undefined;
+    aiFallbackProvider?: "ollama" | "openai" | "anthropic" | "openrouter" | undefined;
 }>;
 type SetupProfile = z.infer<typeof SetupProfileSchema>;
 declare function getSetupProfilePath(cwd?: string): string;
@@ -524,15 +542,69 @@ declare function formatHardwareReport(f: HardwareFacts): string;
 declare const SecretsSchema: z.ZodObject<{
     version: z.ZodLiteral<"1">;
     updatedAt: z.ZodString;
+    ai: z.ZodOptional<z.ZodObject<{
+        mode: z.ZodOptional<z.ZodEnum<["local", "provider", "hybrid"]>>;
+        defaultProvider: z.ZodOptional<z.ZodEnum<["ollama", "openrouter", "anthropic", "openai"]>>;
+        fallbackProvider: z.ZodOptional<z.ZodEnum<["ollama", "openrouter", "anthropic", "openai"]>>;
+        providers: z.ZodOptional<z.ZodArray<z.ZodObject<{
+            id: z.ZodEnum<["ollama", "openrouter", "anthropic", "openai"]>;
+            enabled: z.ZodOptional<z.ZodBoolean>;
+            apiKey: z.ZodOptional<z.ZodString>;
+            baseUrl: z.ZodOptional<z.ZodString>;
+            defaultModel: z.ZodOptional<z.ZodString>;
+        }, "strip", z.ZodTypeAny, {
+            id: "ollama" | "openai" | "anthropic" | "openrouter";
+            enabled?: boolean | undefined;
+            apiKey?: string | undefined;
+            baseUrl?: string | undefined;
+            defaultModel?: string | undefined;
+        }, {
+            id: "ollama" | "openai" | "anthropic" | "openrouter";
+            enabled?: boolean | undefined;
+            apiKey?: string | undefined;
+            baseUrl?: string | undefined;
+            defaultModel?: string | undefined;
+        }>, "many">>;
+        /** Sync intent flag used by explicit `eve ai sync --workspace <id>` command. */
+        syncToSynap: z.ZodOptional<z.ZodBoolean>;
+    }, "strip", z.ZodTypeAny, {
+        mode?: "local" | "provider" | "hybrid" | undefined;
+        defaultProvider?: "ollama" | "openai" | "anthropic" | "openrouter" | undefined;
+        fallbackProvider?: "ollama" | "openai" | "anthropic" | "openrouter" | undefined;
+        providers?: {
+            id: "ollama" | "openai" | "anthropic" | "openrouter";
+            enabled?: boolean | undefined;
+            apiKey?: string | undefined;
+            baseUrl?: string | undefined;
+            defaultModel?: string | undefined;
+        }[] | undefined;
+        syncToSynap?: boolean | undefined;
+    }, {
+        mode?: "local" | "provider" | "hybrid" | undefined;
+        defaultProvider?: "ollama" | "openai" | "anthropic" | "openrouter" | undefined;
+        fallbackProvider?: "ollama" | "openai" | "anthropic" | "openrouter" | undefined;
+        providers?: {
+            id: "ollama" | "openai" | "anthropic" | "openrouter";
+            enabled?: boolean | undefined;
+            apiKey?: string | undefined;
+            baseUrl?: string | undefined;
+            defaultModel?: string | undefined;
+        }[] | undefined;
+        syncToSynap?: boolean | undefined;
+    }>>;
     synap: z.ZodOptional<z.ZodObject<{
         apiUrl: z.ZodOptional<z.ZodString>;
         apiKey: z.ZodOptional<z.ZodString>;
+        /** Full Hub base URL; if unset, Eve derives `${apiUrl}/api/hub` */
+        hubBaseUrl: z.ZodOptional<z.ZodString>;
     }, "strip", z.ZodTypeAny, {
-        apiUrl?: string | undefined;
         apiKey?: string | undefined;
+        apiUrl?: string | undefined;
+        hubBaseUrl?: string | undefined;
     }, {
-        apiUrl?: string | undefined;
         apiKey?: string | undefined;
+        apiUrl?: string | undefined;
+        hubBaseUrl?: string | undefined;
     }>>;
     inference: z.ZodOptional<z.ZodObject<{
         ollamaUrl: z.ZodOptional<z.ZodString>;
@@ -551,20 +623,29 @@ declare const SecretsSchema: z.ZodObject<{
         gatewayPass?: string | undefined;
     }>>;
     builder: z.ZodOptional<z.ZodObject<{
+        codeEngine: z.ZodOptional<z.ZodEnum<["opencode", "openclaude", "claudecode"]>>;
         openclaudeUrl: z.ZodOptional<z.ZodString>;
         dokployApiUrl: z.ZodOptional<z.ZodString>;
         dokployApiKey: z.ZodOptional<z.ZodString>;
+        dokployWebhookUrl: z.ZodOptional<z.ZodString>;
         workspaceDir: z.ZodOptional<z.ZodString>;
+        skillsDir: z.ZodOptional<z.ZodString>;
     }, "strip", z.ZodTypeAny, {
+        codeEngine?: "opencode" | "openclaude" | "claudecode" | undefined;
         openclaudeUrl?: string | undefined;
         dokployApiUrl?: string | undefined;
         dokployApiKey?: string | undefined;
+        dokployWebhookUrl?: string | undefined;
         workspaceDir?: string | undefined;
+        skillsDir?: string | undefined;
     }, {
+        codeEngine?: "opencode" | "openclaude" | "claudecode" | undefined;
         openclaudeUrl?: string | undefined;
         dokployApiUrl?: string | undefined;
         dokployApiKey?: string | undefined;
+        dokployWebhookUrl?: string | undefined;
         workspaceDir?: string | undefined;
+        skillsDir?: string | undefined;
     }>>;
     arms: z.ZodOptional<z.ZodObject<{
         openclawSynapApiKey: z.ZodOptional<z.ZodString>;
@@ -580,14 +661,31 @@ declare const SecretsSchema: z.ZodObject<{
         openclawSynapApiKey?: string | undefined;
     } | undefined;
     builder?: {
+        codeEngine?: "opencode" | "openclaude" | "claudecode" | undefined;
         openclaudeUrl?: string | undefined;
         dokployApiUrl?: string | undefined;
         dokployApiKey?: string | undefined;
+        dokployWebhookUrl?: string | undefined;
         workspaceDir?: string | undefined;
+        skillsDir?: string | undefined;
     } | undefined;
     synap?: {
-        apiUrl?: string | undefined;
         apiKey?: string | undefined;
+        apiUrl?: string | undefined;
+        hubBaseUrl?: string | undefined;
+    } | undefined;
+    ai?: {
+        mode?: "local" | "provider" | "hybrid" | undefined;
+        defaultProvider?: "ollama" | "openai" | "anthropic" | "openrouter" | undefined;
+        fallbackProvider?: "ollama" | "openai" | "anthropic" | "openrouter" | undefined;
+        providers?: {
+            id: "ollama" | "openai" | "anthropic" | "openrouter";
+            enabled?: boolean | undefined;
+            apiKey?: string | undefined;
+            baseUrl?: string | undefined;
+            defaultModel?: string | undefined;
+        }[] | undefined;
+        syncToSynap?: boolean | undefined;
     } | undefined;
     inference?: {
         ollamaUrl?: string | undefined;
@@ -602,14 +700,31 @@ declare const SecretsSchema: z.ZodObject<{
         openclawSynapApiKey?: string | undefined;
     } | undefined;
     builder?: {
+        codeEngine?: "opencode" | "openclaude" | "claudecode" | undefined;
         openclaudeUrl?: string | undefined;
         dokployApiUrl?: string | undefined;
         dokployApiKey?: string | undefined;
+        dokployWebhookUrl?: string | undefined;
         workspaceDir?: string | undefined;
+        skillsDir?: string | undefined;
     } | undefined;
     synap?: {
-        apiUrl?: string | undefined;
         apiKey?: string | undefined;
+        apiUrl?: string | undefined;
+        hubBaseUrl?: string | undefined;
+    } | undefined;
+    ai?: {
+        mode?: "local" | "provider" | "hybrid" | undefined;
+        defaultProvider?: "ollama" | "openai" | "anthropic" | "openrouter" | undefined;
+        fallbackProvider?: "ollama" | "openai" | "anthropic" | "openrouter" | undefined;
+        providers?: {
+            id: "ollama" | "openai" | "anthropic" | "openrouter";
+            enabled?: boolean | undefined;
+            apiKey?: string | undefined;
+            baseUrl?: string | undefined;
+            defaultModel?: string | undefined;
+        }[] | undefined;
+        syncToSynap?: boolean | undefined;
     } | undefined;
     inference?: {
         ollamaUrl?: string | undefined;
@@ -623,6 +738,30 @@ declare function secretsPath(cwd?: string): string;
 declare function readEveSecrets(cwd?: string): Promise<EveSecrets | null>;
 declare function writeEveSecrets(partial: Omit<EveSecrets, 'version' | 'updatedAt'>, cwd?: string): Promise<EveSecrets>;
 declare function ensureSecretValue(existing?: string): string;
+
+/** Default Hub Protocol path on the Synap API host (Better Auth / Hub REST). */
+declare const DEFAULT_HUB_PATH = "/api/hub";
+declare function resolveHubBaseUrl(secrets: EveSecrets | null): string | undefined;
+declare function defaultSkillsDir(): string;
+/**
+ * Ensures ~/.eve/skills/synap/SKILL.md exists (OpenClaw-style layout; Claude Code can symlink into .claude/skills).
+ */
+declare function ensureEveSkillsLayout(skillsDir?: string): void;
+/**
+ * Dotenv for OpenCode / sandbox / any tool that reads `.env` in the project root.
+ */
+declare function writeBuilderProjectEnv(projectDir: string, cwd?: string): Promise<void>;
+/** Writes `.eve/sandbox.env` for docker compose --env-file */
+declare function writeSandboxEnvFile(cwd?: string): Promise<string>;
+/**
+ * Claude Code loads skills from `<project>/.claude/skills/<name>/SKILL.md` (see code.claude.com docs).
+ * Copies the Eve synap stub into the project (portable; no symlink privileges).
+ */
+declare function copySynapSkillIntoClaudeProject(projectDir: string, skillsDir?: string): void;
+/**
+ * Claude Code `settings.json` env block (see https://code.claude.com/docs/en/settings ).
+ */
+declare function writeClaudeCodeSettings(projectDir: string, cwd?: string): Promise<void>;
 
 /**
  * DNA Package - @eve/dna
@@ -658,4 +797,4 @@ declare function ensureSecretValue(existing?: string): string;
 
 declare const VERSION = "0.1.0";
 
-export { type AIModel, ConfigManager, type Credentials, CredentialsManager, type DNAError, type DockerCompose, DockerComposeGenerator, type DockerComposeService, type EntityState, EntityStateManager, type EveConfig, type EveSecrets, type HardwareFacts, type Organ, type OrganState, type OrganStatus, type Service, type ServiceConfig, type SetupProfile, type SetupProfileKind, SetupProfileKindSchema, SetupProfileSchema, type UsbSetupManifest, UsbSetupManifestSchema, VERSION, configManager, createDockerComposeGenerator, credentialsManager, ensureSecretValue, entityStateManager, formatHardwareReport, getSetupProfilePath, probeHardware, readEveSecrets, readSetupProfile, readUsbSetupManifest, secretsPath, writeEveSecrets, writeSetupProfile, writeUsbSetupManifest };
+export { type AIModel, AiModeSchema, AiProviderSchema, type BuilderEngine, BuilderEngineSchema, ConfigManager, type Credentials, CredentialsManager, DEFAULT_HUB_PATH, type DNAError, type DockerCompose, DockerComposeGenerator, type DockerComposeService, type EntityState, EntityStateManager, type EveConfig, type EveSecrets, type HardwareFacts, type Organ, type OrganState, type OrganStatus, type Service, type ServiceConfig, type SetupProfile, type SetupProfileKind, SetupProfileKindSchema, SetupProfileSchema, type UsbSetupManifest, UsbSetupManifestSchema, VERSION, configManager, copySynapSkillIntoClaudeProject, createDockerComposeGenerator, credentialsManager, defaultSkillsDir, ensureEveSkillsLayout, ensureSecretValue, entityStateManager, formatHardwareReport, getSetupProfilePath, probeHardware, readEveSecrets, readSetupProfile, readUsbSetupManifest, resolveHubBaseUrl, secretsPath, writeBuilderProjectEnv, writeClaudeCodeSettings, writeEveSecrets, writeSandboxEnvFile, writeSetupProfile, writeUsbSetupManifest };

@@ -1,5 +1,7 @@
 import type { Command } from 'commander';
 import { select, confirm, isCancel, text } from '@clack/prompts';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import {
   readSetupProfile,
   writeSetupProfile,
@@ -9,6 +11,8 @@ import {
   readEveSecrets,
   writeEveSecrets,
   ensureSecretValue,
+  defaultSkillsDir,
+  ensureEveSkillsLayout,
   type SetupProfileKind,
   type EveSecrets,
 } from '@eve/dna';
@@ -30,6 +34,12 @@ export interface SetupCliOptions {
   fromSource?: boolean;
   skipHardware?: boolean;
   nvidiaSmi?: boolean;
+  /** local | provider | hybrid */
+  aiMode?: string;
+  /** default provider for Eve provider routing (openrouter|anthropic|openai|ollama) */
+  aiProvider?: string;
+  /** optional fallback provider */
+  fallbackProvider?: string;
   /** pangolin | cloudflare — Data Pod / full only */
   tunnel?: string;
   tunnelDomain?: string;
@@ -52,6 +62,41 @@ function parseTunnel(s: string | undefined): 'pangolin' | 'cloudflare' | undefin
   return undefined;
 }
 
+function parseCodeEngine(
+  s: string | undefined,
+): 'opencode' | 'openclaude' | 'claudecode' | undefined {
+  if (!s) return undefined;
+  const v = s.trim().toLowerCase();
+  if (v === 'opencode') return 'opencode';
+  if (v === 'openclaude') return 'openclaude';
+  if (v === 'claudecode' || v === 'claude_code' || v === 'claude-code') return 'claudecode';
+  return undefined;
+}
+
+function parseAiMode(s: string | undefined): 'local' | 'provider' | 'hybrid' | undefined {
+  if (!s) return undefined;
+  const v = s.trim().toLowerCase();
+  if (v === 'local' || v === 'provider' || v === 'hybrid') return v;
+  return undefined;
+}
+
+function parseAiProvider(
+  s: string | undefined,
+): 'ollama' | 'openrouter' | 'anthropic' | 'openai' | undefined {
+  if (!s) return undefined;
+  const v = s.trim().toLowerCase();
+  if (v === 'ollama' || v === 'openrouter' || v === 'anthropic' || v === 'openai') return v;
+  return undefined;
+}
+
+function prevAiModeFromUsb(
+  usb: { target_profile: SetupProfileKind } | null,
+): 'local' | 'provider' | 'hybrid' | undefined {
+  if (!usb) return undefined;
+  if (usb.target_profile === 'inference_only') return 'local';
+  return undefined;
+}
+
 export function setupCommand(program: Command): void {
   program
     .command('setup')
@@ -68,6 +113,12 @@ export function setupCommand(program: Command): void {
     .option('--from-source', 'synap install --from-source')
     .option('--skip-hardware', 'Skip optional hardware summary')
     .option('--nvidia-smi', 'With hardware summary in non-interactive mode, run nvidia-smi')
+    .option('--ai-mode <m>', 'local | provider | hybrid (AI foundation first)', 'hybrid')
+    .option(
+      '--ai-provider <p>',
+      'Default provider for Eve provider routing: openrouter | anthropic | openai | ollama',
+    )
+    .option('--fallback-provider <p>', 'Fallback provider for Eve provider routing')
     .option('--tunnel <provider>', 'data_pod | full: pangolin or cloudflare (runs eve legs setup after install)')
     .option('--tunnel-domain <host>', 'Hostname for tunnel / ingress (optional)')
     .addHelpText(
@@ -79,7 +130,7 @@ export function setupCommand(program: Command): void {
         'State & manifests\n' +
         '  Writes .eve/setup-profile.json in the current working directory.\n' +
         '  Pre-filled profile if ~/.eve/usb-profile.json, /opt/eve/profile.json, or EVE_SETUP_MANIFEST exists.\n\n' +
-        'Docs: hestia-cli/docs/EVE_SETUP_PROFILES.md and hestia-cli/README.md\n',
+        'Docs: hestia-cli/docs/EVE_SETUP_PROFILES.md, hestia-cli/docs/AI_ROUTING_CONSOLIDATION_ADR.md, and hestia-cli/README.md\n',
     )
     .action(async (opts: SetupCliOptions) => {
       const flags = getGlobalCliFlags();
@@ -130,6 +181,79 @@ export function setupCommand(program: Command): void {
         process.exit(1);
       }
 
+      // AI foundation first (local/provider/hybrid) before Synap and side systems
+      let aiMode = parseAiMode(opts.aiMode) ?? prevAiModeFromUsb(usb);
+      let defaultProvider = parseAiProvider(opts.aiProvider);
+      let fallbackProvider = parseAiProvider(opts.fallbackProvider);
+
+      if (!opts.dryRun && !flags.nonInteractive && !flags.json) {
+        if (!aiMode) {
+          const m = await select({
+            message: 'AI foundation: where should inference run?',
+            options: [
+              { value: 'local' as const, label: 'Local only', hint: 'Ollama on this server' },
+              { value: 'provider' as const, label: 'Provider only', hint: 'OpenRouter/Anthropic/OpenAI' },
+              { value: 'hybrid' as const, label: 'Hybrid (recommended)', hint: 'Local + provider fallback' },
+            ],
+            initialValue: 'hybrid',
+          });
+          if (isCancel(m)) {
+            console.log(colors.muted('Cancelled.'));
+            return;
+          }
+          aiMode = parseAiMode(String(m));
+        }
+
+        if (!defaultProvider && aiMode !== 'local') {
+          const p = await select({
+            message: 'Choose default cloud provider',
+            options: [
+              { value: 'openrouter' as const, label: 'OpenRouter', hint: 'Multi-provider gateway' },
+              { value: 'anthropic' as const, label: 'Anthropic' },
+              { value: 'openai' as const, label: 'OpenAI' },
+            ],
+            initialValue: 'openrouter',
+          });
+          if (isCancel(p)) {
+            console.log(colors.muted('Cancelled.'));
+            return;
+          }
+          defaultProvider = parseAiProvider(String(p));
+        }
+
+        // Always propose fallback for resilience
+        const askFallback = await confirm({
+          message: 'Add a fallback provider?',
+          initialValue: true,
+        });
+        if (isCancel(askFallback)) {
+          console.log(colors.muted('Cancelled.'));
+          return;
+        }
+        if (askFallback && !fallbackProvider) {
+          const fp = await select({
+            message: 'Fallback provider',
+            options: [
+              { value: 'openrouter' as const, label: 'OpenRouter' },
+              { value: 'anthropic' as const, label: 'Anthropic' },
+              { value: 'openai' as const, label: 'OpenAI' },
+              { value: 'ollama' as const, label: 'Ollama local' },
+              { value: 'none' as const, label: 'Skip fallback' },
+            ],
+            initialValue: aiMode === 'local' ? 'none' : 'ollama',
+          });
+          if (isCancel(fp)) {
+            console.log(colors.muted('Cancelled.'));
+            return;
+          }
+          fallbackProvider =
+            fp === 'none' ? undefined : parseAiProvider(String(fp));
+        }
+      }
+
+      if (!aiMode) aiMode = 'hybrid';
+      if (!defaultProvider && aiMode !== 'local') defaultProvider = 'openrouter';
+
       let tunnelProvider = parseTunnel(opts.tunnel) ?? usb?.tunnel_provider;
       let tunnelDomain =
         (opts.tunnelDomain?.trim() || usb?.tunnel_domain || '').trim() || undefined;
@@ -162,7 +286,8 @@ export function setupCommand(program: Command): void {
             console.log(colors.muted('Cancelled.'));
             return;
           }
-          tunnelProvider = t === 'none' ? undefined : t;
+          tunnelProvider =
+            t === 'none' ? undefined : parseTunnel(String(t));
         }
         if (tunnelProvider && !tunnelDomain) {
           const d = await text({
@@ -180,6 +305,14 @@ export function setupCommand(program: Command): void {
 
       if (flags.nonInteractive && opts.tunnel && !tunnelProvider) {
         console.error('Invalid --tunnel (use pangolin or cloudflare).');
+        process.exit(1);
+      }
+      if (flags.nonInteractive && opts.aiMode && !parseAiMode(opts.aiMode)) {
+        console.error('Invalid --ai-mode (use local|provider|hybrid).');
+        process.exit(1);
+      }
+      if (flags.nonInteractive && opts.aiProvider && !parseAiProvider(opts.aiProvider)) {
+        console.error('Invalid --ai-provider (use openrouter|anthropic|openai|ollama).');
         process.exit(1);
       }
 
@@ -200,6 +333,11 @@ export function setupCommand(program: Command): void {
           profile,
           existing: existing?.profile ?? null,
           usbManifest: usb ? { target_profile: usb.target_profile } : null,
+          ai: {
+            mode: aiMode ?? null,
+            defaultProvider: defaultProvider ?? null,
+            fallbackProvider: fallbackProvider ?? null,
+          },
           tunnel: tunnelProvider ?? null,
           tunnelDomain: tunnelDomain ?? null,
         };
@@ -238,14 +376,52 @@ export function setupCommand(program: Command): void {
           hearthName: usb?.hearth_name,
           tunnelProvider,
           tunnelDomain,
+          aiMode,
+          aiDefaultProvider: defaultProvider,
+          aiFallbackProvider: fallbackProvider,
         },
         cwd,
       );
 
       const prevSecrets = await readEveSecrets(cwd);
       type SecretsMerge = Omit<EveSecrets, 'version' | 'updatedAt'>;
+      const skillsDir =
+        prevSecrets?.builder?.skillsDir?.trim() ||
+        process.env.EVE_SKILLS_DIR?.trim() ||
+        defaultSkillsDir();
+
       const merge: SecretsMerge = {
+        ai: {
+          mode: aiMode,
+          defaultProvider,
+          fallbackProvider,
+          syncToSynap: true,
+          providers: [
+            { id: 'ollama', enabled: aiMode !== 'provider', baseUrl: prevSecrets?.inference?.ollamaUrl ?? 'http://127.0.0.1:11434' },
+            {
+              id: 'openrouter',
+              enabled: defaultProvider === 'openrouter' || fallbackProvider === 'openrouter',
+              apiKey: prevSecrets?.ai?.providers?.find((p) => p.id === 'openrouter')?.apiKey ?? process.env.OPENROUTER_API_KEY,
+              baseUrl: 'https://openrouter.ai/api/v1',
+              defaultModel: prevSecrets?.ai?.providers?.find((p) => p.id === 'openrouter')?.defaultModel ?? process.env.OPENROUTER_MODEL,
+            },
+            {
+              id: 'anthropic',
+              enabled: defaultProvider === 'anthropic' || fallbackProvider === 'anthropic',
+              apiKey: prevSecrets?.ai?.providers?.find((p) => p.id === 'anthropic')?.apiKey ?? process.env.ANTHROPIC_API_KEY,
+              defaultModel: prevSecrets?.ai?.providers?.find((p) => p.id === 'anthropic')?.defaultModel ?? process.env.ANTHROPIC_MODEL,
+            },
+            {
+              id: 'openai',
+              enabled: defaultProvider === 'openai' || fallbackProvider === 'openai',
+              apiKey: prevSecrets?.ai?.providers?.find((p) => p.id === 'openai')?.apiKey ?? process.env.OPENAI_API_KEY,
+              defaultModel: prevSecrets?.ai?.providers?.find((p) => p.id === 'openai')?.defaultModel ?? process.env.OPENAI_MODEL,
+            },
+          ],
+        },
         builder: {
+          codeEngine:
+            parseCodeEngine(process.env.BUILDER_CODE_ENGINE) ?? prevSecrets?.builder?.codeEngine,
           openclaudeUrl:
             profile === 'data_pod'
               ? prevSecrets?.builder?.openclaudeUrl ??
@@ -255,20 +431,30 @@ export function setupCommand(program: Command): void {
                 'http://127.0.0.1:11435',
           dokployApiUrl: prevSecrets?.builder?.dokployApiUrl ?? process.env.DOKPLOY_API_URL ?? 'http://127.0.0.1:3000',
           dokployApiKey: ensureSecretValue(prevSecrets?.builder?.dokployApiKey ?? process.env.DOKPLOY_API_KEY),
-          workspaceDir: prevSecrets?.builder?.workspaceDir ?? `${cwd}/.eve/workspace`,
-        },
-        arms: {
-          openclawSynapApiKey: ensureSecretValue(
-            prevSecrets?.arms?.openclawSynapApiKey ??
-              process.env.OPENCLAW_SYNAP_API_KEY ??
-              prevSecrets?.synap?.apiKey,
-          ),
+          dokployWebhookUrl:
+            prevSecrets?.builder?.dokployWebhookUrl ?? process.env.DOKPLOY_WEBHOOK_URL ?? undefined,
+          workspaceDir: prevSecrets?.builder?.workspaceDir ?? join(homedir(), '.eve', 'workspace'),
+          skillsDir,
         },
       };
+
       if (profile !== 'inference_only') {
+        const podKey = ensureSecretValue(
+          prevSecrets?.synap?.apiKey ?? process.env.SYNAP_API_KEY ?? process.env.OPENCLAW_SYNAP_API_KEY,
+        );
         merge.synap = {
           apiUrl: prevSecrets?.synap?.apiUrl ?? 'http://127.0.0.1:4000',
-          apiKey: ensureSecretValue(prevSecrets?.synap?.apiKey ?? process.env.SYNAP_API_KEY),
+          apiKey: podKey,
+          hubBaseUrl: prevSecrets?.synap?.hubBaseUrl ?? process.env.SYNAP_HUB_BASE_URL ?? undefined,
+        };
+        merge.arms = {
+          openclawSynapApiKey: podKey,
+        };
+      } else {
+        merge.arms = {
+          openclawSynapApiKey: ensureSecretValue(
+            prevSecrets?.arms?.openclawSynapApiKey ?? process.env.OPENCLAW_SYNAP_API_KEY,
+          ),
         };
       }
       if (profile !== 'data_pod') {
@@ -282,6 +468,7 @@ export function setupCommand(program: Command): void {
         };
       }
       await writeEveSecrets(merge, cwd);
+      ensureEveSkillsLayout(skillsDir);
 
       if (flags.json) {
         outputJson({ ok: true, profile, persisted: true });

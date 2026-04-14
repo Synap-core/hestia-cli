@@ -26,6 +26,11 @@ var OpenClawService = class {
     this.config.ollamaUrl = ollamaUrl;
     console.log(`\u2699\uFE0F  Configured OpenClaw to use Ollama at ${ollamaUrl}`);
   }
+  setIntegration(integration) {
+    this.config.synapApiUrl = integration.synapApiUrl;
+    this.config.synapApiKey = integration.synapApiKey;
+    this.config.dokployApiUrl = integration.dokployApiUrl;
+  }
   /**
    * Start OpenClaw container
    */
@@ -49,6 +54,12 @@ var OpenClawService = class {
       `OLLAMA_URL=${this.config.ollamaUrl}`,
       "-e",
       `DEFAULT_MODEL=${this.config.model}`,
+      "-e",
+      `SYNAP_API_URL=${this.config.synapApiUrl ?? ""}`,
+      "-e",
+      `SYNAP_API_KEY=${this.config.synapApiKey ?? ""}`,
+      "-e",
+      `DOKPLOY_API_URL=${this.config.dokployApiUrl ?? ""}`,
       "-v",
       "eve-arms-openclaw-data:/data",
       "--restart",
@@ -159,7 +170,7 @@ var OpenClawService = class {
 var openclaw = new OpenClawService();
 
 // src/commands/install.ts
-import { EntityStateManager } from "@eve/dna";
+import { EntityStateManager, readEveSecrets } from "@eve/dna";
 import { execa, resolveSynapDelegate } from "@eve/brain";
 function installCommand(program) {
   program.command("install").description("Install OpenClaw AI assistant").action(async () => {
@@ -198,7 +209,14 @@ function installCommand(program) {
       console.log("\u2705 Ollama is configured");
       const openclaw2 = new OpenClawService();
       await openclaw2.install();
-      await openclaw2.configure("http://brain:11434");
+      const secrets = await readEveSecrets(process.cwd());
+      const ollamaUrl = secrets?.inference?.gatewayUrl ?? secrets?.inference?.ollamaUrl ?? "http://eve-brain-ollama:11434";
+      await openclaw2.configure(ollamaUrl);
+      openclaw2.setIntegration({
+        synapApiUrl: secrets?.synap?.apiUrl,
+        synapApiKey: secrets?.arms?.openclawSynapApiKey ?? secrets?.synap?.apiKey,
+        dokployApiUrl: secrets?.builder?.dokployApiUrl
+      });
       await openclaw2.start();
       await stateManager.updateOrgan("arms", "ready");
       console.log("\n\u{1F389} OpenClaw installed successfully!");

@@ -1,6 +1,6 @@
-# @hestia/install - System Installer
+# @eve/install - System Installer
 
-**Bash-based system installation scripts for Hestia infrastructure**
+**Bash-based system installation scripts for eve infrastructure**
 
 ---
 
@@ -11,7 +11,7 @@
 **Scope:**
 - Operating system preparation
 - Base infrastructure installation (Docker, networking, security)
-- Hestia service deployment
+- eve service deployment
 - Initial system hardening
 
 **When to Use:**
@@ -164,12 +164,12 @@ packages/install/
 1. **System Updates** - Latest packages and security patches
 2. **Docker & Docker Compose** - Container runtime
 3. **UFW Firewall** - Network security
-   - Ports: 22 (SSH), 80/443 (HTTP), 3000/4000/3001 (Hestia)
+   - Ports: 22 (SSH), 80/443 (HTTP), 3000/4000/3001 (eve)
 4. **SSH Hardening** - Secure remote access
    - Disable root login
    - Key-based auth
    - Fail2ban integration
-5. **Hestia User** - Dedicated service account
+5. **eve User** - Dedicated service account
 6. **Systemd Services** - Auto-start on boot
 
 **Duration:** 5-10 minutes
@@ -177,7 +177,7 @@ packages/install/
 
 ### Phase 2: Core + Gateway
 
-**Purpose:** Deploy Hestia infrastructure services
+**Purpose:** Deploy eve infrastructure services
 
 **Services Installed:**
 1. **PostgreSQL + pgvector** - Database with vector support
@@ -288,11 +288,11 @@ sudo bash src/install.sh all --unattended  # No prompts
 ### Via CLI
 
 ```bash
-# Through hestia CLI
-hestia install phase1
-hestia install phase2
-hestia install phase3
-hestia install all
+# Through eve CLI
+eve install phase1
+eve install phase2
+eve install phase3
+eve install all
 ```
 
 ---
@@ -301,9 +301,9 @@ hestia install all
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `HESTIA_TARGET` | Installation directory | `/opt/hestia` |
-| `HESTIA_SAFE_MODE` | Preserve existing data | `0` |
-| `HESTIA_UNATTENDED` | Non-interactive mode | `0` |
+| `eve_TARGET` | Installation directory | `/opt/eve` |
+| `eve_SAFE_MODE` | Preserve existing data | `0` |
+| `eve_UNATTENDED` | Non-interactive mode | `0` |
 | `DEBIAN_FRONTEND` | Package manager UI | `noninteractive` |
 
 ---
@@ -344,7 +344,7 @@ sudo bash src/install.sh all --resume
 ### Unattended Installation
 ```bash
 # For automation/scripts
-export HESTIA_UNATTENDED=1
+export eve_UNATTENDED=1
 sudo bash src/install.sh all
 ```
 
@@ -354,8 +354,8 @@ sudo bash src/install.sh all
 
 ### Called By
 1. **USB Installer** - During OS installation
-2. **hestia init** - First-fire wizard
-3. **hestia install** - CLI command
+2. **eve init** - First-fire wizard
+3. **eve install** - CLI command
 4. **Recovery tools** - System repair
 
 ### Calls To
@@ -366,8 +366,8 @@ sudo bash src/install.sh all
 
 ### State Files
 - `.install-state` - Progress tracking
-- `/opt/hestia/.env` - Environment variables
-- `/opt/hestia/docker-compose.yml` - Service orchestration
+- `/opt/eve/.env` - Environment variables
+- `/opt/eve/docker-compose.yml` - Service orchestration
 
 ---
 
@@ -431,7 +431,7 @@ User runs: install.sh all
 ### Error Handling
 - Each step has error checking
 - Failed steps don't block others
-- Detailed logging to `/var/log/hestia/`
+- Detailed logging to `/var/log/eve/`
 
 ---
 
@@ -462,16 +462,16 @@ sudo bash src/install.sh all
 ```
 
 ### Log Locations
-- **Install logs:** `/var/log/hestia/install.log`
-- **Service logs:** `/var/log/hestia/services/`
+- **Install logs:** `/var/log/eve/install.log`
+- **Service logs:** `/var/log/eve/services/`
 - **System logs:** `/var/log/syslog`
 
 ---
 
 ## 🔗 Related Packages
 
-- **@hestia/core** - Management CLI
-- **@hestia/usb** - USB creation tools
+- **@eve/core** - Management CLI
+- **@eve/usb** - USB creation tools
 
 ---
 

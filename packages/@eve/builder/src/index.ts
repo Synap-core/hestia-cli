@@ -2,13 +2,19 @@ import { Command } from 'commander';
 import { OpenCodeService } from './lib/opencode.js';
 import { OpenClaudeService } from './lib/openclaude.js';
 import { DokployService, type DokployStatus, type DokployProject } from './lib/dokploy.js';
+import { ClaudeCodeService } from './lib/claudecode.js';
+import { runBuilderOrganSetup } from './lib/builder-organ.js';
 import { initCommand } from './commands/init.js';
 import { deployCommand } from './commands/deploy.js';
 import { stackCommand } from './commands/stack.js';
+import { sandboxCommand } from './commands/sandbox.js';
 
 // Re-export services
 export { OpenCodeService } from './lib/opencode.js';
 export { OpenClaudeService } from './lib/openclaude.js';
+export { ClaudeCodeService } from './lib/claudecode.js';
+export { resolveBuilderProjectDir, scaffoldNonOpencodeProject } from './lib/project-paths.js';
+export { runBuilderOrganSetup, type RunBuilderOrganOptions, type RunBuilderOrganResult, type BuilderEngine } from './lib/builder-organ.js';
 export { 
   DokployService, 
   type DokployStatus, 
@@ -24,24 +30,28 @@ export class Builder {
   opencode: OpenCodeService;
   openclaude: OpenClaudeService;
   dokploy: DokployService;
+  claudecode: ClaudeCodeService;
 
   constructor() {
     this.opencode = new OpenCodeService();
     this.openclaude = new OpenClaudeService();
     this.dokploy = new DokployService();
+    this.claudecode = new ClaudeCodeService();
   }
 
-  async init(name: string, template?: string, brainUrl?: string): Promise<void> {
-    // Install all components
-    await this.opencode.install();
-    await this.openclaude.install();
-    await this.dokploy.install();
-
-    // Initialize project
-    await this.opencode.initProject(name, template);
-    await this.openclaude.configure(brainUrl || 'http://localhost:11434');
-    await this.openclaude.start();
-    await this.dokploy.createProject(name);
+  /**
+   * Legacy programmatic init — same as `eve builder init` (Builder organ first).
+   * @param withDokploy default false (Dokploy is optional / often overkill).
+   */
+  async init(name: string, template?: string, brainUrl?: string, withDokploy = false): Promise<void> {
+    await runBuilderOrganSetup({
+      name,
+      cwd: process.cwd(),
+      engines: new Set(['opencode', 'openclaude', 'claudecode']),
+      template,
+      brainUrl: brainUrl || 'http://localhost:11434',
+      withDokploy,
+    });
   }
 
   async generate(): Promise<void> {
@@ -85,6 +95,7 @@ export function registerBuilderCommands(builder: Command): void {
   initCommand(builder);
   deployCommand(builder);
   stackCommand(builder);
+  sandboxCommand(builder);
 
   builder
     .command('generate')
@@ -96,9 +107,14 @@ export function registerBuilderCommands(builder: Command): void {
 
   builder
     .command('code <prompt>')
-    .description('Generate code with OpenClaude')
+    .description('Generate code with OpenClaude (Ollama). For Claude Code use the `claude` CLI in your project.')
     .option('--output <file>', 'Output file path')
-    .action(async (prompt, options) => {
+    .option('--engine <e>', 'openclaude (default only — Ollama path)', 'openclaude')
+    .action(async (prompt, options: { output?: string; engine?: string }) => {
+      if (options.engine && options.engine !== 'openclaude') {
+        console.error('Only --engine openclaude is supported here. Use: claude (Claude Code) in the project directory.');
+        process.exit(1);
+      }
       const builder = new Builder();
       await builder.openclaude.start();
       const code = await builder.openclaude.generateCode(prompt);

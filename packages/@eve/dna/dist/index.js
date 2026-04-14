@@ -616,6 +616,12 @@ var SERVICE_REGISTRY = {
     network: "eve-network",
     restart: "no"
   },
+  claudecode: {
+    image: "node:22-bookworm-slim",
+    containerName: "eve-builder-claudecode",
+    network: "eve-network",
+    restart: "no"
+  },
   dokploy: {
     image: "node:20-alpine",
     containerName: "eve-builder-dokploy",
@@ -652,6 +658,12 @@ var SERVICE_REGISTRY = {
   pangolin: {
     image: "pangolin/pangolin:latest",
     containerName: "eve-legs-pangolin",
+    network: "eve-network",
+    restart: "unless-stopped"
+  },
+  newt: {
+    image: "fosrl/newt:latest",
+    containerName: "eve-legs-newt",
     network: "eve-network",
     restart: "unless-stopped"
   }
@@ -1000,6 +1012,9 @@ import { homedir as homedir4 } from "os";
 import { z as z3 } from "zod";
 var SetupProfileKindSchema = z3.enum(["inference_only", "data_pod", "full"]);
 var TunnelProviderSchema = z3.enum(["pangolin", "cloudflare"]);
+var BuilderEngineSchema = z3.enum(["opencode", "openclaude", "claudecode"]);
+var AiModeSchema = z3.enum(["local", "provider", "hybrid"]);
+var AiProviderSchema = z3.enum(["ollama", "openrouter", "anthropic", "openai"]);
 var SetupProfileSchema = z3.object({
   version: z3.literal("1"),
   profile: SetupProfileKindSchema,
@@ -1009,7 +1024,13 @@ var SetupProfileSchema = z3.object({
   source: z3.enum(["wizard", "usb_manifest", "cli"]).optional(),
   /** If set, `eve setup` runs `eve legs setup` with this tunnel after Data Pod / full stack steps. */
   tunnelProvider: TunnelProviderSchema.optional(),
-  tunnelDomain: z3.string().optional()
+  tunnelDomain: z3.string().optional(),
+  /** Default builder codegen surface for `eve builder init` */
+  builderEngine: BuilderEngineSchema.optional(),
+  /** AI foundation mode selected during setup */
+  aiMode: AiModeSchema.optional(),
+  aiDefaultProvider: AiProviderSchema.optional(),
+  aiFallbackProvider: AiProviderSchema.optional()
 });
 var USB_MANIFEST_PATHS = [
   "/opt/eve/profile.json",
@@ -1118,12 +1139,32 @@ import { existsSync } from "fs";
 import { join as join5 } from "path";
 import { randomBytes } from "crypto";
 import { z as z4 } from "zod";
+var AiProviderSchema2 = z4.enum(["ollama", "openrouter", "anthropic", "openai"]);
+var AiModeSchema2 = z4.enum(["local", "provider", "hybrid"]);
 var SecretsSchema = z4.object({
   version: z4.literal("1"),
   updatedAt: z4.string(),
+  ai: z4.object({
+    mode: AiModeSchema2.optional(),
+    defaultProvider: AiProviderSchema2.optional(),
+    fallbackProvider: AiProviderSchema2.optional(),
+    providers: z4.array(
+      z4.object({
+        id: AiProviderSchema2,
+        enabled: z4.boolean().optional(),
+        apiKey: z4.string().optional(),
+        baseUrl: z4.string().optional(),
+        defaultModel: z4.string().optional()
+      })
+    ).optional(),
+    /** Sync intent flag used by explicit `eve ai sync --workspace <id>` command. */
+    syncToSynap: z4.boolean().optional()
+  }).optional(),
   synap: z4.object({
     apiUrl: z4.string().optional(),
-    apiKey: z4.string().optional()
+    apiKey: z4.string().optional(),
+    /** Full Hub base URL; if unset, Eve derives `${apiUrl}/api/hub` */
+    hubBaseUrl: z4.string().optional()
   }).optional(),
   inference: z4.object({
     ollamaUrl: z4.string().optional(),
@@ -1132,10 +1173,13 @@ var SecretsSchema = z4.object({
     gatewayPass: z4.string().optional()
   }).optional(),
   builder: z4.object({
+    codeEngine: z4.enum(["opencode", "openclaude", "claudecode"]).optional(),
     openclaudeUrl: z4.string().optional(),
     dokployApiUrl: z4.string().optional(),
     dokployApiKey: z4.string().optional(),
-    workspaceDir: z4.string().optional()
+    dokployWebhookUrl: z4.string().optional(),
+    workspaceDir: z4.string().optional(),
+    skillsDir: z4.string().optional()
   }).optional(),
   arms: z4.object({
     openclawSynapApiKey: z4.string().optional()
@@ -1168,6 +1212,10 @@ async function writeEveSecrets(partial, cwd = process.cwd()) {
     version: "1",
     updatedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
+  const mergedAi = mergeNested(
+    current.ai,
+    partial.ai
+  );
   const mergedSynap = mergeNested(
     current.synap,
     partial.synap
@@ -1187,6 +1235,7 @@ async function writeEveSecrets(partial, cwd = process.cwd()) {
   const next = {
     ...current,
     ...partial,
+    ai: mergedAi,
     synap: mergedSynap,
     inference: mergedInference,
     builder: mergedBuilder,
@@ -1204,11 +1253,114 @@ function ensureSecretValue(existing) {
   return existing && existing.trim().length > 0 ? existing : randomBytes(24).toString("base64url");
 }
 
+// src/builder-hub-wiring.ts
+import { existsSync as existsSync2, mkdirSync, writeFileSync, copyFileSync } from "fs";
+import { homedir as homedir5 } from "os";
+import { join as join6 } from "path";
+var DEFAULT_HUB_PATH = "/api/hub";
+function resolveHubBaseUrl(secrets) {
+  if (secrets?.synap?.hubBaseUrl?.trim()) {
+    return secrets.synap.hubBaseUrl.replace(/\/$/, "");
+  }
+  const base = secrets?.synap?.apiUrl?.replace(/\/$/, "");
+  if (!base) return void 0;
+  return `${base}${DEFAULT_HUB_PATH}`;
+}
+function defaultSkillsDir() {
+  return join6(homedir5(), ".eve", "skills");
+}
+var SYNAP_SKILL_MD = `---
+name: synap-hub
+description: Call the Synap Data Pod via Hub Protocol (Bearer SYNAP_API_KEY). Use for memory, entities, and agent tools \u2014 not for raw SQL unless explicitly allowed.
+---
+
+# Synap Hub (Eve)
+
+- **Base URL:** use environment variable \`HUB_BASE_URL\` (must include path, e.g. \`https://pod.example.com/api/hub\`).
+- **Auth:** \`Authorization: Bearer\` + value from \`SYNAP_API_KEY\` (same key as OpenClaw / pod API key).
+- **Docs:** see Synap Hub Protocol REST in your pod documentation.
+
+Prefer small, idempotent requests. Do not exfiltrate keys.
+`;
+function ensureEveSkillsLayout(skillsDir = defaultSkillsDir()) {
+  const synapDir = join6(skillsDir, "synap");
+  mkdirSync(synapDir, { recursive: true });
+  const skillPath = join6(synapDir, "SKILL.md");
+  if (!existsSync2(skillPath)) {
+    writeFileSync(skillPath, SYNAP_SKILL_MD, "utf-8");
+  }
+}
+async function writeBuilderProjectEnv(projectDir, cwd = process.cwd()) {
+  const secrets = await readEveSecrets(cwd);
+  const hub = resolveHubBaseUrl(secrets);
+  const skillsDir = secrets?.builder?.skillsDir ?? defaultSkillsDir();
+  ensureEveSkillsLayout(skillsDir);
+  const lines = [
+    "# Generated by Eve \u2014 Synap Hub + workspace wiring",
+    `SYNAP_API_URL=${secrets?.synap?.apiUrl ?? ""}`,
+    `SYNAP_API_KEY=${secrets?.synap?.apiKey ?? ""}`,
+    `HUB_BASE_URL=${hub ?? ""}`,
+    `EVE_SKILLS_DIR=${skillsDir}`,
+    `DOKPLOY_WEBHOOK_URL=${secrets?.builder?.dokployWebhookUrl ?? process.env.DOKPLOY_WEBHOOK_URL ?? ""}`,
+    `DOKPLOY_API_URL=${secrets?.builder?.dokployApiUrl ?? ""}`,
+    `DOKPLOY_API_KEY=${secrets?.builder?.dokployApiKey ?? ""}`,
+    ""
+  ];
+  writeFileSync(join6(projectDir, ".env"), lines.join("\n"), { mode: 384 });
+}
+async function writeSandboxEnvFile(cwd = process.cwd()) {
+  const secrets = await readEveSecrets(cwd);
+  const hub = resolveHubBaseUrl(secrets);
+  const skillsDir = secrets?.builder?.skillsDir ?? defaultSkillsDir();
+  const workspaceDir = secrets?.builder?.workspaceDir ?? join6(cwd, ".eve", "workspace");
+  ensureEveSkillsLayout(skillsDir);
+  const eveDir2 = join6(cwd, ".eve");
+  mkdirSync(eveDir2, { recursive: true });
+  const path2 = join6(eveDir2, "sandbox.env");
+  const lines = [
+    `SYNAP_API_URL=${secrets?.synap?.apiUrl ?? ""}`,
+    `SYNAP_API_KEY=${secrets?.synap?.apiKey ?? ""}`,
+    `HUB_BASE_URL=${hub ?? ""}`,
+    `EVE_SKILLS_DIR=${skillsDir}`,
+    `EVE_WORKSPACE_DIR=${workspaceDir}`,
+    `DOKPLOY_WEBHOOK_URL=${secrets?.builder?.dokployWebhookUrl ?? process.env.DOKPLOY_WEBHOOK_URL ?? ""}`
+  ];
+  writeFileSync(path2, lines.join("\n") + "\n", { mode: 384 });
+  return path2;
+}
+function copySynapSkillIntoClaudeProject(projectDir, skillsDir = defaultSkillsDir()) {
+  ensureEveSkillsLayout(skillsDir);
+  const src = join6(skillsDir, "synap", "SKILL.md");
+  const destDir = join6(projectDir, ".claude", "skills", "synap");
+  mkdirSync(destDir, { recursive: true });
+  const dest = join6(destDir, "SKILL.md");
+  copyFileSync(src, dest);
+}
+async function writeClaudeCodeSettings(projectDir, cwd = process.cwd()) {
+  const secrets = await readEveSecrets(cwd);
+  const hub = resolveHubBaseUrl(secrets);
+  const dir = join6(projectDir, ".claude");
+  mkdirSync(dir, { recursive: true });
+  const settings = {
+    env: {
+      SYNAP_API_URL: secrets?.synap?.apiUrl ?? "",
+      SYNAP_API_KEY: secrets?.synap?.apiKey ?? "",
+      HUB_BASE_URL: hub ?? "",
+      EVE_SKILLS_DIR: secrets?.builder?.skillsDir ?? defaultSkillsDir()
+    }
+  };
+  writeFileSync(join6(dir, "settings.json"), JSON.stringify(settings, null, 2), "utf-8");
+}
+
 // src/index.ts
 var VERSION = "0.1.0";
 export {
+  AiModeSchema,
+  AiProviderSchema,
+  BuilderEngineSchema,
   ConfigManager,
   CredentialsManager,
+  DEFAULT_HUB_PATH,
   DockerComposeGenerator,
   EntityStateManager,
   SetupProfileKindSchema,
@@ -1216,8 +1368,11 @@ export {
   UsbSetupManifestSchema,
   VERSION,
   configManager,
+  copySynapSkillIntoClaudeProject,
   createDockerComposeGenerator,
   credentialsManager,
+  defaultSkillsDir,
+  ensureEveSkillsLayout,
   ensureSecretValue,
   entityStateManager,
   formatHardwareReport,
@@ -1226,8 +1381,12 @@ export {
   readEveSecrets,
   readSetupProfile,
   readUsbSetupManifest,
+  resolveHubBaseUrl,
   secretsPath,
+  writeBuilderProjectEnv,
+  writeClaudeCodeSettings,
   writeEveSecrets,
+  writeSandboxEnvFile,
   writeSetupProfile,
   writeUsbSetupManifest
 };

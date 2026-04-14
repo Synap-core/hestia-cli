@@ -4,7 +4,7 @@
 import { Command } from "commander";
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
-import { dirname as dirname2, join as join2 } from "path";
+import { dirname as dirname2, join as join3 } from "path";
 import { setGlobalCliFlags } from "@eve/cli-kit";
 import {
   registerBrainCommands,
@@ -596,6 +596,8 @@ function birthCommand(program2) {
 
 // src/commands/setup.ts
 import { select as select2, confirm as confirm2, isCancel as isCancel2, text } from "@clack/prompts";
+import { homedir } from "os";
+import { join as join2 } from "path";
 import {
   readSetupProfile,
   writeSetupProfile,
@@ -604,7 +606,9 @@ import {
   formatHardwareReport,
   readEveSecrets,
   writeEveSecrets,
-  ensureSecretValue
+  ensureSecretValue,
+  defaultSkillsDir,
+  ensureEveSkillsLayout
 } from "@eve/dna";
 import { runBrainInit as runBrainInit2, runInferenceInit } from "@eve/brain";
 import { runLegsProxySetup } from "@eve/legs";
@@ -624,10 +628,38 @@ function parseTunnel(s) {
   if (v === "cloudflare" || v === "cf") return "cloudflare";
   return void 0;
 }
+function parseCodeEngine(s) {
+  if (!s) return void 0;
+  const v = s.trim().toLowerCase();
+  if (v === "opencode") return "opencode";
+  if (v === "openclaude") return "openclaude";
+  if (v === "claudecode" || v === "claude_code" || v === "claude-code") return "claudecode";
+  return void 0;
+}
+function parseAiMode(s) {
+  if (!s) return void 0;
+  const v = s.trim().toLowerCase();
+  if (v === "local" || v === "provider" || v === "hybrid") return v;
+  return void 0;
+}
+function parseAiProvider(s) {
+  if (!s) return void 0;
+  const v = s.trim().toLowerCase();
+  if (v === "ollama" || v === "openrouter" || v === "anthropic" || v === "openai") return v;
+  return void 0;
+}
+function prevAiModeFromUsb(usb) {
+  if (!usb) return void 0;
+  if (usb.target_profile === "inference_only") return "local";
+  return void 0;
+}
 function setupCommand(program2) {
-  program2.command("setup").description("Three-path guided setup: Ollama+gateway, Synap Data Pod, or both (logical prompts)").option("--profile <p>", "inference_only | data_pod | full").option("--dry-run", "Resolve profile and print plan; do not write state or install").option("--synap-repo <path>", "data_pod / full: path to synap-backend checkout").option("--domain <host>", "data_pod / full: synap install --domain", "localhost").option("--email <email>", "data_pod / full: required if domain is not localhost").option("--model <m>", "inference_only / full: default Ollama model", "llama3.1:8b").option("--with-openclaw", "data_pod / full: synap install --with-openclaw").option("--with-rsshub", "data_pod / full: synap install --with-rsshub").option("--from-image", "synap install --from-image").option("--from-source", "synap install --from-source").option("--skip-hardware", "Skip optional hardware summary").option("--nvidia-smi", "With hardware summary in non-interactive mode, run nvidia-smi").option("--tunnel <provider>", "data_pod | full: pangolin or cloudflare (runs eve legs setup after install)").option("--tunnel-domain <host>", "Hostname for tunnel / ingress (optional)").addHelpText(
+  program2.command("setup").description("Three-path guided setup: Ollama+gateway, Synap Data Pod, or both (logical prompts)").option("--profile <p>", "inference_only | data_pod | full").option("--dry-run", "Resolve profile and print plan; do not write state or install").option("--synap-repo <path>", "data_pod / full: path to synap-backend checkout").option("--domain <host>", "data_pod / full: synap install --domain", "localhost").option("--email <email>", "data_pod / full: required if domain is not localhost").option("--model <m>", "inference_only / full: default Ollama model", "llama3.1:8b").option("--with-openclaw", "data_pod / full: synap install --with-openclaw").option("--with-rsshub", "data_pod / full: synap install --with-rsshub").option("--from-image", "synap install --from-image").option("--from-source", "synap install --from-source").option("--skip-hardware", "Skip optional hardware summary").option("--nvidia-smi", "With hardware summary in non-interactive mode, run nvidia-smi").option("--ai-mode <m>", "local | provider | hybrid (AI foundation first)", "hybrid").option(
+    "--ai-provider <p>",
+    "Default provider for Eve provider routing: openrouter | anthropic | openai | ollama"
+  ).option("--fallback-provider <p>", "Fallback provider for Eve provider routing").option("--tunnel <provider>", "data_pod | full: pangolin or cloudflare (runs eve legs setup after install)").option("--tunnel-domain <host>", "Hostname for tunnel / ingress (optional)").addHelpText(
     "after",
-    "\nWhy three paths\n  inference_only \u2014 Local Ollama + Traefik gateway (Basic auth on :11435). Synap is not installed.\n  data_pod      \u2014 Official Synap stack via synap CLI (Caddy on 80/443). Use Eve for extra Docker apps.\n  full          \u2014 data_pod first, then Ollama on Docker network only + same gateway (no host :11434).\n\nState & manifests\n  Writes .eve/setup-profile.json in the current working directory.\n  Pre-filled profile if ~/.eve/usb-profile.json, /opt/eve/profile.json, or EVE_SETUP_MANIFEST exists.\n\nDocs: hestia-cli/docs/EVE_SETUP_PROFILES.md and hestia-cli/README.md\n"
+    "\nWhy three paths\n  inference_only \u2014 Local Ollama + Traefik gateway (Basic auth on :11435). Synap is not installed.\n  data_pod      \u2014 Official Synap stack via synap CLI (Caddy on 80/443). Use Eve for extra Docker apps.\n  full          \u2014 data_pod first, then Ollama on Docker network only + same gateway (no host :11434).\n\nState & manifests\n  Writes .eve/setup-profile.json in the current working directory.\n  Pre-filled profile if ~/.eve/usb-profile.json, /opt/eve/profile.json, or EVE_SETUP_MANIFEST exists.\n\nDocs: hestia-cli/docs/EVE_SETUP_PROFILES.md, hestia-cli/docs/AI_ROUTING_CONSOLIDATION_ADR.md, and hestia-cli/README.md\n"
   ).action(async (opts) => {
     const flags = getGlobalCliFlags2();
     const cwd = process.cwd();
@@ -673,6 +705,71 @@ function setupCommand(program2) {
       console.error("Profile required: use --profile inference_only|data_pod|full or run interactively.");
       process.exit(1);
     }
+    let aiMode = parseAiMode(opts.aiMode) ?? prevAiModeFromUsb(usb);
+    let defaultProvider = parseAiProvider(opts.aiProvider);
+    let fallbackProvider = parseAiProvider(opts.fallbackProvider);
+    if (!opts.dryRun && !flags.nonInteractive && !flags.json) {
+      if (!aiMode) {
+        const m = await select2({
+          message: "AI foundation: where should inference run?",
+          options: [
+            { value: "local", label: "Local only", hint: "Ollama on this server" },
+            { value: "provider", label: "Provider only", hint: "OpenRouter/Anthropic/OpenAI" },
+            { value: "hybrid", label: "Hybrid (recommended)", hint: "Local + provider fallback" }
+          ],
+          initialValue: "hybrid"
+        });
+        if (isCancel2(m)) {
+          console.log(colors.muted("Cancelled."));
+          return;
+        }
+        aiMode = m;
+      }
+      if (!defaultProvider && aiMode !== "local") {
+        const p = await select2({
+          message: "Choose default cloud provider",
+          options: [
+            { value: "openrouter", label: "OpenRouter", hint: "Multi-provider gateway" },
+            { value: "anthropic", label: "Anthropic" },
+            { value: "openai", label: "OpenAI" }
+          ],
+          initialValue: "openrouter"
+        });
+        if (isCancel2(p)) {
+          console.log(colors.muted("Cancelled."));
+          return;
+        }
+        defaultProvider = p;
+      }
+      const askFallback = await confirm2({
+        message: "Add a fallback provider?",
+        initialValue: true
+      });
+      if (isCancel2(askFallback)) {
+        console.log(colors.muted("Cancelled."));
+        return;
+      }
+      if (askFallback && !fallbackProvider) {
+        const fp = await select2({
+          message: "Fallback provider",
+          options: [
+            { value: "openrouter", label: "OpenRouter" },
+            { value: "anthropic", label: "Anthropic" },
+            { value: "openai", label: "OpenAI" },
+            { value: "ollama", label: "Ollama local" },
+            { value: "none", label: "Skip fallback" }
+          ],
+          initialValue: aiMode === "local" ? "none" : "ollama"
+        });
+        if (isCancel2(fp)) {
+          console.log(colors.muted("Cancelled."));
+          return;
+        }
+        fallbackProvider = fp === "none" ? void 0 : fp;
+      }
+    }
+    if (!aiMode) aiMode = "hybrid";
+    if (!defaultProvider && aiMode !== "local") defaultProvider = "openrouter";
     let tunnelProvider = parseTunnel(opts.tunnel) ?? usb?.tunnel_provider;
     let tunnelDomain = (opts.tunnelDomain?.trim() || usb?.tunnel_domain || "").trim() || void 0;
     if (!opts.dryRun && (profile === "data_pod" || profile === "full") && !flags.nonInteractive && !flags.json) {
@@ -717,6 +814,14 @@ function setupCommand(program2) {
       console.error("Invalid --tunnel (use pangolin or cloudflare).");
       process.exit(1);
     }
+    if (flags.nonInteractive && opts.aiMode && !parseAiMode(opts.aiMode)) {
+      console.error("Invalid --ai-mode (use local|provider|hybrid).");
+      process.exit(1);
+    }
+    if (flags.nonInteractive && opts.aiProvider && !parseAiProvider(opts.aiProvider)) {
+      console.error("Invalid --ai-provider (use openrouter|anthropic|openai|ollama).");
+      process.exit(1);
+    }
     const existing = await readSetupProfile(cwd);
     if (existing && !flags.nonInteractive && !opts.dryRun) {
       const ok = await confirm2({
@@ -733,6 +838,11 @@ function setupCommand(program2) {
         profile,
         existing: existing?.profile ?? null,
         usbManifest: usb ? { target_profile: usb.target_profile } : null,
+        ai: {
+          mode: aiMode ?? null,
+          defaultProvider: defaultProvider ?? null,
+          fallbackProvider: fallbackProvider ?? null
+        },
         tunnel: tunnelProvider ?? null,
         tunnelDomain: tunnelDomain ?? null
       };
@@ -774,28 +884,71 @@ ${formatHardwareReport(facts)}
         domainHint: opts.domain,
         hearthName: usb?.hearth_name,
         tunnelProvider,
-        tunnelDomain
+        tunnelDomain,
+        aiMode,
+        aiDefaultProvider: defaultProvider,
+        aiFallbackProvider: fallbackProvider
       },
       cwd
     );
     const prevSecrets = await readEveSecrets(cwd);
+    const skillsDir = prevSecrets?.builder?.skillsDir?.trim() || process.env.EVE_SKILLS_DIR?.trim() || defaultSkillsDir();
     const merge = {
+      ai: {
+        mode: aiMode,
+        defaultProvider,
+        fallbackProvider,
+        syncToSynap: true,
+        providers: [
+          { id: "ollama", enabled: aiMode !== "provider", baseUrl: prevSecrets?.inference?.ollamaUrl ?? "http://127.0.0.1:11434" },
+          {
+            id: "openrouter",
+            enabled: defaultProvider === "openrouter" || fallbackProvider === "openrouter",
+            apiKey: prevSecrets?.ai?.providers?.find((p) => p.id === "openrouter")?.apiKey ?? process.env.OPENROUTER_API_KEY,
+            baseUrl: "https://openrouter.ai/api/v1",
+            defaultModel: prevSecrets?.ai?.providers?.find((p) => p.id === "openrouter")?.defaultModel ?? process.env.OPENROUTER_MODEL
+          },
+          {
+            id: "anthropic",
+            enabled: defaultProvider === "anthropic" || fallbackProvider === "anthropic",
+            apiKey: prevSecrets?.ai?.providers?.find((p) => p.id === "anthropic")?.apiKey ?? process.env.ANTHROPIC_API_KEY,
+            defaultModel: prevSecrets?.ai?.providers?.find((p) => p.id === "anthropic")?.defaultModel ?? process.env.ANTHROPIC_MODEL
+          },
+          {
+            id: "openai",
+            enabled: defaultProvider === "openai" || fallbackProvider === "openai",
+            apiKey: prevSecrets?.ai?.providers?.find((p) => p.id === "openai")?.apiKey ?? process.env.OPENAI_API_KEY,
+            defaultModel: prevSecrets?.ai?.providers?.find((p) => p.id === "openai")?.defaultModel ?? process.env.OPENAI_MODEL
+          }
+        ]
+      },
       builder: {
+        codeEngine: parseCodeEngine(process.env.BUILDER_CODE_ENGINE) ?? prevSecrets?.builder?.codeEngine,
         openclaudeUrl: profile === "data_pod" ? prevSecrets?.builder?.openclaudeUrl ?? (process.env.OPENCLAUDE_BRAIN_URL || void 0) : prevSecrets?.builder?.openclaudeUrl ?? prevSecrets?.inference?.gatewayUrl ?? "http://127.0.0.1:11435",
         dokployApiUrl: prevSecrets?.builder?.dokployApiUrl ?? process.env.DOKPLOY_API_URL ?? "http://127.0.0.1:3000",
         dokployApiKey: ensureSecretValue(prevSecrets?.builder?.dokployApiKey ?? process.env.DOKPLOY_API_KEY),
-        workspaceDir: prevSecrets?.builder?.workspaceDir ?? `${cwd}/.eve/workspace`
-      },
-      arms: {
-        openclawSynapApiKey: ensureSecretValue(
-          prevSecrets?.arms?.openclawSynapApiKey ?? process.env.OPENCLAW_SYNAP_API_KEY ?? prevSecrets?.synap?.apiKey
-        )
+        dokployWebhookUrl: prevSecrets?.builder?.dokployWebhookUrl ?? process.env.DOKPLOY_WEBHOOK_URL ?? void 0,
+        workspaceDir: prevSecrets?.builder?.workspaceDir ?? join2(homedir(), ".eve", "workspace"),
+        skillsDir
       }
     };
     if (profile !== "inference_only") {
+      const podKey = ensureSecretValue(
+        prevSecrets?.synap?.apiKey ?? process.env.SYNAP_API_KEY ?? process.env.OPENCLAW_SYNAP_API_KEY
+      );
       merge.synap = {
         apiUrl: prevSecrets?.synap?.apiUrl ?? "http://127.0.0.1:4000",
-        apiKey: ensureSecretValue(prevSecrets?.synap?.apiKey ?? process.env.SYNAP_API_KEY)
+        apiKey: podKey,
+        hubBaseUrl: prevSecrets?.synap?.hubBaseUrl ?? process.env.SYNAP_HUB_BASE_URL ?? void 0
+      };
+      merge.arms = {
+        openclawSynapApiKey: podKey
+      };
+    } else {
+      merge.arms = {
+        openclawSynapApiKey: ensureSecretValue(
+          prevSecrets?.arms?.openclawSynapApiKey ?? process.env.OPENCLAW_SYNAP_API_KEY
+        )
       };
     }
     if (profile !== "data_pod") {
@@ -807,6 +960,7 @@ ${formatHardwareReport(facts)}
       };
     }
     await writeEveSecrets(merge, cwd);
+    ensureEveSkillsLayout(skillsDir);
     if (flags.json) {
       outputJson({ ok: true, profile, persisted: true });
     }
@@ -1054,19 +1208,194 @@ function backupUpdateCommands(program2) {
 import { execa as execa6 } from "execa";
 import { OllamaService } from "@eve/brain";
 import { getGlobalCliFlags as getGlobalCliFlags5, outputJson as outputJson4 } from "@eve/cli-kit";
+import { readEveSecrets as readEveSecrets2, writeEveSecrets as writeEveSecrets2 } from "@eve/dna";
+function resolveHubBaseUrlFromSecrets(secrets) {
+  const explicit = secrets?.synap?.hubBaseUrl?.trim();
+  if (explicit) return explicit.replace(/\/$/, "");
+  const api = secrets?.synap?.apiUrl?.trim();
+  if (!api) return null;
+  return `${api.replace(/\/$/, "")}/api/hub`;
+}
+function buildNonSecretProviderRouting(secrets) {
+  const providers = (secrets?.ai?.providers ?? []).map((p) => ({
+    id: p.id,
+    enabled: p.enabled,
+    baseUrl: p.baseUrl,
+    defaultModel: p.defaultModel
+  }));
+  return {
+    mode: secrets?.ai?.mode,
+    defaultProvider: secrets?.ai?.defaultProvider,
+    fallbackProvider: secrets?.ai?.fallbackProvider,
+    providers,
+    syncToSynap: secrets?.ai?.syncToSynap
+  };
+}
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map((v) => stableJson(v)).join(",")}]`;
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value).filter(([, v]) => v !== void 0).sort(([a], [b]) => a.localeCompare(b));
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableJson(v)}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+function parseProviderId(s) {
+  const v = s.trim().toLowerCase();
+  if (v === "ollama" || v === "openrouter" || v === "anthropic" || v === "openai") return v;
+  throw new Error("Provider must be one of: ollama, openrouter, anthropic, openai");
+}
 function aiCommandGroup(program2) {
-  const ai = program2.command("ai").description("Local AI (Ollama) helpers");
-  ai.command("status").description("Show whether Ollama is running and list models").action(async () => {
+  const ai = program2.command("ai").description("AI foundation helpers (local Ollama + provider routing)");
+  ai.command("status").description("Show AI foundation mode, provider routing, and Ollama status").action(async () => {
     const ollama = new OllamaService();
     try {
       const s = await ollama.getStatus();
+      const secrets = await readEveSecrets2(process.cwd());
+      const out = {
+        ai: secrets?.ai ?? null,
+        ollama: s
+      };
       if (getGlobalCliFlags5().json) {
-        outputJson4(s);
+        outputJson4(out);
         return;
       }
+      console.log(colors.primary.bold("AI Foundation"));
+      console.log(`  Mode: ${secrets?.ai?.mode ?? "(unset)"}`);
+      console.log(`  Default provider: ${secrets?.ai?.defaultProvider ?? "(unset)"}`);
+      console.log(`  Fallback provider: ${secrets?.ai?.fallbackProvider ?? "(unset)"}`);
+      const providers2 = secrets?.ai?.providers ?? [];
+      if (providers2.length) {
+        console.log("  Providers:");
+        for (const p of providers2) {
+          console.log(`    - ${p.id} enabled=${p.enabled ?? true} model=${p.defaultModel ?? "(unset)"}`);
+        }
+      }
+      console.log("");
       console.log(colors.primary.bold("Ollama"));
       console.log(`  Running: ${s.running ? "yes" : "no"}`);
       console.log(`  Models: ${s.modelsInstalled.length ? s.modelsInstalled.join(", ") : "(none)"}`);
+    } catch (e) {
+      printError(e instanceof Error ? e.message : String(e));
+      process.exit(1);
+    }
+  });
+  const providers = ai.command("providers").description("Manage cloud/local provider entries in .eve/secrets/secrets.json");
+  providers.command("list").description("List configured providers").action(async () => {
+    const secrets = await readEveSecrets2(process.cwd());
+    const list = secrets?.ai?.providers ?? [];
+    if (getGlobalCliFlags5().json) {
+      outputJson4({ mode: secrets?.ai?.mode, defaultProvider: secrets?.ai?.defaultProvider, fallbackProvider: secrets?.ai?.fallbackProvider, providers: list });
+      return;
+    }
+    if (!list.length) {
+      console.log("No providers configured. Run `eve setup` or `eve ai providers add <id>`");
+      return;
+    }
+    for (const p of list) {
+      console.log(`${p.id}	enabled=${p.enabled ?? true}	model=${p.defaultModel ?? "(unset)"}`);
+    }
+  });
+  providers.command("add <id>").description("Add or update provider credentials/model").option("--api-key <key>", "Provider API key").option("--base-url <url>", "Custom provider base URL").option("--model <name>", "Default model name").option("--disable", "Set enabled=false").action(async (id, opts) => {
+    try {
+      const pid = parseProviderId(id);
+      const secrets = await readEveSecrets2(process.cwd());
+      const list = [...secrets?.ai?.providers ?? []];
+      const idx = list.findIndex((p) => p.id === pid);
+      const next = {
+        id: pid,
+        enabled: opts.disable ? false : true,
+        apiKey: opts.apiKey ?? list[idx]?.apiKey,
+        baseUrl: opts.baseUrl ?? list[idx]?.baseUrl,
+        defaultModel: opts.model ?? list[idx]?.defaultModel
+      };
+      if (idx >= 0) list[idx] = next;
+      else list.push(next);
+      await writeEveSecrets2({ ai: { providers: list } }, process.cwd());
+      printInfo(`Provider ${pid} saved.`);
+    } catch (e) {
+      printError(e instanceof Error ? e.message : String(e));
+      process.exit(1);
+    }
+  });
+  providers.command("set-default <id>").description("Set default provider").action(async (id) => {
+    try {
+      const pid = parseProviderId(id);
+      await writeEveSecrets2({ ai: { defaultProvider: pid } }, process.cwd());
+      printInfo(`Default provider set to ${pid}`);
+    } catch (e) {
+      printError(e instanceof Error ? e.message : String(e));
+      process.exit(1);
+    }
+  });
+  providers.command("set-fallback <id>").description("Set fallback provider").action(async (id) => {
+    try {
+      const pid = parseProviderId(id);
+      await writeEveSecrets2({ ai: { fallbackProvider: pid } }, process.cwd());
+      printInfo(`Fallback provider set to ${pid}`);
+    } catch (e) {
+      printError(e instanceof Error ? e.message : String(e));
+      process.exit(1);
+    }
+  });
+  ai.command("sync").description("Explicitly sync Eve provider routing policy to Synap workspace settings").requiredOption("--workspace <id>", "Workspace UUID to update").option("--check", "Only compare local policy vs workspace policy; do not write").action(async (opts) => {
+    try {
+      const secrets = await readEveSecrets2(process.cwd());
+      const hubBaseUrl = resolveHubBaseUrlFromSecrets(secrets);
+      const apiKey = secrets?.synap?.apiKey?.trim();
+      if (!hubBaseUrl) {
+        throw new Error("Missing synap.apiUrl/synap.hubBaseUrl in .eve/secrets/secrets.json");
+      }
+      if (!apiKey) {
+        throw new Error("Missing synap.apiKey in .eve/secrets/secrets.json");
+      }
+      const payload = buildNonSecretProviderRouting(secrets);
+      if (opts.check) {
+        const getRes = await fetch(
+          `${hubBaseUrl}/workspaces/${encodeURIComponent(opts.workspace)}/eve-provider-routing`,
+          {
+            method: "GET",
+            headers: {
+              Authorization: `Bearer ${apiKey}`
+            }
+          }
+        );
+        const getData = await getRes.json().catch(() => ({}));
+        if (!getRes.ok) {
+          throw new Error(String(getData.error ?? `Check failed with HTTP ${getRes.status}`));
+        }
+        const remote = getData.eveProviderRouting ?? null;
+        const same = stableJson(remote) === stableJson(payload);
+        if (getGlobalCliFlags5().json) {
+          outputJson4({ ok: true, workspaceId: opts.workspace, same, local: payload, remote });
+          return;
+        }
+        if (same) {
+          printInfo(`Provider routing already in sync for workspace ${opts.workspace}`);
+        } else {
+          printInfo(`Provider routing differs for workspace ${opts.workspace}`);
+        }
+        return;
+      }
+      const res = await fetch(
+        `${hubBaseUrl}/workspaces/${encodeURIComponent(opts.workspace)}/eve-provider-routing`,
+        {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(payload)
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(String(data.error ?? `Sync failed with HTTP ${res.status}`));
+      }
+      if (getGlobalCliFlags5().json) {
+        outputJson4({ ok: true, workspaceId: opts.workspace, synced: payload });
+        return;
+      }
+      printInfo(`Provider routing synced to workspace ${opts.workspace}`);
     } catch (e) {
       printError(e instanceof Error ? e.message : String(e));
       process.exit(1);
@@ -1095,7 +1424,7 @@ function aiCommandGroup(program2) {
       process.exit(1);
     }
   });
-  ai.command("chat").description("Send a one-shot prompt to ollama run (requires CLI on host or use docker exec)").argument("<prompt>", "Prompt text").option("--model <m>", "Model name", "llama3.1:8b").action(async (prompt, opts) => {
+  ai.command("chat").description("Send a one-shot prompt to ollama run (requires container eve-brain-ollama)").argument("<prompt>", "Prompt text").option("--model <m>", "Model name", "llama3.1:8b").action(async (prompt, opts) => {
     try {
       await execa6(
         "docker",
@@ -1113,7 +1442,7 @@ function aiCommandGroup(program2) {
 
 // src/index.ts
 var __dirname = dirname2(fileURLToPath(import.meta.url));
-var pkg = JSON.parse(readFileSync(join2(__dirname, "../package.json"), "utf-8"));
+var pkg = JSON.parse(readFileSync(join3(__dirname, "../package.json"), "utf-8"));
 var program = new Command();
 program.configureHelp({
   sortSubcommands: true,

@@ -29,7 +29,7 @@ def fix_imports_in_file(filepath):
         content = f.read()
     
     # Obtenir le chemin depuis la racine core
-    rel_to_core = os.path.relpath(filepath, '/Users/antoine/Documents/Code/synap/hestia-cli/packages/core')
+    rel_to_core = os.path.relpath(filepath, '/Users/antoine/Documents/Code/synap/eve-cli/packages/core')
     
     # Patterns à corriger
     patterns = [
@@ -48,7 +48,7 @@ def fix_imports_in_file(filepath):
     return True
 
 def main():
-    core_dir = "/Users/antoine/Documents/Code/synap/hestia-cli/packages/core"
+    core_dir = "/Users/antoine/Documents/Code/synap/eve-cli/packages/core"
     
     # Fichiers problématiques identifiés
     problem_files = [

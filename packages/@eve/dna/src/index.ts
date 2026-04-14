@@ -67,6 +67,10 @@ export {
   SetupProfileSchema,
   SetupProfileKindSchema,
   UsbSetupManifestSchema,
+  BuilderEngineSchema,
+  AiModeSchema,
+  AiProviderSchema,
+  type BuilderEngine,
 } from './setup-profile.js';
 
 export { type HardwareFacts, probeHardware, formatHardwareReport } from './hw-probe.js';
@@ -78,6 +82,17 @@ export {
   secretsPath,
   ensureSecretValue,
 } from './secrets-contract.js';
+
+export {
+  DEFAULT_HUB_PATH,
+  resolveHubBaseUrl,
+  defaultSkillsDir,
+  ensureEveSkillsLayout,
+  writeBuilderProjectEnv,
+  writeSandboxEnvFile,
+  copySynapSkillIntoClaudeProject,
+  writeClaudeCodeSettings,
+} from './builder-hub-wiring.js';
 
 // Version
 export const VERSION = '0.1.0';

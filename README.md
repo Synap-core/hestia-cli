@@ -12,6 +12,7 @@ This README is the **single overview**: packages, capabilities, user flows, how 
 |-----|---------|
 | **This README** | Project scope, flows, Synap vs Eve, roadmap |
 | [docs/EVE_SETUP_PROFILES.md](docs/EVE_SETUP_PROFILES.md) | Three profiles, ports, USB manifest, automation flags |
+| [docs/AI_ROUTING_CONSOLIDATION_ADR.md](docs/AI_ROUTING_CONSOLIDATION_ADR.md) | Canonical routing ownership: Synap IS routing vs Eve provider routing |
 | [ARCHITECTURE_CLEANUP_COMPLETE.md](ARCHITECTURE_CLEANUP_COMPLETE.md) | Repo history / canonical layout |
 | [commands.manifest.yaml](commands.manifest.yaml) | Command inventory (`pnpm run check:manifest`) |
 | [docs/north-star.md](docs/north-star.md), [docs/service-reference.md](docs/service-reference.md), … | Deeper product / ADR style notes |
@@ -26,8 +27,8 @@ Older root `*.md` files may mention removed paths; prefer the table above.
 |---------|------|
 | `@eve/cli` | **`eve`** entrypoint — lifecycle, organs, debug, `eve setup` |
 | `@eve/brain` | Synap delegation, `runBrainInit`, `runInferenceInit`, Ollama/Postgres/Redis services |
-| `@eve/legs` | Traefik helpers, **inference gateway** (Ollama + Basic auth on `:11435`) |
-| `@eve/arms`, `@eve/eyes`, `@eve/builder` | OpenClaw, RSSHub, OpenCode/OpenClaude/Dokploy, **`eve builder stack`** |
+| `@eve/legs` | Traefik, inference gateway, **`eve legs newt`** (Pangolin Newt on `eve-network`) |
+| `@eve/arms`, `@eve/eyes`, `@eve/builder` | OpenClaw; RSSHub + **Outerbase Studio** (`eve eyes database`); OpenCode / OpenClaude / **Claude Code** + Dokploy + **`eve builder sandbox`** |
 | `@eve/dna` | Entity state, setup profile JSON (`.eve/setup-profile.json`), USB manifest types, **hardware probe** |
 | `@eve/usb`, `@eve/install` | USB creation wizard, server install scripts; **`hestia usb`** vs **`eve birth usb`** |
 
@@ -63,12 +64,24 @@ Details: [docs/EVE_SETUP_PROFILES.md](docs/EVE_SETUP_PROFILES.md).
 
 ## User flows (how pieces connect)
 
+### Recommended order (central Builder organ first)
+
+1. **AI + Secrets / Hub** — Run **`eve setup`** first to choose AI mode (`local|provider|hybrid`), provider + fallback, then persist **`synap.apiKey`** and optional **`DOKPLOY_WEBHOOK_URL`** before builder work. This is Eve-side **provider routing**, not Synap internal IS routing.
+2. **Builder organ (one place for “hand”)** — **`eve builder init <name>`** wires **OpenCode**, **OpenClaude**, and/or **Claude Code** (see `--engines`). **Dokploy is off by default**; add **`--with-dokploy`** only if you really use it (often overkill vs webhook + static hosting).
+3. **Then edge / other organs** — **`eve legs setup`**, **`eve legs newt up`**, **`eve builder stack up`**, **`eve arms install`**, **`eve eyes database …`**, in whatever order your topology needs.
+
 ### A. From zero on a server (recommended)
 
 1. Install Docker + clone this repo + `pnpm install && pnpm run build` — or use **`bootstrap.sh`** (root of this repo) with **`EVE_BOOTSTRAP_REPO`** set to your clone URL for an opinionated apt + Docker + Node 20 + pnpm path.
-2. Run **`eve setup`** and pick a profile (or use `--yes --profile …`). For **`data_pod`** / **`full`**, optionally choose **Pangolin** or **Cloudflare** for Legs, or pass **`--tunnel`** / **`--tunnel-domain`**.
-3. Optional: **`eve builder stack up`** for a static site on `http://127.0.0.1:9080`.
-4. Grow other organs: **`eve grow`**, **`eve arms install`**, etc., as needed.
+2. Run **`eve setup`** and pick a profile (or use `--yes --profile …`). The wizard now starts with AI foundation choices (mode/provider/fallback). For **`data_pod`** / **`full`**, optionally choose **Pangolin** or **Cloudflare** for Legs, or pass **`--tunnel`** / **`--tunnel-domain`**.
+3. **`eve builder init <project>`** — Hub **`.env`** + skills for OpenCode / OpenClaude / Claude Code; use **`--with-dokploy`** only if you want Dokploy.
+4. Optional: **`eve builder stack up`** (static site `http://127.0.0.1:9080`) or **`eve builder sandbox up`** (Node + workspace-only mount for OpenCode).
+5. **Pangolin site connector** — fill `.eve/legs/newt.env` then **`eve legs newt up`** (fosrl/newt on `eve-network`).
+6. **Database UI** — **`eve eyes database init --database-url postgres://…`** then **`eve eyes database up`** (Outerbase Studio npm CLI; UI embeds `studio.outerbase.com` — needs outbound HTTPS).
+7. Grow other organs: **`eve grow`**, **`eve arms install`**, etc., as needed.
+
+**Hub wiring recap:** `.eve/secrets/secrets.json` now includes `ai.mode`, `ai.defaultProvider`, `ai.fallbackProvider`, and provider entries, plus **`synap.apiKey`** (same as OpenClaw when the pod is installed). Builder projects get **`.env`** with **`HUB_BASE_URL`**, **`EVE_SKILLS_DIR`**, **`DOKPLOY_WEBHOOK_URL`**. **Claude Code** uses **`.claude/settings.json`** + **`.claude/skills/`** ([skills](https://code.claude.com/docs/en/skills)). For consolidation rules, see [AI routing ADR](docs/AI_ROUTING_CONSOLIDATION_ADR.md).
+When you want workspace-level sync, run **`eve ai sync --workspace <workspace-uuid>`** (explicit, non-secret provider policy only).
 
 ### B. USB → bare metal → Eve
 

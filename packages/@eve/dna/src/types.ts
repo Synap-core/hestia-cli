@@ -81,9 +81,9 @@ export interface OrganConfig {
 /** Available services organized by organ */
 export type BrainService = 'synap' | 'ollama' | 'postgres' | 'redis';
 export type ArmsService = 'openclaw';
-export type BuilderService = 'opencode' | 'openclaude' | 'dokploy';
+export type BuilderService = 'opencode' | 'openclaude' | 'claudecode' | 'dokploy';
 export type EyesService = 'rsshub';
-export type LegsService = 'traefik' | 'cloudflared' | 'pangolin';
+export type LegsService = 'traefik' | 'cloudflared' | 'pangolin' | 'newt';
 
 export type Service = BrainService | ArmsService | BuilderService | EyesService | LegsService;
 
@@ -96,11 +96,13 @@ export const SERVICE_TO_ORGAN: Record<Service, Organ> = {
   openclaw: 'arms',
   opencode: 'builder',
   openclaude: 'builder',
+  claudecode: 'builder',
   dokploy: 'builder',
   rsshub: 'eyes',
   traefik: 'legs',
   cloudflared: 'legs',
   pangolin: 'legs',
+  newt: 'legs',
 };
 
 /** Service configuration for Docker containers */
@@ -217,6 +219,12 @@ export const SERVICE_REGISTRY: Record<Service, ServiceConfig> = {
     network: 'eve-network',
     restart: 'no',
   },
+  claudecode: {
+    image: 'node:22-bookworm-slim',
+    containerName: 'eve-builder-claudecode',
+    network: 'eve-network',
+    restart: 'no',
+  },
   dokploy: {
     image: 'node:20-alpine',
     containerName: 'eve-builder-dokploy',
@@ -253,6 +261,12 @@ export const SERVICE_REGISTRY: Record<Service, ServiceConfig> = {
   pangolin: {
     image: 'pangolin/pangolin:latest',
     containerName: 'eve-legs-pangolin',
+    network: 'eve-network',
+    restart: 'unless-stopped',
+  },
+  newt: {
+    image: 'fosrl/newt:latest',
+    containerName: 'eve-legs-newt',
     network: 'eve-network',
     restart: 'unless-stopped',
   },
@@ -582,7 +596,7 @@ export const ORGANS: Organ[] = ['brain', 'arms', 'builder', 'eyes', 'legs'];
 export const SERVICES: Service[] = [
   'synap', 'ollama', 'postgres', 'redis',
   'openclaw',
-  'opencode', 'openclaude', 'dokploy',
+  'opencode', 'openclaude', 'claudecode', 'dokploy',
   'rsshub',
-  'traefik', 'cloudflared', 'pangolin',
+  'traefik', 'cloudflared', 'pangolin', 'newt',
 ];

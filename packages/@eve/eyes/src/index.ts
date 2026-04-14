@@ -8,6 +8,7 @@ import { removeFeedCommand } from './commands/remove-feed.js';
 import { startCommand } from './commands/start.js';
 import { stopCommand } from './commands/stop.js';
 import { syncCommand } from './commands/sync.js';
+import { databaseCommand } from './commands/database.js';
 
 // Re-export commands
 export { 
@@ -17,7 +18,8 @@ export {
   removeFeedCommand,
   startCommand,
   stopCommand,
-  syncCommand
+  syncCommand,
+  databaseCommand,
 };
 
 // Core service exports
@@ -35,6 +37,7 @@ export function registerEyesCommands(eyes: Command): void {
   startCommand(eyes);
   stopCommand(eyes);
   syncCommand(eyes);
+  databaseCommand(eyes);
 }
 
 /**

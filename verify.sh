@@ -7,6 +7,13 @@
 
 set -o pipefail
 
+# Require bash 4+ for associative arrays.
+if [[ -z "${BASH_VERSINFO:-}" ]] || (( BASH_VERSINFO[0] < 4 )); then
+    echo "verify.sh requires bash 4+ (detected: ${BASH_VERSION:-unknown})."
+    echo "Tip: on macOS, install modern bash and run: /usr/local/bin/bash verify.sh"
+    exit 2
+fi
+
 # -----------------------------------------------------------------------------
 # Configuration & Constants
 # -----------------------------------------------------------------------------
@@ -33,6 +40,14 @@ WARNING_CHECKS=0
 # Results storage
 declare -A CHECK_RESULTS
 declare -a CHECK_ORDER
+
+# Backward-compatible command shim:
+# prefer `hestia` when present, otherwise alias to `eve`.
+if ! command -v hestia &>/dev/null && command -v eve &>/dev/null; then
+    hestia() {
+        eve "$@"
+    }
+fi
 
 # -----------------------------------------------------------------------------
 # Color Definitions
