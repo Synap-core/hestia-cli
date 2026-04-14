@@ -1,9 +1,11 @@
 import { execSync } from 'child_process';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
+import { readEveSecrets } from '@eve/dna';
 
 interface OpenClaudeConfig {
   brainUrl: string;
+  basicAuth?: string;
   model: string;
   temperature: number;
   maxTokens: number;
@@ -33,13 +35,27 @@ export class OpenClaudeService {
       await this.install();
     }
 
-    console.log(`Configuring OpenClaude with Brain at: ${brainUrl}`);
+    const secrets = await readEveSecrets(process.cwd());
+    const resolvedBrainUrl =
+      brainUrl ||
+      secrets?.builder?.openclaudeUrl ||
+      secrets?.inference?.gatewayUrl ||
+      secrets?.inference?.ollamaUrl ||
+      'http://127.0.0.1:11434';
+    const basicAuth =
+      secrets?.inference?.gatewayUser && secrets?.inference?.gatewayPass
+        ? Buffer.from(`${secrets.inference.gatewayUser}:${secrets.inference.gatewayPass}`).toString('base64')
+        : undefined;
+
+    console.log(`Configuring OpenClaude with Brain at: ${resolvedBrainUrl}`);
 
     // Verify Brain Ollama connection
     try {
-      const response = await fetch(`${brainUrl}/api/tags`);
+      const response = await fetch(`${resolvedBrainUrl}/api/tags`, {
+        headers: basicAuth ? { Authorization: `Basic ${basicAuth}` } : undefined,
+      });
       if (!response.ok) {
-        throw new Error(`Brain Ollama not responding at ${brainUrl}`);
+        throw new Error(`Brain Ollama not responding at ${resolvedBrainUrl}`);
       }
       const models = await response.json();
       console.log('Available models:', models.models?.map((m: { name: string }) => m.name).join(', '));
@@ -49,7 +65,8 @@ export class OpenClaudeService {
     }
 
     this.config = {
-      brainUrl,
+      brainUrl: resolvedBrainUrl,
+      basicAuth,
       model: 'llama3.2',
       temperature: 0.7,
       maxTokens: 2048,
@@ -99,7 +116,10 @@ export class OpenClaudeService {
       // Call Brain Ollama for code generation
       const response = await fetch(`${this.config.brainUrl}/api/generate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(this.config.basicAuth ? { Authorization: `Basic ${this.config.basicAuth}` } : {}),
+        },
         body: JSON.stringify({
           model: this.config.model,
           prompt: `You are an expert programmer. Generate clean, well-documented code for the following request:\n\n${prompt}\n\nProvide only the code without explanations unless specifically asked.`,

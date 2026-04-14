@@ -6,6 +6,7 @@ import { domainCommand } from './commands/domain.js';
 export { TraefikService, Route } from './lib/traefik.js';
 export { InferenceGateway, type InferenceGatewayResult } from './lib/inference-gateway.js';
 export { TunnelService, TunnelConfig } from './lib/tunnel.js';
+export { runLegsProxySetup, type LegsProxySetupOptions } from './lib/run-proxy-setup.js';
 
 // Export commands
 export { setupCommand } from './commands/setup.js';

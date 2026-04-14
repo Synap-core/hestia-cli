@@ -20,7 +20,7 @@ export function deployCommand(program: Command): void {
         await dokploy.install();
 
         // Load builder state to find project
-        const statePath = join(process.cwd(), '.hestia', 'builder-state.json');
+        const statePath = join(process.cwd(), '.eve', 'builder-state.json');
         let projectId: string | null = null;
 
         if (existsSync(statePath)) {

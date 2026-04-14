@@ -270,75 +270,83 @@ var TunnelService = class {
   }
 };
 
+// src/lib/run-proxy-setup.ts
+async function runLegsProxySetup(options) {
+  console.log("\u{1F9B5} Setting up Legs (Traefik reverse proxy)...\n");
+  const traefik = options.standalone ? new TraefikService("/opt/eve/traefik") : new TraefikService();
+  console.log("Step 1: Installing Traefik...");
+  await traefik.install();
+  console.log("\nStep 2: Configuring routes...");
+  const organs = [
+    { name: "brain", path: "/brain", port: 3e3 },
+    { name: "heart", path: "/heart", port: 4e3 },
+    { name: "memory", path: "/memory", port: 5432 },
+    { name: "nerves", path: "/nerves", port: 6379 },
+    { name: "eyes", path: "/eyes", port: 8080 },
+    { name: "dna", path: "/dna", port: 9e3 }
+  ];
+  for (const organ of organs) {
+    const target = `http://localhost:${organ.port}`;
+    await traefik.addRoute({
+      path: organ.path,
+      target,
+      domain: options.domain,
+      ssl: false
+    });
+    console.log(`  \u2713 Route: ${organ.path} -> ${target}`);
+  }
+  if (options.tunnel) {
+    console.log(`
+Step 3: Setting up ${options.tunnel} tunnel...`);
+    const tunnel = new TunnelService();
+    if (options.tunnel === "pangolin") {
+      await tunnel.setupPangolin({ domain: options.tunnelDomain });
+      console.log("  \u2713 Pangolin tunnel configured");
+    } else if (options.tunnel === "cloudflare") {
+      await tunnel.setupCloudflare({ domain: options.tunnelDomain });
+      console.log("  \u2713 Cloudflare tunnel configured");
+    } else {
+      console.warn(`  \u26A0 Unknown tunnel provider: ${options.tunnel}`);
+    }
+  }
+  if (options.domain) {
+    console.log(`
+Step 4: Configuring domain ${options.domain}...`);
+    await traefik.configureDomain(options.domain);
+    console.log("  \u2713 Domain configured");
+    if (options.ssl) {
+      console.log("\nStep 5: Enabling SSL...");
+      await traefik.enableSSL();
+      console.log("  \u2713 SSL enabled with Let's Encrypt");
+    }
+  }
+  console.log("\n\u2705 Legs setup complete!");
+  console.log("\nYour organs are now accessible at:");
+  const baseUrl = options.domain || "localhost";
+  const protocol = options.ssl ? "https" : "http";
+  for (const organ of organs) {
+    console.log(`  ${protocol}://${baseUrl}${organ.path}`);
+  }
+  if (options.tunnel) {
+    console.log(`
+Tunnel configured with ${options.tunnel}`);
+    if (options.tunnelDomain) {
+      console.log(`External domain: ${options.tunnelDomain}`);
+    }
+  }
+}
+
 // src/commands/setup.ts
 function setupCommand(program) {
   program.command("setup").description("Setup Traefik reverse proxy for Eve").option("--domain <domain>", "Custom domain for external access").option("--tunnel <provider>", "Tunnel provider (pangolin, cloudflare)").option("--tunnel-domain <domain>", "Domain for tunnel (if using tunnel)").option("--ssl", "Enable SSL/TLS (requires --domain)").option("--standalone", "Install standalone Traefik (not using Dokploy)").action(async (options) => {
     try {
-      console.log("\u{1F9B5} Setting up Legs (Traefik reverse proxy)...\n");
-      const traefik = options.standalone ? new TraefikService("/opt/eve/traefik") : new TraefikService();
-      console.log("Step 1: Installing Traefik...");
-      await traefik.install();
-      console.log("\nStep 2: Configuring routes...");
-      const organs = [
-        { name: "brain", path: "/brain", port: 3e3 },
-        { name: "heart", path: "/heart", port: 4e3 },
-        { name: "memory", path: "/memory", port: 5432 },
-        { name: "nerves", path: "/nerves", port: 6379 },
-        { name: "eyes", path: "/eyes", port: 8080 },
-        { name: "dna", path: "/dna", port: 9e3 }
-      ];
-      for (const organ of organs) {
-        const target = `http://localhost:${organ.port}`;
-        await traefik.addRoute({
-          path: organ.path,
-          target,
-          domain: options.domain,
-          ssl: false
-          // SSL will be enabled separately if needed
-        });
-        console.log(`  \u2713 Route: ${organ.path} -> ${target}`);
-      }
-      if (options.tunnel) {
-        console.log(`
-Step 3: Setting up ${options.tunnel} tunnel...`);
-        const tunnel = new TunnelService();
-        if (options.tunnel === "pangolin") {
-          await tunnel.setupPangolin({ domain: options.tunnelDomain });
-          console.log("  \u2713 Pangolin tunnel configured");
-        } else if (options.tunnel === "cloudflare") {
-          await tunnel.setupCloudflare({
-            domain: options.tunnelDomain
-          });
-          console.log("  \u2713 Cloudflare tunnel configured");
-        } else {
-          console.warn(`  \u26A0 Unknown tunnel provider: ${options.tunnel}`);
-        }
-      }
-      if (options.domain) {
-        console.log(`
-Step 4: Configuring domain ${options.domain}...`);
-        await traefik.configureDomain(options.domain);
-        console.log(`  \u2713 Domain configured`);
-        if (options.ssl) {
-          console.log("\nStep 5: Enabling SSL...");
-          await traefik.enableSSL();
-          console.log("  \u2713 SSL enabled with Let's Encrypt");
-        }
-      }
-      console.log("\n\u2705 Legs setup complete!");
-      console.log("\nYour organs are now accessible at:");
-      const baseUrl = options.domain || "localhost";
-      const protocol = options.ssl ? "https" : "http";
-      for (const organ of organs) {
-        console.log(`  ${protocol}://${baseUrl}${organ.path}`);
-      }
-      if (options.tunnel) {
-        console.log(`
-Tunnel configured with ${options.tunnel}`);
-        if (options.tunnelDomain) {
-          console.log(`External domain: ${options.tunnelDomain}`);
-        }
-      }
+      await runLegsProxySetup({
+        domain: options.domain,
+        tunnel: options.tunnel,
+        tunnelDomain: options.tunnelDomain,
+        ssl: Boolean(options.ssl),
+        standalone: Boolean(options.standalone)
+      });
     } catch (error) {
       console.error("\n\u274C Setup failed:", error);
       process.exit(1);
@@ -406,12 +414,15 @@ import { execSync as execSync3, spawnSync } from "child_process";
 import { mkdirSync as mkdirSync3, writeFileSync as writeFileSync3 } from "fs";
 import { join as join3 } from "path";
 import { randomBytes } from "crypto";
+import { readEveSecrets, writeEveSecrets } from "@eve/dna";
 var GATEWAY_CONTAINER = "eve-inference-gateway";
 var DEFAULT_HOST_PORT = "11435";
 var InferenceGateway = class {
   baseDir;
   hostPort;
+  cwd;
   constructor(cwd = process.cwd(), hostPort = DEFAULT_HOST_PORT) {
+    this.cwd = cwd;
     this.baseDir = join3(cwd, ".eve", "inference-gateway");
     this.hostPort = process.env.EVE_INFERENCE_GATEWAY_PORT?.trim() || hostPort;
   }
@@ -477,6 +488,19 @@ Example:
   curl -u '${username}:${password}' http://127.0.0.1:${this.hostPort}/api/tags
 `;
     writeFileSync3(secretsFile, secretBody, { mode: 384 });
+    const prevSecrets = await readEveSecrets(this.cwd);
+    await writeEveSecrets(
+      {
+        inference: {
+          ...prevSecrets?.inference ?? {},
+          gatewayUrl: `http://127.0.0.1:${this.hostPort}`,
+          gatewayUser: username,
+          gatewayPass: password,
+          ollamaUrl: prevSecrets?.inference?.ollamaUrl ?? ollamaHost
+        }
+      },
+      this.cwd
+    );
     try {
       execSync3("docker network create eve-network", { stdio: "ignore" });
     } catch {
@@ -560,5 +584,6 @@ export {
   domainCommand,
   registerCommands,
   registerLegsCommands,
+  runLegsProxySetup,
   setupCommand
 };

@@ -1,6 +1,8 @@
 import { execSync } from 'child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import { homedir } from 'os';
 import { join } from 'path';
+import { readEveSecrets } from '@eve/dna';
 
 export class OpenCodeService {
   private isInstalled = false;
@@ -28,7 +30,10 @@ export class OpenCodeService {
 
     console.log(`Initializing OpenCode project: ${name}`);
     
-    const projectDir = join(process.cwd(), name);
+    const secrets = await readEveSecrets(process.cwd());
+    const workspaceRoot = secrets?.builder?.workspaceDir ?? join(homedir(), '.eve', 'workspace');
+    mkdirSync(workspaceRoot, { recursive: true });
+    const projectDir = join(workspaceRoot, name);
     if (!existsSync(projectDir)) {
       mkdirSync(projectDir, { recursive: true });
     }

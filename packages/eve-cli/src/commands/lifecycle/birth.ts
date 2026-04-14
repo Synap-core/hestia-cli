@@ -22,7 +22,7 @@ export function birthCommand(program: Command): void {
   birth
     .command('usb')
     .description(
-      'Create a bootable USB with Ventoy + autoinstall (runs bash script). After hestia usb create, copy ~/.eve/usb-profile.json to /opt/eve/profile.json on the server for eve setup to pick up the profile.',
+      'Create a bootable USB with Ventoy + autoinstall. Embeds ~/.eve/usb-profile.json as eve/profile.json when present, else a minimal manifest (EVE_USB_TARGET_PROFILE). After install, copy that file to /opt/eve/profile.json if needed.',
     )
     .argument('[device]', 'Block device e.g. /dev/sdb (omit for interactive script)')
     .action(async (device: string | undefined) => {

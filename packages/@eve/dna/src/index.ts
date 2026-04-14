@@ -71,5 +71,13 @@ export {
 
 export { type HardwareFacts, probeHardware, formatHardwareReport } from './hw-probe.js';
 
+export {
+  type EveSecrets,
+  readEveSecrets,
+  writeEveSecrets,
+  secretsPath,
+  ensureSecretValue,
+} from './secrets-contract.js';
+
 // Version
 export const VERSION = '0.1.0';

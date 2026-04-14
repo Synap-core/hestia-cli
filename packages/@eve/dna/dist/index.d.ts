@@ -452,6 +452,9 @@ declare const SetupProfileSchema: z.ZodObject<{
     domainHint: z.ZodOptional<z.ZodString>;
     hearthName: z.ZodOptional<z.ZodString>;
     source: z.ZodOptional<z.ZodEnum<["wizard", "usb_manifest", "cli"]>>;
+    /** If set, `eve setup` runs `eve legs setup` with this tunnel after Data Pod / full stack steps. */
+    tunnelProvider: z.ZodOptional<z.ZodEnum<["pangolin", "cloudflare"]>>;
+    tunnelDomain: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
     version: "1";
     updatedAt: string;
@@ -459,6 +462,8 @@ declare const SetupProfileSchema: z.ZodObject<{
     domainHint?: string | undefined;
     hearthName?: string | undefined;
     source?: "wizard" | "usb_manifest" | "cli" | undefined;
+    tunnelProvider?: "pangolin" | "cloudflare" | undefined;
+    tunnelDomain?: string | undefined;
 }, {
     version: "1";
     updatedAt: string;
@@ -466,6 +471,8 @@ declare const SetupProfileSchema: z.ZodObject<{
     domainHint?: string | undefined;
     hearthName?: string | undefined;
     source?: "wizard" | "usb_manifest" | "cli" | undefined;
+    tunnelProvider?: "pangolin" | "cloudflare" | undefined;
+    tunnelDomain?: string | undefined;
 }>;
 type SetupProfile = z.infer<typeof SetupProfileSchema>;
 declare function getSetupProfilePath(cwd?: string): string;
@@ -476,16 +483,22 @@ declare const UsbSetupManifestSchema: z.ZodObject<{
     target_profile: z.ZodEnum<["inference_only", "data_pod", "full"]>;
     hearth_name: z.ZodOptional<z.ZodString>;
     domain_hint: z.ZodOptional<z.ZodString>;
+    tunnel_provider: z.ZodOptional<z.ZodEnum<["pangolin", "cloudflare"]>>;
+    tunnel_domain: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
     version: "1";
     target_profile: "inference_only" | "data_pod" | "full";
     hearth_name?: string | undefined;
     domain_hint?: string | undefined;
+    tunnel_provider?: "pangolin" | "cloudflare" | undefined;
+    tunnel_domain?: string | undefined;
 }, {
     version: "1";
     target_profile: "inference_only" | "data_pod" | "full";
     hearth_name?: string | undefined;
     domain_hint?: string | undefined;
+    tunnel_provider?: "pangolin" | "cloudflare" | undefined;
+    tunnel_domain?: string | undefined;
 }>;
 type UsbSetupManifest = z.infer<typeof UsbSetupManifestSchema>;
 declare function readUsbSetupManifest(): Promise<UsbSetupManifest | null>;
@@ -507,6 +520,109 @@ interface HardwareFacts {
 }
 declare function probeHardware(runNvidiaSmi: boolean): Promise<HardwareFacts>;
 declare function formatHardwareReport(f: HardwareFacts): string;
+
+declare const SecretsSchema: z.ZodObject<{
+    version: z.ZodLiteral<"1">;
+    updatedAt: z.ZodString;
+    synap: z.ZodOptional<z.ZodObject<{
+        apiUrl: z.ZodOptional<z.ZodString>;
+        apiKey: z.ZodOptional<z.ZodString>;
+    }, "strip", z.ZodTypeAny, {
+        apiUrl?: string | undefined;
+        apiKey?: string | undefined;
+    }, {
+        apiUrl?: string | undefined;
+        apiKey?: string | undefined;
+    }>>;
+    inference: z.ZodOptional<z.ZodObject<{
+        ollamaUrl: z.ZodOptional<z.ZodString>;
+        gatewayUrl: z.ZodOptional<z.ZodString>;
+        gatewayUser: z.ZodOptional<z.ZodString>;
+        gatewayPass: z.ZodOptional<z.ZodString>;
+    }, "strip", z.ZodTypeAny, {
+        ollamaUrl?: string | undefined;
+        gatewayUrl?: string | undefined;
+        gatewayUser?: string | undefined;
+        gatewayPass?: string | undefined;
+    }, {
+        ollamaUrl?: string | undefined;
+        gatewayUrl?: string | undefined;
+        gatewayUser?: string | undefined;
+        gatewayPass?: string | undefined;
+    }>>;
+    builder: z.ZodOptional<z.ZodObject<{
+        openclaudeUrl: z.ZodOptional<z.ZodString>;
+        dokployApiUrl: z.ZodOptional<z.ZodString>;
+        dokployApiKey: z.ZodOptional<z.ZodString>;
+        workspaceDir: z.ZodOptional<z.ZodString>;
+    }, "strip", z.ZodTypeAny, {
+        openclaudeUrl?: string | undefined;
+        dokployApiUrl?: string | undefined;
+        dokployApiKey?: string | undefined;
+        workspaceDir?: string | undefined;
+    }, {
+        openclaudeUrl?: string | undefined;
+        dokployApiUrl?: string | undefined;
+        dokployApiKey?: string | undefined;
+        workspaceDir?: string | undefined;
+    }>>;
+    arms: z.ZodOptional<z.ZodObject<{
+        openclawSynapApiKey: z.ZodOptional<z.ZodString>;
+    }, "strip", z.ZodTypeAny, {
+        openclawSynapApiKey?: string | undefined;
+    }, {
+        openclawSynapApiKey?: string | undefined;
+    }>>;
+}, "strip", z.ZodTypeAny, {
+    version: "1";
+    updatedAt: string;
+    arms?: {
+        openclawSynapApiKey?: string | undefined;
+    } | undefined;
+    builder?: {
+        openclaudeUrl?: string | undefined;
+        dokployApiUrl?: string | undefined;
+        dokployApiKey?: string | undefined;
+        workspaceDir?: string | undefined;
+    } | undefined;
+    synap?: {
+        apiUrl?: string | undefined;
+        apiKey?: string | undefined;
+    } | undefined;
+    inference?: {
+        ollamaUrl?: string | undefined;
+        gatewayUrl?: string | undefined;
+        gatewayUser?: string | undefined;
+        gatewayPass?: string | undefined;
+    } | undefined;
+}, {
+    version: "1";
+    updatedAt: string;
+    arms?: {
+        openclawSynapApiKey?: string | undefined;
+    } | undefined;
+    builder?: {
+        openclaudeUrl?: string | undefined;
+        dokployApiUrl?: string | undefined;
+        dokployApiKey?: string | undefined;
+        workspaceDir?: string | undefined;
+    } | undefined;
+    synap?: {
+        apiUrl?: string | undefined;
+        apiKey?: string | undefined;
+    } | undefined;
+    inference?: {
+        ollamaUrl?: string | undefined;
+        gatewayUrl?: string | undefined;
+        gatewayUser?: string | undefined;
+        gatewayPass?: string | undefined;
+    } | undefined;
+}>;
+type EveSecrets = z.infer<typeof SecretsSchema>;
+declare function secretsPath(cwd?: string): string;
+declare function readEveSecrets(cwd?: string): Promise<EveSecrets | null>;
+declare function writeEveSecrets(partial: Omit<EveSecrets, 'version' | 'updatedAt'>, cwd?: string): Promise<EveSecrets>;
+declare function ensureSecretValue(existing?: string): string;
 
 /**
  * DNA Package - @eve/dna
@@ -542,4 +658,4 @@ declare function formatHardwareReport(f: HardwareFacts): string;
 
 declare const VERSION = "0.1.0";
 
-export { type AIModel, ConfigManager, type Credentials, CredentialsManager, type DNAError, type DockerCompose, DockerComposeGenerator, type DockerComposeService, type EntityState, EntityStateManager, type EveConfig, type HardwareFacts, type Organ, type OrganState, type OrganStatus, type Service, type ServiceConfig, type SetupProfile, type SetupProfileKind, SetupProfileKindSchema, SetupProfileSchema, type UsbSetupManifest, UsbSetupManifestSchema, VERSION, configManager, createDockerComposeGenerator, credentialsManager, entityStateManager, formatHardwareReport, getSetupProfilePath, probeHardware, readSetupProfile, readUsbSetupManifest, writeSetupProfile, writeUsbSetupManifest };
+export { type AIModel, ConfigManager, type Credentials, CredentialsManager, type DNAError, type DockerCompose, DockerComposeGenerator, type DockerComposeService, type EntityState, EntityStateManager, type EveConfig, type EveSecrets, type HardwareFacts, type Organ, type OrganState, type OrganStatus, type Service, type ServiceConfig, type SetupProfile, type SetupProfileKind, SetupProfileKindSchema, SetupProfileSchema, type UsbSetupManifest, UsbSetupManifestSchema, VERSION, configManager, createDockerComposeGenerator, credentialsManager, ensureSecretValue, entityStateManager, formatHardwareReport, getSetupProfilePath, probeHardware, readEveSecrets, readSetupProfile, readUsbSetupManifest, secretsPath, writeEveSecrets, writeSetupProfile, writeUsbSetupManifest };

@@ -6,6 +6,8 @@ import { z } from 'zod';
 export const SetupProfileKindSchema = z.enum(['inference_only', 'data_pod', 'full']);
 export type SetupProfileKind = z.infer<typeof SetupProfileKindSchema>;
 
+const TunnelProviderSchema = z.enum(['pangolin', 'cloudflare']);
+
 export const SetupProfileSchema = z.object({
   version: z.literal('1'),
   profile: SetupProfileKindSchema,
@@ -13,6 +15,9 @@ export const SetupProfileSchema = z.object({
   domainHint: z.string().optional(),
   hearthName: z.string().optional(),
   source: z.enum(['wizard', 'usb_manifest', 'cli']).optional(),
+  /** If set, `eve setup` runs `eve legs setup` with this tunnel after Data Pod / full stack steps. */
+  tunnelProvider: TunnelProviderSchema.optional(),
+  tunnelDomain: z.string().optional(),
 });
 
 export type SetupProfile = z.infer<typeof SetupProfileSchema>;
@@ -47,6 +52,8 @@ export const UsbSetupManifestSchema = z.object({
   target_profile: SetupProfileKindSchema,
   hearth_name: z.string().optional(),
   domain_hint: z.string().optional(),
+  tunnel_provider: TunnelProviderSchema.optional(),
+  tunnel_domain: z.string().optional(),
 });
 
 export type UsbSetupManifest = z.infer<typeof UsbSetupManifestSchema>;

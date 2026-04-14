@@ -11,7 +11,7 @@ export function initCommand(program: Command): void {
     .command('init <name>')
     .description('Initialize builder project')
     .option('--template <template>', 'Project template (website, docs, app)')
-    .option('--brain-url <url>', 'Brain Ollama URL', 'http://localhost:11434')
+    .option('--brain-url <url>', 'Brain/Ollama URL (defaults to .eve/secrets contract)')
     .action(async (name, options) => {
       console.log(`Initializing Builder project: ${name}`);
       console.log('');
@@ -44,7 +44,7 @@ export function initCommand(program: Command): void {
         console.log('-------------------------------------------');
         
         await opencode.initProject(name, options.template);
-        await openclaude.configure(options.brainUrl);
+        await openclaude.configure(options.brainUrl || '');
         await openclaude.start();
         await dokploy.createProject(name);
         
@@ -64,7 +64,7 @@ export function initCommand(program: Command): void {
           type: 'builder_project',
           name,
           template: options.template || 'default',
-          brainUrl: options.brainUrl,
+          brainUrl: options.brainUrl || openclaude.getConfig()?.brainUrl || null,
           components: {
             opencode: {
               installed: true,

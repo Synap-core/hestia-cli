@@ -10,6 +10,9 @@ export interface MCPConfig {
 export interface OpenClawConfig {
   ollamaUrl: string;
   model?: string;
+  synapApiUrl?: string;
+  synapApiKey?: string;
+  dokployApiUrl?: string;
   mcpServers?: Record<string, MCPConfig>;
 }
 
@@ -45,6 +48,12 @@ export class OpenClawService {
     console.log(`⚙️  Configured OpenClaw to use Ollama at ${ollamaUrl}`);
   }
 
+  setIntegration(integration: { synapApiUrl?: string; synapApiKey?: string; dokployApiUrl?: string }): void {
+    this.config.synapApiUrl = integration.synapApiUrl;
+    this.config.synapApiKey = integration.synapApiKey;
+    this.config.dokployApiUrl = integration.dokployApiUrl;
+  }
+
   /**
    * Start OpenClaw container
    */
@@ -65,6 +74,9 @@ export class OpenClawService {
       '-p', `${OPENCLAW_PORT}:3000`,
       '-e', `OLLAMA_URL=${this.config.ollamaUrl}`,
       '-e', `DEFAULT_MODEL=${this.config.model}`,
+      '-e', `SYNAP_API_URL=${this.config.synapApiUrl ?? ''}`,
+      '-e', `SYNAP_API_KEY=${this.config.synapApiKey ?? ''}`,
+      '-e', `DOKPLOY_API_URL=${this.config.dokployApiUrl ?? ''}`,
       '-v', 'eve-arms-openclaw-data:/data',
       '--restart', 'unless-stopped',
       'ghcr.io/openclaw/openclaw:latest',

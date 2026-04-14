@@ -65,8 +65,8 @@ Details: [docs/EVE_SETUP_PROFILES.md](docs/EVE_SETUP_PROFILES.md).
 
 ### A. From zero on a server (recommended)
 
-1. Install Docker + clone this repo + `pnpm install && pnpm run build`.
-2. Run **`eve setup`** and pick a profile (or use `--yes --profile …`).
+1. Install Docker + clone this repo + `pnpm install && pnpm run build` — or use **`bootstrap.sh`** (root of this repo) with **`EVE_BOOTSTRAP_REPO`** set to your clone URL for an opinionated apt + Docker + Node 20 + pnpm path.
+2. Run **`eve setup`** and pick a profile (or use `--yes --profile …`). For **`data_pod`** / **`full`**, optionally choose **Pangolin** or **Cloudflare** for Legs, or pass **`--tunnel`** / **`--tunnel-domain`**.
 3. Optional: **`eve builder stack up`** for a static site on `http://127.0.0.1:9080`.
 4. Grow other organs: **`eve grow`**, **`eve arms install`**, etc., as needed.
 

@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { EntityStateManager } from '@eve/dna';
+import { EntityStateManager, readEveSecrets } from '@eve/dna';
 import { execa, resolveSynapDelegate } from '@eve/brain';
 import { OpenClawService } from '../lib/openclaw.js';
 
@@ -48,7 +48,17 @@ export function installCommand(program: Command): void {
 
         const openclaw = new OpenClawService();
         await openclaw.install();
-        await openclaw.configure('http://brain:11434');
+        const secrets = await readEveSecrets(process.cwd());
+        const ollamaUrl =
+          secrets?.inference?.gatewayUrl ??
+          secrets?.inference?.ollamaUrl ??
+          'http://eve-brain-ollama:11434';
+        await openclaw.configure(ollamaUrl);
+        openclaw.setIntegration({
+          synapApiUrl: secrets?.synap?.apiUrl,
+          synapApiKey: secrets?.arms?.openclawSynapApiKey ?? secrets?.synap?.apiKey,
+          dokployApiUrl: secrets?.builder?.dokployApiUrl,
+        });
         await openclaw.start();
 
         await stateManager.updateOrgan('arms', 'ready');

@@ -2,6 +2,7 @@ import { execSync, spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { readEveSecrets, writeEveSecrets } from '@eve/dna';
 
 const GATEWAY_CONTAINER = 'eve-inference-gateway';
 const DEFAULT_HOST_PORT = '11435';
@@ -22,8 +23,10 @@ export interface InferenceGatewayResult {
 export class InferenceGateway {
   private readonly baseDir: string;
   private readonly hostPort: string;
+  private readonly cwd: string;
 
   constructor(cwd: string = process.cwd(), hostPort: string = DEFAULT_HOST_PORT) {
+    this.cwd = cwd;
     this.baseDir = join(cwd, '.eve', 'inference-gateway');
     this.hostPort = process.env.EVE_INFERENCE_GATEWAY_PORT?.trim() || hostPort;
   }
@@ -96,6 +99,20 @@ log:
       `Example:\n` +
       `  curl -u '${username}:${password}' http://127.0.0.1:${this.hostPort}/api/tags\n`;
     writeFileSync(secretsFile, secretBody, { mode: 0o600 });
+
+    const prevSecrets = await readEveSecrets(this.cwd);
+    await writeEveSecrets(
+      {
+        inference: {
+          ...(prevSecrets?.inference ?? {}),
+          gatewayUrl: `http://127.0.0.1:${this.hostPort}`,
+          gatewayUser: username,
+          gatewayPass: password,
+          ollamaUrl: prevSecrets?.inference?.ollamaUrl ?? ollamaHost,
+        },
+      },
+      this.cwd,
+    );
 
     try {
       execSync('docker network create eve-network', { stdio: 'ignore' });

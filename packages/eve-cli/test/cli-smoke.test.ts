@@ -35,6 +35,7 @@ describe('eve CLI', () => {
         encoding: 'utf-8',
       });
       expect(out).toContain('"profile": "full"');
+      expect(out).toContain('"tunnel"');
       expect(existsSync(join(dir, '.eve', 'setup-profile.json'))).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });

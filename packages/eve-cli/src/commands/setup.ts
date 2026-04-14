@@ -1,14 +1,19 @@
 import type { Command } from 'commander';
-import { select, confirm, isCancel } from '@clack/prompts';
+import { select, confirm, isCancel, text } from '@clack/prompts';
 import {
   readSetupProfile,
   writeSetupProfile,
   readUsbSetupManifest,
   probeHardware,
   formatHardwareReport,
+  readEveSecrets,
+  writeEveSecrets,
+  ensureSecretValue,
   type SetupProfileKind,
+  type EveSecrets,
 } from '@eve/dna';
 import { runBrainInit, runInferenceInit } from '@eve/brain';
+import { runLegsProxySetup } from '@eve/legs';
 import { getGlobalCliFlags, outputJson } from '@eve/cli-kit';
 import { colors, emojis } from '../lib/ui.js';
 
@@ -25,6 +30,9 @@ export interface SetupCliOptions {
   fromSource?: boolean;
   skipHardware?: boolean;
   nvidiaSmi?: boolean;
+  /** pangolin | cloudflare — Data Pod / full only */
+  tunnel?: string;
+  tunnelDomain?: string;
 }
 
 function parseProfile(s: string | undefined): SetupProfileKind | null {
@@ -34,6 +42,14 @@ function parseProfile(s: string | undefined): SetupProfileKind | null {
   if (v === 'data_pod' || v === 'datapod') return 'data_pod';
   if (v === 'full') return 'full';
   return null;
+}
+
+function parseTunnel(s: string | undefined): 'pangolin' | 'cloudflare' | undefined {
+  if (!s) return undefined;
+  const v = s.trim().toLowerCase();
+  if (v === 'pangolin') return 'pangolin';
+  if (v === 'cloudflare' || v === 'cf') return 'cloudflare';
+  return undefined;
 }
 
 export function setupCommand(program: Command): void {
@@ -52,6 +68,8 @@ export function setupCommand(program: Command): void {
     .option('--from-source', 'synap install --from-source')
     .option('--skip-hardware', 'Skip optional hardware summary')
     .option('--nvidia-smi', 'With hardware summary in non-interactive mode, run nvidia-smi')
+    .option('--tunnel <provider>', 'data_pod | full: pangolin or cloudflare (runs eve legs setup after install)')
+    .option('--tunnel-domain <host>', 'Hostname for tunnel / ingress (optional)')
     .addHelpText(
       'after',
       '\nWhy three paths\n' +
@@ -112,6 +130,59 @@ export function setupCommand(program: Command): void {
         process.exit(1);
       }
 
+      let tunnelProvider = parseTunnel(opts.tunnel) ?? usb?.tunnel_provider;
+      let tunnelDomain =
+        (opts.tunnelDomain?.trim() || usb?.tunnel_domain || '').trim() || undefined;
+
+      if (
+        !opts.dryRun &&
+        (profile === 'data_pod' || profile === 'full') &&
+        !flags.nonInteractive &&
+        !flags.json
+      ) {
+        if (!tunnelProvider) {
+          const t = await select({
+            message: 'Expose Eve Legs (Traefik) via a tunnel after Synap install?',
+            options: [
+              { value: 'none' as const, label: 'No tunnel', hint: 'Localhost / manual Traefik only' },
+              {
+                value: 'pangolin' as const,
+                label: 'Pangolin',
+                hint: 'Installs Pangolin CLI and writes config under /opt/hestia/tunnels',
+              },
+              {
+                value: 'cloudflare' as const,
+                label: 'Cloudflare',
+                hint: 'cloudflared + ingress config (stub credentials path)',
+              },
+            ],
+            initialValue: 'none',
+          });
+          if (isCancel(t)) {
+            console.log(colors.muted('Cancelled.'));
+            return;
+          }
+          tunnelProvider = t === 'none' ? undefined : t;
+        }
+        if (tunnelProvider && !tunnelDomain) {
+          const d = await text({
+            message: 'Tunnel / ingress hostname (optional, e.g. eve.example.com)',
+            placeholder: opts.domain && opts.domain !== 'localhost' ? opts.domain : '',
+            initialValue: '',
+          });
+          if (isCancel(d)) {
+            console.log(colors.muted('Cancelled.'));
+            return;
+          }
+          tunnelDomain = d.trim() || undefined;
+        }
+      }
+
+      if (flags.nonInteractive && opts.tunnel && !tunnelProvider) {
+        console.error('Invalid --tunnel (use pangolin or cloudflare).');
+        process.exit(1);
+      }
+
       const existing = await readSetupProfile(cwd);
       if (existing && !flags.nonInteractive && !opts.dryRun) {
         const ok = await confirm({
@@ -129,6 +200,8 @@ export function setupCommand(program: Command): void {
           profile,
           existing: existing?.profile ?? null,
           usbManifest: usb ? { target_profile: usb.target_profile } : null,
+          tunnel: tunnelProvider ?? null,
+          tunnelDomain: tunnelDomain ?? null,
         };
         if (flags.json) outputJson(plan);
         else console.log(JSON.stringify(plan, null, 2));
@@ -163,9 +236,52 @@ export function setupCommand(program: Command): void {
           source: usb ? 'usb_manifest' : flags.nonInteractive ? 'cli' : 'wizard',
           domainHint: opts.domain,
           hearthName: usb?.hearth_name,
+          tunnelProvider,
+          tunnelDomain,
         },
         cwd,
       );
+
+      const prevSecrets = await readEveSecrets(cwd);
+      type SecretsMerge = Omit<EveSecrets, 'version' | 'updatedAt'>;
+      const merge: SecretsMerge = {
+        builder: {
+          openclaudeUrl:
+            profile === 'data_pod'
+              ? prevSecrets?.builder?.openclaudeUrl ??
+                (process.env.OPENCLAUDE_BRAIN_URL || undefined)
+              : prevSecrets?.builder?.openclaudeUrl ??
+                prevSecrets?.inference?.gatewayUrl ??
+                'http://127.0.0.1:11435',
+          dokployApiUrl: prevSecrets?.builder?.dokployApiUrl ?? process.env.DOKPLOY_API_URL ?? 'http://127.0.0.1:3000',
+          dokployApiKey: ensureSecretValue(prevSecrets?.builder?.dokployApiKey ?? process.env.DOKPLOY_API_KEY),
+          workspaceDir: prevSecrets?.builder?.workspaceDir ?? `${cwd}/.eve/workspace`,
+        },
+        arms: {
+          openclawSynapApiKey: ensureSecretValue(
+            prevSecrets?.arms?.openclawSynapApiKey ??
+              process.env.OPENCLAW_SYNAP_API_KEY ??
+              prevSecrets?.synap?.apiKey,
+          ),
+        },
+      };
+      if (profile !== 'inference_only') {
+        merge.synap = {
+          apiUrl: prevSecrets?.synap?.apiUrl ?? 'http://127.0.0.1:4000',
+          apiKey: ensureSecretValue(prevSecrets?.synap?.apiKey ?? process.env.SYNAP_API_KEY),
+        };
+      }
+      if (profile !== 'data_pod') {
+        merge.inference = {
+          ollamaUrl:
+            prevSecrets?.inference?.ollamaUrl ??
+            (profile === 'full' ? 'http://eve-brain-ollama:11434' : 'http://127.0.0.1:11434'),
+          gatewayUrl: prevSecrets?.inference?.gatewayUrl ?? 'http://127.0.0.1:11435',
+          gatewayUser: prevSecrets?.inference?.gatewayUser,
+          gatewayPass: prevSecrets?.inference?.gatewayPass,
+        };
+      }
+      await writeEveSecrets(merge, cwd);
 
       if (flags.json) {
         outputJson({ ok: true, profile, persisted: true });
@@ -194,6 +310,17 @@ export function setupCommand(program: Command): void {
             fromSource: opts.fromSource,
             withAi: false,
           });
+          if (tunnelProvider) {
+            const legsDomain =
+              opts.domain && opts.domain !== 'localhost' ? opts.domain : tunnelDomain ?? undefined;
+            await runLegsProxySetup({
+              domain: legsDomain,
+              tunnel: tunnelProvider,
+              tunnelDomain,
+              ssl: false,
+              standalone: false,
+            });
+          }
         } else {
           const repo = opts.synapRepo?.trim() || process.env.SYNAP_REPO_ROOT?.trim();
           if (!repo) {
@@ -218,6 +345,17 @@ export function setupCommand(program: Command): void {
             withGateway: true,
             internalOllamaOnly: true,
           });
+          if (tunnelProvider) {
+            const legsDomain =
+              opts.domain && opts.domain !== 'localhost' ? opts.domain : tunnelDomain ?? undefined;
+            await runLegsProxySetup({
+              domain: legsDomain,
+              tunnel: tunnelProvider,
+              tunnelDomain,
+              ssl: false,
+              standalone: false,
+            });
+          }
         }
 
         if (!flags.json) {

@@ -1,6 +1,7 @@
 import { execSync } from 'child_process';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
+import { readEveSecrets, writeEveSecrets } from '@eve/dna';
 
 export interface DokployStatus {
   installed: boolean;
@@ -55,7 +56,7 @@ export class DokployService {
   }
 
   private async loadConfig(): Promise<void> {
-    const configDir = join(process.cwd(), '.hestia');
+    const configDir = join(process.cwd(), '.eve');
     const configPath = join(configDir, 'dokploy.json');
 
     if (existsSync(configPath)) {
@@ -63,10 +64,13 @@ export class DokployService {
       this.apiUrl = config.apiUrl || this.apiUrl;
       this.apiKey = config.apiKey;
     }
+    const secrets = await readEveSecrets(process.cwd());
+    this.apiUrl = secrets?.builder?.dokployApiUrl ?? this.apiUrl;
+    this.apiKey = secrets?.builder?.dokployApiKey ?? this.apiKey;
   }
 
   private async saveConfig(): Promise<void> {
-    const configDir = join(process.cwd(), '.hestia');
+    const configDir = join(process.cwd(), '.eve');
     if (!existsSync(configDir)) {
       mkdirSync(configDir, { recursive: true });
     }
@@ -78,6 +82,15 @@ export class DokployService {
         apiKey: this.apiKey,
         updatedAt: new Date().toISOString(),
       }, null, 2)
+    );
+    await writeEveSecrets(
+      {
+        builder: {
+          dokployApiUrl: this.apiUrl ?? undefined,
+          dokployApiKey: this.apiKey ?? undefined,
+        },
+      },
+      process.cwd(),
     );
   }
 
@@ -97,7 +110,7 @@ export class DokployService {
     this.projects.set(project.id, project);
 
     // Save project registry
-    const configDir = join(process.cwd(), '.hestia');
+    const configDir = join(process.cwd(), '.eve');
     if (!existsSync(configDir)) {
       mkdirSync(configDir, { recursive: true });
     }
@@ -117,7 +130,7 @@ export class DokployService {
     const project = this.projects.get(projectId);
     if (!project) {
       // Try to load from file
-      const projectsPath = join(process.cwd(), '.hestia', 'dokploy-projects.json');
+      const projectsPath = join(process.cwd(), '.eve', 'dokploy-projects.json');
       if (existsSync(projectsPath)) {
         const all = JSON.parse(readFileSync(projectsPath, 'utf-8'));
         if (all[projectId]) {
@@ -143,7 +156,7 @@ export class DokployService {
 
     // Update stored project
     this.projects.set(projectId, project);
-    const projectsPath = join(process.cwd(), '.hestia', 'dokploy-projects.json');
+    const projectsPath = join(process.cwd(), '.eve', 'dokploy-projects.json');
     const all = existsSync(projectsPath) 
       ? JSON.parse(readFileSync(projectsPath, 'utf-8')) 
       : {};
@@ -157,7 +170,7 @@ export class DokployService {
     const projects: DokployProject[] = [];
     
     // Load from file
-    const projectsPath = join(process.cwd(), '.hestia', 'dokploy-projects.json');
+    const projectsPath = join(process.cwd(), '.eve', 'dokploy-projects.json');
     if (existsSync(projectsPath)) {
       const all = JSON.parse(readFileSync(projectsPath, 'utf-8'));
       for (const [id, proj] of Object.entries(all)) {
@@ -190,7 +203,7 @@ export class DokployService {
     console.log(`Configuring domain: ${domain}`);
     
     // Save domain configuration
-    const configDir = join(process.cwd(), '.hestia');
+    const configDir = join(process.cwd(), '.eve');
     if (!existsSync(configDir)) {
       mkdirSync(configDir, { recursive: true });
     }

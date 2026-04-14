@@ -18,6 +18,8 @@ log_error() { echo -e "${RED}[USB]${NC} $1"; }
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Ventoy assets live next to this script: packages/usb/src/ventoy/
+VENTOY_ASSETS="${SCRIPT_DIR}/ventoy"
 VENTOY_VERSION="1.0.97"
 UBUNTU_VERSION="24.04"
 UBUNTU_ISO="ubuntu-${UBUNTU_VERSION}-live-server-amd64.iso"
@@ -205,21 +207,31 @@ copy_files() {
     # Copy Ventoy configuration
     log_info "Copying Ventoy configuration..."
     mkdir -p "$mount_point/ventoy"
-    cp "$SCRIPT_DIR/../ventoy/ventoy.json" "$mount_point/ventoy/" 2>/dev/null || {
+    cp "${VENTOY_ASSETS}/ventoy.json" "$mount_point/ventoy/" 2>/dev/null || {
         log_warn "ventoy.json not found, using defaults"
     }
     
     # Copy autoinstall configs
     mkdir -p "$mount_point/ventoy/autoinstall"
-    cp "$SCRIPT_DIR/../ventoy/autoinstall/"*.yaml "$mount_point/ventoy/autoinstall/" 2>/dev/null || {
+    cp "${VENTOY_ASSETS}/autoinstall/"*.yaml "$mount_point/ventoy/autoinstall/" 2>/dev/null || {
         log_warn "Autoinstall configs not found"
     }
     
-    # Copy eve installer
+    # Copy eve installer (packages/usb/src -> packages/install/src)
     mkdir -p "$mount_point/eve"
     cp -r "${SCRIPT_DIR}/../../install/src/"* "$mount_point/eve/" 2>/dev/null || {
         log_warn "eve installer not found at expected location"
     }
+
+    # Optional: handoff manifest for eve setup (copy to /opt/eve/profile.json during provisioning)
+    if [[ -f "${HOME}/.eve/usb-profile.json" ]]; then
+        log_info "Embedding ~/.eve/usb-profile.json as eve/profile.json on USB"
+        cp "${HOME}/.eve/usb-profile.json" "$mount_point/eve/profile.json"
+    else
+        target="${EVE_USB_TARGET_PROFILE:-full}"
+        log_info "Writing default eve/profile.json (target_profile=${target}; override with EVE_USB_TARGET_PROFILE)"
+        printf '{"version":"1","target_profile":"%s"}\n' "$target" > "$mount_point/eve/profile.json"
+    fi
     
     # Create late-command script
     cat > "$mount_point/ventoy/autoinstall/late-command.sh" << 'EOF'

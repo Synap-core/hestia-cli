@@ -999,13 +999,17 @@ import { dirname as dirname2, join as join4 } from "path";
 import { homedir as homedir4 } from "os";
 import { z as z3 } from "zod";
 var SetupProfileKindSchema = z3.enum(["inference_only", "data_pod", "full"]);
+var TunnelProviderSchema = z3.enum(["pangolin", "cloudflare"]);
 var SetupProfileSchema = z3.object({
   version: z3.literal("1"),
   profile: SetupProfileKindSchema,
   updatedAt: z3.string(),
   domainHint: z3.string().optional(),
   hearthName: z3.string().optional(),
-  source: z3.enum(["wizard", "usb_manifest", "cli"]).optional()
+  source: z3.enum(["wizard", "usb_manifest", "cli"]).optional(),
+  /** If set, `eve setup` runs `eve legs setup` with this tunnel after Data Pod / full stack steps. */
+  tunnelProvider: TunnelProviderSchema.optional(),
+  tunnelDomain: z3.string().optional()
 });
 var USB_MANIFEST_PATHS = [
   "/opt/eve/profile.json",
@@ -1031,7 +1035,9 @@ var UsbSetupManifestSchema = z3.object({
   version: z3.literal("1"),
   target_profile: SetupProfileKindSchema,
   hearth_name: z3.string().optional(),
-  domain_hint: z3.string().optional()
+  domain_hint: z3.string().optional(),
+  tunnel_provider: TunnelProviderSchema.optional(),
+  tunnel_domain: z3.string().optional()
 });
 async function readUsbSetupManifest() {
   const envPath = process.env.EVE_SETUP_MANIFEST?.trim();
@@ -1106,6 +1112,98 @@ function formatHardwareReport(f) {
   return lines.join("\n");
 }
 
+// src/secrets-contract.ts
+import { mkdir as mkdir4, readFile as readFile3, writeFile as writeFile4 } from "fs/promises";
+import { existsSync } from "fs";
+import { join as join5 } from "path";
+import { randomBytes } from "crypto";
+import { z as z4 } from "zod";
+var SecretsSchema = z4.object({
+  version: z4.literal("1"),
+  updatedAt: z4.string(),
+  synap: z4.object({
+    apiUrl: z4.string().optional(),
+    apiKey: z4.string().optional()
+  }).optional(),
+  inference: z4.object({
+    ollamaUrl: z4.string().optional(),
+    gatewayUrl: z4.string().optional(),
+    gatewayUser: z4.string().optional(),
+    gatewayPass: z4.string().optional()
+  }).optional(),
+  builder: z4.object({
+    openclaudeUrl: z4.string().optional(),
+    dokployApiUrl: z4.string().optional(),
+    dokployApiKey: z4.string().optional(),
+    workspaceDir: z4.string().optional()
+  }).optional(),
+  arms: z4.object({
+    openclawSynapApiKey: z4.string().optional()
+  }).optional()
+});
+function secretsPath(cwd = process.cwd()) {
+  return join5(cwd, ".eve", "secrets", "secrets.json");
+}
+async function readEveSecrets(cwd = process.cwd()) {
+  const path2 = secretsPath(cwd);
+  if (!existsSync(path2)) return null;
+  try {
+    const raw = JSON.parse(await readFile3(path2, "utf-8"));
+    return SecretsSchema.parse(raw);
+  } catch {
+    return null;
+  }
+}
+function mergeNested(prev, next) {
+  if (next === void 0) return prev;
+  if (prev === void 0) return next;
+  const merged = { ...prev };
+  for (const [k, v] of Object.entries(next)) {
+    if (v !== void 0) merged[k] = v;
+  }
+  return merged;
+}
+async function writeEveSecrets(partial, cwd = process.cwd()) {
+  const current = await readEveSecrets(cwd) ?? {
+    version: "1",
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  const mergedSynap = mergeNested(
+    current.synap,
+    partial.synap
+  );
+  const mergedInference = mergeNested(
+    current.inference,
+    partial.inference
+  );
+  const mergedBuilder = mergeNested(
+    current.builder,
+    partial.builder
+  );
+  const mergedArms = mergeNested(
+    current.arms,
+    partial.arms
+  );
+  const next = {
+    ...current,
+    ...partial,
+    synap: mergedSynap,
+    inference: mergedInference,
+    builder: mergedBuilder,
+    arms: mergedArms,
+    version: "1",
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  const parsed = SecretsSchema.parse(next);
+  const path2 = secretsPath(cwd);
+  await mkdir4(join5(cwd, ".eve", "secrets"), { recursive: true });
+  await writeFile4(path2, JSON.stringify(parsed, null, 2), { mode: 384 });
+  return parsed;
+}
+function ensureSecretValue(existing) {
+  return existing && existing.trim().length > 0 ? existing : randomBytes(24).toString("base64url");
+}
+
 // src/index.ts
 var VERSION = "0.1.0";
 export {
@@ -1120,12 +1218,16 @@ export {
   configManager,
   createDockerComposeGenerator,
   credentialsManager,
+  ensureSecretValue,
   entityStateManager,
   formatHardwareReport,
   getSetupProfilePath,
   probeHardware,
+  readEveSecrets,
   readSetupProfile,
   readUsbSetupManifest,
+  secretsPath,
+  writeEveSecrets,
   writeSetupProfile,
   writeUsbSetupManifest
 };

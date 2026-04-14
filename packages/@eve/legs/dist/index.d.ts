@@ -43,6 +43,7 @@ interface InferenceGatewayResult {
 declare class InferenceGateway {
     private readonly baseDir;
     private readonly hostPort;
+    private readonly cwd;
     constructor(cwd?: string, hostPort?: string);
     /** APR1 hash line for Traefik usersFile (user:hash). */
     private htpasswdLine;
@@ -73,6 +74,19 @@ declare class TunnelService {
     getConfig(): TunnelConfig | null;
 }
 
+type LegsProxySetupOptions = {
+    domain?: string;
+    tunnel?: 'pangolin' | 'cloudflare';
+    tunnelDomain?: string;
+    ssl?: boolean;
+    /** Use /opt/eve/traefik instead of Dokploy-managed Traefik */
+    standalone?: boolean;
+};
+/**
+ * Programmatic entry for `eve legs setup` — Traefik routes + optional Pangolin/Cloudflare tunnel.
+ */
+declare function runLegsProxySetup(options: LegsProxySetupOptions): Promise<void>;
+
 declare function setupCommand(program: Command): void;
 
 /** Register `eve legs domain <subcommand>` (set | status | unset) */
@@ -87,4 +101,4 @@ declare const _default: {
     registerCommands: typeof registerCommands;
 };
 
-export { InferenceGateway, type InferenceGatewayResult, type Route, TraefikService, type TunnelConfig, TunnelService, _default as default, domainCommand, registerCommands, registerLegsCommands, setupCommand };
+export { InferenceGateway, type InferenceGatewayResult, type LegsProxySetupOptions, type Route, TraefikService, type TunnelConfig, TunnelService, _default as default, domainCommand, registerCommands, registerLegsCommands, runLegsProxySetup, setupCommand };

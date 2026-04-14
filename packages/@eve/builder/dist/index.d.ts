@@ -12,6 +12,7 @@ declare class OpenCodeService {
 
 interface OpenClaudeConfig {
     brainUrl: string;
+    basicAuth?: string;
     model: string;
     temperature: number;
     maxTokens: number;

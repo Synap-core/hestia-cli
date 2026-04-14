@@ -52,29 +52,29 @@ var emojis = {
   cross: "\u2717",
   bullet: "\u2022"
 };
-function createSpinner(text) {
+function createSpinner(text2) {
   let interval;
   const frames = ["\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F"];
   let i = 0;
   return {
     start() {
-      process.stdout.write(colors.info(`${frames[0]} ${text}`));
+      process.stdout.write(colors.info(`${frames[0]} ${text2}`));
       interval = setInterval(() => {
-        process.stdout.write(`\r${colors.info(`${frames[i]} ${text}`)}`);
+        process.stdout.write(`\r${colors.info(`${frames[i]} ${text2}`)}`);
         i = (i + 1) % frames.length;
       }, 80);
     },
     succeed(msg) {
       clearInterval(interval);
-      console.log(`\r${colors.success(`${emojis.check} ${msg || text}`)}`);
+      console.log(`\r${colors.success(`${emojis.check} ${msg || text2}`)}`);
     },
     fail(msg) {
       clearInterval(interval);
-      console.log(`\r${colors.error(`${emojis.cross} ${msg || text}`)}`);
+      console.log(`\r${colors.error(`${emojis.cross} ${msg || text2}`)}`);
     },
     warn(msg) {
       clearInterval(interval);
-      console.log(`\r${colors.warning(`${emojis.warning} ${msg || text}`)}`);
+      console.log(`\r${colors.warning(`${emojis.warning} ${msg || text2}`)}`);
     }
   };
 }
@@ -564,7 +564,7 @@ function resolveInstallScript() {
 function birthCommand(program2) {
   const birth = program2.command("birth").description("Bare-metal provisioning (USB) and host install scripts");
   birth.command("usb").description(
-    "Create a bootable USB with Ventoy + autoinstall (runs bash script). After hestia usb create, copy ~/.eve/usb-profile.json to /opt/eve/profile.json on the server for eve setup to pick up the profile."
+    "Create a bootable USB with Ventoy + autoinstall. Embeds ~/.eve/usb-profile.json as eve/profile.json when present, else a minimal manifest (EVE_USB_TARGET_PROFILE). After install, copy that file to /opt/eve/profile.json if needed."
   ).argument("[device]", "Block device e.g. /dev/sdb (omit for interactive script)").action(async (device) => {
     try {
       const script = getCreateUsbScriptPath();
@@ -595,15 +595,19 @@ function birthCommand(program2) {
 }
 
 // src/commands/setup.ts
-import { select as select2, confirm as confirm2, isCancel as isCancel2 } from "@clack/prompts";
+import { select as select2, confirm as confirm2, isCancel as isCancel2, text } from "@clack/prompts";
 import {
   readSetupProfile,
   writeSetupProfile,
   readUsbSetupManifest,
   probeHardware,
-  formatHardwareReport
+  formatHardwareReport,
+  readEveSecrets,
+  writeEveSecrets,
+  ensureSecretValue
 } from "@eve/dna";
 import { runBrainInit as runBrainInit2, runInferenceInit } from "@eve/brain";
+import { runLegsProxySetup } from "@eve/legs";
 import { getGlobalCliFlags as getGlobalCliFlags2, outputJson } from "@eve/cli-kit";
 function parseProfile(s) {
   if (!s) return null;
@@ -613,8 +617,15 @@ function parseProfile(s) {
   if (v === "full") return "full";
   return null;
 }
+function parseTunnel(s) {
+  if (!s) return void 0;
+  const v = s.trim().toLowerCase();
+  if (v === "pangolin") return "pangolin";
+  if (v === "cloudflare" || v === "cf") return "cloudflare";
+  return void 0;
+}
 function setupCommand(program2) {
-  program2.command("setup").description("Three-path guided setup: Ollama+gateway, Synap Data Pod, or both (logical prompts)").option("--profile <p>", "inference_only | data_pod | full").option("--dry-run", "Resolve profile and print plan; do not write state or install").option("--synap-repo <path>", "data_pod / full: path to synap-backend checkout").option("--domain <host>", "data_pod / full: synap install --domain", "localhost").option("--email <email>", "data_pod / full: required if domain is not localhost").option("--model <m>", "inference_only / full: default Ollama model", "llama3.1:8b").option("--with-openclaw", "data_pod / full: synap install --with-openclaw").option("--with-rsshub", "data_pod / full: synap install --with-rsshub").option("--from-image", "synap install --from-image").option("--from-source", "synap install --from-source").option("--skip-hardware", "Skip optional hardware summary").option("--nvidia-smi", "With hardware summary in non-interactive mode, run nvidia-smi").addHelpText(
+  program2.command("setup").description("Three-path guided setup: Ollama+gateway, Synap Data Pod, or both (logical prompts)").option("--profile <p>", "inference_only | data_pod | full").option("--dry-run", "Resolve profile and print plan; do not write state or install").option("--synap-repo <path>", "data_pod / full: path to synap-backend checkout").option("--domain <host>", "data_pod / full: synap install --domain", "localhost").option("--email <email>", "data_pod / full: required if domain is not localhost").option("--model <m>", "inference_only / full: default Ollama model", "llama3.1:8b").option("--with-openclaw", "data_pod / full: synap install --with-openclaw").option("--with-rsshub", "data_pod / full: synap install --with-rsshub").option("--from-image", "synap install --from-image").option("--from-source", "synap install --from-source").option("--skip-hardware", "Skip optional hardware summary").option("--nvidia-smi", "With hardware summary in non-interactive mode, run nvidia-smi").option("--tunnel <provider>", "data_pod | full: pangolin or cloudflare (runs eve legs setup after install)").option("--tunnel-domain <host>", "Hostname for tunnel / ingress (optional)").addHelpText(
     "after",
     "\nWhy three paths\n  inference_only \u2014 Local Ollama + Traefik gateway (Basic auth on :11435). Synap is not installed.\n  data_pod      \u2014 Official Synap stack via synap CLI (Caddy on 80/443). Use Eve for extra Docker apps.\n  full          \u2014 data_pod first, then Ollama on Docker network only + same gateway (no host :11434).\n\nState & manifests\n  Writes .eve/setup-profile.json in the current working directory.\n  Pre-filled profile if ~/.eve/usb-profile.json, /opt/eve/profile.json, or EVE_SETUP_MANIFEST exists.\n\nDocs: hestia-cli/docs/EVE_SETUP_PROFILES.md and hestia-cli/README.md\n"
   ).action(async (opts) => {
@@ -662,6 +673,50 @@ function setupCommand(program2) {
       console.error("Profile required: use --profile inference_only|data_pod|full or run interactively.");
       process.exit(1);
     }
+    let tunnelProvider = parseTunnel(opts.tunnel) ?? usb?.tunnel_provider;
+    let tunnelDomain = (opts.tunnelDomain?.trim() || usb?.tunnel_domain || "").trim() || void 0;
+    if (!opts.dryRun && (profile === "data_pod" || profile === "full") && !flags.nonInteractive && !flags.json) {
+      if (!tunnelProvider) {
+        const t = await select2({
+          message: "Expose Eve Legs (Traefik) via a tunnel after Synap install?",
+          options: [
+            { value: "none", label: "No tunnel", hint: "Localhost / manual Traefik only" },
+            {
+              value: "pangolin",
+              label: "Pangolin",
+              hint: "Installs Pangolin CLI and writes config under /opt/hestia/tunnels"
+            },
+            {
+              value: "cloudflare",
+              label: "Cloudflare",
+              hint: "cloudflared + ingress config (stub credentials path)"
+            }
+          ],
+          initialValue: "none"
+        });
+        if (isCancel2(t)) {
+          console.log(colors.muted("Cancelled."));
+          return;
+        }
+        tunnelProvider = t === "none" ? void 0 : t;
+      }
+      if (tunnelProvider && !tunnelDomain) {
+        const d = await text({
+          message: "Tunnel / ingress hostname (optional, e.g. eve.example.com)",
+          placeholder: opts.domain && opts.domain !== "localhost" ? opts.domain : "",
+          initialValue: ""
+        });
+        if (isCancel2(d)) {
+          console.log(colors.muted("Cancelled."));
+          return;
+        }
+        tunnelDomain = d.trim() || void 0;
+      }
+    }
+    if (flags.nonInteractive && opts.tunnel && !tunnelProvider) {
+      console.error("Invalid --tunnel (use pangolin or cloudflare).");
+      process.exit(1);
+    }
     const existing = await readSetupProfile(cwd);
     if (existing && !flags.nonInteractive && !opts.dryRun) {
       const ok = await confirm2({
@@ -677,7 +732,9 @@ function setupCommand(program2) {
       const plan = {
         profile,
         existing: existing?.profile ?? null,
-        usbManifest: usb ? { target_profile: usb.target_profile } : null
+        usbManifest: usb ? { target_profile: usb.target_profile } : null,
+        tunnel: tunnelProvider ?? null,
+        tunnelDomain: tunnelDomain ?? null
       };
       if (flags.json) outputJson(plan);
       else console.log(JSON.stringify(plan, null, 2));
@@ -715,10 +772,41 @@ ${formatHardwareReport(facts)}
         profile,
         source: usb ? "usb_manifest" : flags.nonInteractive ? "cli" : "wizard",
         domainHint: opts.domain,
-        hearthName: usb?.hearth_name
+        hearthName: usb?.hearth_name,
+        tunnelProvider,
+        tunnelDomain
       },
       cwd
     );
+    const prevSecrets = await readEveSecrets(cwd);
+    const merge = {
+      builder: {
+        openclaudeUrl: profile === "data_pod" ? prevSecrets?.builder?.openclaudeUrl ?? (process.env.OPENCLAUDE_BRAIN_URL || void 0) : prevSecrets?.builder?.openclaudeUrl ?? prevSecrets?.inference?.gatewayUrl ?? "http://127.0.0.1:11435",
+        dokployApiUrl: prevSecrets?.builder?.dokployApiUrl ?? process.env.DOKPLOY_API_URL ?? "http://127.0.0.1:3000",
+        dokployApiKey: ensureSecretValue(prevSecrets?.builder?.dokployApiKey ?? process.env.DOKPLOY_API_KEY),
+        workspaceDir: prevSecrets?.builder?.workspaceDir ?? `${cwd}/.eve/workspace`
+      },
+      arms: {
+        openclawSynapApiKey: ensureSecretValue(
+          prevSecrets?.arms?.openclawSynapApiKey ?? process.env.OPENCLAW_SYNAP_API_KEY ?? prevSecrets?.synap?.apiKey
+        )
+      }
+    };
+    if (profile !== "inference_only") {
+      merge.synap = {
+        apiUrl: prevSecrets?.synap?.apiUrl ?? "http://127.0.0.1:4000",
+        apiKey: ensureSecretValue(prevSecrets?.synap?.apiKey ?? process.env.SYNAP_API_KEY)
+      };
+    }
+    if (profile !== "data_pod") {
+      merge.inference = {
+        ollamaUrl: prevSecrets?.inference?.ollamaUrl ?? (profile === "full" ? "http://eve-brain-ollama:11434" : "http://127.0.0.1:11434"),
+        gatewayUrl: prevSecrets?.inference?.gatewayUrl ?? "http://127.0.0.1:11435",
+        gatewayUser: prevSecrets?.inference?.gatewayUser,
+        gatewayPass: prevSecrets?.inference?.gatewayPass
+      };
+    }
+    await writeEveSecrets(merge, cwd);
     if (flags.json) {
       outputJson({ ok: true, profile, persisted: true });
     }
@@ -745,6 +833,16 @@ ${formatHardwareReport(facts)}
           fromSource: opts.fromSource,
           withAi: false
         });
+        if (tunnelProvider) {
+          const legsDomain = opts.domain && opts.domain !== "localhost" ? opts.domain : tunnelDomain ?? void 0;
+          await runLegsProxySetup({
+            domain: legsDomain,
+            tunnel: tunnelProvider,
+            tunnelDomain,
+            ssl: false,
+            standalone: false
+          });
+        }
       } else {
         const repo = opts.synapRepo?.trim() || process.env.SYNAP_REPO_ROOT?.trim();
         if (!repo) {
@@ -769,6 +867,16 @@ ${formatHardwareReport(facts)}
           withGateway: true,
           internalOllamaOnly: true
         });
+        if (tunnelProvider) {
+          const legsDomain = opts.domain && opts.domain !== "localhost" ? opts.domain : tunnelDomain ?? void 0;
+          await runLegsProxySetup({
+            domain: legsDomain,
+            tunnel: tunnelProvider,
+            tunnelDomain,
+            ssl: false,
+            standalone: false
+          });
+        }
       }
       if (!flags.json) {
         console.log(
