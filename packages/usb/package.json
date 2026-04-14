@@ -1,7 +1,7 @@
 {
-  "name": "@hestia/usb",
+  "name": "@eve/usb",
   "version": "0.1.0",
-  "description": "Hestia USB creation tools and Ventoy configuration",
+  "description": "eve USB creation tools and Ventoy configuration",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -9,14 +9,16 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@eve/dna": "workspace:*"
+  },
   "files": [
     "dist/",
     "src/",
     "README.md"
   ],
   "keywords": [
-    "hestia",
+    "eve",
     "usb",
     "ventoy",
     "installer"
@@ -24,3 +26,4 @@
   "author": "Synap",
   "license": "MIT"
 }
+

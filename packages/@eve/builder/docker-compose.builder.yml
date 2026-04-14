@@ -1,0 +1,19 @@
+# Static site for Eve Builder (nginx). Requires eve-network and EVE_BUILDER_SITE_DIR.
+#   export EVE_BUILDER_SITE_DIR="$(pwd)/.eve/builder-site/public"
+#   docker network create eve-network 2>/dev/null || true
+#   docker compose -f docker-compose.builder.yml up -d
+services:
+  eve-builder-site:
+    image: nginx:alpine
+    container_name: eve-builder-site
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9080:80"
+    volumes:
+      - ${EVE_BUILDER_SITE_DIR}:/usr/share/nginx/html:ro
+    networks:
+      - eve-network
+
+networks:
+  eve-network:
+    external: true

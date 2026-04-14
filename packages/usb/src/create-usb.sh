@@ -1,6 +1,6 @@
 #!/bin/bash
-# Hestia USB Creation Tool
-# Creates a bootable USB drive with Ventoy and Hestia installer
+# eve USB Creation Tool
+# Creates a bootable USB drive with Ventoy and eve installer
 
 set -euo pipefail
 
@@ -27,7 +27,7 @@ show_header() {
     echo -e "${BLUE}"
     echo "╔═══════════════════════════════════════════════════════════════╗"
     echo "║                                                               ║"
-    echo "║              Hestia USB Creation Tool                         ║"
+    echo "║              eve USB Creation Tool                         ║"
     echo "║                                                               ║"
     echo "╚═══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
@@ -215,10 +215,10 @@ copy_files() {
         log_warn "Autoinstall configs not found"
     }
     
-    # Copy Hestia installer
-    mkdir -p "$mount_point/hestia"
-    cp -r "${SCRIPT_DIR}/../../install/src/"* "$mount_point/hestia/" 2>/dev/null || {
-        log_warn "Hestia installer not found at expected location"
+    # Copy eve installer
+    mkdir -p "$mount_point/eve"
+    cp -r "${SCRIPT_DIR}/../../install/src/"* "$mount_point/eve/" 2>/dev/null || {
+        log_warn "eve installer not found at expected location"
     }
     
     # Create late-command script
@@ -226,7 +226,7 @@ copy_files() {
 #!/bin/bash
 # Late command run after Ubuntu installation
 
-HESTIA_TARGET="/opt/hestia"
+eve_TARGET="/opt/eve"
 
 # Update package list
 apt-get update
@@ -234,32 +234,32 @@ apt-get update
 # Install prerequisites
 apt-get install -y curl wget git
 
-# Run Hestia installer Phase 1
-if [[ -d "${HESTIA_TARGET}/hestia" ]]; then
-    bash "${HESTIA_TARGET}/hestia/install.sh" phase1
+# Run eve installer Phase 1
+if [[ -d "${eve_TARGET}/eve" ]]; then
+    bash "${eve_TARGET}/eve/install.sh" phase1
 fi
 EOF
     
     chmod +x "$mount_point/ventoy/autoinstall/late-command.sh"
     
     # Create README
-    cat > "$mount_point/HESTIA-README.txt" << 'EOF'
-HESTIA - Sovereign AI Infrastructure
+    cat > "$mount_point/eve-README.txt" << 'EOF'
+eve - Sovereign AI Infrastructure
 ═══════════════════════════════════════
 
-This USB contains the Hestia installer for Ubuntu Server.
+This USB contains the eve installer for Ubuntu Server.
 
 Boot Options:
-1. Safe Install - Interactive Ubuntu setup with Hestia
+1. Safe Install - Interactive Ubuntu setup with eve
 2. Unattended Install - Automatic installation (DESTROYS ALL DATA)
 
 After Installation:
 1. Remove USB and reboot
-2. Run: sudo /opt/hestia/hestia/bin/hestia init
+2. Run: sudo /opt/eve/eve/bin/eve init
 3. Follow the first-fire wizard
 
-For help: https://docs.hestia.dev
-Community: https://community.hestia.dev
+For help: https://docs.eve.dev
+Community: https://community.eve.dev
 EOF
     
     # Unmount
@@ -279,7 +279,7 @@ main() {
     device_path=$(select_device)
     
     # Create working directory
-    work_dir="/tmp/hestia-usb-$$"
+    work_dir="/tmp/eve-usb-$$"
     mkdir -p "$work_dir"
     
     log_info "Working directory: $work_dir"
@@ -305,10 +305,10 @@ main() {
     log_success "USB Creation Complete!"
     log_success "═══════════════════════════════════════"
     log_info "Device: $device_path"
-    log_info "You can now boot from this USB to install Hestia"
+    log_info "You can now boot from this USB to install eve"
     log_info ""
     log_info "Boot menu options:"
-    log_info "  1. Safe Install - Interactive with Hestia"
+    log_info "  1. Safe Install - Interactive with eve"
     log_info "  2. Wipe Install - Automatic (DESTROYS DATA)"
     log_info ""
     log_warn "Safely eject the USB before removing"
@@ -327,7 +327,7 @@ case "${1:-}" in
         echo "This tool creates a bootable USB with:"
         echo "  - Ventoy bootloader"
         echo "  - Ubuntu Server LTS"
-        echo "  - Hestia installer"
+        echo "  - eve installer"
         echo ""
         exit 0
         ;;

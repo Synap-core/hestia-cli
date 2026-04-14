@@ -8,7 +8,7 @@ autoinstall:
   
   # Early commands - confirm disk wipe (safety check)
   early-commands:
-    - echo "=== HESTIA WIPE INSTALL ==="
+    - echo "=== eve WIPE INSTALL ==="
     - echo "This will DESTROY ALL DATA on the target disk"
     - echo "Starting in 10 seconds... (Ctrl+C to cancel)"
     - sleep 10
@@ -94,11 +94,11 @@ autoinstall:
   
   # Identity - auto-generated
   identity:
-    hostname: hestia-node
-    username: hestia
+    hostname: eve-node
+    username: eve
     # Generated password: Change immediately after first login!
-    # Password is 'hestia-setup-CHANGE-ME'
-    password: "$6$rounds=4096$hestiasalt$1qQQrL.vxL7jQ1x.q7x9qOqOxOxOxOxOxOxOxOxOxOxOxOxOxOxOxOxOxOxOxO."
+    # Password is 'eve-setup-CHANGE-ME'
+    password: "$6$rounds=4096$evesalt$1qQQrL.vxL7jQ1x.q7x9qOqOxOxOxOxOxOxOxOxOxOxOxOxOxOxOxOxOxOxOxO."
   
   # SSH - enable with key auth only (no password)
   ssh:
@@ -111,7 +111,7 @@ autoinstall:
     - name: snapd
       channel: stable
   
-  # Debian packages - full Hestia stack
+  # Debian packages - full eve stack
   packages:
     - curl
     - wget
@@ -136,19 +136,19 @@ autoinstall:
       - systemctl enable docker
       - systemctl start docker
       
-      # Add hestia to docker group
-      - usermod -aG docker hestia
+      # Add eve to docker group
+      - usermod -aG docker eve
       
-      # Create Hestia directory
-      - mkdir -p /opt/hestia
-      - chown hestia:hestia /opt/hestia
+      # Create eve directory
+      - mkdir -p /opt/eve
+      - chown eve:eve /opt/eve
       
       # Copy installer
-      - cp -r /cdrom/hestia /opt/hestia/
-      - chown -R hestia:hestia /opt/hestia
+      - cp -r /cdrom/eve /opt/eve/
+      - chown -R eve:eve /opt/eve
       
       # Run Phase 1 automatically
-      - bash /opt/hestia/install.sh phase1
+      - bash /opt/eve/install.sh phase1
       
       # Configure firewall
       - ufw --force reset
@@ -163,39 +163,39 @@ autoinstall:
       
       # Create completion marker
       - |
-        cat > /opt/hestia/.install-phase1-complete << 'EOF'
+        cat > /opt/eve/.install-phase1-complete << 'EOF'
 Phase 1 installation completed at: $(date -Iseconds)
 Node: $(hostname)
 EOF
       
       # Create MOTD
       - |
-        cat > /etc/update-motd.d/99-hestia << 'EOF'
+        cat > /etc/update-motd.d/99-eve << 'EOF'
 #!/bin/bash
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
-echo "  🔥 Hestia - Sovereign AI Infrastructure (UNATTENDED INSTALL)"
+echo "  🔥 eve - Sovereign AI Infrastructure (UNATTENDED INSTALL)"
 echo "═══════════════════════════════════════════════════════════════"
 echo ""
 echo "  ⚠️  IMPORTANT SECURITY NOTES:"
 echo ""
 echo "  1. Change the default password immediately:"
-echo "       sudo passwd hestia"
+echo "       sudo passwd eve"
 echo ""
 echo "  2. Add SSH keys for secure access:"
 echo "       mkdir -p ~/.ssh"
 echo "       echo 'your-ssh-key' >> ~/.ssh/authorized_keys"
 echo ""
 echo "  3. Continue installation:"
-echo "       sudo /opt/hestia/install.sh all"
+echo "       sudo /opt/eve/install.sh all"
 echo ""
 echo "  4. Or run the CLI wizard:"
-echo "       hestia init"
+echo "       eve init"
 echo ""
-echo "  Documentation: https://docs.hestia.dev"
+echo "  Documentation: https://docs.eve.dev"
 echo "═══════════════════════════════════════════════════════════════"
 EOF
-      - chmod +x /etc/update-motd.d/99-hestia
+      - chmod +x /etc/update-motd.d/99-eve
       
       # Disable password login after first SSH key setup
       # echo "PasswordAuthentication no" >> /etc/ssh/sshd_config
@@ -211,4 +211,4 @@ EOF
     - sync
     
     # Log completion
-    - echo "Hestia unattended install completed" >> /var/log/hestia-install.log
+    - echo "eve unattended install completed" >> /var/log/eve-install.log

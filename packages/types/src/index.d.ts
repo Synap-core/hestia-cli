@@ -1,5 +1,5 @@
 /**
- * Hestia CLI - Centralized Type System
+ * eve CLI - Centralized Type System
  *
  * All types in one place for build-time, lint-time, and dev-time verification.
  * Uses proper enums and strict type safety.
@@ -174,7 +174,7 @@ export interface ControlPlaneConfig {
 export interface ConnectorsConfig {
     controlPlane?: ControlPlaneConfig;
 }
-export interface HestiaConfig {
+export interface eveConfig {
     version: string;
     hearth: {
         id?: string;
@@ -191,7 +191,7 @@ export interface HestiaConfig {
     tunnel?: TunnelConfig;
     aiChat?: AIChatConfig;
     optionalServices?: Record<string, OptionalServiceConfig>;
-    pod?: HestiaPodConfig;
+    pod?: evePodConfig;
     aiPlatform?: "opencode" | "openclaude" | "later";
     logLevel?: "debug" | "info" | "warn" | "error" | "silent";
     packagesDirectory?: string;
@@ -270,7 +270,7 @@ export type ConfigPaths = {
     packagesDir: string;
     registryCache: string;
 };
-export interface HestiaPodConfig {
+export interface evePodConfig {
     url: string;
     apiKey: string;
     workspaceId?: string;
@@ -364,7 +364,7 @@ export interface IntelligenceService {
 }
 export interface CommandContext {
     options: CLIOptions;
-    config: HestiaConfig;
+    config: eveConfig;
     services: {
         entityService: EntityService;
         packageService: PackageService;
@@ -372,20 +372,20 @@ export interface CommandContext {
         intelligenceService: IntelligenceService;
     };
 }
-export declare class HestiaError extends Error {
+export declare class eveError extends Error {
     code: string;
     exitCode: number;
     constructor(message: string, code: string, exitCode?: number);
 }
-export declare class PackageError extends HestiaError {
+export declare class PackageError extends eveError {
     packageName: string;
     constructor(message: string, packageName: string);
 }
-export declare class HearthError extends HestiaError {
+export declare class HearthError extends eveError {
     hearthId: string;
     constructor(message: string, hearthId: string);
 }
-export declare class IntelligenceError extends HestiaError {
+export declare class IntelligenceError extends eveError {
     providerType: string;
     constructor(message: string, providerType: string);
 }
@@ -396,12 +396,12 @@ export type Nullable<T> = {
     [P in keyof T]: T[P] | null;
 };
 export type Optional<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
-export interface HestiaEvent {
+export interface eveEvent {
     type: string;
     timestamp: Date;
     data: unknown;
 }
-export type EventHandler = (event: HestiaEvent) => void | Promise<void>;
+export type EventHandler = (event: eveEvent) => void | Promise<void>;
 export interface Logger {
     debug: (message: string, meta?: Record<string, unknown>) => void;
     info: (message: string, meta?: Record<string, unknown>) => void;

@@ -2,7 +2,7 @@
 
 # Script pour organiser le code core en domaines
 
-cd /Users/antoine/Documents/Code/synap/hestia-cli/packages/core
+cd /Users/antoine/Documents/Code/synap/eve-cli/packages/core
 
 echo "Organisation des domaines dans core..."
 
@@ -59,7 +59,7 @@ mkdir -p src/domains/shared/lib
 mv src/lib/api-client.ts src/domains/shared/lib/
 mv src/lib/validator.ts src/domains/shared/lib/
 mv src/lib/test-suite.ts src/domains/shared/lib/
-mv src/lib/hestia-definition.ts src/domains/shared/lib/
+mv src/lib/eve-definition.ts src/domains/shared/lib/
 mv src/lib/task-list.ts src/domains/shared/lib/
 
 # 7. Commandes restantes (core CLI)

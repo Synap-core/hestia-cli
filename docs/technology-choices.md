@@ -303,3 +303,43 @@ Technologies we're watching for future integration:
 - **Caddy** - Simpler than Traefik for some use cases
 - **Podman** - Daemonless containers (may replace Docker)
 
+---
+
+## Service Naming Convention
+
+Eve follows a consistent naming convention for all Docker resources:
+
+### Container Naming
+```
+hestia-{organ}-{service}
+```
+
+Examples:
+- `hestia-brain-synap`
+- `hestia-brain-ollama`
+- `hestia-arms-openclaw`
+- `hestia-legs-traefik`
+
+### Network Naming
+```
+hestia-network
+```
+
+All organs communicate through this shared Docker bridge network.
+
+### Volume Naming
+```
+hestia-{organ}-{service}-data
+```
+
+Examples:
+- `hestia-brain-postgres-data`
+- `hestia-brain-ollama-data`
+- `hestia-builder-dokploy-data`
+
+This naming scheme ensures:
+- **Clarity**: Easy to identify which organ a service belongs to
+- **Consistency**: All resources follow the same pattern
+- **Isolation**: Resources are namespaced per organ and service
+- **Discoverability**: Services can reach each other by container name within `hestia-network`
+

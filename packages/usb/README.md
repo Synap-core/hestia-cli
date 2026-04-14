@@ -1,19 +1,19 @@
-# @hestia/usb - USB Creation Tools
+# @eve/usb - USB Creation Tools
 
-**Bootable USB generation for Hestia bare-metal installation**
+**Bootable USB generation for eve bare-metal installation**
 
 ---
 
 ## 📋 Package Role
 
-**Purpose:** Create bootable USB keys for Hestia server installation
+**Purpose:** Create bootable USB keys for eve server installation
 
 **Scope:**
 - USB device management and selection
 - Ubuntu Server ISO handling
 - Ventoy bootloader installation
 - Cloud-init configuration generation
-- Hestia installer injection
+- eve installer injection
 - Bootable media verification
 
 **When to Use:**
@@ -121,7 +121,7 @@ packages/usb/
             │       - User prompts for all settings
             │       - Network configuration
             │       - Manual disk selection
-            │       - Post-install Hestia init
+            │       - Post-install eve init
             │
             └── wipe.yaml     # Wipe install config (5.4 KB)
                 └── Unattended Ubuntu installation
@@ -144,7 +144,7 @@ packages/usb/
 - Prompts for disk selection
 - Network configuration wizard
 - User account setup
-- Manual Hestia initialization after reboot
+- Manual eve initialization after reboot
 
 **When to Use:**
 - Production systems
@@ -234,16 +234,16 @@ sudo bash src/create-usb.sh --device /dev/sdb --mode safe
 
 ```bash
 # Interactive wizard
-hestia usb
+eve usb
 
 # List devices
-hestia usb:list
+eve usb:list
 
 # Create USB
-hestia usb:create --device /dev/sdb --mode safe
+eve usb:create --device /dev/sdb --mode safe
 
 # With full configuration
-hestia usb:create \
+eve usb:create \
   --device /dev/sdb \
   --mode safe \
   --hearth-name "my-server" \
@@ -251,10 +251,10 @@ hestia usb:create \
   --ai-model llama3.2
 
 # Verify after creation
-hestia usb:verify --device /dev/sdb
+eve usb:verify --device /dev/sdb
 
 # Benchmark USB speed
-hestia usb:benchmark --device /dev/sdb
+eve usb:benchmark --device /dev/sdb
 ```
 
 ---
@@ -264,7 +264,7 @@ hestia usb:benchmark --device /dev/sdb
 ### Step 1: Device Selection
 ```bash
 # List available USB devices
-hestia usb:list
+eve usb:list
 
 # Output:
 USB Devices:
@@ -299,7 +299,7 @@ sda    Samsung SSD    500GB     Yes      ⚠️ SYSTEM DISK
 3. Copy Ubuntu ISO
 4. Copy Ventoy configuration
 5. Copy autoinstall configs
-6. Copy Hestia installer
+6. Copy eve installer
 7. Verify bootability
 ```
 
@@ -325,7 +325,7 @@ sda    Samsung SSD    500GB     Yes      ⚠️ SYSTEM DISK
 │       └── wipe.yaml         # Unattended config
 │
 ├── ubuntu-24.04-server-amd64.iso  # Ubuntu ISO
-├── hestia/                   # Hestia installer
+├── eve/                   # eve installer
 │   ├── install.sh
 │   ├── phases/
 │   └── wizard/
@@ -334,7 +334,7 @@ sda    Samsung SSD    500GB     Yes      ⚠️ SYSTEM DISK
 
 ### On Target Server (After Boot)
 ```
-/opt/hestia/                  # Installation directory
+/opt/eve/                  # Installation directory
 ├── config/                   # Configuration files
 ├── data/                     # Data storage
 ├── packages/                 # Installed packages
@@ -347,8 +347,8 @@ sda    Samsung SSD    500GB     Yes      ⚠️ SYSTEM DISK
 ## 🔌 Integration Points
 
 ### Called By
-1. **hestia provision:usb** - Server-specific USB creation
-2. **hestia usb** - General USB creation
+1. **eve provision:usb** - Server-specific USB creation
+2. **eve usb** - General USB creation
 3. **Manual execution** - Direct script usage
 
 ### Calls To
@@ -358,8 +358,8 @@ sda    Samsung SSD    500GB     Yes      ⚠️ SYSTEM DISK
 4. **ventoy** - Bootloader installation
 
 ### Uses From
-1. **@hestia/install** - Installer scripts copied to USB
-2. **@hestia/core** - USB generator service
+1. **@eve/install** - Installer scripts copied to USB
+2. **@eve/core** - USB generator service
 
 ---
 
@@ -368,7 +368,7 @@ sda    Samsung SSD    500GB     Yes      ⚠️ SYSTEM DISK
 ### Basic USB Creation
 ```bash
 # Interactive wizard
-hestia usb
+eve usb
 
 # Follow prompts to select device and configure
 ```
@@ -376,7 +376,7 @@ hestia usb
 ### Production Server USB
 ```bash
 # Create for specific server
-hestia usb:create \
+eve usb:create \
   --device /dev/sdb \
   --mode safe \
   --hearth-name "prod-ai-server-01" \
@@ -387,7 +387,7 @@ hestia usb:create \
 ### Testing/Development USB
 ```bash
 # Wipe mode for testing
-hestia usb:create \
+eve usb:create \
   --device /dev/sdb \
   --mode wipe \
   --hearth-name "test-server" \
@@ -400,7 +400,7 @@ hestia usb:create \
 ```bash
 # Create USBs for cluster nodes
 for i in 1 2 3; do
-  hestia usb:create \
+  eve usb:create \
     --device /dev/sdb \
     --hearth-name "cluster-node-$i" \
     --ai-provider ollama
@@ -410,7 +410,7 @@ done
 ### Dry Run (Preview)
 ```bash
 # See what would be done
-hestia usb:create --device /dev/sdb --dry-run
+eve usb:create --device /dev/sdb --dry-run
 ```
 
 ---
@@ -420,7 +420,7 @@ hestia usb:create --device /dev/sdb --dry-run
 ### Generate Configs Only (No USB)
 ```bash
 # Generate configuration files
-hestia usb:config \
+eve usb:config \
   --mode safe \
   --output ./my-configs/
 
@@ -514,7 +514,7 @@ autoinstall:
 ### USB Not Booting
 ```bash
 # 1. Verify USB
-hestia usb:verify --device /dev/sdb
+eve usb:verify --device /dev/sdb
 
 # 2. Check BIOS/UEFI settings
 # - Enable USB boot
@@ -529,7 +529,7 @@ hestia usb:verify --device /dev/sdb
 ### Slow Creation
 ```bash
 # Benchmark USB first
-hestia usb:benchmark --device /dev/sdb
+eve usb:benchmark --device /dev/sdb
 
 # USB 2.0: ~20-30 minutes
 # USB 3.0: ~5-10 minutes
@@ -538,11 +538,11 @@ hestia usb:benchmark --device /dev/sdb
 ### ISO Download Fails
 ```bash
 # Manual download
-curl -L -o ~/.hestia/usb-cache/ubuntu-24.04.iso \
+curl -L -o ~/.eve/usb-cache/ubuntu-24.04.iso \
   https://releases.ubuntu.com/24.04/ubuntu-24.04-live-server-amd64.iso
 
 # Then create USB (will use cached ISO)
-hestia usb:create --device /dev/sdb
+eve usb:create --device /dev/sdb
 ```
 
 ---
@@ -557,8 +557,8 @@ hestia usb:create --device /dev/sdb
 
 ## 🔗 Related Packages
 
-- **@hestia/core** - Management CLI (includes USB commands)
-- **@hestia/install** - Installer scripts (copied to USB)
+- **@eve/core** - Management CLI (includes USB commands)
+- **@eve/install** - Installer scripts (copied to USB)
 
 ---
 

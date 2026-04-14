@@ -1,7 +1,7 @@
 {
-  "name": "@hestia/utils",
+  "name": "@eve/utils",
   "version": "0.1.0",
-  "description": "Common utilities for Hestia CLI",
+  "description": "Common utilities for Eve CLI",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -10,12 +10,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@hestia/types": "file:../types",
+    "@eve/types": "file:../types",
     "chalk": "^5.3.0",
     "ora": "^8.0.1"
   },
   "keywords": [
-    "hestia",
+    "eve",
     "utils",
     "utilities"
   ],

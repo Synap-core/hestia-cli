@@ -1,20 +1,20 @@
 # Changelog
 
-All notable changes to the Hestia CLI will be documented in this file.
+All notable changes to the eve CLI will be documented in this file.
 
 ## [Unreleased] - April 2025
 
 ### 🚀 **Major Feature: AI Platform Integration**
 
 #### **OpenCode/OpenClaude Choice**
-- Added interactive prompt during `hestia init` for AI platform selection
+- Added interactive prompt during `eve init` for AI platform selection
 - Options: "OpenCode (recommended)", "OpenClaude", "I'll configure this later"
 - API key guidance for each platform with direct links
-- Configuration stored in `HestiaConfig.aiPlatform` field
+- Configuration stored in `eveConfig.aiPlatform` field
 
 **Example:**
 ```bash
-$ hestia init
+$ eve init
 ...
 Which AI platform would you like to use?
 ❯ OpenCode (recommended) - Claude Code IDE for development
@@ -24,16 +24,16 @@ Which AI platform would you like to use?
 
 ### 💾 **Major Feature: One-Command USB Deployment**
 
-#### **`hestia usb generate` Command**
-- Single command to create bootable USB with complete Hestia stack
+#### **`eve usb generate` Command**
+- Single command to create bootable USB with complete eve stack
 - Multiple output formats: directory, ISO, or both
 - Production-ready installation scripts
 - Complete documentation and configuration templates
 
 **Example:**
 ```bash
-$ hestia usb generate --bundle-all --format iso --label HESTIA_BOOT
-✅ Hestia CLI copied
+$ eve usb generate --bundle-all --format iso --label eve_BOOT
+✅ eve CLI copied
 ✅ Installation script created
 ✅ Documentation generated
 ✅ Docker compose example created
@@ -42,8 +42,8 @@ $ hestia usb generate --bundle-all --format iso --label HESTIA_BOOT
 
 #### **USB Bundle Structure**
 ```
-hestia-usb-bundle/
-├── bin/hestia          # Main CLI executable
+eve-usb-bundle/
+├── bin/eve          # Main CLI executable
 ├── scripts/install.sh  # Automatic installer
 ├── config/            # Production configuration templates
 ├── docker/            # Docker Compose production configs
@@ -59,7 +59,7 @@ hestia-usb-bundle/
 - Centralized type system in `types/index.ts` with proper enums
 - Type-safe configuration with Zod validation
 - Eliminated ~617 TypeScript errors → 0 blocking errors
-- Added `aiPlatform` field to `HestiaConfig` interface
+- Added `aiPlatform` field to `eveConfig` interface
 
 #### **Build System**
 - Relaxed TypeScript strictness for development speed
@@ -69,7 +69,7 @@ hestia-usb-bundle/
 
 ### 📚 **Documentation**
 - Updated README with new features and examples
-- Added comprehensive demo file (`HESTIA_DEMO.md`)
+- Added comprehensive demo file (`eve_DEMO.md`)
 - Complete API key setup guidance
 - Installation and deployment guides
 

@@ -1,0 +1,188 @@
+version: "3.8"
+
+services:
+  # ============================================================================
+  # BRAIN SERVICES - Core intelligence and data
+  # ============================================================================
+
+  # Synap Backend - AI-powered second brain
+  synap:
+    image: ghcr.io/synap/backend:latest
+    container_name: eve-brain-synap
+    restart: unless-stopped
+    networks:
+      - eve-network
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://eve:eve@eve-brain-postgres:5432/synap
+      - REDIS_URL=redis://eve-brain-redis:6379
+      - JWT_SECRET=${JWT_SECRET}
+      - HUB_PROTOCOL_API_KEY=${HUB_PROTOCOL_API_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.synap.rule=Host(`synap.localhost`)"
+      - "traefik.http.routers.synap.entrypoints=web"
+      - "traefik.http.services.synap.loadbalancer.server.port=4000"
+
+  # Ollama - Local LLM inference
+  ollama:
+    image: ollama/ollama:latest
+    container_name: eve-brain-ollama
+    restart: unless-stopped
+    networks:
+      - eve-network
+    volumes:
+      - ollama-models:/root/.ollama
+    labels:
+      - "traefik.enable=false"
+
+  # PostgreSQL - Primary database
+  postgres:
+    image: postgres:16-alpine
+    container_name: eve-brain-postgres
+    restart: unless-stopped
+    networks:
+      - eve-network
+    environment:
+      - POSTGRES_USER=eve
+      - POSTGRES_PASSWORD=eve
+      - POSTGRES_DB=synap
+    volumes:
+      - eve-brain-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eve -d synap"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    labels:
+      - "traefik.enable=false"
+
+  # Redis - Caching and session store
+  redis:
+    image: redis:7-alpine
+    container_name: eve-brain-redis
+    restart: unless-stopped
+    networks:
+      - eve-network
+    volumes:
+      - eve-brain-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    labels:
+      - "traefik.enable=false"
+
+  # ============================================================================
+  # ARMS SERVICES - Action and automation capabilities
+  # ============================================================================
+
+  # OpenClaw - AI agent orchestration
+  openclaw:
+    image: ghcr.io/openclaw/openclaw:latest
+    container_name: eve-arms-openclaw
+    restart: unless-stopped
+    networks:
+      - eve-network
+    environment:
+      - OLLAMA_URL=http://eve-brain-ollama:11434
+      - DEFAULT_MODEL=llama3.2
+    volumes:
+      - eve-arms-openclaw-data:/app/data
+    depends_on:
+      ollama:
+        condition: service_started
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.openclaw.rule=Host(`openclaw.localhost`)"
+      - "traefik.http.routers.openclaw.entrypoints=web"
+      - "traefik.http.services.openclaw.loadbalancer.server.port=3000"
+
+  # ============================================================================
+  # EYES SERVICES - Information ingestion and monitoring
+  # ============================================================================
+
+  # RSSHub - RSS feed generation
+  rsshub:
+    image: rsshub/rsshub:latest
+    container_name: eve-eyes-rsshub
+    restart: unless-stopped
+    networks:
+      - eve-network
+    environment:
+      - NODE_ENV=production
+      - CACHE_TYPE=memory
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.rsshub.rule=Host(`rsshub.localhost`)"
+      - "traefik.http.routers.rsshub.entrypoints=web"
+      - "traefik.http.services.rsshub.loadbalancer.server.port=1200"
+
+  # ============================================================================
+  # LEGS SERVICES - Networking and routing
+  # ============================================================================
+
+  # Traefik - Reverse proxy and load balancer
+  traefik:
+    image: traefik:v3.0
+    container_name: eve-legs-traefik
+    restart: unless-stopped
+    networks:
+      - eve-network
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - eve-legs-traefik-certs:/letsencrypt
+    command:
+      - "--api.dashboard=true"
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.email=admin@example.com"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      - "--log.level=INFO"
+      - "--accesslog=true"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.localhost`)"
+      - "traefik.http.routers.traefik.entrypoints=web"
+      - "traefik.http.routers.traefik.service=api@internal"
+
+# ============================================================================
+# NETWORKS
+# ============================================================================
+
+networks:
+  eve-network:
+    driver: bridge
+    name: eve-network
+
+# ============================================================================
+# VOLUMES
+# ============================================================================
+
+volumes:
+  ollama-models:
+    name: ollama-models
+  eve-brain-postgres-data:
+    name: eve-brain-postgres-data
+  eve-brain-redis-data:
+    name: eve-brain-redis-data
+  eve-arms-openclaw-data:
+    name: eve-arms-openclaw-data
+  eve-legs-traefik-certs:
+    name: eve-legs-traefik-certs

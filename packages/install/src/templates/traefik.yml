@@ -1,4 +1,4 @@
-# Hestia Traefik Static Configuration
+# eve Traefik Static Configuration
 # This is the main Traefik configuration file
 # Auto-generated - safe to re-run
 
@@ -96,7 +96,7 @@ providers:
   # Docker provider - discovers containers with labels
   docker:
     exposedByDefault: false
-    network: hestia-network
+    network: eve-network
     watch: true
     defaultRule: "Host(`{{ normalize .Name }}.localhost`)"
   

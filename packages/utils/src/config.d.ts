@@ -3,7 +3,7 @@
  *
  * Handles loading, validation, and saving of Hestia configuration.
  */
-import type { HestiaConfig, PackageConfig, IntelligenceConfig } from "@hestia/types";
+import type { HestiaConfig, PackageConfig, IntelligenceConfig } from "@eve/types";
 export declare const defaultConfig: HestiaConfig;
 export declare function getConfigPaths(): {
     configDir: string;

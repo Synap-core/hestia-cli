@@ -1,11 +1,11 @@
-# Pangolin Docker Compose Configuration for Hestia
+# Pangolin Docker Compose Configuration for eve
 # 
 # Pangolin is a self-hosted tunneling solution using WireGuard.
-# It provides secure remote access to your Hestia node without relying on
+# It provides secure remote access to your eve node without relying on
 # third-party services like Cloudflare or ngrok.
 #
 # Use Cases:
-# - Access your home Hestia from anywhere (works behind CGNAT)
+# - Access your home eve from anywhere (works behind CGNAT)
 # - Securely expose services without opening firewall ports
 # - Self-hosted alternative to Cloudflare Tunnel
 # - Multiple tunnel endpoints with identity-aware access control
@@ -25,7 +25,7 @@ services:
   # ============================================================================
   pangolin-server:
     image: fosrl/pangolin:latest
-    container_name: hestia-pangolin-server
+    container_name: eve-pangolin-server
     restart: unless-stopped
     # Only enable if TUNNEL_MODE=server in .env
     profiles:
@@ -39,7 +39,7 @@ services:
       PANGOLIN_WG_PUBLIC_KEY: ${PANGOLIN_WG_PUBLIC_KEY}
       
       # Database (using existing postgres if available, or internal)
-      DATABASE_URL: ${DATABASE_URL:-postgresql://hestia:${POSTGRES_PASSWORD:-hestia}@postgres:5432/hestia}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://eve:${POSTGRES_PASSWORD:-eve}@postgres:5432/eve}
       
       # Authentication
       JWT_SECRET: ${JWT_SECRET}
@@ -62,7 +62,7 @@ services:
       - ${DATA_DIR}/pangolin/certs:/app/certs
       - ${LOGS_DIR}/pangolin:/app/logs
     networks:
-      - hestia-network
+      - eve-network
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
       interval: 30s
@@ -75,7 +75,7 @@ services:
   # ============================================================================
   pangolin-client:
     image: fosrl/pangolin:latest
-    container_name: hestia-pangolin-client
+    container_name: eve-pangolin-client
     restart: unless-stopped
     # Only enable if TUNNEL_MODE=client in .env
     profiles:
@@ -83,7 +83,7 @@ services:
     environment:
       # Client configuration
       PANGOLIN_MODE: client
-      PANGOLIN_CLIENT_NAME: ${HEARTH_NAME:-hestia-client}
+      PANGOLIN_CLIENT_NAME: ${HEARTH_NAME:-eve-client}
       
       # Server connection details
       PANGOLIN_SERVER_URL: ${PANGOLIN_SERVER_URL}
@@ -114,7 +114,7 @@ services:
       - ${DATA_DIR}/pangolin/client:/app/data
       - ${LOGS_DIR}/pangolin:/app/logs
     networks:
-      - hestia-network
+      - eve-network
     # Run in network mode for direct access to host services
     # Uncomment if you need to access services on host directly
     # network_mode: host
@@ -130,7 +130,7 @@ services:
   # ============================================================================
   pangolin-traefik:
     image: traefik:v3.0
-    container_name: hestia-pangolin-traefik
+    container_name: eve-pangolin-traefik
     restart: unless-stopped
     # Only enable if using Pangolin with Traefik integration
     profiles:
@@ -156,10 +156,10 @@ services:
       - ${DATA_DIR}/traefik/letsencrypt:/letsencrypt
       - ${DATA_DIR}/pangolin/traefik:/etc/traefik
     networks:
-      - hestia-network
+      - eve-network
 
 # Reuse existing network from main docker-compose.yml
 networks:
-  hestia-network:
+  eve-network:
     external: true
-    name: hestia-network
+    name: eve-network

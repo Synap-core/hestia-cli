@@ -1,8 +1,8 @@
 // @ts-nocheck
 /**
- * USB Generator for Hestia Installation
+ * USB Generator for eve Installation
  *
- * Creates bootable USB keys for Hestia installation with:
+ * Creates bootable USB keys for eve installation with:
  * - USB device management and safety checks
  * - Ubuntu Server ISO management
  * - Ventoy bootloader installation
@@ -582,7 +582,7 @@ export class USBGenerator extends EventEmitter {
 
   constructor(options: { cacheDir?: string; dryRun?: boolean } = {}) {
     super();
-    this.cacheDir = options.cacheDir || path.join(os.homedir(), '.hestia', 'usb-cache');
+    this.cacheDir = options.cacheDir || path.join(os.homedir(), '.eve', 'usb-cache');
     this.isoDir = path.join(this.cacheDir, 'isos');
     this.ventoyDir = path.join(this.cacheDir, 'ventoy');
     this.logger = createLogger('usb-gen');
@@ -1329,20 +1329,20 @@ export class USBGenerator extends EventEmitter {
 
     // Add theme configuration
     config.theme = {
-      file: '/ventoy/themes/hestia/theme.txt',
+      file: '/ventoy/themes/eve/theme.txt',
       resolution: '1920x1080',
       default_mode: 'both',
     };
 
-    // Add menu aliases for Hestia ISOs
+    // Add menu aliases for eve ISOs
     config.menu_alias = [
       {
-        key: 'hestia-safe',
-        alias: 'Hestia Install (Safe - Preserve Data)',
+        key: 'eve-safe',
+        alias: 'eve Install (Safe - Preserve Data)',
       },
       {
-        key: 'hestia-wipe',
-        alias: 'Hestia Install (Wipe Disk)',
+        key: 'eve-wipe',
+        alias: 'eve Install (Wipe Disk)',
       },
     ];
 
@@ -1350,15 +1350,15 @@ export class USBGenerator extends EventEmitter {
     if (options.mode) {
       const templates: string[] = [];
       if (options.mode === 'safe' || options.mode === 'both') {
-        templates.push('/ventoy/hestia/safe.yaml');
+        templates.push('/ventoy/eve/safe.yaml');
       }
       if (options.mode === 'wipe' || options.mode === 'both') {
-        templates.push('/ventoy/hestia/wipe.yaml');
+        templates.push('/ventoy/eve/wipe.yaml');
       }
 
       config.auto_install = [
         {
-          image: '/ISO/hestia-*.iso',
+          image: '/ISO/eve-*.iso',
           template: templates,
         },
       ];
@@ -1409,10 +1409,10 @@ export class USBGenerator extends EventEmitter {
         ],
       },
       identity: {
-        hostname: options.hostname || 'hestia',
-        username: options.username || 'hestia',
+        hostname: options.hostname || 'eve',
+        username: options.username || 'eve',
         password: options.password || this.generateTempPassword(),
-        realname: 'Hestia Administrator',
+        realname: 'eve Administrator',
         ssh_authorized_keys: options.sshKey ? [options.sshKey] : [],
       },
       locale: options.locale || 'en_US.UTF-8',
@@ -1448,12 +1448,12 @@ export class USBGenerator extends EventEmitter {
       ],
       user_data: this.generateCloudInitUserData(options),
       late_commands: {
-        '00-hestia-setup': 'curl -fsSL https://get.hestia.io | bash',
-        '01-hestia-init': `hestia init --unattended --hearth-name "${options.hearthName || 'My Digital Hearth'}" --install-type ${options.installType}`,
+        '00-eve-setup': 'curl -fsSL https://get.eve.io | bash',
+        '01-eve-init': `eve init --unattended --hearth-name "${options.hearthName || 'My Digital Hearth'}" --install-type ${options.installType}`,
       },
       reporting: {
-        type: 'hestia',
-        endpoint: options.podUrl || 'https://api.hestia.io/v1/install/reports',
+        type: 'eve',
+        endpoint: options.podUrl || 'https://api.eve.io/v1/install/reports',
         token: options.apiKey,
       },
     };
@@ -1492,7 +1492,7 @@ export class USBGenerator extends EventEmitter {
       runcmd: [],
       write_files: [
         {
-          path: '/etc/hestia/config.json',
+          path: '/etc/eve/config.json',
           content: JSON.stringify(
             {
               hearth: {
@@ -1518,8 +1518,8 @@ export class USBGenerator extends EventEmitter {
       ],
       users: [
         {
-          name: options.username || 'hestia',
-          gecos: 'Hestia Administrator',
+          name: options.username || 'eve',
+          gecos: 'eve Administrator',
           groups: ['sudo', 'docker'],
           sudo: 'ALL=(ALL) NOPASSWD:ALL',
           shell: '/bin/bash',
@@ -1527,23 +1527,23 @@ export class USBGenerator extends EventEmitter {
         },
       ],
       ssh_pwauth: false,
-      hostname: options.hostname || 'hestia',
+      hostname: options.hostname || 'eve',
       timezone: options.timezone || 'UTC',
     };
 
     // Add post-install script if provided
     if (options.postInstallScript) {
       userData.write_files?.push({
-        path: '/tmp/hestia-post-install.sh',
+        path: '/tmp/eve-post-install.sh',
         content: options.postInstallScript,
         owner: 'root:root',
         permissions: '0755',
       });
-      userData.runcmd?.push('/tmp/hestia-post-install.sh');
+      userData.runcmd?.push('/tmp/eve-post-install.sh');
     }
 
     // Final message
-    userData.final_message = 'Hestia installation complete! System will reboot in 5 seconds.';
+    userData.final_message = 'eve installation complete! System will reboot in 5 seconds.';
 
     // Power state
     userData.power_state = {
@@ -1551,7 +1551,7 @@ export class USBGenerator extends EventEmitter {
       mode: 'reboot',
       message: 'Rebooting for final configuration...',
       timeout: 300,
-      condition: 'test -f /var/run/hestia-install-complete',
+      condition: 'test -f /var/run/eve-install-complete',
     };
 
     return userData;
@@ -1559,22 +1559,22 @@ export class USBGenerator extends EventEmitter {
 
   generateMetaData(options: USBOptions): CloudInitMetaData {
     return {
-      instance_id: `hestia-${Date.now()}`,
-      local_hostname: options.hostname || 'hestia',
-      hostname: options.hostname || 'hestia',
-      platform: 'hestia',
-      cloud_name: 'hestia',
+      instance_id: `eve-${Date.now()}`,
+      local_hostname: options.hostname || 'eve',
+      hostname: options.hostname || 'eve',
+      platform: 'eve',
+      cloud_name: 'eve',
     };
   }
 
   generateGrubConfig(options: USBOptions): string {
     const timeout = options.unattended ? 5 : 30;
-    const defaultEntry = options.mode === 'wipe' ? 'Hestia Install (Wipe)' : 'Hestia Install (Safe)';
+    const defaultEntry = options.mode === 'wipe' ? 'eve Install (Wipe)' : 'eve Install (Safe)';
 
     return `set timeout=${timeout}
 set default="${defaultEntry}"
 
-# Hestia Boot Configuration
+# eve Boot Configuration
 insmod all_video
 insmod gfxterm
 insmod part_gpt
@@ -1588,23 +1588,23 @@ set gfxpayload=keep
 terminal_output gfxterm
 
 # Load theme if available
-if [ -s /boot/grub/themes/hestia/theme.txt ]; then
-    set theme=/boot/grub/themes/hestia/theme.txt
+if [ -s /boot/grub/themes/eve/theme.txt ]; then
+    set theme=/boot/grub/themes/eve/theme.txt
 fi
 
-# Hestia Install (Safe - Preserve Data)
-menuentry "Hestia Install (Safe - Preserve Data)" {
-    set isofile="/ISO/hestia-safe.iso"
+# eve Install (Safe - Preserve Data)
+menuentry "eve Install (Safe - Preserve Data)" {
+    set isofile="/ISO/eve-safe.iso"
     loopback loop $isofile
-    linux (loop)/casper/vmlinuz iso-scan/filename=$isofile autoinstall ds=nocloud;s=/cdrom/hestia/
+    linux (loop)/casper/vmlinuz iso-scan/filename=$isofile autoinstall ds=nocloud;s=/cdrom/eve/
     initrd (loop)/casper/initrd
 }
 
-# Hestia Install (Wipe Disk)
-menuentry "Hestia Install (Wipe Disk)" {
-    set isofile="/ISO/hestia-wipe.iso"
+# eve Install (Wipe Disk)
+menuentry "eve Install (Wipe Disk)" {
+    set isofile="/ISO/eve-wipe.iso"
     loopback loop $isofile
-    linux (loop)/casper/vmlinuz iso-scan/filename=$isofile autoinstall ds=nocloud;s=/cdrom/hestia/
+    linux (loop)/casper/vmlinuz iso-scan/filename=$isofile autoinstall ds=nocloud;s=/cdrom/eve/
     initrd (loop)/casper/initrd
 }
 
@@ -1671,7 +1671,7 @@ menuentry "Try Ubuntu Server without installing" {
 
   async createUSB(options: USBOptions, onProgress?: ProgressCallback): Promise<USBOperationResult> {
     this.startTime = Date.now();
-    this.logger.header('HESTIA USB CREATOR');
+    this.logger.header('eve USB CREATOR');
 
     // Validate options
     if (!options.device) {
@@ -1712,7 +1712,7 @@ menuentry "Try Ubuntu Server without installing" {
     this.logger.success('Configurations generated');
 
     // Create temporary config directory
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'hestia-usb-'));
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'eve-usb-'));
     const configsDir = path.join(tempDir, 'configs');
     await this.ensureDir(configsDir);
 
@@ -1787,7 +1787,7 @@ menuentry "Try Ubuntu Server without installing" {
       this.logger.info('1. Eject the USB drive safely');
       this.logger.info('2. Insert into target machine');
       this.logger.info('3. Boot from USB (may need to change BIOS/UEFI settings)');
-      this.logger.info('4. Select Hestia installation option');
+      this.logger.info('4. Select eve installation option');
 
       return {
         success: true,
@@ -1947,8 +1947,8 @@ menuentry "Try Ubuntu Server without installing" {
     const mountPoint = await this.mountDevice(device);
 
     try {
-      // Copy to ventoy/hestia directory
-      const ventoyDir = path.join(mountPoint, 'ventoy', 'hestia');
+      // Copy to ventoy/eve directory
+      const ventoyDir = path.join(mountPoint, 'ventoy', 'eve');
       await this.ensureDir(ventoyDir);
 
       // Copy all config files
@@ -1985,7 +1985,7 @@ menuentry "Try Ubuntu Server without installing" {
 
   async copyInstaller(device: USBDevice, onProgress?: ProgressCallback): Promise<USBOperationResult> {
     const startTime = Date.now();
-    this.logger.info('Copying Hestia installer files...');
+    this.logger.info('Copying eve installer files...');
 
     if (this.isDryRun) {
       this.logger.info(`[DRY RUN] Would copy installer to ${device.device}`);
@@ -1996,19 +1996,19 @@ menuentry "Try Ubuntu Server without installing" {
     const mountPoint = await this.mountDevice(device);
 
     try {
-      // Create hestia directory structure
-      const hestiaDir = path.join(mountPoint, 'hestia');
-      await this.ensureDir(hestiaDir);
-      await this.ensureDir(path.join(hestiaDir, 'scripts'));
-      await this.ensureDir(path.join(hestiaDir, 'assets'));
+      // Create eve directory structure
+      const eveDir = path.join(mountPoint, 'eve');
+      await this.ensureDir(eveDir);
+      await this.ensureDir(path.join(eveDir, 'scripts'));
+      await this.ensureDir(path.join(eveDir, 'assets'));
 
       // Write install script
       const installScript = this.generateInstallScript();
-      await fs.writeFile(path.join(hestiaDir, 'install.sh'), installScript);
+      await fs.writeFile(path.join(eveDir, 'install.sh'), installScript);
 
       // Write preseed for compatibility
       const preseed = this.generatePreseed();
-      await fs.writeFile(path.join(hestiaDir, 'preseed.cfg'), preseed);
+      await fs.writeFile(path.join(eveDir, 'preseed.cfg'), preseed);
 
       // Sync
       await execAsync('sync');
@@ -2047,7 +2047,7 @@ menuentry "Try Ubuntu Server without installing" {
       await fs.copyFile(grubSrc, grubDest);
 
       // Create themes directory
-      const themesDir = path.join(bootDir, 'themes', 'hestia');
+      const themesDir = path.join(bootDir, 'themes', 'eve');
       await this.ensureDir(themesDir);
 
       // Create basic theme
@@ -2068,7 +2068,7 @@ menuentry "Try Ubuntu Server without installing" {
   }
 
   private async createBasicTheme(themesDir: string): Promise<void> {
-    const themeTxt = `title-text: "Hestia Installation"
+    const themeTxt = `title-text: "eve Installation"
 title-color: "#ffffff"
 title-font: "DejaVu Sans Regular 16"
 
@@ -2113,19 +2113,19 @@ declare terminal_box = "terminal_box_*.png"
   private generateInstallScript(): string {
     return `#!/bin/bash
 #
-# Hestia Installer Script
+# eve Installer Script
 # Automatically called during Ubuntu installation
 #
 
 set -e
 
 echo "=========================================="
-echo "  Hestia Installation"
+echo "  eve Installation"
 echo "=========================================="
 
 # Detect installation environment
-HEARTH_CONFIG="/etc/hestia/config.json"
-INSTALL_LOG="/var/log/hestia-install.log"
+HEARTH_CONFIG="/etc/eve/config.json"
+INSTALL_LOG="/var/log/eve-install.log"
 
 # Create log directory
 mkdir -p "$(dirname "$INSTALL_LOG")"
@@ -2136,7 +2136,7 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
 }
 
-log "Starting Hestia installation..."
+log "Starting eve installation..."
 
 # Install prerequisites
 log "Installing prerequisites..."
@@ -2156,33 +2156,33 @@ apt-get install -y \\
 log "Configuring Docker..."
 systemctl enable docker
 systemctl start docker
-usermod -aG docker hestia || true
+usermod -aG docker eve || true
 
-# Download and install Hestia CLI
-log "Installing Hestia CLI..."
-curl -fsSL https://get.hestia.io | bash
+# Download and install eve CLI
+log "Installing eve CLI..."
+curl -fsSL https://get.eve.io | bash
 
-# Initialize Hestia if config exists
+# Initialize eve if config exists
 if [ -f "$HEARTH_CONFIG" ]; then
-    log "Initializing Hestia from configuration..."
+    log "Initializing eve from configuration..."
     hearth_name=$(jq -r '.hearth.name // "My Digital Hearth"' "$HEARTH_CONFIG")
     install_type=$(jq -r '.hearth.type // "local"' "$HEARTH_CONFIG")
     
-    hestia init --unattended \\
+    eve init --unattended \\
         --hearth-name "$hearth_name" \\
         --install-type "$install_type" || true
 fi
 
 # Mark installation as complete
 log "Installation complete!"
-touch /var/run/hestia-install-complete
+touch /var/run/eve-install-complete
 
 # Final reboot handled by cloud-init
 `;
   }
 
   private generatePreseed(): string {
-    return `# Hestia Preseed Configuration
+    return `# eve Preseed Configuration
 # For compatibility with older installers
 
 d-i debian-installer/locale string en_US
@@ -2191,7 +2191,7 @@ d-i debian-installer/country string US
 d-i keyboard-configuration/xkb-keymap select us
 
 d-i netcfg/choose_interface select auto
-d-i netcfg/get_hostname string hestia
+d-i netcfg/get_hostname string eve
 d-i netcfg/get_domain string local
 
 d-i mirror/country string manual
@@ -2199,8 +2199,8 @@ d-i mirror/http/hostname string archive.ubuntu.com
 d-i mirror/http/directory string /ubuntu
 d-i mirror/http/proxy string
 
-d-i passwd/user-fullname string Hestia Administrator
-d-i passwd/username string hestia
+d-i passwd/user-fullname string eve Administrator
+d-i passwd/username string eve
 d-i passwd/user-password-crypted password [CRYPTED_PASSWORD]
 d-i passwd/user-default-groups string audio cdrom video sudo docker
 d-i user-setup/allow-password-weak boolean true
@@ -2224,11 +2224,11 @@ d-i grub-installer/bootdev string default
 
 d-i finish-install/reboot_in_progress note
 
-# Run Hestia setup after installation
+# Run eve setup after installation
 d-i preseed/late_command string \\
-    mkdir -p /target/etc/hestia; \\
-    cp -r /cdrom/hestia/* /target/etc/hestia/ 2>/dev/null || true; \\
-    in-target bash /etc/hestia/install.sh || true
+    mkdir -p /target/etc/eve; \\
+    cp -r /cdrom/eve/* /target/etc/eve/ 2>/dev/null || true; \\
+    in-target bash /etc/eve/install.sh || true
 `;
   }
 
@@ -2437,7 +2437,7 @@ d-i preseed/late_command string \\
   // ============== Safety Features ==============
 
   async confirmDestruction(device: USBDevice): Promise<boolean> {
-    if (process.env.HESTIA_FORCE_USB_WRITE === '1') {
+    if (process.env.eve_FORCE_USB_WRITE === '1') {
       return true;
     }
 
@@ -2484,7 +2484,7 @@ d-i preseed/late_command string \\
       };
     }
 
-    const backupDir = path.join(os.homedir(), '.hestia', 'backups', `usb-${device.device}-${Date.now()}`);
+    const backupDir = path.join(os.homedir(), '.eve', 'backups', `usb-${device.device}-${Date.now()}`);
     await this.ensureDir(backupDir);
 
     try {
@@ -2549,7 +2549,7 @@ d-i preseed/late_command string \\
 
   preventSystemDestruction(): void {
     // Set environment variable to prevent accidental writes
-    process.env.HESTIA_USB_SAFE_MODE = '1';
+    process.env.eve_USB_SAFE_MODE = '1';
 
     // Register signal handlers
     const cleanup = () => {
@@ -2569,7 +2569,7 @@ d-i preseed/late_command string \\
   }
 
   private async mountDevice(device: USBDevice): Promise<string> {
-    const mountPoint = `/tmp/hestia-mount-${device.device.replace(/[^a-zA-Z0-9]/g, '_')}`;
+    const mountPoint = `/tmp/eve-mount-${device.device.replace(/[^a-zA-Z0-9]/g, '_')}`;
     await this.ensureDir(mountPoint);
 
     // Find first partition or use device directly
@@ -2603,8 +2603,8 @@ d-i preseed/late_command string \\
         }
       }
 
-      // Unmount any hestia temp mounts
-      const { stdout } = await execAsync('mount | grep hestia-mount | awk "{print \$3}" || echo ""');
+      // Unmount any eve temp mounts
+      const { stdout } = await execAsync('mount | grep eve-mount | awk "{print \$3}" || echo ""');
       for (const mount of stdout.trim().split('\n').filter(Boolean)) {
         await execAsync(`sudo umount "${mount}" 2>/dev/null || true`);
       }

@@ -12,6 +12,8 @@ import chalk from 'chalk';
 import inquirer from 'inquirer';
 import * as path from 'path';
 import * as fs from 'fs/promises';
+import { homedir } from 'os';
+import { writeUsbSetupManifest } from '@eve/dna';
 
 interface USBCreateOptions {
   device?: string;
@@ -660,6 +662,26 @@ async function createUSB(options: USBCreateOptions): Promise<void> {
 
     if (result.success) {
       spinner.succeed(spinnerId, 'USB created successfully!');
+      try {
+        const target_profile =
+          options.aiProvider === 'ollama'
+            ? 'inference_only'
+            : ['openrouter', 'anthropic', 'openai'].includes(options.aiProvider || '')
+              ? 'data_pod'
+              : 'full';
+        await writeUsbSetupManifest(
+          {
+            version: '1',
+            target_profile,
+            hearth_name: options.hearthName,
+            domain_hint: undefined,
+          },
+          path.join(homedir(), '.eve', 'usb-profile.json'),
+        );
+        logger.info(`Wrote Eve setup manifest: ~/.eve/usb-profile.json (${target_profile})`);
+      } catch (e: unknown) {
+        logger.warn(`Could not write setup manifest: ${e instanceof Error ? e.message : String(e)}`);
+      }
       logger.newline();
       logger.section('Next Steps');
       logger.info('1. Safely eject the USB drive');

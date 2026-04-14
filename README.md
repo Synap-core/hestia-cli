@@ -1,184 +1,184 @@
-# Eve - Entity Creation System
+# Hestia CLI & Eve
 
-> **Create your sovereign digital entity.**
-> 
-> Eve transforms a bare server into a living digital being with intelligence, memory, and capabilities.
+**Hestia CLI** is a pnpm monorepo that ships **Eve** (`eve`): a logical, organ-based installer and operator for a sovereign stack. **Synap** (Data Pod) is the production-grade backend; Eve can **delegate** to the official `synap` bash CLI or run a **minimal local brain** for development.
 
-## What is Eve?
-
-Eve is an **Entity Creation System**. It takes a bare server (physical or virtual) and transforms it into a sovereign digital entity with:
-
-- 🧠 **Brain** - Core intelligence and memory
-- 🦾 **Arms** - Action and execution capabilities  
-- 🏗️ **Builder** - Creation and deployment tools
-- 👁️ **Eyes** - Perception and knowledge intake
-- 🦿 **Legs** - Presence and exposure to the world
-
-Unlike traditional server setups, Eve creates a **cohesive entity** where all components work together as a unified system.
-
-## Quick Start
-
-### Path 1: Fresh Server (Physical or VM)
-
-```bash
-# 1. Create bootable USB (for physical servers)
-eve birth create-usb --device /dev/sdb
-
-# Boot from USB, then:
-# 2. Initialize the Brain
-eve brain init --with-ai
-
-# 3. Add Arms (AI assistant)
-eve arms install
-
-# 4. Setup Builder (creation tools)
-eve builder init my-project
-
-# 5. Check entity status
-eve status
-```
-
-### Path 2: Existing Server
-
-```bash
-# Run on any Ubuntu/Debian server
-curl -fsSL https://eve.sh/install.sh | bash
-
-# Initialize
-eve brain init --with-ai
-eve arms install
-eve builder init my-project
-eve legs setup
-```
-
-### Path 3: Proxmox VM
-
-```bash
-# In Proxmox:
-# 1. Download Ubuntu 24.04 ISO
-# 2. Create VM (4+ cores, 8+ GB RAM, 50+ GB disk)
-# 3. Install Ubuntu
-# 4. SSH into VM and run:
-
-curl -fsSL https://eve.sh/install.sh | bash
-eve brain init --with-ai
-eve status
-```
-
-## Entity Anatomy
-
-```
-Your Digital Entity
-├── 🧠 BRAIN (Core Intelligence)
-│   ├── Synap Backend - API, identity, knowledge graph
-│   ├── Ollama - Local AI model (Llama 3.1, etc.)
-│   ├── PostgreSQL - Long-term memory
-│   └── Redis - Working memory
-│
-├── 🦾 ARMS (Action)
-│   └── OpenClaw - AI coding assistant with MCP servers
-│       └── Connects to Brain's Ollama for intelligence
-│
-├── 🏗️ BUILDER (Creation Suite)
-│   ├── OpenCode - Generate websites and docs
-│   ├── OpenClaude - AI-assisted coding (uses Brain AI)
-│   └── Dokploy - Deploy to production
-│
-├── 👁️ EYES (Perception)
-│   └── RSSHub - Consume RSS feeds, APIs
-│       └── Feeds knowledge into Brain
-│
-└── 🦿 LEGS (Exposure)
-    └── Traefik - Reverse proxy, SSL, domain routing
-        └── Exposes your entity to the internet
-```
-
-## Core Commands
-
-```bash
-# Entity lifecycle
-eve birth create-usb     # Create bootable USB
-eve brain init           # Initialize core
-eve brain init --with-ai # Include local AI
-eve status               # Check entity health
-eve doctor               # Diagnose issues
-eve grow                 # Expand capabilities
-
-# Organs
-eve arms install         # Install AI assistant
-eve builder init <name>  # Create project
-eve builder deploy       # Deploy to production
-eve eyes install         # Add RSS aggregation
-eve legs setup           # Configure domain/SSL
-```
-
-## Why Eve?
-
-### vs Traditional Server Setup
-
-| Traditional | Eve |
-|-------------|-----|
-| Install apps individually | Unified entity with connected organs |
-| Manual configuration | Automated, opinionated setup |
-| Apps don't talk to each other | All organs connect to Brain |
-| Cloud dependencies | Fully self-hosted, private |
-| Complex maintenance | Entity state tracking, self-healing |
-
-### vs Cloud Platforms
-
-| Cloud (Vercel, Railway, etc.) | Eve |
-|-------------------------------|-----|
-| Vendor lock-in | You own everything |
-| Monthly costs | One-time server cost |
-| Data on their servers | Data stays on your server |
-| Limited customization | Full control, open source |
-| Internet required | Works offline (local AI) |
-
-## Technology Stack
-
-Eve is built on proven open-source technologies:
-
-- **Container Runtime**: Docker + Docker Compose
-- **AI Engine**: Ollama (local LLM inference)
-- **AI Assistants**: OpenClaw, OpenClaude
-- **Database**: PostgreSQL (data), Redis (cache)
-- **Reverse Proxy**: Traefik (automatic SSL)
-- **Deployment**: Dokploy (self-hosted PaaS)
-- **RSS Aggregation**: RSSHub
-
-See [docs/technology-choices.md](docs/technology-choices.md) for detailed comparison of each technology choice.
-
-## Documentation
-
-- [Getting Started](docs/getting-started.md) - First steps
-- [Architecture](docs/architecture.md) - Entity anatomy
-- [Technology Choices](docs/technology-choices.md) - Why we chose each tool
-- [Deployment Guide](docs/deployment.md) - Deploy your entity
-- [Configuration](docs/configuration.md) - Customize your entity
-
-## Requirements
-
-### Minimum (Basic Entity)
-- 2 CPU cores
-- 4 GB RAM
-- 20 GB storage
-- Ubuntu 22.04+ / Debian 12+
-
-### Recommended (Full AI Entity)
-- 4+ CPU cores
-- 8+ GB RAM (16+ for larger AI models)
-- 50+ GB storage (SSD recommended)
-- Ubuntu 24.04 LTS
-
-### For Local AI
-- GPU optional (accelerates AI inference)
-- Without GPU: CPU inference works fine
-
-## License
-
-MIT - See [LICENSE](LICENSE)
+This README is the **single overview**: packages, capabilities, user flows, how `eve setup` fits in, and what is planned next.
 
 ---
 
-**Create your digital self.**
+## Documentation map
 
+| Doc | Purpose |
+|-----|---------|
+| **This README** | Project scope, flows, Synap vs Eve, roadmap |
+| [docs/EVE_SETUP_PROFILES.md](docs/EVE_SETUP_PROFILES.md) | Three profiles, ports, USB manifest, automation flags |
+| [ARCHITECTURE_CLEANUP_COMPLETE.md](ARCHITECTURE_CLEANUP_COMPLETE.md) | Repo history / canonical layout |
+| [commands.manifest.yaml](commands.manifest.yaml) | Command inventory (`pnpm run check:manifest`) |
+| [docs/north-star.md](docs/north-star.md), [docs/service-reference.md](docs/service-reference.md), … | Deeper product / ADR style notes |
+
+Older root `*.md` files may mention removed paths; prefer the table above.
+
+---
+
+## Packages (monorepo)
+
+| Package | Role |
+|---------|------|
+| `@eve/cli` | **`eve`** entrypoint — lifecycle, organs, debug, `eve setup` |
+| `@eve/brain` | Synap delegation, `runBrainInit`, `runInferenceInit`, Ollama/Postgres/Redis services |
+| `@eve/legs` | Traefik helpers, **inference gateway** (Ollama + Basic auth on `:11435`) |
+| `@eve/arms`, `@eve/eyes`, `@eve/builder` | OpenClaw, RSSHub, OpenCode/OpenClaude/Dokploy, **`eve builder stack`** |
+| `@eve/dna` | Entity state, setup profile JSON (`.eve/setup-profile.json`), USB manifest types, **hardware probe** |
+| `@eve/usb`, `@eve/install` | USB creation wizard, server install scripts; **`hestia usb`** vs **`eve birth usb`** |
+
+---
+
+## User experience principles
+
+1. **Logical guidance only** — prompts explain *what* you are choosing (profiles, ports), not LLM-style coaching.
+2. **One front door for greenfield installs** — prefer **`eve setup`** for the three paths; use **`eve init` / `eve brain init`** for fine-grained or legacy flows.
+3. **Delegation over duplication** — Data Pod installs go through **`synap install`** when `SYNAP_REPO_ROOT` or `--synap-repo` is set; Synap keeps **Caddy** on 80/443. Eve adds **Traefik** only where needed (e.g. Ollama gateway, extra sites).
+4. **Re-runnable** — `eve setup --dry-run` plans without writing; existing `.eve/setup-profile.json` triggers a confirm before overwrite (interactive).
+5. **Automation-friendly** — global **`--json`**, **`--yes`**, and profile-specific flags for CI or cloud-init.
+
+---
+
+## Three-path setup (`eve setup`) — shipped
+
+| Profile | User intent | What runs |
+|---------|-------------|-----------|
+| **`inference_only`** | Local models + secured HTTP API | Ollama (Docker) + Traefik gateway (**`:11435`**, Basic auth). Credentials under `.eve/secrets/`. |
+| **`data_pod`** | Full Synap stack only | `synap install` from repo path; **Caddy** edge unchanged. |
+| **`full`** | Synap + local Ollama | Data Pod first, then Ollama **without** host `:11434` + same gateway on `:11435`. |
+
+```bash
+eve setup                              # interactive wizard
+eve setup --dry-run --profile full     # plan only
+eve setup --yes --profile data_pod --synap-repo /path/to/synap-backend --domain localhost
+```
+
+Details: [docs/EVE_SETUP_PROFILES.md](docs/EVE_SETUP_PROFILES.md).
+
+---
+
+## User flows (how pieces connect)
+
+### A. From zero on a server (recommended)
+
+1. Install Docker + clone this repo + `pnpm install && pnpm run build`.
+2. Run **`eve setup`** and pick a profile (or use `--yes --profile …`).
+3. Optional: **`eve builder stack up`** for a static site on `http://127.0.0.1:9080`.
+4. Grow other organs: **`eve grow`**, **`eve arms install`**, etc., as needed.
+
+### B. USB → bare metal → Eve
+
+1. **`hestia usb create`** (or `eve birth usb`) to build media; on success, **`~/.eve/usb-profile.json`** may be written.
+2. After OS install, copy manifest to **`/opt/eve/profile.json`** (optional) so **`eve setup`** pre-suggests a profile.
+3. Run **`eve setup`** on the server.
+
+### C. Synap-only operator (no Eve brain containers)
+
+Set **`SYNAP_REPO_ROOT`** (or pass **`--synap-repo`** to `eve brain init` / `eve setup`) so installs call the **`synap`** script in `synap-backend`. Use **`synap health`**, **`synap profiles`**, etc., for the pod; use Eve for **RSSHub, builder stack, legs** around it.
+
+### D. Legacy / granular path
+
+- **`eve init`** = **`eve brain init`** (Eve-managed Docker brain *or* delegated Synap via flags).
+- **`eve doctor`**, **`eve status`**, organ subcommands unchanged.
+
+---
+
+## Synap vs Eve (mental model)
+
+| Topic | Synap Data Pod | Eve (minimal / sidecar) |
+|--------|----------------|-------------------------|
+| Edge TLS | **Caddy** (compose) | Traefik for **optional** services (inference gateway, custom routes) |
+| API / graph | Backend compose | Delegates to `synap` when configured |
+| Local LLM | Not required | **Ollama** + gateway for `inference_only` / `full` |
+| Source of truth for pod install | **`synap-backend/synap`** | Eve **calls** it; does not reimplement compose |
+
+---
+
+## Capabilities: shipped vs roadmap
+
+**Shipped today**
+
+- `eve setup` (three profiles, USB manifest hint, hardware prompts, `--dry-run` / `--json`).
+- `runBrainInit` / `runInferenceInit`, inference Traefik container **`eve-inference-gateway`**.
+- `eve builder stack up|down|status` (nginx + `.eve/builder-site/public`).
+- USB create → **`~/.eve/usb-profile.json`**; `readUsbSetupManifest()` for `/opt/eve/profile.json` and **`EVE_SETUP_MANIFEST`**.
+- Delegation: OpenClaw / RSSHub aware of Synap repo when env set (see package changelogs).
+
+**Roadmap / future-hardening** (not promised in the CLI yet)
+
+- **TLS** on the inference gateway (currently HTTP + Basic auth on localhost).
+- **Whisper** (or other sidecar) on `eve-network` + optional route through gateway.
+- **Deeper Dokploy / OpenCode** in Docker (today: CLI + static site stack; Dokploy remains discovery-oriented).
+- **`eve legs synap-note`** (or similar): print `synap health` hint when `SYNAP_REPO_ROOT` is set.
+- **CI**: mocked `synap` + fake repo tree for `data_pod` integration tests.
+
+---
+
+## Quick start (development)
+
+```bash
+git clone <repo-url>
+cd hestia-cli
+pnpm install
+pnpm run build
+
+# Recommended first run
+pnpm exec eve setup --dry-run --profile inference_only
+
+# Or full Synap path (requires synap-backend checkout)
+pnpm exec eve setup --yes --profile data_pod --synap-repo /path/to/synap-backend --domain localhost
+```
+
+Global install: use your package link / publish flow; binary is **`eve`** from `@eve/cli`.
+
+---
+
+## Organ anatomy (conceptual)
+
+```
+Entity (Eve)
+├── Brain    — Synap Data Pod and/or Ollama + data stores
+├── Arms     — OpenClaw, MCP
+├── Builder  — OpenCode, OpenClaude, Dokploy, builder stack (nginx)
+├── Eyes     — RSSHub (or Synap profile when delegated)
+└── Legs     — Traefik, tunnels, inference gateway
+```
+
+Shared Docker network: **`eve-network`** (create-on-demand where used).
+
+---
+
+## Core commands (cheat sheet)
+
+```bash
+eve setup --help           # three paths + extended help
+eve init / eve brain init  # brain only (see --synap-repo)
+eve status / eve doctor
+eve grow
+eve birth usb              # bootable USB script
+eve builder stack up       # static site :9080
+eve legs … / eve eyes … / eve arms …
+```
+
+---
+
+## Technology stack
+
+Docker, Commander, clack (prompts), pnpm workspaces. Synap stack: PostgreSQL, Redis, Caddy, etc. (see **synap-backend** repo).
+
+---
+
+## Requirements
+
+- **Minimum**: Docker, 2 CPU, 4 GB RAM (light profiles).
+- **Data Pod / full**: follow **synap-backend** deploy docs; **full** + local models benefits from more RAM/GPU.
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).

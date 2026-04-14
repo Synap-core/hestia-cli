@@ -24,7 +24,7 @@ services:
   # WhoDB - AI-powered database viewer
   whodb:
     image: clidey/whodb:latest
-    container_name: hestia-whodb
+    container_name: eve-whodb
     restart: unless-stopped
     profiles:
       - db-viewer
@@ -35,7 +35,7 @@ services:
       PORT: "8081"
       
       # PostgreSQL connection (Synap Backend database)
-      # Automatically configured from Hestia's database settings
+      # Automatically configured from eve's database settings
       POSTGRES_HOST: ${SYNAP_DB_HOST:-postgres}
       POSTGRES_PORT: ${SYNAP_DB_PORT:-5432}
       POSTGRES_USER: ${SYNAP_DB_USER:-synap}
@@ -56,7 +56,7 @@ services:
       OLLAMA_MODEL: ${WHODB_OLLAMA_MODEL:-llama3.2}
       
       # Session and security
-      SESSION_SECRET: ${WHODB_SESSION_SECRET:-hestia-whodb-session}
+      SESSION_SECRET: ${WHODB_SESSION_SECRET:-eve-whodb-session}
       
       # Logging
       LOG_LEVEL: ${WHODB_LOG_LEVEL:-info}
@@ -66,11 +66,11 @@ services:
     
     volumes:
       # Persist custom queries and user settings
-      - ${HESTIA_HOME:-/opt/hestia}/data/whodb/queries:/app/queries
-      - ${HESTIA_HOME:-/opt/hestia}/data/whodb/settings:/app/settings
+      - ${eve_HOME:-/opt/eve}/data/whodb/queries:/app/queries
+      - ${eve_HOME:-/opt/eve}/data/whodb/settings:/app/settings
     
     networks:
-      - hestia-network
+      - eve-network
     
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8081/health"]
@@ -80,13 +80,13 @@ services:
       start_period: 10s
     
     labels:
-      - "hestia.service=whodb"
-      - "hestia.profile=db-viewer"
-      - "hestia.optional=true"
-      - "hestia.description=AI-powered database visualization"
+      - "eve.service=whodb"
+      - "eve.profile=db-viewer"
+      - "eve.optional=true"
+      - "eve.description=AI-powered database visualization"
 
-# Use the same network as other Hestia services
+# Use the same network as other eve services
 networks:
-  hestia-network:
+  eve-network:
     external: true
-    name: hestia-network
+    name: eve-network

@@ -10,30 +10,30 @@ def fix_imports_in_file(filepath):
     
     content = original_content
     
-    # Replace @hestia/types imports
+    # Replace @eve/types imports
     content = re.sub(
-        r"from ['\"]@hestia/types['\"]",
+        r"from ['\"]@eve/types['\"]",
         "from '../lib/types/index'",
         content
     )
     
-    # Replace @hestia/utils imports
+    # Replace @eve/utils imports
     content = re.sub(
-        r"from ['\"]@hestia/utils['\"]",
+        r"from ['\"]@eve/utils['\"]",
         "from '../lib/utils/index'",
         content
     )
     
     # Replace type imports
     content = re.sub(
-        r"import type .* from ['\"]@hestia/types['\"]",
-        lambda m: m.group(0).replace("@hestia/types", "../lib/types/index"),
+        r"import type .* from ['\"]@eve/types['\"]",
+        lambda m: m.group(0).replace("@eve/types", "../lib/types/index"),
         content
     )
     
     content = re.sub(
-        r"import type .* from ['\"]@hestia/utils['\"]",
-        lambda m: m.group(0).replace("@hestia/utils", "../lib/utils/index"),
+        r"import type .* from ['\"]@eve/utils['\"]",
+        lambda m: m.group(0).replace("@eve/utils", "../lib/utils/index"),
         content
     )
     
@@ -44,7 +44,7 @@ def fix_imports_in_file(filepath):
     return content != original_content
 
 def main():
-    core_dir = "/Users/antoine/Documents/Code/synap/hestia-cli/packages/core/src"
+    core_dir = "/Users/antoine/Documents/Code/synap/eve-cli/packages/core/src"
     
     for root, dirs, files in os.walk(core_dir):
         for file in files:
@@ -52,7 +52,7 @@ def main():
                 filepath = os.path.join(root, file)
                 try:
                     original_content = open(filepath, 'r', encoding='utf-8').read()
-                    if '@hestia/types' in original_content or '@hestia/utils' in original_content:
+                    if '@eve/types' in original_content or '@eve/utils' in original_content:
                         fix_imports_in_file(filepath)
                         print(f"Fixed imports in: {filepath}")
                 except Exception as e:

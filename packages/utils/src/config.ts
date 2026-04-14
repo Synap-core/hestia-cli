@@ -1,8 +1,8 @@
 // @ts-nocheck
 /**
- * Hestia CLI - Configuration Management
+ * eve CLI - Configuration Management
  *
- * Handles loading, validation, and saving of Hestia configuration.
+ * Handles loading, validation, and saving of eve configuration.
  */
 
 import * as fs from "fs/promises";
@@ -10,7 +10,7 @@ import * as path from "path";
 import * as os from "os";
 import YAML from "yaml";
 import { z } from "zod";
-import type { HestiaConfig, PackageConfig, IntelligenceConfig } from "@hestia/types";
+import type { eveConfig, PackageConfig, IntelligenceConfig } from "@eve/types";
 
 // Configuration schema for validation
 const packageConfigSchema = z.object({
@@ -149,7 +149,7 @@ const defaultOptionalServices = {
 };
 
 // Default configuration
-export const defaultConfig: HestiaConfig = {
+export const defaultConfig: eveConfig = {
   version: "1.0",
   hearth: {
     id: "",
@@ -189,8 +189,8 @@ export const defaultConfig: HestiaConfig = {
 // Configuration paths
 export function getConfigPaths() {
   const homeDir = os.homedir();
-  const configDir = process.env.HESTIA_CONFIG_DIR || path.join(homeDir, ".hestia");
-  const systemConfigDir = "/etc/hestia";
+  const configDir = process.env.eve_CONFIG_DIR || path.join(homeDir, ".eve");
+  const systemConfigDir = "/etc/eve";
 
   return {
     configDir,
@@ -206,14 +206,14 @@ export function getConfigPaths() {
 // Load configuration from files
 export async function loadConfig(
   customPath?: string
-): Promise<{ config: HestiaConfig; path: string }> {
+): Promise<{ config: eveConfig; path: string }> {
   return await _loadConfig(customPath);
 }
 
 // Internal implementation
 async function _loadConfig(
   customPath?: string
-): Promise<{ config: HestiaConfig; path: string }> {
+): Promise<{ config: eveConfig; path: string }> {
   const paths = getConfigPaths();
   const configPath = customPath || paths.userConfig;
 
@@ -222,7 +222,7 @@ async function _loadConfig(
     const parsed = YAML.parse(content);
     const validated = configSchema.parse(parsed);
 
-    return { config: validated as HestiaConfig, path: configPath };
+    return { config: validated as eveConfig, path: configPath };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       // Config file doesn't exist, return default
@@ -243,13 +243,13 @@ async function _loadConfig(
 export const getConfig = loadConfig;
 
 // Simplified getConfig that returns just the config object
-export async function getConfigValue(customPath?: string): Promise<HestiaConfig> {
+export async function getConfigValue(customPath?: string): Promise<eveConfig> {
   const { config } = await loadConfig(customPath);
   return config;
 }
 
 // Load system configuration (if exists)
-export async function loadSystemConfig(): Promise<Partial<HestiaConfig>> {
+export async function loadSystemConfig(): Promise<Partial<eveConfig>> {
   const paths = getConfigPaths();
 
   try {
@@ -266,8 +266,8 @@ export async function loadSystemConfig(): Promise<Partial<HestiaConfig>> {
 
 // Merge configurations (system < user < custom overrides)
 export function mergeConfigs(
-  ...configs: Array<Partial<HestiaConfig> | undefined>
-): HestiaConfig {
+  ...configs: Array<Partial<eveConfig> | undefined>
+): eveConfig {
   const merged = { ...defaultConfig };
 
   for (const config of configs) {
@@ -323,7 +323,7 @@ export function mergeConfigs(
 
 // Save configuration to file
 export async function saveConfig(
-  config: HestiaConfig,
+  config: eveConfig,
   customPath?: string
 ): Promise<void> {
   const paths = getConfigPaths();
@@ -347,9 +347,9 @@ export async function saveConfig(
 
 // Update specific configuration section
 export async function updateConfig(
-  updates: Partial<HestiaConfig>,
+  updates: Partial<eveConfig>,
   customPath?: string
-): Promise<HestiaConfig> {
+): Promise<eveConfig> {
   const { config, path: configPath } = await loadConfig(customPath);
   const updated = mergeConfigs(config, updates);
   await saveConfig(updated, customPath || configPath);
@@ -358,7 +358,7 @@ export async function updateConfig(
 
 // Get package configuration
 export function getPackageConfig(
-  config: HestiaConfig,
+  config: eveConfig,
   packageName: string
 ): PackageConfig | undefined {
   return config.packages[packageName];
@@ -366,10 +366,10 @@ export function getPackageConfig(
 
 // Set package configuration
 export function setPackageConfig(
-  config: HestiaConfig,
+  config: eveConfig,
   packageName: string,
   packageConfig: PackageConfig
-): HestiaConfig {
+): eveConfig {
   return {
     ...config,
     packages: {
@@ -381,16 +381,16 @@ export function setPackageConfig(
 
 // Get intelligence configuration
 export function getIntelligenceConfig(
-  config: HestiaConfig
+  config: eveConfig
 ): IntelligenceConfig | undefined {
   return config.intelligence;
 }
 
 // Set intelligence configuration
 export function setIntelligenceConfig(
-  config: HestiaConfig,
+  config: eveConfig,
   intelligenceConfig: IntelligenceConfig
-): HestiaConfig {
+): eveConfig {
   return {
     ...config,
     intelligence: intelligenceConfig,
@@ -398,8 +398,8 @@ export function setIntelligenceConfig(
 }
 
 // Validate configuration
-export function validateConfig(config: unknown): HestiaConfig {
-  return configSchema.parse(config) as HestiaConfig;
+export function validateConfig(config: unknown): eveConfig {
+  return configSchema.parse(config) as eveConfig;
 }
 
 // Check if configuration exists
@@ -425,8 +425,8 @@ export async function createInitialConfig(
     aiPlatform?: "opencode" | "openclaude" | "later";
   },
   customPath?: string
-): Promise<HestiaConfig> {
-  const config: HestiaConfig = {
+): Promise<eveConfig> {
+  const config: eveConfig = {
     version: "1.0",
     hearth: {
       id: generateHearthId(),
@@ -451,9 +451,9 @@ function generateHearthId(): string {
 }
 
 // Get configuration summary for display
-export function getConfigSummary(config: HestiaConfig): string {
+export function getConfigSummary(config: eveConfig): string {
   const lines = [
-    `Hestia: ${config.hearth.name}`,
+    `eve: ${config.hearth.name}`,
     `Role: ${config.hearth.role}`,
     `Domain: ${config.hearth.domain || "Not configured"}`,
     "",
@@ -540,8 +540,8 @@ export async function setCredential(key: string, value: string): Promise<void> {
 
 // Aliases for backward compatibility
 export { loadCredentials as getCredentials };
-export type { HestiaConfig as UserConfig };
-export type { HestiaConfig as Credentials };
+export type { eveConfig as UserConfig };
+export type { eveConfig as Credentials };
 
 // Type for config paths
 export type ConfigPaths = ReturnType<typeof getConfigPaths>;

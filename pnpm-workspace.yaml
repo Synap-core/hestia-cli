@@ -1,4 +1,8 @@
 packages:
-  - "packages/@hestia/*"
-  - "packages/hestia-cli"
-  - "packages/cli-consolidated"
+  - "packages/@eve/*"
+  - "packages/eve-cli"
+  - "packages/cli-kit"
+  - "packages/types"
+  - "packages/utils"
+  - "packages/usb"
+  - "packages/install"

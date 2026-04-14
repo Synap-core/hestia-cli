@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# Script pour remplacer les imports de @hestia/types et @hestia/utils par des chemins relatifs
+# Script pour remplacer les imports de @eve/types et @eve/utils par des chemins relatifs
 
-cd /Users/antoine/Documents/Code/synap/hestia-cli/packages/core
+cd /Users/antoine/Documents/Code/synap/eve-cli/packages/core
 
-# Remplacer @hestia/types par ../lib/types
-find src -name "*.ts" -type f -exec sed -i '' 's|from "@hestia/types"|from "../lib/types/index"|g' {} \;
+# Remplacer @eve/types par ../lib/types
+find src -name "*.ts" -type f -exec sed -i '' 's|from "@eve/types"|from "../lib/types/index"|g' {} \;
 
-# Remplacer @hestia/utils par ../lib/utils
-find src -name "*.ts" -type f -exec sed -i '' 's|from "@hestia/utils"|from "../lib/utils/index"|g' {} \;
+# Remplacer @eve/utils par ../lib/utils
+find src -name "*.ts" -type f -exec sed -i '' 's|from "@eve/utils"|from "../lib/utils/index"|g' {} \;
 
 echo "Imports remplacés avec succès"

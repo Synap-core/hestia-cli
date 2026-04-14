@@ -1,0 +1,42 @@
+{
+  "name": "@eve/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "eve": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "validate": "pnpm run build"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.7.0",
+    "@eve/arms": "workspace:*",
+    "@eve/brain": "workspace:*",
+    "@eve/builder": "workspace:*",
+    "@eve/cli-kit": "workspace:*",
+    "@eve/dna": "workspace:*",
+    "@eve/eyes": "workspace:*",
+    "@eve/install": "workspace:*",
+    "@eve/legs": "workspace:*",
+    "@eve/usb": "workspace:*",
+    "boxen": "^7.1.1",
+    "chalk": "^5.3.0",
+    "cli-progress": "^3.12.0",
+    "cli-table3": "^0.6.3",
+    "commander": "^11.0.0",
+    "execa": "^9.0.0",
+    "ora": "^8.0.1"
+  },
+  "devDependencies": {
+    "@types/cli-progress": "^3.11.5",
+    "@types/node": "^20.12.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.5",
+    "vitest": "^1.5.0"
+  },
+  "license": "MIT"
+}

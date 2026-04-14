@@ -1,10 +1,10 @@
 /**
- * Hestia CLI - Configuration Management
+ * eve CLI - Configuration Management
  *
- * Handles loading, validation, and saving of Hestia configuration.
+ * Handles loading, validation, and saving of eve configuration.
  */
-import type { HestiaConfig, PackageConfig, IntelligenceConfig } from "@hestia/types";
-export declare const defaultConfig: HestiaConfig;
+import type { eveConfig, PackageConfig, IntelligenceConfig } from "@eve/types";
+export declare const defaultConfig: eveConfig;
 export declare function getConfigPaths(): {
     configDir: string;
     systemConfigDir: string;
@@ -15,20 +15,20 @@ export declare function getConfigPaths(): {
     registryCache: string;
 };
 export declare function loadConfig(customPath?: string): Promise<{
-    config: HestiaConfig;
+    config: eveConfig;
     path: string;
 }>;
 export declare const getConfig: typeof loadConfig;
-export declare function getConfigValue(customPath?: string): Promise<HestiaConfig>;
-export declare function loadSystemConfig(): Promise<Partial<HestiaConfig>>;
-export declare function mergeConfigs(...configs: Array<Partial<HestiaConfig> | undefined>): HestiaConfig;
-export declare function saveConfig(config: HestiaConfig, customPath?: string): Promise<void>;
-export declare function updateConfig(updates: Partial<HestiaConfig>, customPath?: string): Promise<HestiaConfig>;
-export declare function getPackageConfig(config: HestiaConfig, packageName: string): PackageConfig | undefined;
-export declare function setPackageConfig(config: HestiaConfig, packageName: string, packageConfig: PackageConfig): HestiaConfig;
-export declare function getIntelligenceConfig(config: HestiaConfig): IntelligenceConfig | undefined;
-export declare function setIntelligenceConfig(config: HestiaConfig, intelligenceConfig: IntelligenceConfig): HestiaConfig;
-export declare function validateConfig(config: unknown): HestiaConfig;
+export declare function getConfigValue(customPath?: string): Promise<eveConfig>;
+export declare function loadSystemConfig(): Promise<Partial<eveConfig>>;
+export declare function mergeConfigs(...configs: Array<Partial<eveConfig> | undefined>): eveConfig;
+export declare function saveConfig(config: eveConfig, customPath?: string): Promise<void>;
+export declare function updateConfig(updates: Partial<eveConfig>, customPath?: string): Promise<eveConfig>;
+export declare function getPackageConfig(config: eveConfig, packageName: string): PackageConfig | undefined;
+export declare function setPackageConfig(config: eveConfig, packageName: string, packageConfig: PackageConfig): eveConfig;
+export declare function getIntelligenceConfig(config: eveConfig): IntelligenceConfig | undefined;
+export declare function setIntelligenceConfig(config: eveConfig, intelligenceConfig: IntelligenceConfig): eveConfig;
+export declare function validateConfig(config: unknown): eveConfig;
 export declare function configExists(customPath?: string): Promise<boolean>;
 export declare function createInitialConfig(options: {
     hearthName: string;
@@ -36,16 +36,16 @@ export declare function createInitialConfig(options: {
     domain?: string;
     intelligence?: IntelligenceConfig;
     aiPlatform?: "opencode" | "openclaude" | "later";
-}, customPath?: string): Promise<HestiaConfig>;
-export declare function getConfigSummary(config: HestiaConfig): string;
+}, customPath?: string): Promise<eveConfig>;
+export declare function getConfigSummary(config: eveConfig): string;
 export declare function expandEnvVars(str: string): string;
 export declare function loadCredentials(configDir?: string): Promise<Record<string, string>>;
 export declare function saveCredentials(credentials: Record<string, string>, configDir?: string): Promise<void>;
 export declare function getCredential(key: string): Promise<string | undefined>;
 export declare function setCredential(key: string, value: string): Promise<void>;
 export { loadCredentials as getCredentials };
-export type { HestiaConfig as UserConfig };
-export type { HestiaConfig as Credentials };
+export type { eveConfig as UserConfig };
+export type { eveConfig as Credentials };
 export type ConfigPaths = ReturnType<typeof getConfigPaths>;
 export type ConfigPath = string;
 //# sourceMappingURL=config.d.ts.map

@@ -1,29 +1,34 @@
 {
   "name": "eve",
   "version": "0.1.0",
-  "description": "Eve - Entity Creation System (formerly Hestia)",
+  "description": "Eve - Entity Creation System. AI-powered sovereign infrastructure organized as a 5-organ living entity: Brain (intelligence), Arms (action), Builder (creation), Eyes (perception), Legs (presence).",
   "private": true,
   "workspaces": [
-    "packages/@hestia/*",
-    "packages/hestia-cli",
-    "packages/cli-consolidated"
+    "packages/@eve/*",
+    "packages/eve-cli",
+    "packages/cli-kit",
+    "packages/types",
+    "packages/utils",
+    "packages/usb",
+    "packages/install"
   ],
   "scripts": {
     "build": "pnpm -r run build",
-    "build:new": "pnpm --filter @hestia/* --filter hestia-cli build",
+    "build:new": "pnpm --filter \"@eve/*\" --filter @eve/cli build",
     "typecheck": "pnpm -r run typecheck",
     "lint": "pnpm -r run lint",
     "test": "pnpm -r run test",
-    "cli": "pnpm --filter hestia-cli",
-    "validate": "pnpm --filter @hestia/cli validate",
-    "verify": "bash verify.sh"
+    "cli": "pnpm --filter @eve/cli",
+    "validate": "pnpm --filter @eve/cli run validate",
+    "verify": "bash verify.sh",
+    "check:manifest": "node scripts/check-manifest.mjs"
   },
   "engines": {
     "node": ">=18.0.0"
   },
   "keywords": [
     "eve",
-    "hestia",
+    "eve",
     "synap",
     "ai",
     "infrastructure",

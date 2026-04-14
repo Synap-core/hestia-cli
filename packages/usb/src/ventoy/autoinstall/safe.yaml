@@ -1,7 +1,7 @@
 #cloud-config
 # Ubuntu Server 24.04 - Safe Install (Interactive)
 # This configuration starts an interactive Ubuntu installation
-# with Hestia setup prompts
+# with eve setup prompts
 
 autoinstall:
   version: 1
@@ -51,8 +51,8 @@ autoinstall:
   
   # Identity - interactive (will prompt for user setup)
   identity:
-    hostname: hestia-node
-    username: hestia
+    hostname: eve-node
+    username: eve
     password: $6$rounds=4096$saltsalt$encryptedpasswordplaceholder
   
   # SSH - enable
@@ -87,39 +87,39 @@ autoinstall:
     - curtin in-target --target=/target -- systemctl enable docker
     
     # Add user to docker group
-    - curtin in-target --target=/target -- usermod -aG docker hestia
+    - curtin in-target --target=/target -- usermod -aG docker eve
     
-    # Create Hestia directory structure
-    - curtin in-target --target=/target -- mkdir -p /opt/hestia
-    - curtin in-target --target=/target -- chown hestia:hestia /opt/hestia
+    # Create eve directory structure
+    - curtin in-target --target=/target -- mkdir -p /opt/eve
+    - curtin in-target --target=/target -- chown eve:eve /opt/eve
     
-    # Copy Hestia installer if available
-    - cp -r /cdrom/hestia /target/opt/hestia/ || true
+    # Copy eve installer if available
+    - cp -r /cdrom/eve /target/opt/eve/ || true
     
     # Set permissions
-    - curtin in-target --target=/target -- chown -R hestia:hestia /opt/hestia
+    - curtin in-target --target=/target -- chown -R eve:eve /opt/eve
     
     # Create welcome message
     - |
-      cat > /target/etc/update-motd.d/99-hestia << 'EOF'
+      cat > /target/etc/update-motd.d/99-eve << 'EOF'
 #!/bin/bash
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
-echo "  🔥 Hestia - Sovereign AI Infrastructure"
+echo "  🔥 eve - Sovereign AI Infrastructure"
 echo "═══════════════════════════════════════════════════════════════"
 echo ""
 echo "  Your node is installed but not configured yet."
 echo ""
 echo "  To complete setup, run as root:"
-echo "    /opt/hestia/install.sh all"
+echo "    /opt/eve/install.sh all"
 echo ""
 echo "  Or start with the CLI:"
-echo "    hestia init"
+echo "    eve init"
 echo ""
-echo "  Documentation: https://docs.hestia.dev"
+echo "  Documentation: https://docs.eve.dev"
 echo "═══════════════════════════════════════════════════════════════"
 EOF
-    - chmod +x /target/etc/update-motd.d/99-hestia
+    - chmod +x /target/etc/update-motd.d/99-eve
     
     # Reboot message
-    - echo "Installation complete. System will reboot to Hestia setup."
+    - echo "Installation complete. System will reboot to eve setup."

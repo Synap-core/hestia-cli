@@ -1,0 +1,196 @@
+import { spawn } from 'node:child_process';
+import { setTimeout } from 'node:timers/promises';
+
+export interface MCPConfig {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+}
+
+export interface OpenClawConfig {
+  ollamaUrl: string;
+  model?: string;
+  mcpServers?: Record<string, MCPConfig>;
+}
+
+const OPENCLAW_CONTAINER = 'eve-arms-openclaw';
+const OPENCLAW_PORT = 3000;
+
+export class OpenClawService {
+  private config: OpenClawConfig = {
+    ollamaUrl: 'http://eve-brain-ollama:11434',
+    model: 'llama3.2',
+  };
+
+  /**
+   * Install OpenClaw container
+   */
+  async install(): Promise<void> {
+    console.log('📦 Installing OpenClaw...');
+
+    // Pull the OpenClaw image
+    await this.runDockerCommand([
+      'pull',
+      'ghcr.io/openclaw/openclaw:latest',
+    ]);
+
+    console.log('✅ OpenClaw image pulled');
+  }
+
+  /**
+   * Configure OpenClaw to use Ollama
+   */
+  async configure(ollamaUrl: string): Promise<void> {
+    this.config.ollamaUrl = ollamaUrl;
+    console.log(`⚙️  Configured OpenClaw to use Ollama at ${ollamaUrl}`);
+  }
+
+  /**
+   * Start OpenClaw container
+   */
+  async start(): Promise<void> {
+    const isRunning = await this.isRunning();
+    if (isRunning) {
+      console.log('🤖 OpenClaw is already running');
+      return;
+    }
+
+    console.log('🚀 Starting OpenClaw...');
+
+    await this.runDockerCommand([
+      'run',
+      '-d',
+      '--name', OPENCLAW_CONTAINER,
+      '--network', 'eve-network',
+      '-p', `${OPENCLAW_PORT}:3000`,
+      '-e', `OLLAMA_URL=${this.config.ollamaUrl}`,
+      '-e', `DEFAULT_MODEL=${this.config.model}`,
+      '-v', 'eve-arms-openclaw-data:/data',
+      '--restart', 'unless-stopped',
+      'ghcr.io/openclaw/openclaw:latest',
+    ]);
+
+    // Wait for service to be ready
+    await setTimeout(3000);
+
+    console.log(`✅ OpenClaw started on port ${OPENCLAW_PORT}`);
+  }
+
+  /**
+   * Stop OpenClaw container
+   */
+  async stop(): Promise<void> {
+    const isRunning = await this.isRunning();
+    if (!isRunning) {
+      console.log('🤖 OpenClaw is not running');
+      return;
+    }
+
+    console.log('🛑 Stopping OpenClaw...');
+
+    await this.runDockerCommand(['stop', OPENCLAW_CONTAINER]);
+    await this.runDockerCommand(['rm', OPENCLAW_CONTAINER]);
+
+    console.log('✅ OpenClaw stopped');
+  }
+
+  /**
+   * Check if OpenClaw is running
+   */
+  async isRunning(): Promise<boolean> {
+    try {
+      const output = await this.runDockerCommand(
+        ['ps', '--filter', `name=${OPENCLAW_CONTAINER}`, '--format', '{{.Names}}'],
+        true
+      );
+      return output.includes(OPENCLAW_CONTAINER);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Install an MCP server
+   */
+  async installMCPServer(name: string, config: MCPConfig): Promise<void> {
+    console.log(`🔌 Installing MCP server: ${name}...`);
+
+    const mcpConfig = {
+      mcpServers: {
+        [name]: config,
+      },
+    };
+
+    // Write config to container
+    const configJson = JSON.stringify(mcpConfig);
+    await this.runDockerCommand([
+      'exec', OPENCLAW_CONTAINER,
+      'sh', '-c',
+      `echo '${configJson}' > /data/mcp-${name}.json`,
+    ]);
+
+    console.log(`✅ MCP server ${name} installed`);
+  }
+
+  /**
+   * List installed MCP servers
+   */
+  async listMCPServers(): Promise<string[]> {
+    try {
+      const output = await this.runDockerCommand(
+        ['exec', OPENCLAW_CONTAINER, 'ls', '/data/'],
+        true
+      );
+      
+      return output
+        .split('\n')
+        .filter(f => f.startsWith('mcp-') && f.endsWith('.json'))
+        .map(f => f.replace('mcp-', '').replace('.json', ''));
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Get OpenClaw status
+   */
+  async getStatus(): Promise<{ running: boolean; url: string; model: string }> {
+    const running = await this.isRunning();
+    return {
+      running,
+      url: `http://localhost:${OPENCLAW_PORT}`,
+      model: this.config.model || 'llama3.2',
+    };
+  }
+
+  /**
+   * Run a Docker command and return output
+   */
+  private runDockerCommand(args: string[], returnOutput = false): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const proc = spawn('docker', args, {
+        stdio: returnOutput ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+      });
+
+      let output = '';
+      if (returnOutput) {
+        proc.stdout?.on('data', (data) => {
+          output += data.toString();
+        });
+      }
+
+      proc.on('close', (code) => {
+        if (code === 0) {
+          resolve(output.trim());
+        } else {
+          reject(new Error(`Docker command failed with code ${code}`));
+        }
+      });
+
+      proc.on('error', reject);
+    });
+  }
+}
+
+// Singleton instance
+export const openclaw = new OpenClawService();

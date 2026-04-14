@@ -4,18 +4,18 @@
 # - Install Docker and Docker Compose
 # - Configure UFW firewall
 # - Harden SSH access
-# - Create hestia user
+# - Create eve user
 #
 # Idempotent: Safe to run multiple times
 
 set -euo pipefail
 
-HESTIA_TARGET="${HESTIA_TARGET:-/opt/hestia}"
-HESTIA_SAFE_MODE="${HESTIA_SAFE_MODE:-0}"
+eve_TARGET="${eve_TARGET:-/opt/eve}"
+eve_SAFE_MODE="${eve_SAFE_MODE:-0}"
 
 # State tracking (inherited from main script or use defaults)
-INSTALL_STATE_FILE="${INSTALL_STATE_FILE:-${HESTIA_TARGET}/.install-state}"
-INSTALL_STATE_DIR="${INSTALL_STATE_DIR:-${HESTIA_TARGET}/.install-state.d/phase1}"
+INSTALL_STATE_FILE="${INSTALL_STATE_FILE:-${eve_TARGET}/.install-state}"
+INSTALL_STATE_DIR="${INSTALL_STATE_DIR:-${eve_TARGET}/.install-state.d/phase1}"
 FORCE_MODE="${FORCE_MODE:-false}"
 DRY_RUN_MODE="${DRY_RUN_MODE:-false}"
 
@@ -261,7 +261,7 @@ configure_firewall() {
     fi
     
     # Reset UFW to default (only if safe mode is off)
-    if [[ "$HESTIA_SAFE_MODE" != "1" ]]; then
+    if [[ "$eve_SAFE_MODE" != "1" ]]; then
         ufw --force reset 2>/dev/null || true
     fi
     
@@ -282,15 +282,15 @@ configure_firewall() {
         ufw allow 443/tcp comment 'HTTPS'
     fi
     
-    # Allow Hestia services - idempotent
-    local hestia_ports=(
+    # Allow eve services - idempotent
+    local eve_ports=(
         "3000/tcp:Synap Frontend"
         "4000/tcp:Synap Backend"
         "3001/tcp:Intelligence Hub"
         "5173/tcp:Admin Dashboard"
     )
     
-    for port_entry in "${hestia_ports[@]}"; do
+    for port_entry in "${eve_ports[@]}"; do
         IFS=':' read -r port comment <<< "$port_entry"
         if ! ufw status | grep -q "${port}"; then
             ufw allow "$port" comment "$comment"
@@ -374,7 +374,7 @@ harden_ssh() {
     mark_step_completed "$step_name"
 }
 
-# Create hestia user
+# Create eve user
 create_user() {
     local step_name="create_user"
     
@@ -383,27 +383,27 @@ create_user() {
     fi
     
     if [[ "$DRY_RUN_MODE" == true ]]; then
-        log_dryrun "Would create hestia user"
+        log_dryrun "Would create eve user"
         mark_step_completed "$step_name"
         return 0
     fi
     
-    log_info "Setting up hestia user..."
+    log_info "Setting up eve user..."
     
     # Check if user already exists
-    if id "hestia" &>/dev/null; then
-        log_info "User 'hestia' already exists"
+    if id "eve" &>/dev/null; then
+        log_info "User 'eve' already exists"
         
         # Ensure user is in docker group
-        if ! groups hestia | grep -q docker; then
-            usermod -aG docker hestia
-            log_info "Added hestia to docker group"
+        if ! groups eve | grep -q docker; then
+            usermod -aG docker eve
+            log_info "Added eve to docker group"
         fi
         
         # Ensure home directory exists
-        if [[ ! -d "$HESTIA_TARGET/home" ]]; then
-            mkdir -p "$HESTIA_TARGET/home"
-            chown hestia:hestia "$HESTIA_TARGET/home"
+        if [[ ! -d "$eve_TARGET/home" ]]; then
+            mkdir -p "$eve_TARGET/home"
+            chown eve:eve "$eve_TARGET/home"
         fi
         
         mark_step_completed "$step_name"
@@ -411,17 +411,17 @@ create_user() {
     fi
     
     # Create user with home directory
-    useradd -m -s /bin/bash -d "$HESTIA_TARGET/home" hestia
+    useradd -m -s /bin/bash -d "$eve_TARGET/home" eve
     
     # Add to docker group
-    usermod -aG docker hestia
+    usermod -aG docker eve
     
     # Set up .ssh directory
-    mkdir -p "$HESTIA_TARGET/home/.ssh"
-    chmod 700 "$HESTIA_TARGET/home/.ssh"
-    chown -R hestia:hestia "$HESTIA_TARGET/home"
+    mkdir -p "$eve_TARGET/home/.ssh"
+    chmod 700 "$eve_TARGET/home/.ssh"
+    chown -R eve:eve "$eve_TARGET/home"
     
-    log_success "User 'hestia' created"
+    log_success "User 'eve' created"
     mark_step_completed "$step_name"
 }
 
@@ -443,8 +443,8 @@ configure_fail2ban() {
     
     # Check if jail.local already exists and is correct
     if [[ -f /etc/fail2ban/jail.local ]]; then
-        if grep -q "Hestia" /etc/fail2ban/jail.local 2>/dev/null; then
-            log_info "Fail2ban already configured for Hestia"
+        if grep -q "eve" /etc/fail2ban/jail.local 2>/dev/null; then
+            log_info "Fail2ban already configured for eve"
             
             # Ensure service is running
             systemctl enable fail2ban 2>/dev/null || true
@@ -457,7 +457,7 @@ configure_fail2ban() {
     
     # Create jail.local
     cat > /etc/fail2ban/jail.local << 'EOF'
-# Hestia fail2ban configuration
+# eve fail2ban configuration
 # Auto-generated - safe to re-run
 
 [DEFAULT]
@@ -489,7 +489,7 @@ EOF
     mark_step_completed "$step_name"
 }
 
-# Create systemd service for Hestia
+# Create systemd service for eve
 create_systemd_service() {
     local step_name="create_systemd_service"
     
@@ -498,23 +498,23 @@ create_systemd_service() {
     fi
     
     if [[ "$DRY_RUN_MODE" == true ]]; then
-        log_dryrun "Would create Hestia systemd service"
+        log_dryrun "Would create eve systemd service"
         mark_step_completed "$step_name"
         return 0
     fi
     
-    log_info "Creating Hestia systemd service..."
+    log_info "Creating eve systemd service..."
     
-    local service_file="/etc/systemd/system/hestia.service"
+    local service_file="/etc/systemd/system/eve.service"
     
     # Check if service file exists and is correct
     if [[ -f "$service_file" ]]; then
-        if grep -q "$HESTIA_TARGET" "$service_file" 2>/dev/null; then
+        if grep -q "$eve_TARGET" "$service_file" 2>/dev/null; then
             log_info "Systemd service already exists and is correct"
             
             # Ensure enabled
             systemctl daemon-reload 2>/dev/null || true
-            systemctl enable hestia.service 2>/dev/null || true
+            systemctl enable eve.service 2>/dev/null || true
             
             mark_step_completed "$step_name"
             return 0
@@ -523,24 +523,24 @@ create_systemd_service() {
     
     # Create/overwrite service file
     cat > "$service_file" << EOF
-# Hestia Systemd Service
+# eve Systemd Service
 # Auto-generated - safe to re-run
 
 [Unit]
-Description=Hestia - Sovereign AI Infrastructure
-Documentation=https://docs.hestia.dev
+Description=eve - Sovereign AI Infrastructure
+Documentation=https://docs.eve.dev
 Requires=docker.service
 After=docker.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-User=hestia
-Group=hestia
-WorkingDirectory=$HESTIA_TARGET
-Environment=HESTIA_HOME=$HESTIA_TARGET
-ExecStart=$HESTIA_TARGET/bin/hestia ignite
-ExecStop=$HESTIA_TARGET/bin/hestia extinguish
+User=eve
+Group=eve
+WorkingDirectory=$eve_TARGET
+Environment=eve_HOME=$eve_TARGET
+ExecStart=$eve_TARGET/bin/eve ignite
+ExecStop=$eve_TARGET/bin/eve extinguish
 TimeoutStartSec=0
 
 [Install]
@@ -548,7 +548,7 @@ WantedBy=multi-user.target
 EOF
     
     systemctl daemon-reload 2>/dev/null || true
-    systemctl enable hestia.service 2>/dev/null || true
+    systemctl enable eve.service 2>/dev/null || true
     
     log_success "Systemd service created"
     mark_step_completed "$step_name"

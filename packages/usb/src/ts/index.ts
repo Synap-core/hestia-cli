@@ -1,8 +1,6 @@
 /**
- * Hestia USB Package
- * 
- * USB creation tools and Ventoy configuration for bare-metal installation.
+ * eve USB Package — paths and generators for bare-metal installs.
+ * For the interactive USB CLI, import from `@eve/usb/commands` (optional).
  */
 
-export { usbCommand } from './commands/usb.js';
-export { createUsbDrive, generateIso } from './lib/usb-generator.js';
+export { getCreateUsbScriptPath } from './paths.js';

@@ -1,7 +1,7 @@
 {
-  "name": "@hestia/types",
+  "name": "@eve/types",
   "version": "0.1.0",
-  "description": "Shared TypeScript types for Hestia CLI",
+  "description": "Shared TypeScript types for eve CLI",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "keywords": [
-    "hestia",
+    "eve",
     "types",
     "typescript"
   ],

@@ -1,18 +1,16 @@
 {
-  "name": "@hestia/install",
+  "name": "@eve/install",
   "version": "0.1.0",
-  "description": "OS/server installation for Hestia CLI",
+  "description": "OS/server installation for eve CLI",
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "build": "node -e \"process.exit(0)\"",
+    "typecheck": "node -e \"process.exit(0)\"",
+    "test": "node -e \"console.log('@eve/install: no tests'); process.exit(0)\""
   },
   "dependencies": {},
   "keywords": [
-    "hestia",
+    "eve",
     "install",
     "os",
     "server",

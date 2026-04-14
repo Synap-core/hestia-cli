@@ -1,0 +1,24 @@
+# Eve CLI command registry (category + id for docs/tests)
+version: 1
+categories:
+  lifecycle:
+    - init
+    - grow
+    - birth
+    - status
+  organs:
+    - brain
+    - arms
+    - eyes
+    - legs
+    - builder
+  debug:
+    - doctor
+    - logs
+    - inspect
+  management:
+    - config
+    - backup
+    - update
+  ai:
+    - ai

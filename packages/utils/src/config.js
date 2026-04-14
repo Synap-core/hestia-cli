@@ -1,8 +1,8 @@
 // @ts-nocheck
 /**
- * Hestia CLI - Configuration Management
+ * eve CLI - Configuration Management
  *
- * Handles loading, validation, and saving of Hestia configuration.
+ * Handles loading, validation, and saving of eve configuration.
  */
 import * as fs from "fs/promises";
 import * as path from "path";
@@ -174,8 +174,8 @@ export const defaultConfig = {
 // Configuration paths
 export function getConfigPaths() {
     const homeDir = os.homedir();
-    const configDir = process.env.HESTIA_CONFIG_DIR || path.join(homeDir, ".hestia");
-    const systemConfigDir = "/etc/hestia";
+    const configDir = process.env.eve_CONFIG_DIR || path.join(homeDir, ".eve");
+    const systemConfigDir = "/etc/eve";
     return {
         configDir,
         systemConfigDir,
@@ -375,7 +375,7 @@ function generateHearthId() {
 // Get configuration summary for display
 export function getConfigSummary(config) {
     const lines = [
-        `Hestia: ${config.hearth.name}`,
+        `eve: ${config.hearth.name}`,
         `Role: ${config.hearth.role}`,
         `Domain: ${config.hearth.domain || "Not configured"}`,
         "",

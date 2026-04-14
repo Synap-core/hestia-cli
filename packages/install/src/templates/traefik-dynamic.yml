@@ -1,4 +1,4 @@
-# Hestia Traefik Dynamic Configuration
+# eve Traefik Dynamic Configuration
 # Middlewares, routers, and services defined here
 # Auto-generated - safe to re-run
 
@@ -65,7 +65,7 @@ http:
           # Default: admin / admin (change in production!)
           # Generate with: htpasswd -nbB admin "yourpassword"
           - "admin:$2y$10$MIjx9V4p2Z3z8wIqyM72Uu7Cq/1oM97FMQ6V6R9VzZ9Q4vJlT2"
-        realm: "Hestia Dashboard"
+        realm: "eve Dashboard"
         headerField: "X-User"
     
     # Strip prefix middleware
