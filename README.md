@@ -25,10 +25,14 @@ If you only remember one thing: **Synap is the “heart” (data + Hub + governa
 | CLI framework         | **Commander** + **@clack/prompts** (interactive), **execa** (subprocesses)                      |
 | Build                 | **tsup** / **tsc** per package                                                                  |
 | Tests                 | **Vitest** (`packages/eve-cli`)                                                                 |
-| Runtime orchestration | **Docker** + **Docker Compose** (containers named with `eve-`* / gateway patterns in docs)      |
+| Runtime orchestration | **Docker** + **Docker Compose** (containers named with `eve-*` / gateway patterns in docs)      |
 
 
-Synap itself (PostgreSQL, Redis, Caddy, API, etc.) lives in the **synap-backend** repository. Eve **calls** the official `**synap`** shell installer when you use `data_pod` / `full` with `--synap-repo` or `SYNAP_REPO_ROOT`.
+Synap itself (PostgreSQL, Redis, Caddy, API, etc.) lives in the **synap-backend** repository. Eve **calls** the official **`synap`** shell installer when you use `data_pod` / `full`. Setup auto-detects an existing `synap-backend` checkout and can auto-clone when missing (default: `/opt/synap-backend`). You can still pin with `--synap-repo` or `SYNAP_REPO_ROOT`.
+
+Reference repositories:
+- Hestia/Eve CLI: [github.com/Synap-core/hestia-cli](https://github.com/Synap-core/hestia-cli)
+- Synap CLI companion: [github.com/Synap-core/synap-cli](https://github.com/Synap-core/synap-cli)
 
 ---
 
@@ -163,6 +167,8 @@ DEBIAN_FRONTEND=noninteractive apt-get update -y && apt-get install -y ca-certif
 
 **TTY note:** piping through `curl | bash` can leave **stdin non-interactive**. For a full interactive `eve setup`, SSH into the server and run `cd /opt/eve && pnpm --filter @eve/cli exec eve setup` after a `--no-setup` bootstrap, or use a PTY (`ssh -t`). Non-interactive flows should use `--yes` / `--json` flags after `--` as above.
 
+If bootstrap detects non-interactive stdin and no setup flags, it exits with a clear message instead of showing a prompt that immediately closes.
+
 The script file is **[bootstrap.sh](bootstrap.sh)** at the repo root (same path on `raw.githubusercontent.com`).
 
 ### 0.1) Post-pull sync (important)
@@ -216,10 +222,12 @@ Same behavior as the curl one-liner in **§0**; only the script source differs.
 
 ### 3) Non-interactive / CI / cloud-init
 
-Use `**--yes`**, `**--json`**, and explicit flags (see [docs/EVE_SETUP_PROFILES.md](docs/EVE_SETUP_PROFILES.md)):
+Use **`--yes`**, **`--json`**, and explicit flags (see [docs/EVE_SETUP_PROFILES.md](docs/EVE_SETUP_PROFILES.md)):
 
 ```bash
 pnpm --filter @eve/cli exec eve --json setup --dry-run --profile data_pod
+pnpm --filter @eve/cli exec eve setup --yes --profile data_pod --domain pod.example.com
+# optional explicit pin:
 pnpm --filter @eve/cli exec eve setup --yes --profile data_pod --synap-repo /path/to/synap-backend --domain pod.example.com
 ```
 
@@ -230,10 +238,10 @@ Point Eve at your checkout of **synap-backend**:
 ```bash
 export SYNAP_REPO_ROOT=/path/to/synap-backend
 pnpm --filter @eve/cli exec eve brain init --synap-repo "$SYNAP_REPO_ROOT"
-# or use eve setup --profile data_pod with --synap-repo
+# or use eve setup --profile data_pod (auto-detect/clone)
 ```
 
-Use `**synap**` inside that repo for pod lifecycle; use `**eve**` for legs/builder/arms/eyes extras.
+Use **`synap`** inside that repo for pod lifecycle; use **`eve`** for legs/builder/arms/eyes extras.
 
 ### 5) USB → bare metal
 

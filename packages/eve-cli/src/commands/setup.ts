@@ -1,7 +1,9 @@
 import type { Command } from 'commander';
 import { select, confirm, isCancel, text } from '@clack/prompts';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { execa } from 'execa';
 import {
   readSetupProfile,
   writeSetupProfile,
@@ -97,6 +99,116 @@ function prevAiModeFromUsb(
   return undefined;
 }
 
+const SYNAP_BACKEND_REPO_URL = 'https://github.com/Synap-core/synap-backend.git';
+
+function looksLikeSynapRepo(repoRoot: string): boolean {
+  return (
+    existsSync(join(repoRoot, 'synap')) &&
+    existsSync(join(repoRoot, 'deploy', 'docker-compose.yml'))
+  );
+}
+
+function findLocalSynapRepo(startDir: string): string | null {
+  const candidates = new Set<string>();
+  const resolvedStart = resolve(startDir);
+  let cursor = resolvedStart;
+  for (let i = 0; i < 8; i += 1) {
+    candidates.add(cursor);
+    candidates.add(join(cursor, 'synap-backend'));
+    const parent = dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+
+  const home = homedir();
+  for (const p of [
+    '/opt/synap-backend',
+    '/srv/synap-backend',
+    join(home, 'synap-backend'),
+    join(home, 'synap', 'synap-backend'),
+  ]) {
+    candidates.add(p);
+  }
+
+  for (const candidate of candidates) {
+    if (looksLikeSynapRepo(candidate)) return candidate;
+  }
+  return null;
+}
+
+async function ensureSynapRepoForProfile(
+  requestedPath: string | undefined,
+  cwd: string,
+  nonInteractive: boolean,
+  jsonMode: boolean,
+): Promise<string> {
+  const explicit = requestedPath?.trim() || process.env.SYNAP_REPO_ROOT?.trim();
+  if (explicit) {
+    const resolved = resolve(explicit);
+    if (!looksLikeSynapRepo(resolved)) {
+      throw new Error(
+        `Invalid synap repo at ${resolved}. Expected ${resolved}/synap and ${resolved}/deploy/docker-compose.yml`,
+      );
+    }
+    return resolved;
+  }
+
+  const detected = findLocalSynapRepo(cwd);
+  if (detected) return detected;
+
+  const defaultCloneDir = '/opt/synap-backend';
+  let targetDir = defaultCloneDir;
+
+  if (!nonInteractive && !jsonMode) {
+    const shouldClone = await confirm({
+      message: `No synap-backend checkout detected. Clone it automatically to ${defaultCloneDir}?`,
+      initialValue: true,
+    });
+    if (isCancel(shouldClone) || !shouldClone) {
+      throw new Error(
+        'data_pod/full requires a synap-backend checkout. Pass --synap-repo or set SYNAP_REPO_ROOT.',
+      );
+    }
+
+    const maybePath = await text({
+      message: 'Where should synap-backend be cloned?',
+      placeholder: defaultCloneDir,
+      defaultValue: defaultCloneDir,
+    });
+    if (isCancel(maybePath)) {
+      throw new Error('Cancelled.');
+    }
+    const trimmed = maybePath.trim();
+    targetDir = resolve(trimmed.length ? trimmed : defaultCloneDir);
+  }
+
+  if (existsSync(targetDir) && !looksLikeSynapRepo(targetDir)) {
+    throw new Error(
+      `Cannot auto-clone: target exists but is not a synap-backend checkout (${targetDir}).`,
+    );
+  }
+
+  if (!existsSync(targetDir)) {
+    if (!jsonMode) {
+      console.log(`${emojis.info} Cloning synap-backend to ${colors.info(targetDir)} …`);
+    }
+    try {
+      await execa('git', ['clone', SYNAP_BACKEND_REPO_URL, targetDir], { stdio: 'inherit' });
+    } catch (error) {
+      throw new Error(
+        `Failed to clone synap-backend to ${targetDir}. Ensure git is installed and outbound access to GitHub is available.\n` +
+          `You can also pass --synap-repo <path> (or set SYNAP_REPO_ROOT) to an existing checkout.`,
+      );
+    }
+  }
+
+  if (!looksLikeSynapRepo(targetDir)) {
+    throw new Error(`Cloned repo at ${targetDir}, but synap CLI layout was not found.`);
+  }
+
+  return targetDir;
+}
+
 export function setupCommand(program: Command): void {
   program
     .command('setup')
@@ -158,12 +270,12 @@ export function setupCommand(program: Command): void {
             },
             {
               value: 'data_pod' as const,
-              label: 'Synap Data Pod only',
+              label: 'Eve only',
               hint: 'Official synap install (Caddy on 80/443); Eve for extra Docker apps',
             },
             {
               value: 'full' as const,
-              label: 'Data Pod + Ollama',
+              label: 'All',
               hint: 'Synap first, then Ollama on eve-network + gateway :11435',
             },
           ],
@@ -254,6 +366,18 @@ export function setupCommand(program: Command): void {
       if (!aiMode) aiMode = 'hybrid';
       if (!defaultProvider && aiMode !== 'local') defaultProvider = 'openrouter';
 
+      if (opts.fromImage && opts.fromSource) {
+        console.error('Use only one of --from-image or --from-source.');
+        process.exit(1);
+      }
+
+      let installDomain = (opts.domain?.trim() || 'localhost');
+      let installEmail = opts.email?.trim() || process.env.LETSENCRYPT_EMAIL?.trim() || undefined;
+      let installMode: 'auto' | 'from_image' | 'from_source' =
+        opts.fromImage ? 'from_image' : opts.fromSource ? 'from_source' : 'auto';
+      let installWithOpenclaw = Boolean(opts.withOpenclaw);
+      let installWithRsshub = Boolean(opts.withRsshub);
+
       let tunnelProvider = parseTunnel(opts.tunnel) ?? usb?.tunnel_provider;
       let tunnelDomain =
         (opts.tunnelDomain?.trim() || usb?.tunnel_domain || '').trim() || undefined;
@@ -264,6 +388,72 @@ export function setupCommand(program: Command): void {
         !flags.nonInteractive &&
         !flags.json
       ) {
+        const d = await text({
+          message: 'Synap domain (localhost for local install, or your public hostname)',
+          initialValue: installDomain || 'localhost',
+          placeholder: 'localhost',
+        });
+        if (isCancel(d)) {
+          console.log(colors.muted('Cancelled.'));
+          return;
+        }
+        installDomain = (d.trim() || 'localhost');
+
+        if (installDomain !== 'localhost' && !installEmail) {
+          const em = await text({
+            message: "Let's Encrypt email (required for non-localhost domain)",
+            placeholder: 'you@example.com',
+            initialValue: '',
+          });
+          if (isCancel(em)) {
+            console.log(colors.muted('Cancelled.'));
+            return;
+          }
+          const trimmed = em.trim();
+          if (!trimmed) {
+            console.error('Non-localhost domain requires --email (or LETSENCRYPT_EMAIL).');
+            process.exit(1);
+          }
+          installEmail = trimmed;
+        }
+
+        if (installMode === 'auto') {
+          const mode = await select({
+            message: 'Synap install mode',
+            options: [
+              { value: 'auto' as const, label: 'Auto', hint: 'Let synap decide (repo-aware default)' },
+              { value: 'from_image' as const, label: 'From image', hint: 'Use prebuilt GHCR image' },
+              { value: 'from_source' as const, label: 'From source', hint: 'Build locally from repo checkout' },
+            ],
+            initialValue: 'auto',
+          });
+          if (isCancel(mode)) {
+            console.log(colors.muted('Cancelled.'));
+            return;
+          }
+          installMode = mode as 'auto' | 'from_image' | 'from_source';
+        }
+
+        const askOpenclaw = await confirm({
+          message: 'Install OpenClaw during Synap install?',
+          initialValue: installWithOpenclaw,
+        });
+        if (isCancel(askOpenclaw)) {
+          console.log(colors.muted('Cancelled.'));
+          return;
+        }
+        installWithOpenclaw = Boolean(askOpenclaw);
+
+        const askRsshub = await confirm({
+          message: 'Enable RSSHub during Synap install?',
+          initialValue: installWithRsshub,
+        });
+        if (isCancel(askRsshub)) {
+          console.log(colors.muted('Cancelled.'));
+          return;
+        }
+        installWithRsshub = Boolean(askRsshub);
+
         if (!tunnelProvider) {
           const t = await select({
             message: 'Expose Eve Legs (Traefik) via a tunnel after Synap install?',
@@ -292,7 +482,7 @@ export function setupCommand(program: Command): void {
         if (tunnelProvider && !tunnelDomain) {
           const d = await text({
             message: 'Tunnel / ingress hostname (optional, e.g. eve.example.com)',
-            placeholder: opts.domain && opts.domain !== 'localhost' ? opts.domain : '',
+            placeholder: installDomain !== 'localhost' ? installDomain : '',
             initialValue: '',
           });
           if (isCancel(d)) {
@@ -313,6 +503,10 @@ export function setupCommand(program: Command): void {
       }
       if (flags.nonInteractive && opts.aiProvider && !parseAiProvider(opts.aiProvider)) {
         console.error('Invalid --ai-provider (use openrouter|anthropic|openai|ollama).');
+        process.exit(1);
+      }
+      if (installDomain !== 'localhost' && !installEmail) {
+        console.error('Non-localhost domain requires --email (or LETSENCRYPT_EMAIL).');
         process.exit(1);
       }
 
@@ -340,6 +534,13 @@ export function setupCommand(program: Command): void {
           },
           tunnel: tunnelProvider ?? null,
           tunnelDomain: tunnelDomain ?? null,
+          synap: {
+            domain: installDomain,
+            email: installEmail ?? null,
+            mode: installMode,
+            withOpenclaw: installWithOpenclaw,
+            withRsshub: installWithRsshub,
+          },
         };
         if (flags.json) outputJson(plan);
         else console.log(JSON.stringify(plan, null, 2));
@@ -372,7 +573,7 @@ export function setupCommand(program: Command): void {
         {
           profile,
           source: usb ? 'usb_manifest' : flags.nonInteractive ? 'cli' : 'wizard',
-          domainHint: opts.domain,
+          domainHint: installDomain,
           hearthName: usb?.hearth_name,
           tunnelProvider,
           tunnelDomain,
@@ -482,24 +683,25 @@ export function setupCommand(program: Command): void {
             internalOllamaOnly: false,
           });
         } else if (profile === 'data_pod') {
-          const repo = opts.synapRepo?.trim() || process.env.SYNAP_REPO_ROOT?.trim();
-          if (!repo) {
-            console.error('data_pod requires --synap-repo or SYNAP_REPO_ROOT');
-            process.exit(1);
-          }
+          const repo = await ensureSynapRepoForProfile(
+            opts.synapRepo,
+            cwd,
+            Boolean(flags.nonInteractive),
+            Boolean(flags.json),
+          );
           await runBrainInit({
             synapRepo: repo,
-            domain: opts.domain,
-            email: opts.email,
-            withOpenclaw: opts.withOpenclaw,
-            withRsshub: opts.withRsshub,
-            fromImage: opts.fromImage,
-            fromSource: opts.fromSource,
+            domain: installDomain,
+            email: installEmail,
+            withOpenclaw: installWithOpenclaw,
+            withRsshub: installWithRsshub,
+            fromImage: installMode === 'from_image',
+            fromSource: installMode === 'from_source',
             withAi: false,
           });
           if (tunnelProvider) {
             const legsDomain =
-              opts.domain && opts.domain !== 'localhost' ? opts.domain : tunnelDomain ?? undefined;
+              installDomain !== 'localhost' ? installDomain : tunnelDomain ?? undefined;
             await runLegsProxySetup({
               domain: legsDomain,
               tunnel: tunnelProvider,
@@ -509,22 +711,23 @@ export function setupCommand(program: Command): void {
             });
           }
         } else {
-          const repo = opts.synapRepo?.trim() || process.env.SYNAP_REPO_ROOT?.trim();
-          if (!repo) {
-            console.error('full requires --synap-repo or SYNAP_REPO_ROOT');
-            process.exit(1);
-          }
+          const repo = await ensureSynapRepoForProfile(
+            opts.synapRepo,
+            cwd,
+            Boolean(flags.nonInteractive),
+            Boolean(flags.json),
+          );
           if (!flags.json) {
             console.log(colors.info('\nFull profile: (1) Data Pod  (2) Ollama internal + gateway\n'));
           }
           await runBrainInit({
             synapRepo: repo,
-            domain: opts.domain,
-            email: opts.email,
-            withOpenclaw: opts.withOpenclaw,
-            withRsshub: opts.withRsshub,
-            fromImage: opts.fromImage,
-            fromSource: opts.fromSource,
+            domain: installDomain,
+            email: installEmail,
+            withOpenclaw: installWithOpenclaw,
+            withRsshub: installWithRsshub,
+            fromImage: installMode === 'from_image',
+            fromSource: installMode === 'from_source',
             withAi: false,
           });
           await runInferenceInit({
@@ -534,7 +737,7 @@ export function setupCommand(program: Command): void {
           });
           if (tunnelProvider) {
             const legsDomain =
-              opts.domain && opts.domain !== 'localhost' ? opts.domain : tunnelDomain ?? undefined;
+              installDomain !== 'localhost' ? installDomain : tunnelDomain ?? undefined;
             await runLegsProxySetup({
               domain: legsDomain,
               tunnel: tunnelProvider,

@@ -124,6 +124,16 @@ if [[ "$NO_SETUP" -eq 1 ]]; then
   exit 0
 fi
 
+if [[ ! -t 0 ]] && [[ ${#SETUP_ARGS[@]} -eq 0 ]]; then
+  echo "[bootstrap] Non-interactive stdin detected; cannot run interactive eve setup from a piped bootstrap."
+  echo "[bootstrap] Choose one:"
+  echo "  1) Run non-interactive flags now (example):"
+  echo "     curl .../bootstrap.sh | bash -s -- --repo '$REPO_URL' -- --yes --profile full"
+  echo "  2) Re-run bootstrap with --no-setup, then start setup in a real TTY:"
+  echo "     cd $TARGET_DIR && pnpm --filter @eve/cli exec eve setup"
+  exit 2
+fi
+
 echo "[bootstrap] Launching eve setup…"
 cd "$TARGET_DIR"
 exec pnpm --filter @eve/cli exec eve setup "${SETUP_ARGS[@]}"

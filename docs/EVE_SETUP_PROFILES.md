@@ -24,10 +24,11 @@ Routing ownership and consolidation rules are defined in [AI_ROUTING_CONSOLIDATI
 3. **Overwrite guard** — If `.eve/setup-profile.json` already exists, confirm before replacing (skipped with `--yes` or on `--dry-run`).
 4. **Hardware (optional)** — Facts only: OS, CPU model, core count, RAM; optional `nvidia-smi` after explicit confirm. Skip with `--skip-hardware`.
 5. **AI foundation first** — choose `--ai-mode local|provider|hybrid`, default provider (`openrouter|anthropic|openai|ollama`), and optional fallback provider (always proposed interactively). This config drives Eve-side provider routing for external tools.
-6. **Persist** — Write `setup-profile.json` + merge `.eve/secrets/secrets.json`, then run installers (`runInferenceInit`, `runBrainInit`, or both in order for `full`).
-7. **Tunnel (optional, `data_pod` / `full`)** — Wizard can run **Pangolin** or **Cloudflare** via `eve legs setup` after Synap install. Same choices can come from USB manifest (`tunnel_provider`, `tunnel_domain`) or flags `--tunnel` / `--tunnel-domain`.
+6. **Synap install options** (`data_pod` / `full`) — Domain, optional email (required for non-localhost), install mode (auto/image/source), OpenClaw, and RSSHub.
+7. **Persist** — Write `setup-profile.json` + merge `.eve/secrets/secrets.json`, then run installers (`runInferenceInit`, `runBrainInit`, or both in order for `full`).
+8. **Tunnel (optional, `data_pod` / `full`)** — Wizard can run **Pangolin** or **Cloudflare** via `eve legs setup` after Synap install. Same choices can come from USB manifest (`tunnel_provider`, `tunnel_domain`) or flags `--tunnel` / `--tunnel-domain`.
 
-Non-interactive (`--yes`): supply `--profile`; for `data_pod` / `full` supply `--synap-repo` or `SYNAP_REPO_ROOT`. AI defaults can be set with `--ai-mode`, `--ai-provider`, `--fallback-provider`. Use `--tunnel pangolin` (or `cloudflare`) when you want Legs setup without prompts. Use `--nvidia-smi` only if you want GPU lines in a scripted hardware block.
+Non-interactive (`--yes`): supply `--profile`; for `data_pod` / `full` Eve auto-detects an existing `synap-backend` checkout and auto-clones when missing (default `/opt/synap-backend`). You can still force a path with `--synap-repo` or `SYNAP_REPO_ROOT`. AI defaults can be set with `--ai-mode`, `--ai-provider`, `--fallback-provider`. Use `--tunnel pangolin` (or `cloudflare`) when you want Legs setup without prompts. Use `--nvidia-smi` only if you want GPU lines in a scripted hardware block.
 
 ---
 
@@ -64,9 +65,11 @@ eve --json setup --dry-run --profile data_pod
 # Non-interactive examples
 eve setup --yes --profile inference_only --model llama3.1:8b
 
+eve setup --yes --profile data_pod --domain localhost
+# optional explicit pin:
 eve setup --yes --profile data_pod --synap-repo /path/to/synap-backend --domain localhost
 
-eve setup --yes --profile full --synap-repo /path/to/synap-backend --domain localhost \
+eve setup --yes --profile full --domain localhost \
   --with-openclaw --with-rsshub --from-source
 
 eve setup --yes --profile data_pod --synap-repo /path/to/synap-backend --domain pod.example.com \
