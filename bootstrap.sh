@@ -1,25 +1,69 @@
 #!/usr/bin/env bash
-# Greenfield host prep: Docker, Node 20+, pnpm, clone Hestia CLI, build, then eve setup.
-# Usage:
-#   curl -fsSL ... | bash
-#   ./bootstrap.sh [--dir /opt/eve] [--repo https://github.com/.../hestia-cli.git]
+# Greenfield host prep: Docker, Node 20+, pnpm, clone hestia-cli, build, then optionally run `eve setup`.
+#
+# Canonical repo: https://github.com/Synap-core/hestia-cli
+# Default install dir: /opt/eve
+#
+# One-liner (raw script from main):
+#   curl -fsSL "https://raw.githubusercontent.com/Synap-core/hestia-cli/main/bootstrap.sh" | sudo bash -s -- \
+#     --repo "https://github.com/Synap-core/hestia-cli.git"
+#
+# Pass flags to eve setup after `--` (optional; omit `--` for interactive wizard):
+#   curl -fsSL "https://raw.githubusercontent.com/Synap-core/hestia-cli/main/bootstrap.sh" | sudo bash -s -- \
+#     --repo "https://github.com/Synap-core/hestia-cli.git" -- --dry-run --profile inference_only
+#
+# Skip launching setup (only install deps + clone + build):
+#   curl -fsSL "https://raw.githubusercontent.com/Synap-core/hestia-cli/main/bootstrap.sh" | sudo bash -s -- \
+#     --repo "https://github.com/Synap-core/hestia-cli.git" --no-setup
+#
+# Env (alternative to --repo): EVE_BOOTSTRAP_REPO, EVE_BOOTSTRAP_DIR
+# Preserve env through sudo: sudo -E bash -s -- ...
+#
 set -euo pipefail
 
 TARGET_DIR="${EVE_BOOTSTRAP_DIR:-/opt/eve}"
 REPO_URL="${EVE_BOOTSTRAP_REPO:-}"
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --dir) TARGET_DIR="$2"; shift 2 ;;
-    --repo) REPO_URL="$2"; shift 2 ;;
-    *) echo "Unknown arg: $1"; exit 1 ;;
-  esac
-done
+NO_SETUP=0
+SETUP_ARGS=()
 
 need_cmd() { command -v "$1" >/dev/null 2>&1; }
 
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dir)
+      TARGET_DIR="${2:?--dir requires a path}"
+      shift 2
+      ;;
+    --repo)
+      REPO_URL="${2:?--repo requires a git URL}"
+      shift 2
+      ;;
+    --no-setup)
+      NO_SETUP=1
+      shift
+      ;;
+    --)
+      shift
+      SETUP_ARGS+=("$@")
+      break
+      ;;
+    *)
+      echo "Unknown option: $1"
+      echo "Usage: $0 [--dir /opt/eve] [--repo https://github.com/Synap-core/hestia-cli.git] [--no-setup] [-- ...eve setup args...]"
+      echo "When piping from curl, pass script args after: bash -s -- --repo URL [-- eve setup flags]"
+      exit 1
+      ;;
+  esac
+done
+
 if [[ "$(id -u)" -ne 0 ]]; then
   echo "Run as root (uses apt / Docker install when needed)."
+  exit 1
+fi
+
+if [[ ! -d "$TARGET_DIR/.git" ]] && [[ -z "$REPO_URL" ]]; then
+  echo "Either clone hestia-cli into $TARGET_DIR first, or pass --repo / set EVE_BOOTSTRAP_REPO, e.g.:"
+  echo "  curl -fsSL 'https://raw.githubusercontent.com/Synap-core/hestia-cli/main/bootstrap.sh' | sudo bash -s -- --repo 'https://github.com/Synap-core/hestia-cli.git'"
   exit 1
 fi
 
@@ -54,7 +98,7 @@ fi
 mkdir -p "$(dirname "$TARGET_DIR")"
 if [[ ! -d "$TARGET_DIR/.git" ]]; then
   if [[ -z "$REPO_URL" ]]; then
-    echo "Set EVE_BOOTSTRAP_REPO or pass --repo <git-url> to clone hestia-cli."
+    echo "Directory $TARGET_DIR is not a git repo; --repo (or EVE_BOOTSTRAP_REPO) is required to clone."
     exit 1
   fi
   git clone "$REPO_URL" "$TARGET_DIR"
@@ -64,4 +108,14 @@ cd "$TARGET_DIR"
 pnpm install
 pnpm --filter @eve/cli... run build
 
-echo "[bootstrap] Done. Next: cd $TARGET_DIR/packages/eve-cli && node dist/index.js setup"
+echo "[bootstrap] Build complete in $TARGET_DIR"
+
+if [[ "$NO_SETUP" -eq 1 ]]; then
+  echo "[bootstrap] Skipped eve setup (--no-setup). Next:"
+  echo "  cd $TARGET_DIR && pnpm exec eve setup"
+  exit 0
+fi
+
+echo "[bootstrap] Launching eve setup…"
+cd "$TARGET_DIR"
+exec pnpm exec eve setup "${SETUP_ARGS[@]}"
