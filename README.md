@@ -161,9 +161,22 @@ DEBIAN_FRONTEND=noninteractive apt-get update -y && apt-get install -y ca-certif
 **No `curl` but `wget` is installed:** run `apt-get install -y ca-certificates wget git` (if needed), then  
 `wget -qO- "https://raw.githubusercontent.com/Synap-core/hestia-cli/main/bootstrap.sh" | bash -s -- --repo "https://github.com/Synap-core/hestia-cli.git"`.
 
-**TTY note:** piping through `curl | bash` can leave **stdin non-interactive**. For a full interactive `eve setup`, SSH into the server and run `cd /opt/eve && pnpm exec eve setup` after a `--no-setup` bootstrap, or use a PTY (`ssh -t`). Non-interactive flows should use `--yes` / `--json` flags after `--` as above.
+**TTY note:** piping through `curl | bash` can leave **stdin non-interactive**. For a full interactive `eve setup`, SSH into the server and run `cd /opt/eve && pnpm --filter @eve/cli exec eve setup` after a `--no-setup` bootstrap, or use a PTY (`ssh -t`). Non-interactive flows should use `--yes` / `--json` flags after `--` as above.
 
 The script file is **[bootstrap.sh](bootstrap.sh)** at the repo root (same path on `raw.githubusercontent.com`).
+
+### 0.1) Post-pull sync (important)
+
+After a `git pull`, always rehydrate workspace state before launching Eve:
+
+```bash
+cd /opt/eve
+pnpm install
+pnpm --filter @eve/cli... run build
+pnpm --filter @eve/cli exec eve --help
+```
+
+This avoids stale workspace/bin state and guarantees the `@eve/cli` binary is resolvable.
 
 ### 1) From source (developer / your laptop)
 
@@ -179,8 +192,8 @@ pnpm run build
 Run the CLI **without** global install:
 
 ```bash
-pnpm exec eve --help
-pnpm exec eve setup --dry-run --profile inference_only
+pnpm --filter @eve/cli exec eve --help
+pnpm --filter @eve/cli exec eve setup --dry-run --profile inference_only
 ```
 
 Optional: link globally from the workspace (pick one workflow your team uses):
@@ -196,7 +209,7 @@ If you copied **[bootstrap.sh](bootstrap.sh)** onto the machine (or cloned the r
 
 ```bash
 ./bootstrap.sh --repo 'https://github.com/Synap-core/hestia-cli.git'
-# optional: --no-setup then later: cd /opt/eve && pnpm exec eve setup
+# optional: --no-setup then later: cd /opt/eve && pnpm --filter @eve/cli exec eve setup
 ```
 
 Same behavior as the curl one-liner in **§0**; only the script source differs.
@@ -206,8 +219,8 @@ Same behavior as the curl one-liner in **§0**; only the script source differs.
 Use `**--yes`**, `**--json`**, and explicit flags (see [docs/EVE_SETUP_PROFILES.md](docs/EVE_SETUP_PROFILES.md)):
 
 ```bash
-pnpm exec eve --json setup --dry-run --profile data_pod
-pnpm exec eve setup --yes --profile data_pod --synap-repo /path/to/synap-backend --domain pod.example.com
+pnpm --filter @eve/cli exec eve --json setup --dry-run --profile data_pod
+pnpm --filter @eve/cli exec eve setup --yes --profile data_pod --synap-repo /path/to/synap-backend --domain pod.example.com
 ```
 
 ### 4) Synap already installed; Eve only for sidecars
@@ -216,7 +229,7 @@ Point Eve at your checkout of **synap-backend**:
 
 ```bash
 export SYNAP_REPO_ROOT=/path/to/synap-backend
-pnpm exec eve brain init --synap-repo "$SYNAP_REPO_ROOT"
+pnpm --filter @eve/cli exec eve brain init --synap-repo "$SYNAP_REPO_ROOT"
 # or use eve setup --profile data_pod with --synap-repo
 ```
 

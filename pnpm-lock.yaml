@@ -6,7 +6,11 @@ settings:
 
 importers:
 
-  .: {}
+  .:
+    devDependencies:
+      '@eve/cli':
+        specifier: workspace:*
+        version: link:packages/eve-cli
 
   packages/@eve/arms:
     dependencies:

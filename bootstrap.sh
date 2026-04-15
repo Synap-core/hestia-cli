@@ -120,10 +120,10 @@ echo "[bootstrap] Build complete in $TARGET_DIR"
 
 if [[ "$NO_SETUP" -eq 1 ]]; then
   echo "[bootstrap] Skipped eve setup (--no-setup). Next:"
-  echo "  cd $TARGET_DIR && pnpm exec eve setup"
+  echo "  cd $TARGET_DIR && pnpm --filter @eve/cli exec eve setup"
   exit 0
 fi
 
 echo "[bootstrap] Launching eve setup…"
 cd "$TARGET_DIR"
-exec pnpm exec eve setup "${SETUP_ARGS[@]}"
+exec pnpm --filter @eve/cli exec eve setup "${SETUP_ARGS[@]}"
