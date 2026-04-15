@@ -4,17 +4,24 @@
 # Canonical repo: https://github.com/Synap-core/hestia-cli
 # Default install dir: /opt/eve
 #
-# One-liner (raw script from main):
+# Minimal Debian/Ubuntu (no curl yet — install curl+git first, then fetch; run as root, no sudo):
+#   export DEBIAN_FRONTEND=noninteractive
+#   apt-get update -y && apt-get install -y ca-certificates curl git
+#   curl -fsSL "https://raw.githubusercontent.com/Synap-core/hestia-cli/main/bootstrap.sh" | bash -s -- \
+#     --repo "https://github.com/Synap-core/hestia-cli.git"
+#
+# One-liner (same as above chained; raw script from main):
+#   DEBIAN_FRONTEND=noninteractive apt-get update -y && apt-get install -y ca-certificates curl git \
+#     && curl -fsSL "https://raw.githubusercontent.com/Synap-core/hestia-cli/main/bootstrap.sh" | bash -s -- \
+#     --repo "https://github.com/Synap-core/hestia-cli.git"
+#
+# Non-root with sudo:
 #   curl -fsSL "https://raw.githubusercontent.com/Synap-core/hestia-cli/main/bootstrap.sh" | sudo bash -s -- \
 #     --repo "https://github.com/Synap-core/hestia-cli.git"
 #
 # Pass flags to eve setup after `--` (optional; omit `--` for interactive wizard):
-#   curl -fsSL "https://raw.githubusercontent.com/Synap-core/hestia-cli/main/bootstrap.sh" | sudo bash -s -- \
+#   curl -fsSL "https://raw.githubusercontent.com/Synap-core/hestia-cli/main/bootstrap.sh" | bash -s -- \
 #     --repo "https://github.com/Synap-core/hestia-cli.git" -- --dry-run --profile inference_only
-#
-# Skip launching setup (only install deps + clone + build):
-#   curl -fsSL "https://raw.githubusercontent.com/Synap-core/hestia-cli/main/bootstrap.sh" | sudo bash -s -- \
-#     --repo "https://github.com/Synap-core/hestia-cli.git" --no-setup
 #
 # Env (alternative to --repo): EVE_BOOTSTRAP_REPO, EVE_BOOTSTRAP_DIR
 # Preserve env through sudo: sudo -E bash -s -- ...
@@ -63,7 +70,8 @@ fi
 
 if [[ ! -d "$TARGET_DIR/.git" ]] && [[ -z "$REPO_URL" ]]; then
   echo "Either clone hestia-cli into $TARGET_DIR first, or pass --repo / set EVE_BOOTSTRAP_REPO, e.g.:"
-  echo "  curl -fsSL 'https://raw.githubusercontent.com/Synap-core/hestia-cli/main/bootstrap.sh' | sudo bash -s -- --repo 'https://github.com/Synap-core/hestia-cli.git'"
+  echo "  apt-get update -y && apt-get install -y ca-certificates curl git   # as root if curl is missing"
+  echo "  curl -fsSL 'https://raw.githubusercontent.com/Synap-core/hestia-cli/main/bootstrap.sh' | bash -s -- --repo 'https://github.com/Synap-core/hestia-cli.git'"
   exit 1
 fi
 

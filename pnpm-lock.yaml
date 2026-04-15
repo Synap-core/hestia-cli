@@ -232,6 +232,10 @@ importers:
       '@eve/dna':
         specifier: workspace:*
         version: link:../@eve/dna
+    devDependencies:
+      typescript:
+        specifier: ^5.4.5
+        version: 5.9.3
 
   packages/utils:
     dependencies:

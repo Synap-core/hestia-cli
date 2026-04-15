@@ -1,6 +1,6 @@
 # Eve (Hestia CLI monorepo)
 
-This repository is a **pnpm monorepo** that builds **`eve`**: a command-line installer and operator for a **self-hosted stack** around **Synap** (your Data Pod) and optional sidecars (local LLMs, tunnels, builder tooling, OpenClaw, RSSHub, database UI).
+This repository is a **pnpm monorepo** that builds `**eve`**: a command-line installer and operator for a **self-hosted stack** around **Synap** (your Data Pod) and optional sidecars (local LLMs, tunnels, builder tooling, OpenClaw, RSSHub, database UI).
 
 If you only remember one thing: **Synap is the “heart” (data + Hub + governance). Eve is the “hands” (Docker sidecars + wiring + secrets + convenience).** Eve does not replace Synap’s server; it orchestrates what runs *next to* it.
 
@@ -10,7 +10,7 @@ If you only remember one thing: **Synap is the “heart” (data + Hub + governa
 
 1. **Guided setup** — `eve setup` is organized around **three paths**: **inference only** (local models + gateway, no Synap; `inference_only`), **Synap only** — the Data Pod / “the rest” without Eve’s Ollama bundle (`data_pod`), or **both** (Synap then sidecar inference; `full`). It can persist **AI foundation** choices (local vs cloud providers, hybrid, fallback) into `.eve/secrets/secrets.json`.
 2. **Organ commands** — “Brain / Arms / Eyes / Legs / Builder” map to real Docker flows and scripts (Ollama + gateway, Traefik, OpenClaw, RSSHub, OpenCode / OpenClaude / Claude Code, Dokploy optional, etc.).
-3. **Hub wiring for agents** — Builder flows write project **`.env`** and skill layout so OpenCode / OpenClaude / Claude Code can call Synap’s **Hub** with an API key and skills (see [docs/EVE_SETUP_PROFILES.md](docs/EVE_SETUP_PROFILES.md)).
+3. **Hub wiring for agents** — Builder flows write project `**.env`** and skill layout so OpenCode / OpenClaude / Claude Code can call Synap’s **Hub** with an API key and skills (see [docs/EVE_SETUP_PROFILES.md](docs/EVE_SETUP_PROFILES.md)).
 4. **Explicit sync to Synap workspace settings** — `eve ai sync` pushes **non-secret** “provider routing” policy to the pod when your backend exposes the Hub route (see [docs/AI_ROUTING_CONSOLIDATION_ADR.md](docs/AI_ROUTING_CONSOLIDATION_ADR.md)).
 
 ---
@@ -25,10 +25,10 @@ If you only remember one thing: **Synap is the “heart” (data + Hub + governa
 | CLI framework         | **Commander** + **@clack/prompts** (interactive), **execa** (subprocesses)                      |
 | Build                 | **tsup** / **tsc** per package                                                                  |
 | Tests                 | **Vitest** (`packages/eve-cli`)                                                                 |
-| Runtime orchestration | **Docker** + **Docker Compose** (containers named with `eve-*` / gateway patterns in docs)      |
+| Runtime orchestration | **Docker** + **Docker Compose** (containers named with `eve-`* / gateway patterns in docs)      |
 
 
-Synap itself (PostgreSQL, Redis, Caddy, API, etc.) lives in the **synap-backend** repository. Eve **calls** the official **`synap`** shell installer when you use `data_pod` / `full` with `--synap-repo` or `SYNAP_REPO_ROOT`.
+Synap itself (PostgreSQL, Redis, Caddy, API, etc.) lives in the **synap-backend** repository. Eve **calls** the official `**synap`** shell installer when you use `data_pod` / `full` with `--synap-repo` or `SYNAP_REPO_ROOT`.
 
 ---
 
@@ -96,9 +96,28 @@ Only these workspaces are built and published from this tree:
 
 ### 0) One-liner from GitHub (blank Debian/Ubuntu server)
 
-`bootstrap.sh` installs **ca-certificates, curl, git**, **Docker** (get.docker.com), **Node 20** (NodeSource), **pnpm 10**, clones **hestia-cli**, builds the workspace, then **runs `eve setup`** (interactive wizard unless you pass flags after `--`).
+`bootstrap.sh` installs **ca-certificates, curl, git** (via `apt` when needed), **Docker** (get.docker.com), **Node 20** (NodeSource), **pnpm 10**, clones **hestia-cli**, builds the workspace, then **runs `eve setup`** (interactive wizard unless you pass flags after `--`).
+
+**Minimal / LXC / cloud images** often ship **without `curl`** and sometimes **without `sudo`**. You cannot download the script until something can fetch HTTPS; on Debian/Ubuntu use `**apt-get` as root** first. `**bootstrap.sh` must run as root** (it calls `apt-get` and installs Docker); if your shell is already `root`, pipe to `**bash`** — not `sudo bash`.
 
 Canonical repo: **[github.com/Synap-core/hestia-cli](https://github.com/Synap-core/hestia-cli)**. Pin `main` or another branch in the raw URL if you need a specific revision; forks can swap the org/repo in both URLs.
+
+**Recommended (single copy-paste as root):** installs `curl` + `git`, then runs bootstrap.
+
+```bash
+DEBIAN_FRONTEND=noninteractive apt-get update -y && apt-get install -y ca-certificates curl git \
+  && curl -fsSL "https://raw.githubusercontent.com/Synap-core/hestia-cli/main/bootstrap.sh" | bash -s -- \
+  --repo "https://github.com/Synap-core/hestia-cli.git"
+```
+
+**If you already have `curl`**:
+
+```bash
+curl -fsSL "https://raw.githubusercontent.com/Synap-core/hestia-cli/main/bootstrap.sh" | bash -s -- \
+  --repo "https://github.com/Synap-core/hestia-cli.git"
+```
+
+**Non-root** (has `curl` and `sudo`):
 
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/Synap-core/hestia-cli/main/bootstrap.sh" | sudo bash -s -- \
@@ -108,7 +127,8 @@ curl -fsSL "https://raw.githubusercontent.com/Synap-core/hestia-cli/main/bootstr
 **Non-interactive** (CI / cloud-init) — pass `eve setup` flags after `--`:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/Synap-core/hestia-cli/main/bootstrap.sh" | sudo bash -s -- \
+DEBIAN_FRONTEND=noninteractive apt-get update -y && apt-get install -y ca-certificates curl git \
+  && curl -fsSL "https://raw.githubusercontent.com/Synap-core/hestia-cli/main/bootstrap.sh" | bash -s -- \
   --repo "https://github.com/Synap-core/hestia-cli.git" -- \
   --yes --profile inference_only
 ```
@@ -116,26 +136,32 @@ curl -fsSL "https://raw.githubusercontent.com/Synap-core/hestia-cli/main/bootstr
 **Install only, no wizard** (you will run setup yourself):
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/Synap-core/hestia-cli/main/bootstrap.sh" | sudo bash -s -- \
+DEBIAN_FRONTEND=noninteractive apt-get update -y && apt-get install -y ca-certificates curl git \
+  && curl -fsSL "https://raw.githubusercontent.com/Synap-core/hestia-cli/main/bootstrap.sh" | bash -s -- \
   --repo "https://github.com/Synap-core/hestia-cli.git" --no-setup
 ```
 
 **Custom install directory** (default is `/opt/eve`):
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/Synap-core/hestia-cli/main/bootstrap.sh" | sudo bash -s -- \
+DEBIAN_FRONTEND=noninteractive apt-get update -y && apt-get install -y ca-certificates curl git \
+  && curl -fsSL "https://raw.githubusercontent.com/Synap-core/hestia-cli/main/bootstrap.sh" | bash -s -- \
   --dir /srv/eve --repo "https://github.com/Synap-core/hestia-cli.git"
 ```
 
-**Using environment variables** (works with `sudo -E` so the child sees them):
+**Using environment variables** (as root; use `sudo -E` if non-root):
 
 ```bash
 export EVE_BOOTSTRAP_REPO='https://github.com/Synap-core/hestia-cli.git'
 export EVE_BOOTSTRAP_DIR='/opt/eve'
-curl -fsSL "https://raw.githubusercontent.com/Synap-core/hestia-cli/main/bootstrap.sh" | sudo -E bash -s --
+DEBIAN_FRONTEND=noninteractive apt-get update -y && apt-get install -y ca-certificates curl git \
+  && curl -fsSL "https://raw.githubusercontent.com/Synap-core/hestia-cli/main/bootstrap.sh" | bash -s --
 ```
 
-**TTY note:** piping through `curl | sudo bash` can leave **stdin non-interactive**. For a full interactive `eve setup`, SSH into the server and run `cd /opt/eve && pnpm exec eve setup` after a `--no-setup` bootstrap, or use a PTY (`ssh -t`). Non-interactive flows should use `--yes` / `--json` flags after `--` as above.
+**No `curl` but `wget` is installed:** run `apt-get install -y ca-certificates wget git` (if needed), then  
+`wget -qO- "https://raw.githubusercontent.com/Synap-core/hestia-cli/main/bootstrap.sh" | bash -s -- --repo "https://github.com/Synap-core/hestia-cli.git"`.
+
+**TTY note:** piping through `curl | bash` can leave **stdin non-interactive**. For a full interactive `eve setup`, SSH into the server and run `cd /opt/eve && pnpm exec eve setup` after a `--no-setup` bootstrap, or use a PTY (`ssh -t`). Non-interactive flows should use `--yes` / `--json` flags after `--` as above.
 
 The script file is **[bootstrap.sh](bootstrap.sh)** at the repo root (same path on `raw.githubusercontent.com`).
 
@@ -166,10 +192,10 @@ eve --help
 
 ### 2) Greenfield server when you already have the repo tarball / git mirror
 
-If you copied `**bootstrap.sh**` onto the machine (or cloned the repo out-of-band), run it as root from disk:
+If you copied **[bootstrap.sh](bootstrap.sh)** onto the machine (or cloned the repo out-of-band), run it **as root** from disk (`sudo` only if you are not root):
 
 ```bash
-sudo ./bootstrap.sh --repo 'https://github.com/Synap-core/hestia-cli.git'
+./bootstrap.sh --repo 'https://github.com/Synap-core/hestia-cli.git'
 # optional: --no-setup then later: cd /opt/eve && pnpm exec eve setup
 ```
 
@@ -177,7 +203,7 @@ Same behavior as the curl one-liner in **§0**; only the script source differs.
 
 ### 3) Non-interactive / CI / cloud-init
 
-Use `**--yes`**, `**--json**`, and explicit flags (see [docs/EVE_SETUP_PROFILES.md](docs/EVE_SETUP_PROFILES.md)):
+Use `**--yes`**, `**--json`**, and explicit flags (see [docs/EVE_SETUP_PROFILES.md](docs/EVE_SETUP_PROFILES.md)):
 
 ```bash
 pnpm exec eve --json setup --dry-run --profile data_pod
@@ -242,11 +268,12 @@ eve ai sync --workspace <workspace-uuid>
 
 Same **three paths** as above, in one table:
 
-| Path | Profile | You get |
-|------|---------|---------|
-| **Inference only** | `inference_only` | Ollama + Traefik gateway (e.g. `:11435`), no Synap |
-| **Synap only** (Data Pod; no Eve Ollama bundle) | `data_pod` | Synap via `synap install` (Caddy on 80/443) |
-| **Both** | `full` | Synap first, then Ollama on Docker network + gateway |
+
+| Path                                            | Profile          | You get                                              |
+| ----------------------------------------------- | ---------------- | ---------------------------------------------------- |
+| **Inference only**                              | `inference_only` | Ollama + Traefik gateway (e.g. `:11435`), no Synap   |
+| **Synap only** (Data Pod; no Eve Ollama bundle) | `data_pod`       | Synap via `synap install` (Caddy on 80/443)          |
+| **Both**                                        | `full`           | Synap first, then Ollama on Docker network + gateway |
 
 
 Full flags and examples: [docs/EVE_SETUP_PROFILES.md](docs/EVE_SETUP_PROFILES.md).
