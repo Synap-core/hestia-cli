@@ -388,20 +388,52 @@ export function setupCommand(program: Command): void {
         !flags.nonInteractive &&
         !flags.json
       ) {
-        const d = await text({
-          message: 'Synap domain (localhost for local install, or your public hostname)',
-          initialValue: installDomain || 'localhost',
-          placeholder: 'localhost',
+        const accessMode = await select({
+          message: 'How should users reach your Synap Data Pod API/auth endpoint?',
+          options: [
+            {
+              value: 'local' as const,
+              label: 'Local only (this machine / private network)',
+              hint:
+                'Sets Synap to localhost. Eve side services stay local unless you configure Legs exposure separately.',
+            },
+            {
+              value: 'public' as const,
+              label: 'Public domain (internet-accessible)',
+              hint:
+                'Sets Synap public URL (Caddy/API/auth). Eve side services are exposed only if Legs/tunnel is enabled.',
+            },
+          ],
+          initialValue: installDomain !== 'localhost' ? 'public' : 'local',
         });
-        if (isCancel(d)) {
+        if (isCancel(accessMode)) {
           console.log(colors.muted('Cancelled.'));
           return;
         }
-        installDomain = (d.trim() || 'localhost');
+
+        if (accessMode === 'local') {
+          installDomain = 'localhost';
+        } else {
+          const d = await text({
+            message: 'Public hostname for Synap (Caddy URL for API/auth, e.g. pod.example.com)',
+            initialValue: installDomain !== 'localhost' ? installDomain : '',
+            placeholder: 'pod.example.com',
+          });
+          if (isCancel(d)) {
+            console.log(colors.muted('Cancelled.'));
+            return;
+          }
+          const candidate = d.trim();
+          if (!candidate || candidate === 'localhost') {
+            console.error('Public mode requires a real hostname (not localhost).');
+            process.exit(1);
+          }
+          installDomain = candidate;
+        }
 
         if (installDomain !== 'localhost' && !installEmail) {
           const em = await text({
-            message: "Let's Encrypt email (required for non-localhost domain)",
+            message: "Let's Encrypt email for TLS certificates",
             placeholder: 'you@example.com',
             initialValue: '',
           });
@@ -508,6 +540,23 @@ export function setupCommand(program: Command): void {
       if (installDomain !== 'localhost' && !installEmail) {
         console.error('Non-localhost domain requires --email (or LETSENCRYPT_EMAIL).');
         process.exit(1);
+      }
+
+      if (!flags.json) {
+        const synapReachability =
+          installDomain === 'localhost'
+            ? 'local only (localhost/private network)'
+            : `public via https://${installDomain}`;
+        const legsReachability = tunnelProvider
+          ? `enabled (${tunnelProvider}${tunnelDomain ? `, tunnel domain: ${tunnelDomain}` : ''})`
+          : 'disabled (no tunnel/public Legs route configured)';
+        console.log(
+          colors.info(
+            '\nNetwork exposure plan:\n' +
+              `  - Synap Data Pod (API/auth): ${synapReachability}\n` +
+              `  - Eve side services (Legs routes): ${legsReachability}\n`,
+          ),
+        );
       }
 
       const existing = await readSetupProfile(cwd);

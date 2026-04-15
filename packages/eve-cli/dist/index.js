@@ -872,19 +872,48 @@ function setupCommand(program2) {
     let tunnelProvider = parseTunnel(opts.tunnel) ?? usb?.tunnel_provider;
     let tunnelDomain = (opts.tunnelDomain?.trim() || usb?.tunnel_domain || "").trim() || void 0;
     if (!opts.dryRun && (profile === "data_pod" || profile === "full") && !flags.nonInteractive && !flags.json) {
-      const d = await text({
-        message: "Synap domain (localhost for local install, or your public hostname)",
-        initialValue: installDomain || "localhost",
-        placeholder: "localhost"
+      const accessMode = await select2({
+        message: "How should users reach your Synap Data Pod API/auth endpoint?",
+        options: [
+          {
+            value: "local",
+            label: "Local only (this machine / private network)",
+            hint: "Sets Synap to localhost. Eve side services stay local unless you configure Legs exposure separately."
+          },
+          {
+            value: "public",
+            label: "Public domain (internet-accessible)",
+            hint: "Sets Synap public URL (Caddy/API/auth). Eve side services are exposed only if Legs/tunnel is enabled."
+          }
+        ],
+        initialValue: installDomain !== "localhost" ? "public" : "local"
       });
-      if (isCancel2(d)) {
+      if (isCancel2(accessMode)) {
         console.log(colors.muted("Cancelled."));
         return;
       }
-      installDomain = d.trim() || "localhost";
+      if (accessMode === "local") {
+        installDomain = "localhost";
+      } else {
+        const d = await text({
+          message: "Public hostname for Synap (Caddy URL for API/auth, e.g. pod.example.com)",
+          initialValue: installDomain !== "localhost" ? installDomain : "",
+          placeholder: "pod.example.com"
+        });
+        if (isCancel2(d)) {
+          console.log(colors.muted("Cancelled."));
+          return;
+        }
+        const candidate = d.trim();
+        if (!candidate || candidate === "localhost") {
+          console.error("Public mode requires a real hostname (not localhost).");
+          process.exit(1);
+        }
+        installDomain = candidate;
+      }
       if (installDomain !== "localhost" && !installEmail) {
         const em = await text({
-          message: "Let's Encrypt email (required for non-localhost domain)",
+          message: "Let's Encrypt email for TLS certificates",
           placeholder: "you@example.com",
           initialValue: ""
         });
@@ -958,16 +987,16 @@ function setupCommand(program2) {
         tunnelProvider = t === "none" ? void 0 : parseTunnel(String(t));
       }
       if (tunnelProvider && !tunnelDomain) {
-        const d2 = await text({
+        const d = await text({
           message: "Tunnel / ingress hostname (optional, e.g. eve.example.com)",
           placeholder: installDomain !== "localhost" ? installDomain : "",
           initialValue: ""
         });
-        if (isCancel2(d2)) {
+        if (isCancel2(d)) {
           console.log(colors.muted("Cancelled."));
           return;
         }
-        tunnelDomain = d2.trim() || void 0;
+        tunnelDomain = d.trim() || void 0;
       }
     }
     if (flags.nonInteractive && opts.tunnel && !tunnelProvider) {
@@ -985,6 +1014,19 @@ function setupCommand(program2) {
     if (installDomain !== "localhost" && !installEmail) {
       console.error("Non-localhost domain requires --email (or LETSENCRYPT_EMAIL).");
       process.exit(1);
+    }
+    if (!flags.json) {
+      const synapReachability = installDomain === "localhost" ? "local only (localhost/private network)" : `public via https://${installDomain}`;
+      const legsReachability = tunnelProvider ? `enabled (${tunnelProvider}${tunnelDomain ? `, tunnel domain: ${tunnelDomain}` : ""})` : "disabled (no tunnel/public Legs route configured)";
+      console.log(
+        colors.info(
+          `
+Network exposure plan:
+  - Synap Data Pod (API/auth): ${synapReachability}
+  - Eve side services (Legs routes): ${legsReachability}
+`
+        )
+      );
     }
     const existing = await readSetupProfile(cwd);
     if (existing && !flags.nonInteractive && !opts.dryRun) {

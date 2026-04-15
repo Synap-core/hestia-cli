@@ -40,6 +40,13 @@ These are the **three paths** `eve setup` offers:
 2. **Synap only** — the Data Pod stack via `synap install`; **no** Eve-managed Ollama bundle (`data_pod`). Use Eve later for legs/builder/arms only.
 3. **Both** — install Synap first, then add Ollama on Docker network + same gateway (`full`).
 
+### Public exposure semantics (important)
+
+- **Synap domain in setup** controls the **Data Pod API/auth URL** (via Synap/Caddy).
+- **Eve side services** (Legs Traefik routes/tunnel) are a separate exposure layer.
+- Choosing a public Synap domain does **not** automatically publish every Eve service.
+- Legs/tunnel settings decide whether extra Eve endpoints are reachable beyond localhost/private network.
+
 
 | Profile          | What runs                                                 | Typical ports                                                                 |
 | ---------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------- |
