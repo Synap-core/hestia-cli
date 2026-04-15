@@ -6,13 +6,16 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "build": "tsc -p .",
+    "typecheck": "tsc -p . --noEmit"
   },
   "dependencies": {
     "@eve/types": "file:../types",
     "chalk": "^5.3.0",
     "ora": "^8.0.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
   },
   "keywords": [
     "eve",

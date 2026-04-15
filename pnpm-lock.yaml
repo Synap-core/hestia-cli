@@ -229,7 +229,11 @@ importers:
 
   packages/install: {}
 
-  packages/types: {}
+  packages/types:
+    devDependencies:
+      typescript:
+        specifier: ^5.4.5
+        version: 5.9.3
 
   packages/usb:
     dependencies:
@@ -255,6 +259,10 @@ importers:
       ora:
         specifier: ^8.0.1
         version: 8.2.0
+    devDependencies:
+      typescript:
+        specifier: ^5.4.5
+        version: 5.9.3
 
 packages:
 
