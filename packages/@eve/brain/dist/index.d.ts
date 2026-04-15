@@ -105,6 +105,9 @@ interface BrainInitOptions {
     withRsshub?: boolean;
     fromImage?: boolean;
     fromSource?: boolean;
+    adminEmail?: string;
+    adminPassword?: string;
+    adminBootstrapMode?: 'preseed' | 'token';
 }
 declare function runBrainInit(options: BrainInitOptions): Promise<void>;
 declare function initCommand(program: Command): void;

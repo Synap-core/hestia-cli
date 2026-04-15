@@ -807,7 +807,7 @@ You can also pass --synap-repo <path> (or set SYNAP_REPO_ROOT) to an existing ch
   return targetDir;
 }
 function setupCommand(program2) {
-  program2.command("setup").description("Three-path guided setup: Ollama+gateway, Synap Data Pod, or both (logical prompts)").option("--profile <p>", "inference_only | data_pod | full").option("--dry-run", "Resolve profile and print plan; do not write state or install").option("--synap-repo <path>", "data_pod / full: path to synap-backend checkout").option("--domain <host>", "data_pod / full: synap install --domain", "localhost").option("--email <email>", "data_pod / full: required if domain is not localhost").option("--model <m>", "inference_only / full: default Ollama model", "llama3.1:8b").option("--with-openclaw", "data_pod / full: synap install --with-openclaw").option("--with-rsshub", "data_pod / full: synap install --with-rsshub").option("--from-image", "synap install --from-image").option("--from-source", "synap install --from-source").option("--skip-hardware", "Skip optional hardware summary").option("--nvidia-smi", "With hardware summary in non-interactive mode, run nvidia-smi").option("--ai-mode <m>", "local | provider | hybrid (AI foundation first)", "hybrid").option(
+  program2.command("setup").description("Three-path guided setup: Ollama+gateway, Synap Data Pod, or both (logical prompts)").option("--profile <p>", "inference_only | data_pod | full").option("--dry-run", "Resolve profile and print plan; do not write state or install").option("--synap-repo <path>", "data_pod / full: path to synap-backend checkout").option("--domain <host>", "data_pod / full: synap install --domain", "localhost").option("--email <email>", "data_pod / full: required if domain is not localhost").option("--model <m>", "inference_only / full: default Ollama model", "llama3.1:8b").option("--with-openclaw", "data_pod / full: synap install --with-openclaw").option("--with-rsshub", "data_pod / full: synap install --with-rsshub").option("--admin-email <email>", "data_pod / full: synap install --admin-email").option("--admin-password <secret>", "data_pod / full: synap install --admin-password (preseed mode)").option("--admin-bootstrap-mode <mode>", "data_pod / full: preseed | token (default token)").option("--from-image", "synap install --from-image").option("--from-source", "synap install --from-source").option("--skip-hardware", "Skip optional hardware summary").option("--nvidia-smi", "With hardware summary in non-interactive mode, run nvidia-smi").option("--ai-mode <m>", "local | provider | hybrid (AI foundation first)", "hybrid").option(
     "--ai-provider <p>",
     "Default provider for Eve provider routing: openrouter | anthropic | openai | ollama"
   ).option("--fallback-provider <p>", "Fallback provider for Eve provider routing").option("--tunnel <provider>", "data_pod | full: pangolin or cloudflare (runs eve legs setup after install)").option("--tunnel-domain <host>", "Hostname for tunnel / ingress (optional)").addHelpText(
@@ -932,6 +932,9 @@ function setupCommand(program2) {
     let installMode = opts.fromImage ? "from_image" : opts.fromSource ? "from_source" : "auto";
     let installWithOpenclaw = Boolean(opts.withOpenclaw);
     let installWithRsshub = Boolean(opts.withRsshub);
+    let adminBootstrapMode = opts.adminBootstrapMode === "preseed" || opts.adminBootstrapMode === "token" ? opts.adminBootstrapMode : "token";
+    let adminEmail = opts.adminEmail?.trim() || process.env.ADMIN_EMAIL?.trim() || installEmail;
+    let adminPassword = opts.adminPassword?.trim() || process.env.ADMIN_PASSWORD?.trim();
     let exposureMode = installDomain !== "localhost" ? "public" : "local";
     let tunnelProvider = parseTunnel(opts.tunnel) ?? usb?.tunnel_provider;
     let tunnelDomain = (opts.tunnelDomain?.trim() || usb?.tunnel_domain || "").trim() || void 0;
@@ -995,7 +998,7 @@ function setupCommand(program2) {
         installEmail = trimmed;
       }
       if (installMode === "auto") {
-        const mode = await select2({
+        const mode2 = await select2({
           message: "Synap install mode",
           options: [
             { value: "auto", label: "Auto", hint: "Let synap decide (repo-aware default)" },
@@ -1004,11 +1007,11 @@ function setupCommand(program2) {
           ],
           initialValue: "auto"
         });
-        if (isCancel2(mode)) {
+        if (isCancel2(mode2)) {
           console.log(colors.muted("Cancelled."));
           return;
         }
-        installMode = mode;
+        installMode = mode2;
       }
       const askOpenclaw = await confirm2({
         message: "Install OpenClaw during Synap install?",
@@ -1028,6 +1031,59 @@ function setupCommand(program2) {
         return;
       }
       installWithRsshub = Boolean(askRsshub);
+      const mode = await select2({
+        message: "Admin bootstrap mode for Synap",
+        options: [
+          {
+            value: "token",
+            label: "Token (recommended)",
+            hint: "Generate bootstrap token; create first admin later in UI/CLI."
+          },
+          {
+            value: "preseed",
+            label: "Preseed admin now",
+            hint: "Create first admin during install (needs email + password)."
+          }
+        ],
+        initialValue: adminBootstrapMode
+      });
+      if (isCancel2(mode)) {
+        console.log(colors.muted("Cancelled."));
+        return;
+      }
+      adminBootstrapMode = mode;
+      if (adminBootstrapMode === "preseed") {
+        const ae = await text({
+          message: "Admin email for initial Synap admin account",
+          initialValue: adminEmail ?? "",
+          placeholder: "admin@example.com"
+        });
+        if (isCancel2(ae)) {
+          console.log(colors.muted("Cancelled."));
+          return;
+        }
+        adminEmail = ae.trim();
+        if (!adminEmail) {
+          console.error("Preseed mode requires an admin email.");
+          process.exit(1);
+        }
+        if (!adminPassword) {
+          const ap = await text({
+            message: "Admin password for initial account",
+            initialValue: "",
+            placeholder: "Choose a strong password"
+          });
+          if (isCancel2(ap)) {
+            console.log(colors.muted("Cancelled."));
+            return;
+          }
+          adminPassword = ap.trim();
+        }
+        if (!adminPassword) {
+          console.error("Preseed mode requires an admin password.");
+          process.exit(1);
+        }
+      }
       if (!tunnelProvider) {
         const t = await select2({
           message: "Expose Eve Legs (Traefik) via a tunnel after Synap install?",
@@ -1107,8 +1163,20 @@ function setupCommand(program2) {
       console.error("Invalid --ai-provider (use openrouter|anthropic|openai|ollama).");
       process.exit(1);
     }
+    if (flags.nonInteractive && opts.adminBootstrapMode && opts.adminBootstrapMode !== "token" && opts.adminBootstrapMode !== "preseed") {
+      console.error("Invalid --admin-bootstrap-mode (use token|preseed).");
+      process.exit(1);
+    }
     if (installDomain !== "localhost" && !installEmail) {
       console.error("Non-localhost domain requires --email (or LETSENCRYPT_EMAIL).");
+      process.exit(1);
+    }
+    if (adminBootstrapMode === "preseed" && !adminEmail) {
+      console.error("Preseed admin bootstrap requires --admin-email (or ADMIN_EMAIL).");
+      process.exit(1);
+    }
+    if (adminBootstrapMode === "preseed" && !adminPassword) {
+      console.error("Preseed admin bootstrap requires --admin-password (or ADMIN_PASSWORD).");
       process.exit(1);
     }
     if (!flags.json) {
@@ -1153,7 +1221,9 @@ Network exposure plan:
           email: installEmail ?? null,
           mode: installMode,
           withOpenclaw: installWithOpenclaw,
-          withRsshub: installWithRsshub
+          withRsshub: installWithRsshub,
+          adminBootstrapMode,
+          adminEmail: adminEmail ?? null
         }
       };
       if (flags.json) outputJson(plan);
@@ -1305,6 +1375,9 @@ ${formatHardwareReport(facts)}
           withRsshub: installWithRsshub,
           fromImage: installMode === "from_image",
           fromSource: installMode === "from_source",
+          adminBootstrapMode,
+          adminEmail,
+          adminPassword,
           withAi: false
         });
         if (tunnelProvider) {
@@ -1335,6 +1408,9 @@ ${formatHardwareReport(facts)}
           withRsshub: installWithRsshub,
           fromImage: installMode === "from_image",
           fromSource: installMode === "from_source",
+          adminBootstrapMode,
+          adminEmail,
+          adminPassword,
           withAi: false
         });
         await runInferenceInit({

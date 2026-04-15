@@ -573,6 +573,9 @@ async function runBrainInit(options) {
   if (delegate) {
     const domain = options.domain?.trim() || "localhost";
     const email = options.email?.trim() || process.env.LETSENCRYPT_EMAIL?.trim() || process.env.SYNAP_LETSENCRYPT_EMAIL?.trim();
+    const adminEmail = options.adminEmail?.trim() || process.env.ADMIN_EMAIL?.trim();
+    const adminPassword = options.adminPassword?.trim() || process.env.ADMIN_PASSWORD?.trim();
+    const adminBootstrapMode = options.adminBootstrapMode ?? "token";
     if (domain !== "localhost" && !email) {
       throw new Error(
         "Non-localhost domain requires --email (or LETSENCRYPT_EMAIL) for synap install."
@@ -584,6 +587,15 @@ async function runBrainInit(options) {
     const installArgs = [delegate.synapScript, "install", "--non-interactive", "--domain", domain];
     if (email) {
       installArgs.push("--email", email);
+    }
+    if (adminBootstrapMode) {
+      installArgs.push("--admin-bootstrap-mode", adminBootstrapMode);
+    }
+    if (adminEmail) {
+      installArgs.push("--admin-email", adminEmail);
+    }
+    if (adminPassword) {
+      installArgs.push("--admin-password", adminPassword);
     }
     if (options.fromImage) {
       installArgs.push("--from-image");
@@ -664,7 +676,7 @@ function initCommand(program) {
   ).option("--with-ai", "Include Ollama for local AI (alongside Synap or Eve stack)").option("--model <model>", "AI model to use", "llama3.1:8b").option(
     "--synap-repo <path>",
     "Path to synap-backend checkout; runs official synap install instead of Eve brain containers"
-  ).option("--domain <host>", "With --synap-repo: DOMAIN for synap install", "localhost").option("--email <email>", "With --synap-repo: SSL contact (required if domain isn't localhost)").option("--with-openclaw", "With --synap-repo: pass --with-openclaw to synap install").option("--with-rsshub", "With --synap-repo: pass --with-rsshub to synap install").option("--from-image", "With --synap-repo: synap install --from-image").option("--from-source", "With --synap-repo: synap install --from-source").action(
+  ).option("--domain <host>", "With --synap-repo: DOMAIN for synap install", "localhost").option("--email <email>", "With --synap-repo: SSL contact (required if domain isn't localhost)").option("--with-openclaw", "With --synap-repo: pass --with-openclaw to synap install").option("--with-rsshub", "With --synap-repo: pass --with-rsshub to synap install").option("--from-image", "With --synap-repo: synap install --from-image").option("--from-source", "With --synap-repo: synap install --from-source").option("--admin-email <email>", "With --synap-repo: admin bootstrap email for synap install").option("--admin-password <secret>", "With --synap-repo: admin password for preseed bootstrap").option("--admin-bootstrap-mode <mode>", "With --synap-repo: preseed | token (default token)").action(
     async (options) => {
       try {
         await runBrainInit({
@@ -676,7 +688,10 @@ function initCommand(program) {
           withOpenclaw: options.withOpenclaw,
           withRsshub: options.withRsshub,
           fromImage: options.fromImage,
-          fromSource: options.fromSource
+          fromSource: options.fromSource,
+          adminEmail: options.adminEmail,
+          adminPassword: options.adminPassword,
+          adminBootstrapMode: options.adminBootstrapMode
         });
       } catch (error) {
         console.error("Failed to initialize brain:", error);

@@ -21,6 +21,9 @@ export interface BrainInitOptions {
   withRsshub?: boolean;
   fromImage?: boolean;
   fromSource?: boolean;
+  adminEmail?: string;
+  adminPassword?: string;
+  adminBootstrapMode?: 'preseed' | 'token';
 }
 
 export async function runBrainInit(options: BrainInitOptions): Promise<void> {
@@ -38,6 +41,9 @@ export async function runBrainInit(options: BrainInitOptions): Promise<void> {
   if (delegate) {
     const domain = options.domain?.trim() || 'localhost';
     const email = options.email?.trim() || process.env.LETSENCRYPT_EMAIL?.trim() || process.env.SYNAP_LETSENCRYPT_EMAIL?.trim();
+    const adminEmail = options.adminEmail?.trim() || process.env.ADMIN_EMAIL?.trim();
+    const adminPassword = options.adminPassword?.trim() || process.env.ADMIN_PASSWORD?.trim();
+    const adminBootstrapMode = options.adminBootstrapMode ?? 'token';
 
     if (domain !== 'localhost' && !email) {
       throw new Error(
@@ -51,6 +57,15 @@ export async function runBrainInit(options: BrainInitOptions): Promise<void> {
     const installArgs = [delegate.synapScript, 'install', '--non-interactive', '--domain', domain];
     if (email) {
       installArgs.push('--email', email);
+    }
+    if (adminBootstrapMode) {
+      installArgs.push('--admin-bootstrap-mode', adminBootstrapMode);
+    }
+    if (adminEmail) {
+      installArgs.push('--admin-email', adminEmail);
+    }
+    if (adminPassword) {
+      installArgs.push('--admin-password', adminPassword);
     }
     if (options.fromImage) {
       installArgs.push('--from-image');
@@ -159,8 +174,20 @@ export function initCommand(program: Command): void {
     .option('--with-rsshub', 'With --synap-repo: pass --with-rsshub to synap install')
     .option('--from-image', 'With --synap-repo: synap install --from-image')
     .option('--from-source', 'With --synap-repo: synap install --from-source')
+    .option('--admin-email <email>', 'With --synap-repo: admin bootstrap email for synap install')
+    .option('--admin-password <secret>', 'With --synap-repo: admin password for preseed bootstrap')
+    .option('--admin-bootstrap-mode <mode>', "With --synap-repo: preseed | token (default token)")
     .action(
-      async (options: BrainInitOptions & { synapRepo?: string; domain?: string; email?: string }) => {
+      async (
+        options: BrainInitOptions & {
+          synapRepo?: string;
+          domain?: string;
+          email?: string;
+          adminEmail?: string;
+          adminPassword?: string;
+          adminBootstrapMode?: 'preseed' | 'token';
+        },
+      ) => {
         try {
           await runBrainInit({
             withAi: options.withAi,
@@ -172,6 +199,9 @@ export function initCommand(program: Command): void {
             withRsshub: options.withRsshub,
             fromImage: options.fromImage,
             fromSource: options.fromSource,
+            adminEmail: options.adminEmail,
+            adminPassword: options.adminPassword,
+            adminBootstrapMode: options.adminBootstrapMode,
           });
         } catch (error) {
           console.error('Failed to initialize brain:', error);
