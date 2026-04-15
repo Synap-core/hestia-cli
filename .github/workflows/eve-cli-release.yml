@@ -1,0 +1,49 @@
+name: Eve CLI Release Bundle
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release-bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify build and tests
+        run: |
+          pnpm -r run build
+          pnpm run check:manifest
+          pnpm --filter @eve/cli test
+          node packages/eve-cli/dist/index.js --help
+
+      - name: Build release bundle
+        run: |
+          VERSION="${GITHUB_REF_NAME:-manual}"
+          bash scripts/create-release-bundle.sh "$VERSION"
+
+      - name: Publish GitHub release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            .release/eve-cli-bundle-*.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

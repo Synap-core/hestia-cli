@@ -184,6 +184,22 @@ pnpm --filter @eve/cli exec eve --help
 
 This avoids stale workspace/bin state and guarantees the `@eve/cli` binary is resolvable.
 
+### 0.2) Prebuilt release bundle (no local build)
+
+For tagged releases, CI publishes `eve-cli-bundle-<version>.tar.gz` assets in GitHub Releases.
+This avoids compiling TypeScript on the target host.
+
+```bash
+# example (replace version)
+VERSION=v0.1.0
+curl -fsSL -o "eve-cli-bundle-${VERSION}.tar.gz" \
+  "https://github.com/Synap-core/hestia-cli/releases/download/${VERSION}/eve-cli-bundle-${VERSION}.tar.gz"
+mkdir -p /opt/eve && tar -xzf "eve-cli-bundle-${VERSION}.tar.gz" -C /opt/eve --strip-components=1
+cd /opt/eve
+node dist/index.js --help
+node dist/index.js setup
+```
+
 ### 1) From source (developer / your laptop)
 
 **Requirements:** Git, Node **18+** (20+ recommended), pnpm, Docker (for anything that pulls images).
