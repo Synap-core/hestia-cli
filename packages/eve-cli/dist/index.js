@@ -598,7 +598,7 @@ function birthCommand(program2) {
 import { select as select2, confirm as confirm2, isCancel as isCancel2, text } from "@clack/prompts";
 import { homedir, tmpdir } from "os";
 import { existsSync } from "fs";
-import { mkdir, rm } from "fs/promises";
+import { mkdir, readdir, rm } from "fs/promises";
 import { dirname as dirname2, join as join2, resolve } from "path";
 import { execa as execa3 } from "execa";
 import {
@@ -686,6 +686,14 @@ function findLocalSynapRepo(startDir) {
   }
   return null;
 }
+async function isDirectoryEmpty(path) {
+  try {
+    const entries = await readdir(path);
+    return entries.length === 0;
+  } catch {
+    return false;
+  }
+}
 async function ensureSynapRepoForProfile(requestedPath, cwd, nonInteractive, jsonMode) {
   const explicit = requestedPath?.trim() || process.env.SYNAP_REPO_ROOT?.trim();
   if (explicit) {
@@ -723,9 +731,25 @@ async function ensureSynapRepoForProfile(requestedPath, cwd, nonInteractive, jso
     targetDir = resolve(trimmed.length ? trimmed : defaultCloneDir);
   }
   if (existsSync(targetDir) && !looksLikeSynapRepo(targetDir)) {
-    throw new Error(
-      `Cannot auto-clone: target exists but is not a synap-backend checkout (${targetDir}).`
-    );
+    const empty = await isDirectoryEmpty(targetDir);
+    if (empty) {
+      await rm(targetDir, { recursive: true, force: true });
+    } else if (!nonInteractive && !jsonMode) {
+      const cleanup = await confirm2({
+        message: `${targetDir} exists but is not a valid synap-backend checkout. Remove it and retry download?`,
+        initialValue: true
+      });
+      if (isCancel2(cleanup) || !cleanup) {
+        throw new Error(
+          `Cannot continue with invalid checkout at ${targetDir}. Pass --synap-repo to a valid checkout or remove that folder.`
+        );
+      }
+      await rm(targetDir, { recursive: true, force: true });
+    } else {
+      throw new Error(
+        `Cannot auto-clone: target exists but is not a valid synap-backend checkout (${targetDir}). Remove it first or pass --synap-repo.`
+      );
+    }
   }
   if (!existsSync(targetDir)) {
     if (!jsonMode) {

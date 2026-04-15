@@ -2,7 +2,7 @@ import type { Command } from 'commander';
 import { select, confirm, isCancel, text } from '@clack/prompts';
 import { homedir, tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, readdir, rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { execa } from 'execa';
 import {
@@ -139,6 +139,15 @@ function findLocalSynapRepo(startDir: string): string | null {
   return null;
 }
 
+async function isDirectoryEmpty(path: string): Promise<boolean> {
+  try {
+    const entries = await readdir(path);
+    return entries.length === 0;
+  } catch {
+    return false;
+  }
+}
+
 async function ensureSynapRepoForProfile(
   requestedPath: string | undefined,
   cwd: string,
@@ -186,9 +195,25 @@ async function ensureSynapRepoForProfile(
   }
 
   if (existsSync(targetDir) && !looksLikeSynapRepo(targetDir)) {
-    throw new Error(
-      `Cannot auto-clone: target exists but is not a synap-backend checkout (${targetDir}).`,
-    );
+    const empty = await isDirectoryEmpty(targetDir);
+    if (empty) {
+      await rm(targetDir, { recursive: true, force: true });
+    } else if (!nonInteractive && !jsonMode) {
+      const cleanup = await confirm({
+        message: `${targetDir} exists but is not a valid synap-backend checkout. Remove it and retry download?`,
+        initialValue: true,
+      });
+      if (isCancel(cleanup) || !cleanup) {
+        throw new Error(
+          `Cannot continue with invalid checkout at ${targetDir}. Pass --synap-repo to a valid checkout or remove that folder.`,
+        );
+      }
+      await rm(targetDir, { recursive: true, force: true });
+    } else {
+      throw new Error(
+        `Cannot auto-clone: target exists but is not a valid synap-backend checkout (${targetDir}). Remove it first or pass --synap-repo.`,
+      );
+    }
   }
 
   if (!existsSync(targetDir)) {
