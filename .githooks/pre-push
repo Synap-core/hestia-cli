@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Mirrors CI (.github/workflows/eve-cli.yml) so broken builds do not reach GitHub.
+set -euo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+echo "[pre-push] pnpm -r run build …"
+pnpm -r run build
+echo "[pre-push] check:manifest …"
+pnpm run check:manifest
+echo "[pre-push] OK"

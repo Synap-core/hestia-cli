@@ -13,6 +13,7 @@
     "@eve/dna": "workspace:*"
   },
   "devDependencies": {
+    "@types/node": "^20.12.0",
     "typescript": "^5.4.5"
   },
   "files": [

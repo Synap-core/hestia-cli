@@ -230,7 +230,18 @@ Use `**synap**` inside that repo for pod lifecycle; use `**eve**` for legs/build
 
 ### 6) Verification script (`verify.sh`)
 
-`pnpm run verify` runs `**verify.sh**`. It expects **bash 4+** (associative arrays). On macOS, system bash is often 3.2 — use a modern bash (Homebrew) or run verification on your **Linux VM**.
+`pnpm run verify` runs **[verify.sh](verify.sh)**. It expects **bash 4+** (associative arrays). On macOS, system bash is often 3.2 — use a modern bash (Homebrew) or run verification on your **Linux VM**.
+
+### 7) Catch build breaks before push (contributors)
+
+GitHub already runs **`pnpm -r run build`** and **`check:manifest`** on PRs ([`.github/workflows/eve-cli.yml`](.github/workflows/eve-cli.yml)). To block a broken push **locally**, enable the repo hooks once:
+
+```bash
+cd hestia-cli   # repo root
+pnpm run setup:hooks
+```
+
+Then every **`git push`** runs [`.githooks/pre-push`](.githooks/pre-push) (same checks as above). To run the same checks by hand: **`pnpm run prepush`**.
 
 ---
 
