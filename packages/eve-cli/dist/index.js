@@ -730,10 +730,30 @@ async function ensureSynapRepoForProfile(requestedPath, cwd, nonInteractive, jso
       console.log(`${emojis.info} Cloning synap-backend to ${colors.info(targetDir)} \u2026`);
     }
     try {
-      await execa3("git", ["clone", SYNAP_BACKEND_REPO_URL, targetDir], { stdio: "inherit" });
+      await execa3(
+        "git",
+        [
+          "-c",
+          "credential.interactive=never",
+          "clone",
+          "--depth",
+          "1",
+          SYNAP_BACKEND_REPO_URL,
+          targetDir
+        ],
+        {
+          stdio: "inherit",
+          env: {
+            ...process.env,
+            GIT_TERMINAL_PROMPT: "0"
+          }
+        }
+      );
     } catch (error) {
       throw new Error(
-        `Failed to clone synap-backend to ${targetDir}. Ensure git is installed and outbound access to GitHub is available.
+        `Failed to clone public synap-backend repo to ${targetDir} without credentials.
+This usually means network/proxy/git config is forcing auth.
+Ensure outbound HTTPS to github.com is allowed and no credential rewrite is applied.
 You can also pass --synap-repo <path> (or set SYNAP_REPO_ROOT) to an existing checkout.`
       );
     }

@@ -231,6 +231,22 @@ pnpm --filter @eve/cli exec eve setup --yes --profile data_pod --domain pod.exam
 pnpm --filter @eve/cli exec eve setup --yes --profile data_pod --synap-repo /path/to/synap-backend --domain pod.example.com
 ```
 
+**Public exposure patterns (Pod + Legs):**
+
+```bash
+# Pattern A: shared hostname (Pod + Legs on same public host)
+pnpm --filter @eve/cli exec eve setup --yes --profile data_pod \
+  --domain pod.example.com --email ops@example.com \
+  --tunnel pangolin --tunnel-domain pod.example.com
+
+# Pattern B: separate hostname for Legs ingress
+pnpm --filter @eve/cli exec eve setup --yes --profile data_pod \
+  --domain pod.example.com --email ops@example.com \
+  --tunnel pangolin --tunnel-domain eve.example.com
+```
+
+Use **Pattern A** when one public host is enough. Use **Pattern B** when you want a dedicated ingress hostname for Eve side routes.
+
 ### 4) Synap already installed; Eve only for sidecars
 
 Point Eve at your checkout of **synap-backend**:
