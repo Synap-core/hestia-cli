@@ -465,10 +465,53 @@ declare const SetupProfileSchema: z.ZodObject<{
     aiMode: z.ZodOptional<z.ZodEnum<["local", "provider", "hybrid"]>>;
     aiDefaultProvider: z.ZodOptional<z.ZodEnum<["ollama", "openrouter", "anthropic", "openai"]>>;
     aiFallbackProvider: z.ZodOptional<z.ZodEnum<["ollama", "openrouter", "anthropic", "openai"]>>;
+    /** Canonical network intent selected during setup. */
+    network: z.ZodOptional<z.ZodObject<{
+        exposureMode: z.ZodEnum<["local", "public"]>;
+        synapHost: z.ZodString;
+        legs: z.ZodOptional<z.ZodObject<{
+            tunnelProvider: z.ZodOptional<z.ZodEnum<["pangolin", "cloudflare"]>>;
+            hostStrategy: z.ZodOptional<z.ZodEnum<["same_as_synap", "custom"]>>;
+            host: z.ZodOptional<z.ZodString>;
+        }, "strip", z.ZodTypeAny, {
+            tunnelProvider?: "pangolin" | "cloudflare" | undefined;
+            hostStrategy?: "custom" | "same_as_synap" | undefined;
+            host?: string | undefined;
+        }, {
+            tunnelProvider?: "pangolin" | "cloudflare" | undefined;
+            hostStrategy?: "custom" | "same_as_synap" | undefined;
+            host?: string | undefined;
+        }>>;
+    }, "strip", z.ZodTypeAny, {
+        exposureMode: "local" | "public";
+        synapHost: string;
+        legs?: {
+            tunnelProvider?: "pangolin" | "cloudflare" | undefined;
+            hostStrategy?: "custom" | "same_as_synap" | undefined;
+            host?: string | undefined;
+        } | undefined;
+    }, {
+        exposureMode: "local" | "public";
+        synapHost: string;
+        legs?: {
+            tunnelProvider?: "pangolin" | "cloudflare" | undefined;
+            hostStrategy?: "custom" | "same_as_synap" | undefined;
+            host?: string | undefined;
+        } | undefined;
+    }>>;
 }, "strip", z.ZodTypeAny, {
     version: "1";
     updatedAt: string;
     profile: "inference_only" | "data_pod" | "full";
+    network?: {
+        exposureMode: "local" | "public";
+        synapHost: string;
+        legs?: {
+            tunnelProvider?: "pangolin" | "cloudflare" | undefined;
+            hostStrategy?: "custom" | "same_as_synap" | undefined;
+            host?: string | undefined;
+        } | undefined;
+    } | undefined;
     domainHint?: string | undefined;
     hearthName?: string | undefined;
     source?: "wizard" | "usb_manifest" | "cli" | undefined;
@@ -482,6 +525,15 @@ declare const SetupProfileSchema: z.ZodObject<{
     version: "1";
     updatedAt: string;
     profile: "inference_only" | "data_pod" | "full";
+    network?: {
+        exposureMode: "local" | "public";
+        synapHost: string;
+        legs?: {
+            tunnelProvider?: "pangolin" | "cloudflare" | undefined;
+            hostStrategy?: "custom" | "same_as_synap" | undefined;
+            host?: string | undefined;
+        } | undefined;
+    } | undefined;
     domainHint?: string | undefined;
     hearthName?: string | undefined;
     source?: "wizard" | "usb_manifest" | "cli" | undefined;

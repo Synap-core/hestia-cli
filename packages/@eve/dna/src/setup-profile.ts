@@ -28,6 +28,20 @@ export const SetupProfileSchema = z.object({
   aiMode: AiModeSchema.optional(),
   aiDefaultProvider: AiProviderSchema.optional(),
   aiFallbackProvider: AiProviderSchema.optional(),
+  /** Canonical network intent selected during setup. */
+  network: z
+    .object({
+      exposureMode: z.enum(['local', 'public']),
+      synapHost: z.string(),
+      legs: z
+        .object({
+          tunnelProvider: TunnelProviderSchema.optional(),
+          hostStrategy: z.enum(['same_as_synap', 'custom']).optional(),
+          host: z.string().optional(),
+        })
+        .optional(),
+    })
+    .optional(),
 });
 
 export type SetupProfile = z.infer<typeof SetupProfileSchema>;

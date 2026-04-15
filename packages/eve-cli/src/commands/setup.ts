@@ -377,10 +377,12 @@ export function setupCommand(program: Command): void {
         opts.fromImage ? 'from_image' : opts.fromSource ? 'from_source' : 'auto';
       let installWithOpenclaw = Boolean(opts.withOpenclaw);
       let installWithRsshub = Boolean(opts.withRsshub);
+      let exposureMode: 'local' | 'public' = installDomain !== 'localhost' ? 'public' : 'local';
 
       let tunnelProvider = parseTunnel(opts.tunnel) ?? usb?.tunnel_provider;
       let tunnelDomain =
         (opts.tunnelDomain?.trim() || usb?.tunnel_domain || '').trim() || undefined;
+      let legsHostStrategy: 'same_as_synap' | 'custom' | undefined;
 
       if (
         !opts.dryRun &&
@@ -411,6 +413,7 @@ export function setupCommand(program: Command): void {
           return;
         }
 
+        exposureMode = accessMode as 'local' | 'public';
         if (accessMode === 'local') {
           installDomain = 'localhost';
         } else {
@@ -512,16 +515,46 @@ export function setupCommand(program: Command): void {
             t === 'none' ? undefined : parseTunnel(String(t));
         }
         if (tunnelProvider && !tunnelDomain) {
-          const d = await text({
-            message: 'Tunnel / ingress hostname (optional, e.g. eve.example.com)',
-            placeholder: installDomain !== 'localhost' ? installDomain : '',
-            initialValue: '',
-          });
-          if (isCancel(d)) {
-            console.log(colors.muted('Cancelled.'));
-            return;
+          if (installDomain !== 'localhost') {
+            const strategy = await select({
+              message: 'Legs ingress hostname',
+              options: [
+                {
+                  value: 'same_as_synap' as const,
+                  label: `Reuse Synap host (${installDomain})`,
+                  hint: 'No extra hostname needed.',
+                },
+                {
+                  value: 'custom' as const,
+                  label: 'Use a different hostname',
+                  hint: 'Example: eve.example.com',
+                },
+              ],
+              initialValue: 'same_as_synap',
+            });
+            if (isCancel(strategy)) {
+              console.log(colors.muted('Cancelled.'));
+              return;
+            }
+            legsHostStrategy = strategy as 'same_as_synap' | 'custom';
+            if (legsHostStrategy === 'same_as_synap') {
+              tunnelDomain = installDomain;
+            }
+          } else {
+            legsHostStrategy = 'custom';
           }
-          tunnelDomain = d.trim() || undefined;
+          if (!tunnelDomain) {
+            const d = await text({
+              message: 'Public hostname for Eve Legs ingress',
+              placeholder: 'eve.example.com',
+              initialValue: '',
+            });
+            if (isCancel(d)) {
+              console.log(colors.muted('Cancelled.'));
+              return;
+            }
+            tunnelDomain = d.trim() || undefined;
+          }
         }
       }
 
@@ -548,7 +581,7 @@ export function setupCommand(program: Command): void {
             ? 'local only (localhost/private network)'
             : `public via https://${installDomain}`;
         const legsReachability = tunnelProvider
-          ? `enabled (${tunnelProvider}${tunnelDomain ? `, tunnel domain: ${tunnelDomain}` : ''})`
+          ? `enabled (${tunnelProvider}${tunnelDomain ? `, hostname: ${tunnelDomain}` : ''})`
           : 'disabled (no tunnel/public Legs route configured)';
         console.log(
           colors.info(
@@ -583,6 +616,7 @@ export function setupCommand(program: Command): void {
           },
           tunnel: tunnelProvider ?? null,
           tunnelDomain: tunnelDomain ?? null,
+          legsHostStrategy: legsHostStrategy ?? null,
           synap: {
             domain: installDomain,
             email: installEmail ?? null,
@@ -629,6 +663,17 @@ export function setupCommand(program: Command): void {
           aiMode,
           aiDefaultProvider: defaultProvider,
           aiFallbackProvider: fallbackProvider,
+          network: {
+            exposureMode,
+            synapHost: installDomain,
+            legs: tunnelProvider
+              ? {
+                  tunnelProvider,
+                  hostStrategy: legsHostStrategy ?? (tunnelDomain ? 'custom' : undefined),
+                  host: tunnelDomain,
+                }
+              : undefined,
+          },
         },
         cwd,
       );

@@ -1030,7 +1030,17 @@ var SetupProfileSchema = z3.object({
   /** AI foundation mode selected during setup */
   aiMode: AiModeSchema.optional(),
   aiDefaultProvider: AiProviderSchema.optional(),
-  aiFallbackProvider: AiProviderSchema.optional()
+  aiFallbackProvider: AiProviderSchema.optional(),
+  /** Canonical network intent selected during setup. */
+  network: z3.object({
+    exposureMode: z3.enum(["local", "public"]),
+    synapHost: z3.string(),
+    legs: z3.object({
+      tunnelProvider: TunnelProviderSchema.optional(),
+      hostStrategy: z3.enum(["same_as_synap", "custom"]).optional(),
+      host: z3.string().optional()
+    }).optional()
+  }).optional()
 });
 var USB_MANIFEST_PATHS = [
   "/opt/eve/profile.json",
