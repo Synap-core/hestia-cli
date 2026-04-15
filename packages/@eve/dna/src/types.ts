@@ -140,7 +140,7 @@ export interface ServiceConfig {
 export const SERVICE_REGISTRY: Record<Service, ServiceConfig> = {
   // Brain Services
   synap: {
-    image: 'ghcr.io/synap/backend:latest',
+    image: 'ghcr.io/synap-core/backend:latest',
     containerName: 'eve-brain-synap',
     ports: ['4000:4000'],
     environment: {

@@ -9,7 +9,7 @@ export interface SynapHealth {
 
 export class SynapService {
   private containerName = 'eve-brain-synap';
-  private image = 'synap/backend:latest';
+  private image = 'ghcr.io/synap-core/backend:latest';
 
   private delegate() {
     return resolveSynapDelegate();

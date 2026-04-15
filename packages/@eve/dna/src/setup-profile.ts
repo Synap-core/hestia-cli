@@ -42,6 +42,17 @@ export const SetupProfileSchema = z.object({
         .optional(),
     })
     .optional(),
+  /** Non-secret Synap install preferences used to resume setup after interruption. */
+  synapInstall: z
+    .object({
+      mode: z.enum(['auto', 'from_image', 'from_source']).optional(),
+      tlsEmail: z.string().optional(),
+      withOpenclaw: z.boolean().optional(),
+      withRsshub: z.boolean().optional(),
+      adminBootstrapMode: z.enum(['token', 'preseed']).optional(),
+      adminEmail: z.string().optional(),
+    })
+    .optional(),
 });
 
 export type SetupProfile = z.infer<typeof SetupProfileSchema>;

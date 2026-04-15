@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { execa } from 'execa';
 import { setGlobalCliFlags } from '@eve/cli-kit';
 import {
   registerBrainCommands,
@@ -24,7 +25,8 @@ import { backupUpdateCommands } from './commands/manage/backup-update.js';
 import { aiCommandGroup } from './commands/ai.js';
 import { colors, emojis } from './lib/ui.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 const pkg = JSON.parse(readFileSync(join(__dirname, '../package.json'), 'utf-8')) as { version: string };
 
 const program = new Command();
@@ -76,8 +78,9 @@ setupCommand(program);
 program
   .command('init')
   .description(
-    'Alias for brain init (Eve Docker brain, or full Data Pod with --synap-repo / SYNAP_REPO_ROOT)',
+    'Alias for setup; forwards to setup flow by default, brain init only when synap repo is explicit.',
   )
+  .option('--profile <p>', 'inference_only | data_pod | full')
   .option('--with-ai', 'Include Ollama for local AI')
   .option('--model <model>', 'AI model', 'llama3.1:8b')
   .option('--synap-repo <path>', 'synap-backend checkout → official synap install')
@@ -87,8 +90,12 @@ program
   .option('--with-rsshub', 'With --synap-repo: synap install --with-rsshub')
   .option('--from-image', 'With --synap-repo: synap install --from-image')
   .option('--from-source', 'With --synap-repo: synap install --from-source')
+  .option('--admin-email <email>', 'With --synap-repo: synap install --admin-email')
+  .option('--admin-password <secret>', 'With --synap-repo: synap install --admin-password (preseed mode)')
+  .option('--admin-bootstrap-mode <mode>', 'With --synap-repo: token | preseed (default token)')
   .action(
     async (opts: {
+      profile?: string;
       withAi?: boolean;
       model?: string;
       synapRepo?: string;
@@ -98,8 +105,35 @@ program
       withRsshub?: boolean;
       fromImage?: boolean;
       fromSource?: boolean;
+      adminEmail?: string;
+      adminPassword?: string;
+      adminBootstrapMode?: 'token' | 'preseed';
     }) => {
       try {
+        if (!opts.synapRepo && !process.env.SYNAP_REPO_ROOT) {
+          const rootFlags = program.opts() as { yes?: boolean; json?: boolean };
+          const profile = opts.profile ?? (opts.withAi ? 'full' : 'data_pod');
+          const forwardArgs = ['setup', '--profile', profile];
+          if (rootFlags.yes) forwardArgs.push('--yes');
+          if (rootFlags.json) forwardArgs.push('--json');
+          if (opts.domain) forwardArgs.push('--domain', opts.domain);
+          if (opts.email) forwardArgs.push('--email', opts.email);
+          if (opts.withOpenclaw) forwardArgs.push('--with-openclaw');
+          if (opts.withRsshub) forwardArgs.push('--with-rsshub');
+          if (opts.fromImage) forwardArgs.push('--from-image');
+          if (opts.fromSource) forwardArgs.push('--from-source');
+          if (opts.adminEmail) forwardArgs.push('--admin-email', opts.adminEmail);
+          if (opts.adminPassword) forwardArgs.push('--admin-password', opts.adminPassword);
+          if (opts.adminBootstrapMode) {
+            forwardArgs.push('--admin-bootstrap-mode', opts.adminBootstrapMode);
+          }
+          await execa('node', [__filename, ...forwardArgs], {
+            stdio: 'inherit',
+            env: process.env,
+          });
+          return;
+        }
+
         await runBrainInit({
           withAi: opts.withAi,
           model: opts.model,
@@ -110,6 +144,9 @@ program
           withRsshub: opts.withRsshub,
           fromImage: opts.fromImage,
           fromSource: opts.fromSource,
+          adminEmail: opts.adminEmail,
+          adminPassword: opts.adminPassword,
+          adminBootstrapMode: opts.adminBootstrapMode,
         });
       } catch {
         process.exit(1);

@@ -95,7 +95,7 @@ declare class RedisService {
 interface BrainInitOptions {
     withAi?: boolean;
     model?: string;
-    /** Path to synap-backend repo; uses official `synap` CLI (full Data Pod) instead of Eve Docker brain. */
+    /** Path to Synap backend repo checkout; uses official `synap` CLI (full Data Pod) instead of Eve Docker brain. */
     synapRepo?: string;
     /** DOMAIN for `synap install` (default localhost). */
     domain?: string;

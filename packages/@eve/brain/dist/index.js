@@ -54,7 +54,7 @@ function resolveSynapDelegate() {
 // src/lib/synap.ts
 var SynapService = class {
   containerName = "eve-brain-synap";
-  image = "synap/backend:latest";
+  image = "ghcr.io/synap-core/backend:latest";
   delegate() {
     return resolveSynapDelegate();
   }
@@ -637,7 +637,7 @@ async function runBrainInit(options) {
   }
   console.log("Initializing Eve brain (Eve-managed Docker containers)...\n");
   console.log(
-    "  Tip: for the full Data Pod, clone synap-backend and run with\n  SYNAP_REPO_ROOT=/path/to/synap-backend eve brain init\n  or: eve brain init --synap-repo /path/to/synap-backend\n"
+    "  Tip: for the full Data Pod, set SYNAP_REPO_ROOT to your backend checkout and run\n  SYNAP_REPO_ROOT=/path/to/backend eve brain init\n  or: eve brain init --synap-repo /path/to/backend\n"
   );
   const synap = new SynapService();
   const postgres = new PostgresService();
@@ -675,7 +675,7 @@ function initCommand(program) {
     "Initialize brain: Eve Docker stack, or full Synap Data Pod when --synap-repo / SYNAP_REPO_ROOT is set"
   ).option("--with-ai", "Include Ollama for local AI (alongside Synap or Eve stack)").option("--model <model>", "AI model to use", "llama3.1:8b").option(
     "--synap-repo <path>",
-    "Path to synap-backend checkout; runs official synap install instead of Eve brain containers"
+    "Path to backend checkout; runs official synap install instead of Eve brain containers"
   ).option("--domain <host>", "With --synap-repo: DOMAIN for synap install", "localhost").option("--email <email>", "With --synap-repo: SSL contact (required if domain isn't localhost)").option("--with-openclaw", "With --synap-repo: pass --with-openclaw to synap install").option("--with-rsshub", "With --synap-repo: pass --with-rsshub to synap install").option("--from-image", "With --synap-repo: synap install --from-image").option("--from-source", "With --synap-repo: synap install --from-source").option("--admin-email <email>", "With --synap-repo: admin bootstrap email for synap install").option("--admin-password <secret>", "With --synap-repo: admin password for preseed bootstrap").option("--admin-bootstrap-mode <mode>", "With --synap-repo: preseed | token (default token)").action(
     async (options) => {
       try {

@@ -499,6 +499,29 @@ declare const SetupProfileSchema: z.ZodObject<{
             host?: string | undefined;
         } | undefined;
     }>>;
+    /** Non-secret Synap install preferences used to resume setup after interruption. */
+    synapInstall: z.ZodOptional<z.ZodObject<{
+        mode: z.ZodOptional<z.ZodEnum<["auto", "from_image", "from_source"]>>;
+        tlsEmail: z.ZodOptional<z.ZodString>;
+        withOpenclaw: z.ZodOptional<z.ZodBoolean>;
+        withRsshub: z.ZodOptional<z.ZodBoolean>;
+        adminBootstrapMode: z.ZodOptional<z.ZodEnum<["token", "preseed"]>>;
+        adminEmail: z.ZodOptional<z.ZodString>;
+    }, "strip", z.ZodTypeAny, {
+        mode?: "auto" | "from_image" | "from_source" | undefined;
+        tlsEmail?: string | undefined;
+        withOpenclaw?: boolean | undefined;
+        withRsshub?: boolean | undefined;
+        adminBootstrapMode?: "token" | "preseed" | undefined;
+        adminEmail?: string | undefined;
+    }, {
+        mode?: "auto" | "from_image" | "from_source" | undefined;
+        tlsEmail?: string | undefined;
+        withOpenclaw?: boolean | undefined;
+        withRsshub?: boolean | undefined;
+        adminBootstrapMode?: "token" | "preseed" | undefined;
+        adminEmail?: string | undefined;
+    }>>;
 }, "strip", z.ZodTypeAny, {
     version: "1";
     updatedAt: string;
@@ -521,6 +544,14 @@ declare const SetupProfileSchema: z.ZodObject<{
     aiMode?: "local" | "provider" | "hybrid" | undefined;
     aiDefaultProvider?: "ollama" | "openai" | "anthropic" | "openrouter" | undefined;
     aiFallbackProvider?: "ollama" | "openai" | "anthropic" | "openrouter" | undefined;
+    synapInstall?: {
+        mode?: "auto" | "from_image" | "from_source" | undefined;
+        tlsEmail?: string | undefined;
+        withOpenclaw?: boolean | undefined;
+        withRsshub?: boolean | undefined;
+        adminBootstrapMode?: "token" | "preseed" | undefined;
+        adminEmail?: string | undefined;
+    } | undefined;
 }, {
     version: "1";
     updatedAt: string;
@@ -543,6 +574,14 @@ declare const SetupProfileSchema: z.ZodObject<{
     aiMode?: "local" | "provider" | "hybrid" | undefined;
     aiDefaultProvider?: "ollama" | "openai" | "anthropic" | "openrouter" | undefined;
     aiFallbackProvider?: "ollama" | "openai" | "anthropic" | "openrouter" | undefined;
+    synapInstall?: {
+        mode?: "auto" | "from_image" | "from_source" | undefined;
+        tlsEmail?: string | undefined;
+        withOpenclaw?: boolean | undefined;
+        withRsshub?: boolean | undefined;
+        adminBootstrapMode?: "token" | "preseed" | undefined;
+        adminEmail?: string | undefined;
+    } | undefined;
 }>;
 type SetupProfile = z.infer<typeof SetupProfileSchema>;
 declare function getSetupProfilePath(cwd?: string): string;

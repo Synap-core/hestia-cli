@@ -5,6 +5,7 @@ import { Command } from "commander";
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname as dirname3, join as join3 } from "path";
+import { execa as execa8 } from "execa";
 import { setGlobalCliFlags } from "@eve/cli-kit";
 import {
   registerBrainCommands,
@@ -816,6 +817,19 @@ function setupCommand(program2) {
   ).action(async (opts) => {
     const flags = getGlobalCliFlags2();
     const cwd = process.cwd();
+    const existing = await readSetupProfile(cwd);
+    let loadedExistingPrefs = false;
+    if (existing && !flags.nonInteractive && !opts.dryRun && !flags.json) {
+      const load = await confirm2({
+        message: `Load latest saved setup preferences from .eve/setup-profile.json (${existing.profile})?`,
+        initialValue: true
+      });
+      if (isCancel2(load)) {
+        console.log(colors.muted("Cancelled."));
+        return;
+      }
+      loadedExistingPrefs = Boolean(load);
+    }
     let profile = parseProfile(opts.profile);
     const usb = await readUsbSetupManifest();
     if (!profile && usb) {
@@ -825,6 +839,9 @@ function setupCommand(program2) {
           `${emojis.info} Found USB/setup manifest \u2192 suggested profile: ${colors.info(profile)}`
         );
       }
+    }
+    if (!profile && loadedExistingPrefs && existing?.profile) {
+      profile = existing.profile;
     }
     if (!profile && !flags.nonInteractive) {
       const choice = await select2({
@@ -858,9 +875,9 @@ function setupCommand(program2) {
       console.error("Profile required: use --profile inference_only|data_pod|full or run interactively.");
       process.exit(1);
     }
-    let aiMode = parseAiMode(opts.aiMode) ?? prevAiModeFromUsb(usb);
-    let defaultProvider = parseAiProvider(opts.aiProvider);
-    let fallbackProvider = parseAiProvider(opts.fallbackProvider);
+    let aiMode = parseAiMode(opts.aiMode) ?? prevAiModeFromUsb(usb) ?? (loadedExistingPrefs ? existing?.aiMode : void 0);
+    let defaultProvider = parseAiProvider(opts.aiProvider) ?? (loadedExistingPrefs ? existing?.aiDefaultProvider : void 0);
+    let fallbackProvider = parseAiProvider(opts.fallbackProvider) ?? (loadedExistingPrefs ? existing?.aiFallbackProvider : void 0);
     if (!opts.dryRun && !flags.nonInteractive && !flags.json) {
       if (!aiMode) {
         const m = await select2({
@@ -928,17 +945,50 @@ function setupCommand(program2) {
       process.exit(1);
     }
     let installDomain = opts.domain?.trim() || "localhost";
+    if (!opts.domain?.trim() && loadedExistingPrefs) {
+      installDomain = existing?.network?.synapHost?.trim() || existing?.domainHint?.trim() || installDomain;
+    }
     let installEmail = opts.email?.trim() || process.env.LETSENCRYPT_EMAIL?.trim() || void 0;
+    if (!installEmail && loadedExistingPrefs) {
+      installEmail = existing?.synapInstall?.tlsEmail?.trim() || installEmail;
+    }
     let installMode = opts.fromImage ? "from_image" : opts.fromSource ? "from_source" : "auto";
+    if (!opts.fromImage && !opts.fromSource && loadedExistingPrefs && existing?.synapInstall?.mode) {
+      installMode = existing.synapInstall.mode;
+    }
     let installWithOpenclaw = Boolean(opts.withOpenclaw);
+    if (!opts.withOpenclaw && loadedExistingPrefs && typeof existing?.synapInstall?.withOpenclaw === "boolean") {
+      installWithOpenclaw = existing.synapInstall.withOpenclaw;
+    }
     let installWithRsshub = Boolean(opts.withRsshub);
+    if (!opts.withRsshub && loadedExistingPrefs && typeof existing?.synapInstall?.withRsshub === "boolean") {
+      installWithRsshub = existing.synapInstall.withRsshub;
+    }
     let adminBootstrapMode = opts.adminBootstrapMode === "preseed" || opts.adminBootstrapMode === "token" ? opts.adminBootstrapMode : "token";
+    if (!opts.adminBootstrapMode && loadedExistingPrefs && (existing?.synapInstall?.adminBootstrapMode === "preseed" || existing?.synapInstall?.adminBootstrapMode === "token")) {
+      adminBootstrapMode = existing.synapInstall.adminBootstrapMode;
+    }
     let adminEmail = opts.adminEmail?.trim() || process.env.ADMIN_EMAIL?.trim() || installEmail;
+    if (!opts.adminEmail?.trim() && loadedExistingPrefs && existing?.synapInstall?.adminEmail?.trim()) {
+      adminEmail = existing.synapInstall.adminEmail.trim();
+    }
     let adminPassword = opts.adminPassword?.trim() || process.env.ADMIN_PASSWORD?.trim();
     let exposureMode = installDomain !== "localhost" ? "public" : "local";
     let tunnelProvider = parseTunnel(opts.tunnel) ?? usb?.tunnel_provider;
+    if (!opts.tunnel && !usb?.tunnel_provider && loadedExistingPrefs) {
+      tunnelProvider = existing?.network?.legs?.tunnelProvider ?? existing?.tunnelProvider;
+    }
     let tunnelDomain = (opts.tunnelDomain?.trim() || usb?.tunnel_domain || "").trim() || void 0;
+    if (!tunnelDomain && loadedExistingPrefs) {
+      tunnelDomain = existing?.network?.legs?.host?.trim() || existing?.tunnelDomain?.trim() || void 0;
+    }
     let legsHostStrategy;
+    if (loadedExistingPrefs) {
+      const prior = existing?.network?.legs?.hostStrategy;
+      if (prior === "same_as_synap" || prior === "custom") {
+        legsHostStrategy = prior;
+      }
+    }
     if (!opts.dryRun && (profile === "data_pod" || profile === "full") && !flags.nonInteractive && !flags.json) {
       const accessMode = await select2({
         message: "How should users reach your Synap Data Pod API/auth endpoint?",
@@ -1192,8 +1242,7 @@ Network exposure plan:
         )
       );
     }
-    const existing = await readSetupProfile(cwd);
-    if (existing && !flags.nonInteractive && !opts.dryRun) {
+    if (existing && !flags.nonInteractive && !opts.dryRun && !loadedExistingPrefs) {
       const ok = await confirm2({
         message: `Existing setup profile (${existing.profile}). Overwrite and continue?`,
         initialValue: false
@@ -1276,6 +1325,14 @@ ${formatHardwareReport(facts)}
             hostStrategy: legsHostStrategy ?? (tunnelDomain ? "custom" : void 0),
             host: tunnelDomain
           } : void 0
+        },
+        synapInstall: {
+          mode: installMode,
+          tlsEmail: installEmail,
+          withOpenclaw: installWithOpenclaw,
+          withRsshub: installWithRsshub,
+          adminBootstrapMode,
+          adminEmail
         }
       },
       cwd
@@ -1838,7 +1895,8 @@ function aiCommandGroup(program2) {
 }
 
 // src/index.ts
-var __dirname = dirname3(fileURLToPath(import.meta.url));
+var __filename = fileURLToPath(import.meta.url);
+var __dirname = dirname3(__filename);
 var pkg = JSON.parse(readFileSync(join3(__dirname, "../package.json"), "utf-8"));
 var program = new Command();
 program.configureHelp({
@@ -1878,10 +1936,33 @@ ${colors.muted("Categories:")}
 );
 setupCommand(program);
 program.command("init").description(
-  "Alias for brain init (Eve Docker brain, or full Data Pod with --synap-repo / SYNAP_REPO_ROOT)"
-).option("--with-ai", "Include Ollama for local AI").option("--model <model>", "AI model", "llama3.1:8b").option("--synap-repo <path>", "synap-backend checkout \u2192 official synap install").option("--domain <host>", "With --synap-repo: synap install --domain", "localhost").option("--email <email>", "With --synap-repo: required when domain isn't localhost").option("--with-openclaw", "With --synap-repo: synap install --with-openclaw").option("--with-rsshub", "With --synap-repo: synap install --with-rsshub").option("--from-image", "With --synap-repo: synap install --from-image").option("--from-source", "With --synap-repo: synap install --from-source").action(
+  "Alias for setup; forwards to setup flow by default, brain init only when synap repo is explicit."
+).option("--profile <p>", "inference_only | data_pod | full").option("--with-ai", "Include Ollama for local AI").option("--model <model>", "AI model", "llama3.1:8b").option("--synap-repo <path>", "synap-backend checkout \u2192 official synap install").option("--domain <host>", "With --synap-repo: synap install --domain", "localhost").option("--email <email>", "With --synap-repo: required when domain isn't localhost").option("--with-openclaw", "With --synap-repo: synap install --with-openclaw").option("--with-rsshub", "With --synap-repo: synap install --with-rsshub").option("--from-image", "With --synap-repo: synap install --from-image").option("--from-source", "With --synap-repo: synap install --from-source").option("--admin-email <email>", "With --synap-repo: synap install --admin-email").option("--admin-password <secret>", "With --synap-repo: synap install --admin-password (preseed mode)").option("--admin-bootstrap-mode <mode>", "With --synap-repo: token | preseed (default token)").action(
   async (opts) => {
     try {
+      if (!opts.synapRepo && !process.env.SYNAP_REPO_ROOT) {
+        const rootFlags = program.opts();
+        const profile = opts.profile ?? (opts.withAi ? "full" : "data_pod");
+        const forwardArgs = ["setup", "--profile", profile];
+        if (rootFlags.yes) forwardArgs.push("--yes");
+        if (rootFlags.json) forwardArgs.push("--json");
+        if (opts.domain) forwardArgs.push("--domain", opts.domain);
+        if (opts.email) forwardArgs.push("--email", opts.email);
+        if (opts.withOpenclaw) forwardArgs.push("--with-openclaw");
+        if (opts.withRsshub) forwardArgs.push("--with-rsshub");
+        if (opts.fromImage) forwardArgs.push("--from-image");
+        if (opts.fromSource) forwardArgs.push("--from-source");
+        if (opts.adminEmail) forwardArgs.push("--admin-email", opts.adminEmail);
+        if (opts.adminPassword) forwardArgs.push("--admin-password", opts.adminPassword);
+        if (opts.adminBootstrapMode) {
+          forwardArgs.push("--admin-bootstrap-mode", opts.adminBootstrapMode);
+        }
+        await execa8("node", [__filename, ...forwardArgs], {
+          stdio: "inherit",
+          env: process.env
+        });
+        return;
+      }
       await runBrainInit3({
         withAi: opts.withAi,
         model: opts.model,
@@ -1891,7 +1972,10 @@ program.command("init").description(
         withOpenclaw: opts.withOpenclaw,
         withRsshub: opts.withRsshub,
         fromImage: opts.fromImage,
-        fromSource: opts.fromSource
+        fromSource: opts.fromSource,
+        adminEmail: opts.adminEmail,
+        adminPassword: opts.adminPassword,
+        adminBootstrapMode: opts.adminBootstrapMode
       });
     } catch {
       process.exit(1);

@@ -319,6 +319,20 @@ export function setupCommand(program: Command): void {
     .action(async (opts: SetupCliOptions) => {
       const flags = getGlobalCliFlags();
       const cwd = process.cwd();
+      const existing = await readSetupProfile(cwd);
+      let loadedExistingPrefs = false;
+
+      if (existing && !flags.nonInteractive && !opts.dryRun && !flags.json) {
+        const load = await confirm({
+          message: `Load latest saved setup preferences from .eve/setup-profile.json (${existing.profile})?`,
+          initialValue: true,
+        });
+        if (isCancel(load)) {
+          console.log(colors.muted('Cancelled.'));
+          return;
+        }
+        loadedExistingPrefs = Boolean(load);
+      }
 
       let profile = parseProfile(opts.profile);
       const usb = await readUsbSetupManifest();
@@ -329,6 +343,9 @@ export function setupCommand(program: Command): void {
             `${emojis.info} Found USB/setup manifest → suggested profile: ${colors.info(profile)}`,
           );
         }
+      }
+      if (!profile && loadedExistingPrefs && existing?.profile) {
+        profile = existing.profile;
       }
 
       if (!profile && !flags.nonInteractive) {
@@ -366,9 +383,16 @@ export function setupCommand(program: Command): void {
       }
 
       // AI foundation first (local/provider/hybrid) before Synap and side systems
-      let aiMode = parseAiMode(opts.aiMode) ?? prevAiModeFromUsb(usb);
-      let defaultProvider = parseAiProvider(opts.aiProvider);
-      let fallbackProvider = parseAiProvider(opts.fallbackProvider);
+      let aiMode =
+        parseAiMode(opts.aiMode) ??
+        prevAiModeFromUsb(usb) ??
+        (loadedExistingPrefs ? existing?.aiMode : undefined);
+      let defaultProvider =
+        parseAiProvider(opts.aiProvider) ??
+        (loadedExistingPrefs ? existing?.aiDefaultProvider : undefined);
+      let fallbackProvider =
+        parseAiProvider(opts.fallbackProvider) ??
+        (loadedExistingPrefs ? existing?.aiFallbackProvider : undefined);
 
       if (!opts.dryRun && !flags.nonInteractive && !flags.json) {
         if (!aiMode) {
@@ -444,23 +468,64 @@ export function setupCommand(program: Command): void {
       }
 
       let installDomain = (opts.domain?.trim() || 'localhost');
+      if (!opts.domain?.trim() && loadedExistingPrefs) {
+        installDomain =
+          existing?.network?.synapHost?.trim() ||
+          existing?.domainHint?.trim() ||
+          installDomain;
+      }
       let installEmail = opts.email?.trim() || process.env.LETSENCRYPT_EMAIL?.trim() || undefined;
+      if (!installEmail && loadedExistingPrefs) {
+        installEmail = existing?.synapInstall?.tlsEmail?.trim() || installEmail;
+      }
       let installMode: 'auto' | 'from_image' | 'from_source' =
         opts.fromImage ? 'from_image' : opts.fromSource ? 'from_source' : 'auto';
+      if (!opts.fromImage && !opts.fromSource && loadedExistingPrefs && existing?.synapInstall?.mode) {
+        installMode = existing.synapInstall.mode;
+      }
       let installWithOpenclaw = Boolean(opts.withOpenclaw);
+      if (!opts.withOpenclaw && loadedExistingPrefs && typeof existing?.synapInstall?.withOpenclaw === 'boolean') {
+        installWithOpenclaw = existing.synapInstall.withOpenclaw;
+      }
       let installWithRsshub = Boolean(opts.withRsshub);
+      if (!opts.withRsshub && loadedExistingPrefs && typeof existing?.synapInstall?.withRsshub === 'boolean') {
+        installWithRsshub = existing.synapInstall.withRsshub;
+      }
       let adminBootstrapMode: 'preseed' | 'token' =
         opts.adminBootstrapMode === 'preseed' || opts.adminBootstrapMode === 'token'
           ? opts.adminBootstrapMode
           : 'token';
+      if (
+        !opts.adminBootstrapMode &&
+        loadedExistingPrefs &&
+        (existing?.synapInstall?.adminBootstrapMode === 'preseed' ||
+          existing?.synapInstall?.adminBootstrapMode === 'token')
+      ) {
+        adminBootstrapMode = existing.synapInstall.adminBootstrapMode;
+      }
       let adminEmail = opts.adminEmail?.trim() || process.env.ADMIN_EMAIL?.trim() || installEmail;
+      if (!opts.adminEmail?.trim() && loadedExistingPrefs && existing?.synapInstall?.adminEmail?.trim()) {
+        adminEmail = existing.synapInstall.adminEmail.trim();
+      }
       let adminPassword = opts.adminPassword?.trim() || process.env.ADMIN_PASSWORD?.trim();
       let exposureMode: 'local' | 'public' = installDomain !== 'localhost' ? 'public' : 'local';
 
       let tunnelProvider = parseTunnel(opts.tunnel) ?? usb?.tunnel_provider;
+      if (!opts.tunnel && !usb?.tunnel_provider && loadedExistingPrefs) {
+        tunnelProvider = existing?.network?.legs?.tunnelProvider ?? existing?.tunnelProvider;
+      }
       let tunnelDomain =
         (opts.tunnelDomain?.trim() || usb?.tunnel_domain || '').trim() || undefined;
+      if (!tunnelDomain && loadedExistingPrefs) {
+        tunnelDomain = existing?.network?.legs?.host?.trim() || existing?.tunnelDomain?.trim() || undefined;
+      }
       let legsHostStrategy: 'same_as_synap' | 'custom' | undefined;
+      if (loadedExistingPrefs) {
+        const prior = existing?.network?.legs?.hostStrategy;
+        if (prior === 'same_as_synap' || prior === 'custom') {
+          legsHostStrategy = prior;
+        }
+      }
 
       if (
         !opts.dryRun &&
@@ -742,8 +807,7 @@ export function setupCommand(program: Command): void {
         );
       }
 
-      const existing = await readSetupProfile(cwd);
-      if (existing && !flags.nonInteractive && !opts.dryRun) {
+      if (existing && !flags.nonInteractive && !opts.dryRun && !loadedExistingPrefs) {
         const ok = await confirm({
           message: `Existing setup profile (${existing.profile}). Overwrite and continue?`,
           initialValue: false,
@@ -825,6 +889,14 @@ export function setupCommand(program: Command): void {
                   host: tunnelDomain,
                 }
               : undefined,
+          },
+          synapInstall: {
+            mode: installMode,
+            tlsEmail: installEmail,
+            withOpenclaw: installWithOpenclaw,
+            withRsshub: installWithRsshub,
+            adminBootstrapMode,
+            adminEmail,
           },
         },
         cwd,

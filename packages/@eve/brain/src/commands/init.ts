@@ -11,7 +11,7 @@ import { resolveSynapDelegate } from '../lib/synap-delegate.js';
 export interface BrainInitOptions {
   withAi?: boolean;
   model?: string;
-  /** Path to synap-backend repo; uses official `synap` CLI (full Data Pod) instead of Eve Docker brain. */
+  /** Path to Synap backend repo checkout; uses official `synap` CLI (full Data Pod) instead of Eve Docker brain. */
   synapRepo?: string;
   /** DOMAIN for `synap install` (default localhost). */
   domain?: string;
@@ -112,9 +112,9 @@ export async function runBrainInit(options: BrainInitOptions): Promise<void> {
 
   console.log('Initializing Eve brain (Eve-managed Docker containers)...\n');
   console.log(
-    '  Tip: for the full Data Pod, clone synap-backend and run with\n' +
-      '  SYNAP_REPO_ROOT=/path/to/synap-backend eve brain init\n' +
-      '  or: eve brain init --synap-repo /path/to/synap-backend\n',
+    '  Tip: for the full Data Pod, set SYNAP_REPO_ROOT to your backend checkout and run\n' +
+      '  SYNAP_REPO_ROOT=/path/to/backend eve brain init\n' +
+      '  or: eve brain init --synap-repo /path/to/backend\n',
   );
 
   const synap = new SynapService();
@@ -166,7 +166,7 @@ export function initCommand(program: Command): void {
     .option('--model <model>', 'AI model to use', 'llama3.1:8b')
     .option(
       '--synap-repo <path>',
-      'Path to synap-backend checkout; runs official synap install instead of Eve brain containers',
+      'Path to backend checkout; runs official synap install instead of Eve brain containers',
     )
     .option('--domain <host>', 'With --synap-repo: DOMAIN for synap install', 'localhost')
     .option('--email <email>', "With --synap-repo: SSL contact (required if domain isn't localhost)")

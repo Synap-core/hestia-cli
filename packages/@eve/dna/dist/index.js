@@ -537,7 +537,7 @@ import * as path from "path";
 var SERVICE_REGISTRY = {
   // Brain Services
   synap: {
-    image: "ghcr.io/synap/backend:latest",
+    image: "ghcr.io/synap-core/backend:latest",
     containerName: "eve-brain-synap",
     ports: ["4000:4000"],
     environment: {
@@ -1040,6 +1040,15 @@ var SetupProfileSchema = z3.object({
       hostStrategy: z3.enum(["same_as_synap", "custom"]).optional(),
       host: z3.string().optional()
     }).optional()
+  }).optional(),
+  /** Non-secret Synap install preferences used to resume setup after interruption. */
+  synapInstall: z3.object({
+    mode: z3.enum(["auto", "from_image", "from_source"]).optional(),
+    tlsEmail: z3.string().optional(),
+    withOpenclaw: z3.boolean().optional(),
+    withRsshub: z3.boolean().optional(),
+    adminBootstrapMode: z3.enum(["token", "preseed"]).optional(),
+    adminEmail: z3.string().optional()
   }).optional()
 });
 var USB_MANIFEST_PATHS = [
