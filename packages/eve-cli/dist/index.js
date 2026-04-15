@@ -656,8 +656,8 @@ function prevAiModeFromUsb(usb) {
   if (usb.target_profile === "inference_only") return "local";
   return void 0;
 }
-var SYNAP_BACKEND_REPO_URL = "https://github.com/Synap-core/synap-backend.git";
-var SYNAP_BACKEND_TARBALL_URL = "https://codeload.github.com/Synap-core/synap-backend/tar.gz/refs/heads/main";
+var SYNAP_BACKEND_REPO_URL = "https://github.com/synap-core/backend.git";
+var SYNAP_BACKEND_TARBALL_URL = "https://codeload.github.com/synap-core/backend/tar.gz/refs/heads/main";
 function looksLikeSynapRepo(repoRoot) {
   return existsSync(join2(repoRoot, "synap")) && existsSync(join2(repoRoot, "deploy", "docker-compose.yml"));
 }

@@ -100,9 +100,9 @@ function prevAiModeFromUsb(
   return undefined;
 }
 
-const SYNAP_BACKEND_REPO_URL = 'https://github.com/Synap-core/synap-backend.git';
+const SYNAP_BACKEND_REPO_URL = 'https://github.com/synap-core/backend.git';
 const SYNAP_BACKEND_TARBALL_URL =
-  'https://codeload.github.com/Synap-core/synap-backend/tar.gz/refs/heads/main';
+  'https://codeload.github.com/synap-core/backend/tar.gz/refs/heads/main';
 
 function looksLikeSynapRepo(repoRoot: string): boolean {
   return (
