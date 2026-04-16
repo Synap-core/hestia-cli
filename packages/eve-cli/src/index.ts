@@ -84,7 +84,7 @@ program
   .option('--with-ai', 'Include Ollama for local AI')
   .option('--model <model>', 'AI model', 'llama3.1:8b')
   .option('--synap-repo <path>', 'synap-backend checkout → official synap install')
-  .option('--domain <host>', 'With --synap-repo: synap install --domain', 'localhost')
+  .option('--domain <host>', 'With --synap-repo: synap install --domain (default: localhost in brain init)')
   .option('--email <email>', "With --synap-repo: required when domain isn't localhost")
   .option('--with-openclaw', 'With --synap-repo: synap install --with-openclaw')
   .option('--with-rsshub', 'With --synap-repo: synap install --with-rsshub')

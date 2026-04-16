@@ -52,7 +52,11 @@ export async function runBrainInit(options: BrainInitOptions): Promise<void> {
     }
 
     console.log('Initializing Eve brain via Synap Data Pod CLI...\n');
-    console.log(`  Repo: ${delegate.repoRoot}\n`);
+    console.log(`  SYNAP_REPO_ROOT (install cwd): ${delegate.repoRoot}`);
+    console.log(`  SYNAP_DEPLOY_DIR (compose dir):  ${delegate.deployDir}`);
+    console.log(
+      '  Note: Eve state under .eve/ uses your shell cwd (where you ran eve); Synap always uses the paths above.\n',
+    );
 
     const installArgs = [delegate.synapScript, 'install', '--non-interactive', '--domain', domain];
     if (email) {

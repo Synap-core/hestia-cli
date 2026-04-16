@@ -8,6 +8,7 @@ import { execa } from 'execa';
 import {
   readSetupProfile,
   writeSetupProfile,
+  getSetupProfilePath,
   readUsbSetupManifest,
   probeHardware,
   formatHardwareReport,
@@ -285,9 +286,9 @@ export function setupCommand(program: Command): void {
     .option('--profile <p>', 'inference_only | data_pod | full')
     .option('--dry-run', 'Resolve profile and print plan; do not write state or install')
     .option('--synap-repo <path>', 'data_pod / full: path to synap-backend checkout')
-    .option('--domain <host>', 'data_pod / full: synap install --domain', 'localhost')
+    .option('--domain <host>', 'data_pod / full: synap install --domain (default: localhost, or from saved setup profile)')
     .option('--email <email>', 'data_pod / full: required if domain is not localhost')
-    .option('--model <m>', 'inference_only / full: default Ollama model', 'llama3.1:8b')
+    .option('--model <m>', 'inference_only / full: default Ollama model (default: llama3.1:8b)')
     .option('--with-openclaw', 'data_pod / full: synap install --with-openclaw')
     .option('--with-rsshub', 'data_pod / full: synap install --with-rsshub')
     .option('--admin-email <email>', 'data_pod / full: synap install --admin-email')
@@ -297,7 +298,7 @@ export function setupCommand(program: Command): void {
     .option('--from-source', 'synap install --from-source')
     .option('--skip-hardware', 'Skip optional hardware summary')
     .option('--nvidia-smi', 'With hardware summary in non-interactive mode, run nvidia-smi')
-    .option('--ai-mode <m>', 'local | provider | hybrid (AI foundation first)', 'hybrid')
+    .option('--ai-mode <m>', 'local | provider | hybrid (AI foundation first); default after merge: hybrid')
     .option(
       '--ai-provider <p>',
       'Default provider for Eve provider routing: openrouter | anthropic | openai | ollama',
@@ -321,6 +322,20 @@ export function setupCommand(program: Command): void {
       const cwd = process.cwd();
       const existing = await readSetupProfile(cwd);
       let loadedExistingPrefs = false;
+
+      if (
+        !existing &&
+        existsSync(getSetupProfilePath(cwd)) &&
+        !flags.nonInteractive &&
+        !flags.json &&
+        !opts.dryRun
+      ) {
+        console.log(
+          colors.warning(
+            `${emojis.warning} ${getSetupProfilePath(cwd)} is present but invalid or unreadable. Fix or remove it to enable "load saved preferences".`,
+          ),
+        );
+      }
 
       if (existing && !flags.nonInteractive && !opts.dryRun && !flags.json) {
         const load = await confirm({
@@ -467,13 +482,15 @@ export function setupCommand(program: Command): void {
         process.exit(1);
       }
 
-      let installDomain = (opts.domain?.trim() || 'localhost');
-      if (!opts.domain?.trim() && loadedExistingPrefs) {
-        installDomain =
-          existing?.network?.synapHost?.trim() ||
-          existing?.domainHint?.trim() ||
-          installDomain;
-      }
+      // No Commander default for --domain: a default of "localhost" prevented loading saved synapHost/domainHint.
+      const domainArg = opts.domain?.trim();
+      const explicitDomain = domainArg !== undefined && domainArg.length > 0 ? domainArg : undefined;
+      let installDomain =
+        explicitDomain ??
+        (loadedExistingPrefs
+          ? existing?.network?.synapHost?.trim() || existing?.domainHint?.trim()
+          : undefined) ??
+        'localhost';
       let installEmail = opts.email?.trim() || process.env.LETSENCRYPT_EMAIL?.trim() || undefined;
       if (!installEmail && loadedExistingPrefs) {
         installEmail = existing?.synapInstall?.tlsEmail?.trim() || installEmail;
@@ -996,7 +1013,7 @@ export function setupCommand(program: Command): void {
       try {
         if (profile === 'inference_only') {
           await runInferenceInit({
-            model: opts.model,
+            model: opts.model ?? 'llama3.1:8b',
             withGateway: true,
             internalOllamaOnly: false,
           });
@@ -1055,7 +1072,7 @@ export function setupCommand(program: Command): void {
             withAi: false,
           });
           await runInferenceInit({
-            model: opts.model,
+            model: opts.model ?? 'llama3.1:8b',
             withGateway: true,
             internalOllamaOnly: true,
           });

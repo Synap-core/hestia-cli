@@ -605,6 +605,7 @@ import { execa as execa3 } from "execa";
 import {
   readSetupProfile,
   writeSetupProfile,
+  getSetupProfilePath,
   readUsbSetupManifest,
   probeHardware,
   formatHardwareReport,
@@ -808,7 +809,7 @@ You can also pass --synap-repo <path> (or set SYNAP_REPO_ROOT) to an existing ch
   return targetDir;
 }
 function setupCommand(program2) {
-  program2.command("setup").description("Three-path guided setup: Ollama+gateway, Synap Data Pod, or both (logical prompts)").option("--profile <p>", "inference_only | data_pod | full").option("--dry-run", "Resolve profile and print plan; do not write state or install").option("--synap-repo <path>", "data_pod / full: path to synap-backend checkout").option("--domain <host>", "data_pod / full: synap install --domain", "localhost").option("--email <email>", "data_pod / full: required if domain is not localhost").option("--model <m>", "inference_only / full: default Ollama model", "llama3.1:8b").option("--with-openclaw", "data_pod / full: synap install --with-openclaw").option("--with-rsshub", "data_pod / full: synap install --with-rsshub").option("--admin-email <email>", "data_pod / full: synap install --admin-email").option("--admin-password <secret>", "data_pod / full: synap install --admin-password (preseed mode)").option("--admin-bootstrap-mode <mode>", "data_pod / full: preseed | token (default token)").option("--from-image", "synap install --from-image").option("--from-source", "synap install --from-source").option("--skip-hardware", "Skip optional hardware summary").option("--nvidia-smi", "With hardware summary in non-interactive mode, run nvidia-smi").option("--ai-mode <m>", "local | provider | hybrid (AI foundation first)", "hybrid").option(
+  program2.command("setup").description("Three-path guided setup: Ollama+gateway, Synap Data Pod, or both (logical prompts)").option("--profile <p>", "inference_only | data_pod | full").option("--dry-run", "Resolve profile and print plan; do not write state or install").option("--synap-repo <path>", "data_pod / full: path to synap-backend checkout").option("--domain <host>", "data_pod / full: synap install --domain (default: localhost, or from saved setup profile)").option("--email <email>", "data_pod / full: required if domain is not localhost").option("--model <m>", "inference_only / full: default Ollama model (default: llama3.1:8b)").option("--with-openclaw", "data_pod / full: synap install --with-openclaw").option("--with-rsshub", "data_pod / full: synap install --with-rsshub").option("--admin-email <email>", "data_pod / full: synap install --admin-email").option("--admin-password <secret>", "data_pod / full: synap install --admin-password (preseed mode)").option("--admin-bootstrap-mode <mode>", "data_pod / full: preseed | token (default token)").option("--from-image", "synap install --from-image").option("--from-source", "synap install --from-source").option("--skip-hardware", "Skip optional hardware summary").option("--nvidia-smi", "With hardware summary in non-interactive mode, run nvidia-smi").option("--ai-mode <m>", "local | provider | hybrid (AI foundation first); default after merge: hybrid").option(
     "--ai-provider <p>",
     "Default provider for Eve provider routing: openrouter | anthropic | openai | ollama"
   ).option("--fallback-provider <p>", "Fallback provider for Eve provider routing").option("--tunnel <provider>", "data_pod | full: pangolin or cloudflare (runs eve legs setup after install)").option("--tunnel-domain <host>", "Hostname for tunnel / ingress (optional)").addHelpText(
@@ -819,6 +820,13 @@ function setupCommand(program2) {
     const cwd = process.cwd();
     const existing = await readSetupProfile(cwd);
     let loadedExistingPrefs = false;
+    if (!existing && existsSync(getSetupProfilePath(cwd)) && !flags.nonInteractive && !flags.json && !opts.dryRun) {
+      console.log(
+        colors.warning(
+          `${emojis.warning} ${getSetupProfilePath(cwd)} is present but invalid or unreadable. Fix or remove it to enable "load saved preferences".`
+        )
+      );
+    }
     if (existing && !flags.nonInteractive && !opts.dryRun && !flags.json) {
       const load = await confirm2({
         message: `Load latest saved setup preferences from .eve/setup-profile.json (${existing.profile})?`,
@@ -944,10 +952,9 @@ function setupCommand(program2) {
       console.error("Use only one of --from-image or --from-source.");
       process.exit(1);
     }
-    let installDomain = opts.domain?.trim() || "localhost";
-    if (!opts.domain?.trim() && loadedExistingPrefs) {
-      installDomain = existing?.network?.synapHost?.trim() || existing?.domainHint?.trim() || installDomain;
-    }
+    const domainArg = opts.domain?.trim();
+    const explicitDomain = domainArg !== void 0 && domainArg.length > 0 ? domainArg : void 0;
+    let installDomain = explicitDomain ?? (loadedExistingPrefs ? existing?.network?.synapHost?.trim() || existing?.domainHint?.trim() : void 0) ?? "localhost";
     let installEmail = opts.email?.trim() || process.env.LETSENCRYPT_EMAIL?.trim() || void 0;
     if (!installEmail && loadedExistingPrefs) {
       installEmail = existing?.synapInstall?.tlsEmail?.trim() || installEmail;
@@ -1413,7 +1420,7 @@ ${formatHardwareReport(facts)}
     try {
       if (profile === "inference_only") {
         await runInferenceInit({
-          model: opts.model,
+          model: opts.model ?? "llama3.1:8b",
           withGateway: true,
           internalOllamaOnly: false
         });
@@ -1471,7 +1478,7 @@ ${formatHardwareReport(facts)}
           withAi: false
         });
         await runInferenceInit({
-          model: opts.model,
+          model: opts.model ?? "llama3.1:8b",
           withGateway: true,
           internalOllamaOnly: true
         });
@@ -1937,7 +1944,7 @@ ${colors.muted("Categories:")}
 setupCommand(program);
 program.command("init").description(
   "Alias for setup; forwards to setup flow by default, brain init only when synap repo is explicit."
-).option("--profile <p>", "inference_only | data_pod | full").option("--with-ai", "Include Ollama for local AI").option("--model <model>", "AI model", "llama3.1:8b").option("--synap-repo <path>", "synap-backend checkout \u2192 official synap install").option("--domain <host>", "With --synap-repo: synap install --domain", "localhost").option("--email <email>", "With --synap-repo: required when domain isn't localhost").option("--with-openclaw", "With --synap-repo: synap install --with-openclaw").option("--with-rsshub", "With --synap-repo: synap install --with-rsshub").option("--from-image", "With --synap-repo: synap install --from-image").option("--from-source", "With --synap-repo: synap install --from-source").option("--admin-email <email>", "With --synap-repo: synap install --admin-email").option("--admin-password <secret>", "With --synap-repo: synap install --admin-password (preseed mode)").option("--admin-bootstrap-mode <mode>", "With --synap-repo: token | preseed (default token)").action(
+).option("--profile <p>", "inference_only | data_pod | full").option("--with-ai", "Include Ollama for local AI").option("--model <model>", "AI model", "llama3.1:8b").option("--synap-repo <path>", "synap-backend checkout \u2192 official synap install").option("--domain <host>", "With --synap-repo: synap install --domain (default: localhost in brain init)").option("--email <email>", "With --synap-repo: required when domain isn't localhost").option("--with-openclaw", "With --synap-repo: synap install --with-openclaw").option("--with-rsshub", "With --synap-repo: synap install --with-rsshub").option("--from-image", "With --synap-repo: synap install --from-image").option("--from-source", "With --synap-repo: synap install --from-source").option("--admin-email <email>", "With --synap-repo: synap install --admin-email").option("--admin-password <secret>", "With --synap-repo: synap install --admin-password (preseed mode)").option("--admin-bootstrap-mode <mode>", "With --synap-repo: token | preseed (default token)").action(
   async (opts) => {
     try {
       if (!opts.synapRepo && !process.env.SYNAP_REPO_ROOT) {
