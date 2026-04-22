@@ -7,7 +7,7 @@ import { z } from 'zod';
  * including organs, services, configuration, and state management.
  */
 /** Represents the health/availability state of an organ */
-type OrganState = 'missing' | 'installing' | 'ready' | 'error' | 'stopped';
+type OrganState = 'missing' | 'installing' | 'starting' | 'ready' | 'error' | 'stopped';
 /** The available organs in the Eve ecosystem */
 type Organ = 'brain' | 'arms' | 'builder' | 'eyes' | 'legs';
 /** The state of a single organ */
@@ -28,7 +28,7 @@ interface OrganConfig {
 /** Available services organized by organ */
 type BrainService = 'synap' | 'ollama' | 'postgres' | 'redis';
 type ArmsService = 'openclaw';
-type BuilderService = 'opencode' | 'openclaude' | 'claudecode' | 'dokploy';
+type BuilderService = 'opencode' | 'openclaude' | 'claudecode' | 'dokploy' | 'hermes';
 type EyesService = 'rsshub';
 type LegsService = 'traefik' | 'cloudflared' | 'pangolin' | 'newt';
 type Service = BrainService | ArmsService | BuilderService | EyesService | LegsService;
@@ -157,6 +157,72 @@ interface Credentials {
     /** API keys and tokens */
     [key: string]: string;
 }
+/** Task lifecycle status */
+type TaskStatus = 'pending' | 'assigned' | 'in-progress' | 'reviewing' | 'done' | 'failed' | 'cancelled';
+/** Task priority levels */
+type TaskPriority = 'low' | 'medium' | 'high' | 'critical';
+/** Task type categories */
+type TaskType = 'code-gen' | 'review' | 'deployment' | 'config' | 'maintenance' | 'data' | 'notification' | 'custom';
+/** A task entity managed by the Hermes orchestrator */
+interface Task {
+    id: string;
+    title: string;
+    description?: string;
+    type: TaskType;
+    status: TaskStatus;
+    priority: TaskPriority;
+    /** Agent slug assigned to this task (e.g., 'orchestrator', 'hermes') */
+    assignedAgentId?: string;
+    /** Synap entity ID this task is linked to */
+    entityId?: string;
+    /** Parent task ID (for subtasks) */
+    parentId?: string;
+    /** Template slug if generated from a template */
+    templateSlug?: string;
+    /** Arbitrary context payload */
+    context?: Record<string, unknown>;
+    /** Result data after completion */
+    result?: Record<string, unknown>;
+    metadata: {
+        createdAt: string;
+        updatedAt: string;
+        startedAt?: string;
+        completedAt?: string;
+        deadline?: string;
+        tags?: string[];
+    };
+}
+/** Default Hermes configuration */
+declare const DEFAULT_HERMES_CONFIG: {
+    readonly enabled: true;
+    readonly pollIntervalMs: 30000;
+    readonly maxConcurrentTasks: 1;
+};
+/** Supported messaging platforms */
+type MessagingPlatform = 'telegram' | 'signal' | 'matrix';
+/** Messaging platform configuration */
+interface MessagingConfig {
+    enabled: boolean;
+    platform: MessagingPlatform;
+    botToken?: string;
+    chatId?: string;
+    username?: string;
+    /** Max messages to process per poll */
+    batchSize?: number;
+}
+/** Supported voice/telephony providers */
+type VoiceProvider = 'twilio' | 'signal' | 'selfhosted';
+/** Voice/telephony configuration */
+interface VoiceConfig {
+    enabled: boolean;
+    provider: VoiceProvider;
+    phoneNumber?: string;
+    sipUri?: string;
+    /** STT model for speech-to-text */
+    sttModel?: string;
+    /** TTS model for text-to-speech */
+    ttsModel?: string;
+}
 /** DNA package error with code */
 interface DNAError extends Error {
     code?: string;
@@ -273,11 +339,17 @@ declare const credentialsManager: CredentialsManager;
 /**
  * Entity State Manager
  *
- * Manages the state of the Hestia entity, including organ health,
+ * Manages the state of the Eve entity, including organ health,
  * installation status, and completeness tracking.
- * State is stored as JSON in ~/.local/share/hestia/state.json
+ * State is stored as JSON in ~/.local/share/eve/state.json
  */
 
+/**
+ * Migrates entity state from the legacy eve directory to the new eve directory.
+ * Copies state.json and any ancillary files, then removes the old directory.
+ * Returns true if a migration was performed, false if nothing to migrate.
+ */
+declare function migrateStateDirectory(): Promise<boolean>;
 declare class EntityStateManager {
     private state;
     private statePath;
@@ -350,6 +422,14 @@ declare class DockerComposeGenerator {
      * Add legs services: traefik
      */
     addLegsServices(): void;
+    /**
+     * Add builder services: hermes (CLI tools like opencode/openclaude/claudecode have no containers)
+     */
+    addBuilderServices(): void;
+    /**
+     * Add all services across all organs (brain, arms, builder, eyes, legs)
+     */
+    addAllServices(): void;
     /**
      * Set an environment variable for substitution
      * Variables will be substituted in the format ${VAR} or $VAR
@@ -714,14 +794,35 @@ declare const SecretsSchema: z.ZodObject<{
         gatewayPass?: string | undefined;
     }>>;
     builder: z.ZodOptional<z.ZodObject<{
+        /** Selected code engine (defaults to 'openclaude') */
         codeEngine: z.ZodOptional<z.ZodEnum<["opencode", "openclaude", "claudecode"]>>;
+        /** Legacy flat fields — may be deprecated when nested subsections are used */
         openclaudeUrl: z.ZodOptional<z.ZodString>;
         dokployApiUrl: z.ZodOptional<z.ZodString>;
         dokployApiKey: z.ZodOptional<z.ZodString>;
         dokployWebhookUrl: z.ZodOptional<z.ZodString>;
         workspaceDir: z.ZodOptional<z.ZodString>;
         skillsDir: z.ZodOptional<z.ZodString>;
+        /** Hermes headless orchestrator daemon */
+        hermes: z.ZodOptional<z.ZodObject<{
+            enabled: z.ZodOptional<z.ZodBoolean>;
+            pollIntervalMs: z.ZodOptional<z.ZodNumber>;
+            maxConcurrentTasks: z.ZodOptional<z.ZodNumber>;
+        }, "strip", z.ZodTypeAny, {
+            enabled?: boolean | undefined;
+            pollIntervalMs?: number | undefined;
+            maxConcurrentTasks?: number | undefined;
+        }, {
+            enabled?: boolean | undefined;
+            pollIntervalMs?: number | undefined;
+            maxConcurrentTasks?: number | undefined;
+        }>>;
     }, "strip", z.ZodTypeAny, {
+        hermes?: {
+            enabled?: boolean | undefined;
+            pollIntervalMs?: number | undefined;
+            maxConcurrentTasks?: number | undefined;
+        } | undefined;
         codeEngine?: "opencode" | "openclaude" | "claudecode" | undefined;
         openclaudeUrl?: string | undefined;
         dokployApiUrl?: string | undefined;
@@ -730,6 +831,11 @@ declare const SecretsSchema: z.ZodObject<{
         workspaceDir?: string | undefined;
         skillsDir?: string | undefined;
     }, {
+        hermes?: {
+            enabled?: boolean | undefined;
+            pollIntervalMs?: number | undefined;
+            maxConcurrentTasks?: number | undefined;
+        } | undefined;
         codeEngine?: "opencode" | "openclaude" | "claudecode" | undefined;
         openclaudeUrl?: string | undefined;
         dokployApiUrl?: string | undefined;
@@ -739,19 +845,101 @@ declare const SecretsSchema: z.ZodObject<{
         skillsDir?: string | undefined;
     }>>;
     arms: z.ZodOptional<z.ZodObject<{
-        openclawSynapApiKey: z.ZodOptional<z.ZodString>;
+        /** OpenClaw bridge config */
+        openclaw: z.ZodOptional<z.ZodObject<{
+            synapApiKey: z.ZodOptional<z.ZodString>;
+        }, "strip", z.ZodTypeAny, {
+            synapApiKey?: string | undefined;
+        }, {
+            synapApiKey?: string | undefined;
+        }>>;
+        /** Messaging platform bridges (Telegram, Signal, etc.) */
+        messaging: z.ZodOptional<z.ZodObject<{
+            enabled: z.ZodOptional<z.ZodBoolean>;
+            platform: z.ZodOptional<z.ZodEnum<["telegram", "signal", "matrix"]>>;
+            botToken: z.ZodOptional<z.ZodString>;
+        }, "strip", z.ZodTypeAny, {
+            enabled?: boolean | undefined;
+            platform?: "telegram" | "signal" | "matrix" | undefined;
+            botToken?: string | undefined;
+        }, {
+            enabled?: boolean | undefined;
+            platform?: "telegram" | "signal" | "matrix" | undefined;
+            botToken?: string | undefined;
+        }>>;
+        /** Voice / telephony (SIP, Twilio, etc.) */
+        voice: z.ZodOptional<z.ZodObject<{
+            enabled: z.ZodOptional<z.ZodBoolean>;
+            provider: z.ZodOptional<z.ZodEnum<["twilio", "signal", "selfhosted"]>>;
+            phoneNumber: z.ZodOptional<z.ZodString>;
+            sipUri: z.ZodOptional<z.ZodString>;
+        }, "strip", z.ZodTypeAny, {
+            enabled?: boolean | undefined;
+            provider?: "signal" | "twilio" | "selfhosted" | undefined;
+            phoneNumber?: string | undefined;
+            sipUri?: string | undefined;
+        }, {
+            enabled?: boolean | undefined;
+            provider?: "signal" | "twilio" | "selfhosted" | undefined;
+            phoneNumber?: string | undefined;
+            sipUri?: string | undefined;
+        }>>;
     }, "strip", z.ZodTypeAny, {
-        openclawSynapApiKey?: string | undefined;
+        openclaw?: {
+            synapApiKey?: string | undefined;
+        } | undefined;
+        messaging?: {
+            enabled?: boolean | undefined;
+            platform?: "telegram" | "signal" | "matrix" | undefined;
+            botToken?: string | undefined;
+        } | undefined;
+        voice?: {
+            enabled?: boolean | undefined;
+            provider?: "signal" | "twilio" | "selfhosted" | undefined;
+            phoneNumber?: string | undefined;
+            sipUri?: string | undefined;
+        } | undefined;
     }, {
-        openclawSynapApiKey?: string | undefined;
+        openclaw?: {
+            synapApiKey?: string | undefined;
+        } | undefined;
+        messaging?: {
+            enabled?: boolean | undefined;
+            platform?: "telegram" | "signal" | "matrix" | undefined;
+            botToken?: string | undefined;
+        } | undefined;
+        voice?: {
+            enabled?: boolean | undefined;
+            provider?: "signal" | "twilio" | "selfhosted" | undefined;
+            phoneNumber?: string | undefined;
+            sipUri?: string | undefined;
+        } | undefined;
     }>>;
 }, "strip", z.ZodTypeAny, {
     version: "1";
     updatedAt: string;
     arms?: {
-        openclawSynapApiKey?: string | undefined;
+        openclaw?: {
+            synapApiKey?: string | undefined;
+        } | undefined;
+        messaging?: {
+            enabled?: boolean | undefined;
+            platform?: "telegram" | "signal" | "matrix" | undefined;
+            botToken?: string | undefined;
+        } | undefined;
+        voice?: {
+            enabled?: boolean | undefined;
+            provider?: "signal" | "twilio" | "selfhosted" | undefined;
+            phoneNumber?: string | undefined;
+            sipUri?: string | undefined;
+        } | undefined;
     } | undefined;
     builder?: {
+        hermes?: {
+            enabled?: boolean | undefined;
+            pollIntervalMs?: number | undefined;
+            maxConcurrentTasks?: number | undefined;
+        } | undefined;
         codeEngine?: "opencode" | "openclaude" | "claudecode" | undefined;
         openclaudeUrl?: string | undefined;
         dokployApiUrl?: string | undefined;
@@ -788,9 +976,27 @@ declare const SecretsSchema: z.ZodObject<{
     version: "1";
     updatedAt: string;
     arms?: {
-        openclawSynapApiKey?: string | undefined;
+        openclaw?: {
+            synapApiKey?: string | undefined;
+        } | undefined;
+        messaging?: {
+            enabled?: boolean | undefined;
+            platform?: "telegram" | "signal" | "matrix" | undefined;
+            botToken?: string | undefined;
+        } | undefined;
+        voice?: {
+            enabled?: boolean | undefined;
+            provider?: "signal" | "twilio" | "selfhosted" | undefined;
+            phoneNumber?: string | undefined;
+            sipUri?: string | undefined;
+        } | undefined;
     } | undefined;
     builder?: {
+        hermes?: {
+            enabled?: boolean | undefined;
+            pollIntervalMs?: number | undefined;
+            maxConcurrentTasks?: number | undefined;
+        } | undefined;
         codeEngine?: "opencode" | "openclaude" | "claudecode" | undefined;
         openclaudeUrl?: string | undefined;
         dokployApiUrl?: string | undefined;
@@ -853,6 +1059,10 @@ declare function copySynapSkillIntoClaudeProject(projectDir: string, skillsDir?:
  * Claude Code `settings.json` env block (see https://code.claude.com/docs/en/settings ).
  */
 declare function writeClaudeCodeSettings(projectDir: string, cwd?: string): Promise<void>;
+/**
+ * Dotenv for Hermes daemon — reads secrets and writes `.eve/hermes.env` for docker compose `env_file`.
+ */
+declare function writeHermesEnvFile(cwd?: string): Promise<string>;
 
 /**
  * DNA Package - @eve/dna
@@ -888,4 +1098,4 @@ declare function writeClaudeCodeSettings(projectDir: string, cwd?: string): Prom
 
 declare const VERSION = "0.1.0";
 
-export { type AIModel, AiModeSchema, AiProviderSchema, type BuilderEngine, BuilderEngineSchema, ConfigManager, type Credentials, CredentialsManager, DEFAULT_HUB_PATH, type DNAError, type DockerCompose, DockerComposeGenerator, type DockerComposeService, type EntityState, EntityStateManager, type EveConfig, type EveSecrets, type HardwareFacts, type Organ, type OrganState, type OrganStatus, type Service, type ServiceConfig, type SetupProfile, type SetupProfileKind, SetupProfileKindSchema, SetupProfileSchema, type UsbSetupManifest, UsbSetupManifestSchema, VERSION, configManager, copySynapSkillIntoClaudeProject, createDockerComposeGenerator, credentialsManager, defaultSkillsDir, ensureEveSkillsLayout, ensureSecretValue, entityStateManager, formatHardwareReport, getSetupProfilePath, probeHardware, readEveSecrets, readSetupProfile, readUsbSetupManifest, resolveHubBaseUrl, secretsPath, writeBuilderProjectEnv, writeClaudeCodeSettings, writeEveSecrets, writeSandboxEnvFile, writeSetupProfile, writeUsbSetupManifest };
+export { type AIModel, AiModeSchema, AiProviderSchema, type BuilderEngine, BuilderEngineSchema, ConfigManager, type Credentials, CredentialsManager, DEFAULT_HERMES_CONFIG, DEFAULT_HUB_PATH, type DNAError, type DockerCompose, DockerComposeGenerator, type DockerComposeService, type EntityState, EntityStateManager, type EveConfig, type EveSecrets, type HardwareFacts, type MessagingConfig, type MessagingPlatform, type Organ, type OrganState, type OrganStatus, type Service, type ServiceConfig, type SetupProfile, type SetupProfileKind, SetupProfileKindSchema, SetupProfileSchema, type Task, type TaskPriority, type TaskStatus, type TaskType, type UsbSetupManifest, UsbSetupManifestSchema, VERSION, type VoiceConfig, type VoiceProvider, configManager, copySynapSkillIntoClaudeProject, createDockerComposeGenerator, credentialsManager, defaultSkillsDir, ensureEveSkillsLayout, ensureSecretValue, entityStateManager, formatHardwareReport, getSetupProfilePath, migrateStateDirectory, probeHardware, readEveSecrets, readSetupProfile, readUsbSetupManifest, resolveHubBaseUrl, secretsPath, writeBuilderProjectEnv, writeClaudeCodeSettings, writeEveSecrets, writeHermesEnvFile, writeSandboxEnvFile, writeSetupProfile, writeUsbSetupManifest };

@@ -128,10 +128,33 @@ ${body}`, {
     })
   );
 }
+function printEveDeprecation(command, suggested) {
+  console.log(
+    `
+${colors.warning("\u26A0\uFE0F")}  ${colors.warning.bold(`\`eve ${command}\` is deprecated.`)}
+    This command delegates to the Synap bash script.
+    Please use instead:
+        ${colors.info(suggested)}
+    (eve organs/brain/arms subcommands remain available for Eve Entity System use.)
+`
+  );
+}
+function requireDelegationConfirmed() {
+  if (!process.argv.includes("--confirm-delegation")) {
+    console.log(
+      colors.muted(
+        "    Pass --confirm-delegation to proceed anyway (not recommended).\n"
+      )
+    );
+    process.exit(2);
+  }
+}
 
 // src/commands/status.ts
 function statusCommand(program2) {
   program2.command("status").alias("s").description("Show comprehensive entity status").option("-w, --watch", "Watch mode - continuously update").option("-j, --json", "Output as JSON").action(async (options) => {
+    printEveDeprecation("status", "./synap health (on your server)  or  npx @synap-core/cli status (from your laptop)");
+    requireDelegationConfirmed();
     try {
       if (options.watch) {
         await watchStatus();
@@ -250,6 +273,8 @@ import { execa } from "execa";
 import { entityStateManager as entityStateManager2 } from "@eve/dna";
 function doctorCommand(program2) {
   program2.command("doctor").alias("doc").description("Run comprehensive diagnostics on the entity").option("-f, --fix", "Attempt to fix issues automatically").option("-v, --verbose", "Show verbose output").action(async (options) => {
+    printEveDeprecation("doctor", "./synap diagnose (on your server)  or  npx @synap-core/cli status (from your laptop)");
+    requireDelegationConfirmed();
     try {
       await runDiagnostics(options.fix, options.verbose);
     } catch (error) {
@@ -816,6 +841,8 @@ function setupCommand(program2) {
     "after",
     "\nWhy three paths\n  inference_only \u2014 Local Ollama + Traefik gateway (Basic auth on :11435). Synap is not installed.\n  data_pod      \u2014 Official Synap stack via synap CLI (Caddy on 80/443). Use Eve for extra Docker apps.\n  full          \u2014 data_pod first, then Ollama on Docker network only + same gateway (no host :11434).\n\nState & manifests\n  Writes .eve/setup-profile.json in the current working directory.\n  Pre-filled profile if ~/.eve/usb-profile.json, /opt/eve/profile.json, or EVE_SETUP_MANIFEST exists.\n\nDocs: hestia-cli/docs/EVE_SETUP_PROFILES.md, hestia-cli/docs/AI_ROUTING_CONSOLIDATION_ADR.md, and hestia-cli/README.md\n"
   ).action(async (opts) => {
+    printEveDeprecation("setup", "./synap install (on your server)");
+    requireDelegationConfirmed();
     const flags = getGlobalCliFlags2();
     const cwd = process.cwd();
     const existing = await readSetupProfile(cwd);
@@ -1055,7 +1082,7 @@ function setupCommand(program2) {
         installEmail = trimmed;
       }
       if (installMode === "auto") {
-        const mode2 = await select2({
+        const mode = await select2({
           message: "Synap install mode",
           options: [
             { value: "auto", label: "Auto", hint: "Let synap decide (repo-aware default)" },
@@ -1064,31 +1091,13 @@ function setupCommand(program2) {
           ],
           initialValue: "auto"
         });
-        if (isCancel2(mode2)) {
+        if (isCancel2(mode)) {
           console.log(colors.muted("Cancelled."));
           return;
         }
-        installMode = mode2;
+        installMode = mode;
       }
-      const askOpenclaw = await confirm2({
-        message: "Install OpenClaw during Synap install?",
-        initialValue: installWithOpenclaw
-      });
-      if (isCancel2(askOpenclaw)) {
-        console.log(colors.muted("Cancelled."));
-        return;
-      }
-      installWithOpenclaw = Boolean(askOpenclaw);
-      const askRsshub = await confirm2({
-        message: "Enable RSSHub during Synap install?",
-        initialValue: installWithRsshub
-      });
-      if (isCancel2(askRsshub)) {
-        console.log(colors.muted("Cancelled."));
-        return;
-      }
-      installWithRsshub = Boolean(askRsshub);
-      const mode = await select2({
+      const bootstrapMode = await select2({
         message: "Admin bootstrap mode for Synap",
         options: [
           {
@@ -1104,11 +1113,11 @@ function setupCommand(program2) {
         ],
         initialValue: adminBootstrapMode
       });
-      if (isCancel2(mode)) {
+      if (isCancel2(bootstrapMode)) {
         console.log(colors.muted("Cancelled."));
         return;
       }
-      adminBootstrapMode = mode;
+      adminBootstrapMode = bootstrapMode;
       if (adminBootstrapMode === "preseed") {
         const ae = await text({
           message: "Admin email for initial Synap admin account",
@@ -1141,6 +1150,24 @@ function setupCommand(program2) {
           process.exit(1);
         }
       }
+      const askOpenclaw = await confirm2({
+        message: adminBootstrapMode === "preseed" ? "Install OpenClaw during Synap install? (A workspace exists after preseed, so the add-on can provision immediately.)" : "Enable OpenClaw for this pod? (Token bootstrap has no workspace yet \u2014 Synap install skips the add-on; the admin UI will offer setup after you register.)",
+        initialValue: adminBootstrapMode === "preseed" ? installWithOpenclaw : false
+      });
+      if (isCancel2(askOpenclaw)) {
+        console.log(colors.muted("Cancelled."));
+        return;
+      }
+      installWithOpenclaw = Boolean(askOpenclaw);
+      const askRsshub = await confirm2({
+        message: "Enable RSSHub during Synap install?",
+        initialValue: installWithRsshub
+      });
+      if (isCancel2(askRsshub)) {
+        console.log(colors.muted("Cancelled."));
+        return;
+      }
+      installWithRsshub = Boolean(askRsshub);
       if (!tunnelProvider) {
         const t = await select2({
           message: "Expose Eve Legs (Traefik) via a tunnel after Synap install?",
@@ -1236,6 +1263,16 @@ function setupCommand(program2) {
       console.error("Preseed admin bootstrap requires --admin-password (or ADMIN_PASSWORD).");
       process.exit(1);
     }
+    const synapInstallWithOpenclaw = installWithOpenclaw && adminBootstrapMode === "preseed";
+    if (installWithOpenclaw && adminBootstrapMode === "token" && !opts.dryRun) {
+      if (!flags.json) {
+        console.log(
+          colors.info(
+            "OpenClaw: token bootstrap has no workspace at install time, so `synap install` runs without --with-openclaw. After you finish /admin/bootstrap, use the admin dashboard prompt or run `./synap services add openclaw` on the server."
+          )
+        );
+      }
+    }
     if (!flags.json) {
       const synapReachability = installDomain === "localhost" ? "local only (localhost/private network)" : `public via https://${installDomain}`;
       const legsReachability = tunnelProvider ? `enabled (${tunnelProvider}${tunnelDomain ? `, hostname: ${tunnelDomain}` : ""})` : "disabled (no tunnel/public Legs route configured)";
@@ -1277,6 +1314,7 @@ Network exposure plan:
           email: installEmail ?? null,
           mode: installMode,
           withOpenclaw: installWithOpenclaw,
+          synapInstallWithOpenclaw,
           withRsshub: installWithRsshub,
           adminBootstrapMode,
           adminEmail: adminEmail ?? null
@@ -1435,7 +1473,7 @@ ${formatHardwareReport(facts)}
           synapRepo: repo,
           domain: installDomain,
           email: installEmail,
-          withOpenclaw: installWithOpenclaw,
+          withOpenclaw: synapInstallWithOpenclaw,
           withRsshub: installWithRsshub,
           fromImage: installMode === "from_image",
           fromSource: installMode === "from_source",
@@ -1468,7 +1506,7 @@ ${formatHardwareReport(facts)}
           synapRepo: repo,
           domain: installDomain,
           email: installEmail,
-          withOpenclaw: installWithOpenclaw,
+          withOpenclaw: synapInstallWithOpenclaw,
           withRsshub: installWithRsshub,
           fromImage: installMode === "from_image",
           fromSource: installMode === "from_source",
@@ -1515,6 +1553,8 @@ ${emojis.check} Setup complete. Profile: ${colors.success(profile)}  (.eve/setup
 import { execa as execa4 } from "execa";
 function logsCommand(program2) {
   program2.command("logs").description("Docker Compose logs for Eve stack (set EVE_COMPOSE_FILE or run from compose directory)").argument("[service]", "Optional compose service name").option("-f, --follow", "Follow log output", false).option("-n, --tail <lines>", "Number of lines", "100").option("--compose-file <path>", "Path to docker-compose.yml").action(async (service, opts) => {
+    printEveDeprecation("logs", "./synap logs [service] (on your server)");
+    requireDelegationConfirmed();
     const composeFile = opts.composeFile || process.env.EVE_COMPOSE_FILE;
     const args = ["compose"];
     if (composeFile) {
@@ -1638,6 +1678,20 @@ function configCommands(program2) {
 
 // src/commands/manage/backup-update.ts
 import { execa as execa6 } from "execa";
+import { createInterface } from "readline/promises";
+import { stdin as input, stdout as output } from "process";
+import { getGlobalCliFlags as getGlobalCliFlags5 } from "@eve/cli-kit";
+async function confirmDestructiveReset() {
+  const flags = getGlobalCliFlags5();
+  if (flags.nonInteractive) return true;
+  const rl = createInterface({ input, output });
+  try {
+    const answer = await rl.question("Type 'recreate' to continue: ");
+    return answer.trim() === "recreate";
+  } finally {
+    rl.close();
+  }
+}
 function backupUpdateCommands(program2) {
   program2.command("backup").description("List Eve-related Docker volumes (full backup: stop stack + docker run volume export \u2014 see docs)").action(async () => {
     try {
@@ -1658,17 +1712,48 @@ function backupUpdateCommands(program2) {
     }
   });
   program2.command("update").description("Guidance for updating Eve / Synap images (use synap-backend deploy on the Data Pod)").action(() => {
+    printEveDeprecation("update", "./synap update (on your server)");
+    requireDelegationConfirmed();
     printInfo(
       "Eve does not replace your Data Pod updater. For Synap: use your deploy directory `./synap update` or pull new images and run migrations as documented in synap-backend/deploy."
     );
     printInfo(`Compose hint: ${colors.muted("docker compose pull && docker compose up -d")} in the directory that owns your stack.`);
+  });
+  program2.command("recreate").description("Full cleanup + full recreation (remove stale Docker data and rebuild stack)").option("--no-prune", "Skip docker system prune").action(async (opts) => {
+    try {
+      console.log(colors.error.bold("\n\u26A0\uFE0F  Dangerous operation: full cleanup + recreation\n"));
+      console.log("This command will:");
+      console.log("  - stop and remove all compose resources in the current directory");
+      console.log("  - remove project volumes (data loss)");
+      if (opts.prune !== false) {
+        console.log("  - prune stale Docker containers/images/volumes/networks");
+      }
+      console.log("");
+      const confirmed = await confirmDestructiveReset();
+      if (!confirmed) {
+        printInfo("Cancelled.");
+        return;
+      }
+      printInfo("Stopping stack and removing compose resources...");
+      await execa6("docker", ["compose", "down", "--volumes", "--remove-orphans"], { stdio: "inherit" });
+      if (opts.prune !== false) {
+        printInfo("Pruning stale Docker resources...");
+        await execa6("docker", ["system", "prune", "-a", "-f", "--volumes"], { stdio: "inherit" });
+      }
+      printInfo("Recreating stack...");
+      await execa6("docker", ["compose", "up", "-d"], { stdio: "inherit" });
+      printInfo("Done. Stack recreated from clean state.");
+    } catch (e) {
+      printError(e instanceof Error ? e.message : String(e));
+      process.exit(1);
+    }
   });
 }
 
 // src/commands/ai.ts
 import { execa as execa7 } from "execa";
 import { OllamaService } from "@eve/brain";
-import { getGlobalCliFlags as getGlobalCliFlags5, outputJson as outputJson4 } from "@eve/cli-kit";
+import { getGlobalCliFlags as getGlobalCliFlags6, outputJson as outputJson4 } from "@eve/cli-kit";
 import { readEveSecrets as readEveSecrets2, writeEveSecrets as writeEveSecrets2 } from "@eve/dna";
 function resolveHubBaseUrlFromSecrets(secrets) {
   const explicit = secrets?.synap?.hubBaseUrl?.trim();
@@ -1716,7 +1801,7 @@ function aiCommandGroup(program2) {
         ai: secrets?.ai ?? null,
         ollama: s
       };
-      if (getGlobalCliFlags5().json) {
+      if (getGlobalCliFlags6().json) {
         outputJson4(out);
         return;
       }
@@ -1744,7 +1829,7 @@ function aiCommandGroup(program2) {
   providers.command("list").description("List configured providers").action(async () => {
     const secrets = await readEveSecrets2(process.cwd());
     const list = secrets?.ai?.providers ?? [];
-    if (getGlobalCliFlags5().json) {
+    if (getGlobalCliFlags6().json) {
       outputJson4({ mode: secrets?.ai?.mode, defaultProvider: secrets?.ai?.defaultProvider, fallbackProvider: secrets?.ai?.fallbackProvider, providers: list });
       return;
     }
@@ -1826,7 +1911,7 @@ function aiCommandGroup(program2) {
         }
         const remote = getData.eveProviderRouting ?? null;
         const same = stableJson(remote) === stableJson(payload);
-        if (getGlobalCliFlags5().json) {
+        if (getGlobalCliFlags6().json) {
           outputJson4({ ok: true, workspaceId: opts.workspace, same, local: payload, remote });
           return;
         }
@@ -1852,7 +1937,7 @@ function aiCommandGroup(program2) {
       if (!res.ok) {
         throw new Error(String(data.error ?? `Sync failed with HTTP ${res.status}`));
       }
-      if (getGlobalCliFlags5().json) {
+      if (getGlobalCliFlags6().json) {
         outputJson4({ ok: true, workspaceId: opts.workspace, synced: payload });
         return;
       }
@@ -1865,7 +1950,7 @@ function aiCommandGroup(program2) {
   ai.command("models").description("List models (docker exec ollama list)").action(async () => {
     const ollama = new OllamaService();
     const models = await ollama.listModels();
-    if (getGlobalCliFlags5().json) {
+    if (getGlobalCliFlags6().json) {
       outputJson4({ models });
       return;
     }
@@ -1937,7 +2022,7 @@ ${colors.muted("Categories:")}
   ${colors.primary("Lifecycle")}  setup, init, grow, birth, status
   ${colors.primary("Organs")}     brain, arms, eyes, legs, builder
   ${colors.primary("Debug")}      doctor, logs, inspect
-  ${colors.primary("Management")} config, backup, update
+  ${colors.primary("Management")} config, backup, update, recreate
   ${colors.primary("AI")}         ai \u2026
 `
 );
@@ -1946,6 +2031,8 @@ program.command("init").description(
   "Alias for setup; forwards to setup flow by default, brain init only when synap repo is explicit."
 ).option("--profile <p>", "inference_only | data_pod | full").option("--with-ai", "Include Ollama for local AI").option("--model <model>", "AI model", "llama3.1:8b").option("--synap-repo <path>", "synap-backend checkout \u2192 official synap install").option("--domain <host>", "With --synap-repo: synap install --domain (default: localhost in brain init)").option("--email <email>", "With --synap-repo: required when domain isn't localhost").option("--with-openclaw", "With --synap-repo: synap install --with-openclaw").option("--with-rsshub", "With --synap-repo: synap install --with-rsshub").option("--from-image", "With --synap-repo: synap install --from-image").option("--from-source", "With --synap-repo: synap install --from-source").option("--admin-email <email>", "With --synap-repo: synap install --admin-email").option("--admin-password <secret>", "With --synap-repo: synap install --admin-password (preseed mode)").option("--admin-bootstrap-mode <mode>", "With --synap-repo: token | preseed (default token)").action(
   async (opts) => {
+    printEveDeprecation("init", "./synap install (on your server)  or  npx @synap-core/cli init (on your laptop)");
+    requireDelegationConfirmed();
     try {
       if (!opts.synapRepo && !process.env.SYNAP_REPO_ROOT) {
         const rootFlags = program.opts();
@@ -1998,7 +2085,7 @@ inspectCommand(program);
 configCommands(program);
 backupUpdateCommands(program);
 aiCommandGroup(program);
-var brain = program.command("brain").description("Intelligence & memory (Synap, DB, Redis, Ollama)");
+var brain = program.command("brain").description("Intelligence & memory (Synap, Ollama)");
 registerBrainCommands(brain);
 var arms = program.command("arms").description("Action \u2014 OpenClaw & MCP");
 registerArmsCommands(arms);

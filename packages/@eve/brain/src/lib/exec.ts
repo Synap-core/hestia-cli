@@ -45,3 +45,16 @@ export function execa(
     });
   });
 }
+
+/** Ensure the 'eve-network' Docker network exists. */
+export async function ensureNetwork(): Promise<void> {
+  try {
+    const { stdout } = await execa('docker', ['network', 'ls', '--format', '{{.Name}}']);
+    if (!stdout.includes('eve-network')) {
+      console.log('Creating eve-network...');
+      await execa('docker', ['network', 'create', 'eve-network']);
+    }
+  } catch (error) {
+    console.warn('Could not ensure Docker network:', error);
+  }
+}

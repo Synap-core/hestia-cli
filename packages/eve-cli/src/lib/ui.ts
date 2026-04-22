@@ -125,3 +125,41 @@ export function printBox(title: string, lines: string[]): void {
     })
   );
 }
+
+/**
+ * Print a loud deprecation banner for eve commands that silently delegate to
+ * the Synap bash script. The user must opt in with `--confirm-delegation` to
+ * actually run the underlying command — see `requireDelegationConfirmed`.
+ *
+ * Centralising this makes the boundary explicit and discoverable, and keeps
+ * the exit semantics consistent (exit 2 when the confirm flag is missing).
+ */
+export function printEveDeprecation(command: string, suggested: string): void {
+  console.log(
+    `
+${colors.warning('⚠️')}  ${colors.warning.bold(`\`eve ${command}\` is deprecated.`)}
+    This command delegates to the Synap bash script.
+    Please use instead:
+        ${colors.info(suggested)}
+    (eve organs/brain/arms subcommands remain available for Eve Entity System use.)
+`
+  );
+}
+
+/**
+ * Gate used by the deprecated commands above. Checks process.argv for
+ * `--confirm-delegation`; if absent, exits 2 without running the command.
+ *
+ * We read argv directly instead of wiring a Commander option on every
+ * command — keeps the opt-in uniform and impossible to forget.
+ */
+export function requireDelegationConfirmed(): void {
+  if (!process.argv.includes('--confirm-delegation')) {
+    console.log(
+      colors.muted(
+        '    Pass --confirm-delegation to proceed anyway (not recommended).\n'
+      )
+    );
+    process.exit(2);
+  }
+}

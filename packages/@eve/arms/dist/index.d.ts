@@ -12,6 +12,19 @@ interface OpenClawConfig {
     synapApiKey?: string;
     dokployApiUrl?: string;
     mcpServers?: Record<string, MCPConfig>;
+    /** Messaging platform bridges */
+    messaging?: {
+        enabled?: boolean;
+        platform?: 'telegram' | 'signal' | 'matrix';
+        botToken?: string;
+    };
+    /** Voice / telephony config */
+    voice?: {
+        enabled?: boolean;
+        provider?: 'twilio' | 'signal' | 'selfhosted';
+        phoneNumber?: string;
+        sipUri?: string;
+    };
 }
 declare class OpenClawService {
     private config;
@@ -28,6 +41,21 @@ declare class OpenClawService {
         synapApiKey?: string;
         dokployApiUrl?: string;
     }): void;
+    /**
+     * Configure messaging platform (Telegram, Signal, Matrix).
+     * Writes config and updates running container with env vars.
+     */
+    configureMessaging(platform: 'telegram' | 'signal' | 'matrix', config: {
+        botToken?: string;
+    }): Promise<void>;
+    /**
+     * Configure voice/telephony (Twilio, Signal, self-hosted SIP).
+     */
+    configureVoice(config: {
+        provider?: 'twilio' | 'signal' | 'selfhosted';
+        phoneNumber?: string;
+        sipUri?: string;
+    }): Promise<void>;
     /**
      * Start OpenClaw container
      */
@@ -71,6 +99,10 @@ declare function stopCommand(program: Command): void;
 
 declare function mcpCommand(program: Command): void;
 
+declare function messagingCommand(program: Command): void;
+
+declare function voiceCommand(program: Command): void;
+
 /**
  * Register Arms leaf commands on an existing `eve arms` Commander node
  */
@@ -78,4 +110,4 @@ declare function registerArmsCommands(arms: Command): void;
 /** @deprecated Use registerArmsCommands on the `arms` subcommand */
 declare function registerCommands(program: Command): void;
 
-export { type MCPConfig, type OpenClawConfig, OpenClawService, installCommand, mcpCommand, openclaw, registerArmsCommands, registerCommands, startCommand, stopCommand };
+export { type MCPConfig, type OpenClawConfig, OpenClawService, installCommand, mcpCommand, messagingCommand, openclaw, registerArmsCommands, registerCommands, startCommand, stopCommand, voiceCommand };

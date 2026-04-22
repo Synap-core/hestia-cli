@@ -35,8 +35,6 @@ declare function execa(command: string, args: string[], options?: {
     cwd?: string;
     env?: NodeJS.ProcessEnv;
 }): Promise<ExecResult>;
-/** Ensure the 'eve-network' Docker network exists. */
-declare function ensureNetwork(): Promise<void>;
 
 interface AIModelStatus {
     running: boolean;
@@ -64,6 +62,31 @@ declare class OllamaService {
     getStatus(): Promise<AIModelStatus>;
     listModels(): Promise<string[]>;
     private containerExists;
+}
+
+declare class PostgresService {
+    private containerName;
+    private image;
+    install(): Promise<void>;
+    start(): Promise<void>;
+    stop(): Promise<void>;
+    createDatabase(name: string): Promise<void>;
+    isHealthy(): Promise<boolean>;
+    private isRunning;
+    private containerExists;
+    private waitForReady;
+}
+
+declare class RedisService {
+    private containerName;
+    private image;
+    install(): Promise<void>;
+    start(): Promise<void>;
+    stop(): Promise<void>;
+    isHealthy(): Promise<boolean>;
+    private isRunning;
+    private containerExists;
+    private waitForReady;
 }
 
 interface BrainInitOptions {
@@ -100,11 +123,7 @@ declare function runInferenceInit(options?: InferenceInitOptions): Promise<void>
 
 declare function statusCommand(program: Command): void;
 
-declare function startCommand(program: Command): void;
-
-declare function stopCommand(program: Command): void;
-
 /** Register leaf commands on an existing `eve brain` Commander node */
 declare function registerBrainCommands(brain: Command): void;
 
-export { type AIModelStatus, type BrainInitOptions, type InferenceInitOptions, OllamaService, type SynapDelegatePaths, type SynapHealth, SynapService, ensureNetwork, execa, initCommand, registerBrainCommands, resolveSynapDelegate, runBrainInit, runInferenceInit, startCommand, statusCommand, stopCommand };
+export { type AIModelStatus, type BrainInitOptions, type InferenceInitOptions, OllamaService, PostgresService, RedisService, type SynapDelegatePaths, type SynapHealth, SynapService, execa, initCommand, registerBrainCommands, resolveSynapDelegate, runBrainInit, runInferenceInit, statusCommand };

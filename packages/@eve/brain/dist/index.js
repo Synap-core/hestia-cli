@@ -1,3 +1,6 @@
+// src/commands/init.ts
+import { EntityStateManager } from "@eve/dna";
+
 // src/lib/exec.ts
 import { spawn } from "child_process";
 function execa(command, args, options) {
@@ -31,423 +34,17 @@ function execa(command, args, options) {
     });
   });
 }
-
-// src/lib/synap-delegate.ts
-import { existsSync } from "fs";
-import { join } from "path";
-function resolveSynapDelegate() {
-  const repoRoot = process.env.SYNAP_REPO_ROOT?.trim();
-  if (!repoRoot || !existsSync(repoRoot)) {
-    return null;
+async function ensureNetwork() {
+  try {
+    const { stdout } = await execa("docker", ["network", "ls", "--format", "{{.Name}}"]);
+    if (!stdout.includes("eve-network")) {
+      console.log("Creating eve-network...");
+      await execa("docker", ["network", "create", "eve-network"]);
+    }
+  } catch (error) {
+    console.warn("Could not ensure Docker network:", error);
   }
-  const script = process.env.SYNAP_CLI?.trim() || join(repoRoot, "synap");
-  if (!existsSync(script)) {
-    return null;
-  }
-  const deployDir = join(repoRoot, "deploy");
-  if (!existsSync(join(deployDir, "docker-compose.yml"))) {
-    return null;
-  }
-  return { repoRoot, synapScript: script, deployDir };
 }
-
-// src/lib/synap.ts
-var SynapService = class {
-  containerName = "eve-brain-synap";
-  image = "ghcr.io/synap-core/backend:latest";
-  delegate() {
-    return resolveSynapDelegate();
-  }
-  async install() {
-    const d = this.delegate();
-    if (d) {
-      console.log("Synap Data Pod: using synap CLI (SYNAP_REPO_ROOT). Run install via eve brain init --synap-repo \u2026");
-      return;
-    }
-    console.log("Installing Synap backend...");
-    await execa("docker", ["pull", this.image], { stdio: "inherit" });
-    console.log("Synap backend image pulled successfully");
-  }
-  async start() {
-    const d = this.delegate();
-    if (d) {
-      console.log("Starting Synap stack via synap CLI...");
-      await execa("bash", [d.synapScript, "start"], {
-        cwd: d.repoRoot,
-        env: { ...process.env, SYNAP_DEPLOY_DIR: d.deployDir },
-        stdio: "inherit"
-      });
-      return;
-    }
-    console.log("Starting Synap backend...");
-    const running = await this.isRunning();
-    if (running) {
-      console.log("Synap backend is already running");
-      return;
-    }
-    const exists = await this.containerExists();
-    if (exists) {
-      await execa("docker", ["start", this.containerName], { stdio: "inherit" });
-    } else {
-      await execa(
-        "docker",
-        [
-          "run",
-          "-d",
-          "--name",
-          this.containerName,
-          "--network",
-          "eve-network",
-          "-p",
-          "4000:4000",
-          "-e",
-          "NODE_ENV=production",
-          "-e",
-          "DATABASE_URL=postgresql://eve:eve@eve-brain-postgres:5432/synap",
-          "-e",
-          "REDIS_URL=redis://eve-brain-redis:6379",
-          "-e",
-          "JWT_SECRET=hestia-local-dev-secret",
-          "--restart",
-          "unless-stopped",
-          this.image
-        ],
-        { stdio: "inherit" }
-      );
-    }
-    console.log("Synap backend started on port 4000");
-  }
-  async stop() {
-    const d = this.delegate();
-    if (d) {
-      console.log("Stopping Synap stack via synap CLI...");
-      await execa("bash", [d.synapScript, "stop"], {
-        cwd: d.repoRoot,
-        env: { ...process.env, SYNAP_DEPLOY_DIR: d.deployDir },
-        stdio: "inherit"
-      });
-      return;
-    }
-    console.log("Stopping Synap backend...");
-    const running = await this.isRunning();
-    if (!running) {
-      console.log("Synap backend is not running");
-      return;
-    }
-    await execa("docker", ["stop", this.containerName], { stdio: "inherit" });
-    console.log("Synap backend stopped");
-  }
-  async isHealthy() {
-    if (this.delegate()) {
-      try {
-        const res = await fetch("http://127.0.0.1:4000/health", { signal: AbortSignal.timeout(3e3) });
-        return res.ok;
-      } catch {
-        return false;
-      }
-    }
-    try {
-      const { stdout } = await execa("docker", [
-        "inspect",
-        "--format",
-        "{{.State.Health.Status}}",
-        this.containerName
-      ]);
-      return stdout.trim() === "healthy";
-    } catch {
-      return false;
-    }
-  }
-  async getVersion() {
-    if (this.delegate()) {
-      return "synap-compose";
-    }
-    try {
-      const { stdout } = await execa("docker", [
-        "inspect",
-        "--format",
-        "{{.Config.Image}}",
-        this.containerName
-      ]);
-      return stdout.trim();
-    } catch {
-      return "unknown";
-    }
-  }
-  async isRunning() {
-    try {
-      const { stdout } = await execa("docker", [
-        "ps",
-        "--filter",
-        `name=${this.containerName}`,
-        "--filter",
-        "status=running",
-        "--format",
-        "{{.Names}}"
-      ]);
-      return stdout.trim() === this.containerName;
-    } catch {
-      return false;
-    }
-  }
-  async containerExists() {
-    try {
-      const { stdout } = await execa("docker", [
-        "ps",
-        "-a",
-        "--filter",
-        `name=${this.containerName}`,
-        "--format",
-        "{{.Names}}"
-      ]);
-      return stdout.trim() === this.containerName;
-    } catch {
-      return false;
-    }
-  }
-};
-
-// src/commands/init.ts
-import { EntityStateManager } from "@eve/dna";
-
-// src/lib/postgres.ts
-var PostgresService = class {
-  containerName = "eve-brain-postgres";
-  image = "postgres:16-alpine";
-  async install() {
-    console.log("Installing PostgreSQL...");
-    await execa("docker", ["pull", this.image], { stdio: "inherit" });
-    console.log("PostgreSQL image pulled successfully");
-  }
-  async start() {
-    const running = await this.isRunning();
-    if (running) {
-      console.log("PostgreSQL is already running");
-      return;
-    }
-    const exists = await this.containerExists();
-    if (exists) {
-      await execa("docker", ["start", this.containerName], { stdio: "inherit" });
-    } else {
-      await execa("docker", [
-        "run",
-        "-d",
-        "--name",
-        this.containerName,
-        "--network",
-        "eve-network",
-        "-p",
-        "5432:5432",
-        "-e",
-        "POSTGRES_USER=eve",
-        "-e",
-        "POSTGRES_PASSWORD=eve",
-        "-e",
-        "POSTGRES_DB=synap",
-        "-v",
-        "eve-postgres-data:/var/lib/postgresql/data",
-        "--restart",
-        "unless-stopped",
-        this.image
-      ], { stdio: "inherit" });
-    }
-    console.log("PostgreSQL started on port 5432");
-    await this.waitForReady();
-  }
-  async stop() {
-    console.log("Stopping PostgreSQL...");
-    const running = await this.isRunning();
-    if (!running) {
-      console.log("PostgreSQL is not running");
-      return;
-    }
-    await execa("docker", ["stop", this.containerName], { stdio: "inherit" });
-    console.log("PostgreSQL stopped");
-  }
-  async createDatabase(name) {
-    console.log(`Creating database: ${name}...`);
-    await execa("docker", [
-      "exec",
-      this.containerName,
-      "psql",
-      "-U",
-      "eve",
-      "-c",
-      `CREATE DATABASE ${name};`
-    ], { stdio: "inherit" });
-    console.log(`Database ${name} created`);
-  }
-  async isHealthy() {
-    try {
-      await execa("docker", [
-        "exec",
-        this.containerName,
-        "pg_isready",
-        "-U",
-        "eve"
-      ]);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-  async isRunning() {
-    try {
-      const { stdout } = await execa("docker", [
-        "ps",
-        "--filter",
-        `name=${this.containerName}`,
-        "--filter",
-        "status=running",
-        "--format",
-        "{{.Names}}"
-      ]);
-      return stdout.trim() === this.containerName;
-    } catch {
-      return false;
-    }
-  }
-  async containerExists() {
-    try {
-      const { stdout } = await execa("docker", [
-        "ps",
-        "-a",
-        "--filter",
-        `name=${this.containerName}`,
-        "--format",
-        "{{.Names}}"
-      ]);
-      return stdout.trim() === this.containerName;
-    } catch {
-      return false;
-    }
-  }
-  async waitForReady() {
-    console.log("Waiting for PostgreSQL to be ready...");
-    let attempts = 0;
-    const maxAttempts = 30;
-    while (attempts < maxAttempts) {
-      if (await this.isHealthy()) {
-        console.log("PostgreSQL is ready");
-        return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 1e3));
-      attempts++;
-    }
-    throw new Error("PostgreSQL failed to become ready");
-  }
-};
-
-// src/lib/redis.ts
-var RedisService = class {
-  containerName = "eve-brain-redis";
-  image = "redis:7-alpine";
-  async install() {
-    console.log("Installing Redis...");
-    await execa("docker", ["pull", this.image], { stdio: "inherit" });
-    console.log("Redis image pulled successfully");
-  }
-  async start() {
-    const running = await this.isRunning();
-    if (running) {
-      console.log("Redis is already running");
-      return;
-    }
-    const exists = await this.containerExists();
-    if (exists) {
-      await execa("docker", ["start", this.containerName], { stdio: "inherit" });
-    } else {
-      await execa("docker", [
-        "run",
-        "-d",
-        "--name",
-        this.containerName,
-        "--network",
-        "eve-network",
-        "-p",
-        "6379:6379",
-        "-v",
-        "eve-redis-data:/data",
-        "--restart",
-        "unless-stopped",
-        this.image,
-        "redis-server",
-        "--appendonly",
-        "yes"
-      ], { stdio: "inherit" });
-    }
-    console.log("Redis started on port 6379");
-    await this.waitForReady();
-  }
-  async stop() {
-    console.log("Stopping Redis...");
-    const running = await this.isRunning();
-    if (!running) {
-      console.log("Redis is not running");
-      return;
-    }
-    await execa("docker", ["stop", this.containerName], { stdio: "inherit" });
-    console.log("Redis stopped");
-  }
-  async isHealthy() {
-    try {
-      await execa("docker", [
-        "exec",
-        this.containerName,
-        "redis-cli",
-        "ping"
-      ]);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-  async isRunning() {
-    try {
-      const { stdout } = await execa("docker", [
-        "ps",
-        "--filter",
-        `name=${this.containerName}`,
-        "--filter",
-        "status=running",
-        "--format",
-        "{{.Names}}"
-      ]);
-      return stdout.trim() === this.containerName;
-    } catch {
-      return false;
-    }
-  }
-  async containerExists() {
-    try {
-      const { stdout } = await execa("docker", [
-        "ps",
-        "-a",
-        "--filter",
-        `name=${this.containerName}`,
-        "--format",
-        "{{.Names}}"
-      ]);
-      return stdout.trim() === this.containerName;
-    } catch {
-      return false;
-    }
-  }
-  async waitForReady() {
-    console.log("Waiting for Redis to be ready...");
-    let attempts = 0;
-    const maxAttempts = 30;
-    while (attempts < maxAttempts) {
-      if (await this.isHealthy()) {
-        console.log("Redis is ready");
-        return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 1e3));
-      attempts++;
-    }
-    throw new Error("Redis failed to become ready");
-  }
-};
 
 // src/lib/ollama.ts
 var OllamaService = class {
@@ -563,124 +160,144 @@ var OllamaService = class {
   }
 };
 
+// src/lib/synap-delegate.ts
+import { existsSync } from "fs";
+import { join } from "path";
+function resolveSynapDelegate() {
+  const repoRoot = process.env.SYNAP_REPO_ROOT?.trim();
+  if (!repoRoot || !existsSync(repoRoot)) {
+    return null;
+  }
+  const script = process.env.SYNAP_CLI?.trim() || join(repoRoot, "synap");
+  if (!existsSync(script)) {
+    return null;
+  }
+  const deployDir = join(repoRoot, "deploy");
+  if (!existsSync(join(deployDir, "docker-compose.yml"))) {
+    return null;
+  }
+  return { repoRoot, synapScript: script, deployDir };
+}
+
 // src/commands/init.ts
+async function cleanupKnownStaleState(deployDir) {
+  console.log("Cleaning known stale Synap artifacts...");
+  try {
+    await execa("bash", ["-lc", `rm -f "${deployDir}/patch_migration.js"`], { stdio: "inherit" });
+    await execa(
+      "bash",
+      [
+        "-lc",
+        `if [ -f "${deployDir}/docker-compose.override.yml" ] && grep -q "patch_migration.js" "${deployDir}/docker-compose.override.yml"; then rm -f "${deployDir}/docker-compose.override.yml"; fi`
+      ],
+      { stdio: "inherit" }
+    );
+  } catch {
+  }
+  try {
+    await execa("docker", ["rm", "-f", "eve-brain-synap"], { stdio: "pipe" });
+  } catch {
+  }
+}
 async function runBrainInit(options) {
   const repo = options.synapRepo?.trim() || process.env.SYNAP_REPO_ROOT?.trim() || void 0;
   if (repo) {
     process.env.SYNAP_REPO_ROOT = repo;
   }
   const delegate = resolveSynapDelegate();
-  if (delegate) {
-    const domain = options.domain?.trim() || "localhost";
-    const email = options.email?.trim() || process.env.LETSENCRYPT_EMAIL?.trim() || process.env.SYNAP_LETSENCRYPT_EMAIL?.trim();
-    const adminEmail = options.adminEmail?.trim() || process.env.ADMIN_EMAIL?.trim();
-    const adminPassword = options.adminPassword?.trim() || process.env.ADMIN_PASSWORD?.trim();
-    const adminBootstrapMode = options.adminBootstrapMode ?? "token";
-    if (domain !== "localhost" && !email) {
-      throw new Error(
-        "Non-localhost domain requires --email (or LETSENCRYPT_EMAIL) for synap install."
-      );
-    }
-    console.log("Initializing Eve brain via Synap Data Pod CLI...\n");
-    console.log(`  SYNAP_REPO_ROOT (install cwd): ${delegate.repoRoot}`);
-    console.log(`  SYNAP_DEPLOY_DIR (compose dir):  ${delegate.deployDir}`);
-    console.log(
-      "  Note: Eve state under .eve/ uses your shell cwd (where you ran eve); Synap always uses the paths above.\n"
+  if (!delegate) {
+    throw new Error(
+      "Legacy Eve-managed Synap install path has been removed. Provide a valid `--synap-repo` (or `SYNAP_REPO_ROOT`) pointing to a synap-backend checkout with `synap` and `deploy/docker-compose.yml`."
     );
-    const installArgs = [delegate.synapScript, "install", "--non-interactive", "--domain", domain];
-    if (email) {
-      installArgs.push("--email", email);
-    }
-    if (adminBootstrapMode) {
-      installArgs.push("--admin-bootstrap-mode", adminBootstrapMode);
-    }
-    if (adminEmail) {
-      installArgs.push("--admin-email", adminEmail);
-    }
-    if (adminPassword) {
-      installArgs.push("--admin-password", adminPassword);
-    }
-    if (options.fromImage) {
-      installArgs.push("--from-image");
-    }
-    if (options.fromSource) {
-      installArgs.push("--from-source");
-    }
-    if (options.withOpenclaw) {
-      installArgs.push("--with-openclaw");
-    }
-    if (options.withRsshub) {
-      installArgs.push("--with-rsshub");
-    }
-    await execa("bash", installArgs, {
-      cwd: delegate.repoRoot,
-      env: { ...process.env, SYNAP_DEPLOY_DIR: delegate.deployDir },
-      stdio: "inherit"
-    });
-    if (options.withAi) {
-      console.log("\n\u{1F916} Local Ollama (optional; not part of default Synap compose)\n");
-      await ensureNetwork();
-      const ollama2 = new OllamaService();
-      await ollama2.install();
-      await ollama2.start();
-      await ollama2.pullModel(options.model ?? "llama3.1:8b");
-    }
-    const stateManager2 = new EntityStateManager();
-    await stateManager2.updateOrgan("brain", "ready");
-    console.log("\n\u2705 Eve brain initialized (Synap Data Pod).");
-    if (domain === "localhost") {
-      console.log("  API: http://localhost:4000 (backend; Caddy may serve https://localhost when configured)");
-    } else {
-      console.log(`  Public URL: https://${domain} (see deploy .env PUBLIC_URL)`);
-    }
-    if (options.withRsshub) {
-      console.log("  RSSHub: http://localhost:1200 (default compose port)");
-    }
-    return;
   }
-  console.log("Initializing Eve brain (Eve-managed Docker containers)...\n");
+  const domain = options.domain?.trim() || "localhost";
+  const email = options.email?.trim() || process.env.LETSENCRYPT_EMAIL?.trim() || process.env.SYNAP_LETSENCRYPT_EMAIL?.trim();
+  const adminEmail = options.adminEmail?.trim() || process.env.ADMIN_EMAIL?.trim();
+  const adminPassword = options.adminPassword?.trim() || process.env.ADMIN_PASSWORD?.trim();
+  const adminBootstrapMode = options.adminBootstrapMode ?? "token";
+  if (domain !== "localhost" && !email) {
+    throw new Error(
+      "Non-localhost domain requires --email (or LETSENCRYPT_EMAIL) for synap install."
+    );
+  }
+  console.log("Initializing Eve brain via Synap Data Pod CLI...\n");
+  console.log(`  SYNAP_REPO_ROOT (install cwd): ${delegate.repoRoot}`);
+  console.log(`  SYNAP_DEPLOY_DIR (compose dir):  ${delegate.deployDir}`);
   console.log(
-    "  Tip: for the full Data Pod, set SYNAP_REPO_ROOT to your backend checkout and run\n  SYNAP_REPO_ROOT=/path/to/backend eve brain init\n  or: eve brain init --synap-repo /path/to/backend\n"
+    "  Note: Eve state under .eve/ uses your shell cwd (where you ran eve); Synap always uses the paths above.\n"
   );
-  const synap = new SynapService();
-  const postgres = new PostgresService();
-  const redis = new RedisService();
-  const ollama = new OllamaService();
-  await ensureNetwork();
-  console.log("\n\u{1F4E6} Synap Backend");
-  await synap.install();
-  await synap.start();
-  console.log("\n\u{1F4E6} Data Stores");
-  await postgres.install();
-  await postgres.start();
-  await redis.install();
-  await redis.start();
+  await cleanupKnownStaleState(delegate.deployDir);
+  const installArgs = [delegate.synapScript, "install", "--non-interactive", "--domain", domain];
+  if (email) {
+    installArgs.push("--email", email);
+  }
+  if (adminBootstrapMode) {
+    installArgs.push("--admin-bootstrap-mode", adminBootstrapMode);
+  }
+  if (adminEmail) {
+    installArgs.push("--admin-email", adminEmail);
+  }
+  if (adminPassword) {
+    installArgs.push("--admin-password", adminPassword);
+  }
+  if (options.fromImage) {
+    installArgs.push("--from-image");
+  }
+  if (options.fromSource) {
+    installArgs.push("--from-source");
+  }
+  if (options.withOpenclaw) {
+    installArgs.push("--with-openclaw");
+  }
+  if (options.withRsshub) {
+    installArgs.push("--with-rsshub");
+  }
+  await execa("bash", installArgs, {
+    cwd: delegate.repoRoot,
+    env: { ...process.env, SYNAP_DEPLOY_DIR: delegate.deployDir },
+    stdio: "inherit"
+  });
   if (options.withAi) {
-    console.log("\n\u{1F916} AI Services");
+    console.log("\n\u{1F916} Local Ollama (optional; not part of default Synap compose)\n");
+    await ensureNetwork();
+    const ollama = new OllamaService();
     await ollama.install();
     await ollama.start();
     await ollama.pullModel(options.model ?? "llama3.1:8b");
   }
   const stateManager = new EntityStateManager();
   await stateManager.updateOrgan("brain", "ready");
-  console.log("\n\u2705 Eve brain initialized successfully!");
-  console.log("\nServices:");
-  console.log("  Synap Backend: http://localhost:4000");
-  console.log("  PostgreSQL: localhost:5432");
-  console.log("  Redis: localhost:6379");
-  if (options.withAi) {
-    console.log("  Ollama: http://localhost:11434");
-    console.log(`  Model: ${options.model}`);
+  console.log("\n\u2705 Eve brain initialized (Synap Data Pod).");
+  if (domain === "localhost") {
+    console.log("  API: http://localhost:4000 (backend; Caddy may serve https://localhost when configured)");
+  } else {
+    console.log(`  Public URL: https://${domain} (see deploy .env PUBLIC_URL)`);
+  }
+  if (options.withRsshub) {
+    console.log("  RSSHub: http://localhost:1200 (default compose port)");
   }
 }
 function initCommand(program) {
   program.command("init").description(
-    "Initialize brain: Eve Docker stack, or full Synap Data Pod when --synap-repo / SYNAP_REPO_ROOT is set"
-  ).option("--with-ai", "Include Ollama for local AI (alongside Synap or Eve stack)").option("--model <model>", "AI model to use", "llama3.1:8b").option(
+    "Initialize brain via Synap Data Pod (requires --synap-repo or SYNAP_REPO_ROOT)"
+  ).option("--with-ai", "Include local Ollama sidecar (optional)").option("--model <model>", "AI model to use", "llama3.1:8b").option(
     "--synap-repo <path>",
-    "Path to backend checkout; runs official synap install instead of Eve brain containers"
+    "Path to backend checkout; required for official synap install"
   ).option("--domain <host>", "With --synap-repo: DOMAIN for synap install", "localhost").option("--email <email>", "With --synap-repo: SSL contact (required if domain isn't localhost)").option("--with-openclaw", "With --synap-repo: pass --with-openclaw to synap install").option("--with-rsshub", "With --synap-repo: pass --with-rsshub to synap install").option("--from-image", "With --synap-repo: synap install --from-image").option("--from-source", "With --synap-repo: synap install --from-source").option("--admin-email <email>", "With --synap-repo: admin bootstrap email for synap install").option("--admin-password <secret>", "With --synap-repo: admin password for preseed bootstrap").option("--admin-bootstrap-mode <mode>", "With --synap-repo: preseed | token (default token)").action(
     async (options) => {
+      console.log(
+        `
+\u26A0\uFE0F  \`eve brain init\` is deprecated.
+    This command delegates to the Synap bash script.
+    Please use instead:
+        ./synap install (on your server)  or  npx @synap-core/cli init (on your laptop)
+    (eve organs/brain/arms subcommands remain available for Eve Entity System use.)
+`
+      );
+      if (!process.argv.includes("--confirm-delegation")) {
+        console.log("    Pass --confirm-delegation to proceed anyway (not recommended).\n");
+        process.exit(2);
+      }
       try {
         await runBrainInit({
           withAi: options.withAi,
@@ -703,17 +320,6 @@ function initCommand(program) {
     }
   );
 }
-async function ensureNetwork() {
-  try {
-    const { stdout } = await execa("docker", ["network", "ls", "--format", "{{.Name}}"]);
-    if (!stdout.includes("eve-network")) {
-      console.log("Creating eve-network...");
-      await execa("docker", ["network", "create", "eve-network"]);
-    }
-  } catch (error) {
-    console.warn("Could not ensure network:", error);
-  }
-}
 
 // src/commands/status.ts
 function statusCommand(program) {
@@ -721,44 +327,18 @@ function statusCommand(program) {
     try {
       console.log("Checking brain health...\n");
       const delegate = resolveSynapDelegate();
-      if (delegate) {
-        await execa("bash", [delegate.synapScript, "health"], {
-          cwd: delegate.repoRoot,
-          env: { ...process.env, SYNAP_DEPLOY_DIR: delegate.deployDir },
-          stdio: "inherit"
-        });
-        const ollama2 = new OllamaService();
-        const ollamaStatus2 = await ollama2.getStatus();
-        if (ollamaStatus2.running) {
-          console.log("\nOllama (sidecar)");
-          if (ollamaStatus2.modelsInstalled.length > 0) {
-            for (const model of ollamaStatus2.modelsInstalled) {
-              const current = model === ollamaStatus2.currentModel ? " (current)" : "";
-              console.log(`  \u2022 ${model}${current}`);
-            }
-          }
-        }
-        return;
+      if (!delegate) {
+        throw new Error(
+          "Synap delegate not configured. Set SYNAP_REPO_ROOT to a valid synap-backend checkout and rerun `eve brain status`."
+        );
       }
-      const synap = new SynapService();
-      const postgres = new PostgresService();
-      const redis = new RedisService();
+      await execa("bash", [delegate.synapScript, "health"], {
+        cwd: delegate.repoRoot,
+        env: { ...process.env, SYNAP_DEPLOY_DIR: delegate.deployDir },
+        stdio: "inherit"
+      });
       const ollama = new OllamaService();
-      const synapHealthy = await synap.isHealthy();
-      const postgresHealthy = await postgres.isHealthy();
-      const redisHealthy = await redis.isHealthy();
       const ollamaStatus = await ollama.getStatus();
-      console.log("Brain Status");
-      const services = [
-        { name: "Synap Backend", healthy: synapHealthy, url: "http://localhost:4000" },
-        { name: "PostgreSQL", healthy: postgresHealthy, url: "localhost:5432" },
-        { name: "Redis", healthy: redisHealthy, url: "localhost:6379" },
-        { name: "Ollama", healthy: ollamaStatus.running, url: "http://localhost:11434" }
-      ];
-      for (const service of services) {
-        const mark = service.healthy ? "\u2713" : "\u2717";
-        console.log(`  ${mark} ${service.name.padEnd(20)} ${service.url}`);
-      }
       if (ollamaStatus.running) {
         console.log("AI Models");
         if (ollamaStatus.modelsInstalled.length > 0) {
@@ -771,13 +351,6 @@ function statusCommand(program) {
           console.log("  Run: eve brain init --with-ai --model <model>");
         }
       }
-      const allHealthy = synapHealthy && postgresHealthy && redisHealthy;
-      console.log("Summary");
-      if (allHealthy) {
-        console.log("All core services are healthy!");
-      } else {
-        console.warn('Some services are unhealthy. Run "eve brain init" to fix.');
-      }
     } catch (error) {
       console.error("Failed to check brain status:", error);
       process.exit(1);
@@ -785,24 +358,82 @@ function statusCommand(program) {
   });
 }
 
+// src/lib/synap.ts
+var SynapService = class {
+  delegate() {
+    return resolveSynapDelegate();
+  }
+  requireDelegate() {
+    const d = this.delegate();
+    if (!d) {
+      throw new Error(
+        "Synap delegate not configured. Set SYNAP_REPO_ROOT to a valid synap-backend checkout (must contain `synap` and `deploy/docker-compose.yml`), then run `eve setup --profile data_pod --synap-repo <path>`."
+      );
+    }
+    return d;
+  }
+  async install() {
+    this.requireDelegate();
+    console.log(
+      "Synap install is managed via the official synap CLI. Use `eve brain init --synap-repo <path>` or `eve setup --profile data_pod`."
+    );
+  }
+  async start() {
+    const d = this.requireDelegate();
+    console.log("Starting Synap stack via synap CLI...");
+    await execa("bash", [d.synapScript, "start"], {
+      cwd: d.repoRoot,
+      env: { ...process.env, SYNAP_DEPLOY_DIR: d.deployDir },
+      stdio: "inherit"
+    });
+  }
+  async stop() {
+    const d = this.requireDelegate();
+    console.log("Stopping Synap stack via synap CLI...");
+    await execa("bash", [d.synapScript, "stop"], {
+      cwd: d.repoRoot,
+      env: { ...process.env, SYNAP_DEPLOY_DIR: d.deployDir },
+      stdio: "inherit"
+    });
+  }
+  async isHealthy() {
+    this.requireDelegate();
+    try {
+      const res = await fetch("http://127.0.0.1:4000/health", { signal: AbortSignal.timeout(3e3) });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+  async getVersion() {
+    this.requireDelegate();
+    return "synap-compose";
+  }
+};
+
+// src/commands/start.ts
+function startCommand(program) {
+  program.command("start").description("Start Synap backend container").action(async () => {
+    const synap = new SynapService();
+    await synap.start();
+  });
+}
+
+// src/commands/stop.ts
+function stopCommand(program) {
+  program.command("stop").description("Stop Synap backend container").action(async () => {
+    const synap = new SynapService();
+    await synap.stop();
+  });
+}
+
 // src/inference-init.ts
 import { EntityStateManager as EntityStateManager2 } from "@eve/dna";
 import { InferenceGateway } from "@eve/legs";
-async function ensureNetwork2() {
-  try {
-    const { stdout } = await execa("docker", ["network", "ls", "--format", "{{.Name}}"]);
-    if (!stdout.includes("eve-network")) {
-      console.log("Creating eve-network...");
-      await execa("docker", ["network", "create", "eve-network"]);
-    }
-  } catch (error) {
-    console.warn("Could not ensure Docker network:", error);
-  }
-}
 async function runInferenceInit(options = {}) {
   const withGateway = options.withGateway !== false;
   const internalOnly = Boolean(options.internalOllamaOnly);
-  await ensureNetwork2();
+  await ensureNetwork();
   const ollama = new OllamaService();
   await ollama.install();
   await ollama.start({ publishToHost: !internalOnly });
@@ -830,25 +461,20 @@ async function runInferenceInit(options = {}) {
 function registerBrainCommands(brain) {
   initCommand(brain);
   statusCommand(brain);
-  brain.command("start").description("Start Synap backend container").action(async () => {
-    const synap = new SynapService();
-    await synap.start();
-  });
-  brain.command("stop").description("Stop Synap backend container").action(async () => {
-    const synap = new SynapService();
-    await synap.stop();
-  });
+  startCommand(brain);
+  stopCommand(brain);
 }
 export {
   OllamaService,
-  PostgresService,
-  RedisService,
   SynapService,
+  ensureNetwork,
   execa,
   initCommand,
   registerBrainCommands,
   resolveSynapDelegate,
   runBrainInit,
   runInferenceInit,
-  statusCommand
+  startCommand,
+  statusCommand,
+  stopCommand
 };

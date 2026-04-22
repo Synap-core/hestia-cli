@@ -23,7 +23,7 @@ import { inspectCommand } from './commands/debug/inspect.js';
 import { configCommands } from './commands/manage/config-cmd.js';
 import { backupUpdateCommands } from './commands/manage/backup-update.js';
 import { aiCommandGroup } from './commands/ai.js';
-import { colors, emojis } from './lib/ui.js';
+import { colors, emojis, printEveDeprecation, requireDelegationConfirmed } from './lib/ui.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -68,7 +68,7 @@ program.addHelpText(
     `  ${colors.primary('Lifecycle')}  setup, init, grow, birth, status\n` +
     `  ${colors.primary('Organs')}     brain, arms, eyes, legs, builder\n` +
     `  ${colors.primary('Debug')}      doctor, logs, inspect\n` +
-    `  ${colors.primary('Management')} config, backup, update\n` +
+    `  ${colors.primary('Management')} config, backup, update, recreate\n` +
     `  ${colors.primary('AI')}         ai …\n`
 );
 
@@ -109,6 +109,9 @@ program
       adminPassword?: string;
       adminBootstrapMode?: 'token' | 'preseed';
     }) => {
+      printEveDeprecation('init', './synap install (on your server)  or  npx @synap-core/cli init (on your laptop)');
+      requireDelegationConfirmed();
+
       try {
         if (!opts.synapRepo && !process.env.SYNAP_REPO_ROOT) {
           const rootFlags = program.opts() as { yes?: boolean; json?: boolean };
@@ -171,7 +174,7 @@ backupUpdateCommands(program);
 aiCommandGroup(program);
 
 // --- Organs ---
-const brain = program.command('brain').description('Intelligence & memory (Synap, DB, Redis, Ollama)');
+const brain = program.command('brain').description('Intelligence & memory (Synap, Ollama)');
 registerBrainCommands(brain);
 
 const arms = program.command('arms').description('Action — OpenClaw & MCP');

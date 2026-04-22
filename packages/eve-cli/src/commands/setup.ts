@@ -23,7 +23,7 @@ import {
 import { runBrainInit, runInferenceInit } from '@eve/brain';
 import { runLegsProxySetup } from '@eve/legs';
 import { getGlobalCliFlags, outputJson } from '@eve/cli-kit';
-import { colors, emojis } from '../lib/ui.js';
+import { colors, emojis, printEveDeprecation, requireDelegationConfirmed } from '../lib/ui.js';
 
 export interface SetupCliOptions {
   profile?: string;
@@ -318,6 +318,9 @@ export function setupCommand(program: Command): void {
         'Docs: hestia-cli/docs/EVE_SETUP_PROFILES.md, hestia-cli/docs/AI_ROUTING_CONSOLIDATION_ADR.md, and hestia-cli/README.md\n',
     )
     .action(async (opts: SetupCliOptions) => {
+      printEveDeprecation('setup', './synap install (on your server)');
+      requireDelegationConfirmed();
+
       const flags = getGlobalCliFlags();
       const cwd = process.cwd();
       const existing = await readSetupProfile(cwd);
@@ -629,27 +632,7 @@ export function setupCommand(program: Command): void {
           installMode = mode as 'auto' | 'from_image' | 'from_source';
         }
 
-        const askOpenclaw = await confirm({
-          message: 'Install OpenClaw during Synap install?',
-          initialValue: installWithOpenclaw,
-        });
-        if (isCancel(askOpenclaw)) {
-          console.log(colors.muted('Cancelled.'));
-          return;
-        }
-        installWithOpenclaw = Boolean(askOpenclaw);
-
-        const askRsshub = await confirm({
-          message: 'Enable RSSHub during Synap install?',
-          initialValue: installWithRsshub,
-        });
-        if (isCancel(askRsshub)) {
-          console.log(colors.muted('Cancelled.'));
-          return;
-        }
-        installWithRsshub = Boolean(askRsshub);
-
-        const mode = await select({
+        const bootstrapMode = await select({
           message: 'Admin bootstrap mode for Synap',
           options: [
             {
@@ -665,11 +648,11 @@ export function setupCommand(program: Command): void {
           ],
           initialValue: adminBootstrapMode,
         });
-        if (isCancel(mode)) {
+        if (isCancel(bootstrapMode)) {
           console.log(colors.muted('Cancelled.'));
           return;
         }
-        adminBootstrapMode = mode as 'preseed' | 'token';
+        adminBootstrapMode = bootstrapMode as 'preseed' | 'token';
 
         if (adminBootstrapMode === 'preseed') {
           const ae = await text({
@@ -703,6 +686,30 @@ export function setupCommand(program: Command): void {
             process.exit(1);
           }
         }
+
+        const askOpenclaw = await confirm({
+          message:
+            adminBootstrapMode === 'preseed'
+              ? 'Install OpenClaw during Synap install? (A workspace exists after preseed, so the add-on can provision immediately.)'
+              : 'Enable OpenClaw for this pod? (Token bootstrap has no workspace yet — Synap install skips the add-on; the admin UI will offer setup after you register.)',
+          initialValue:
+            adminBootstrapMode === 'preseed' ? installWithOpenclaw : false,
+        });
+        if (isCancel(askOpenclaw)) {
+          console.log(colors.muted('Cancelled.'));
+          return;
+        }
+        installWithOpenclaw = Boolean(askOpenclaw);
+
+        const askRsshub = await confirm({
+          message: 'Enable RSSHub during Synap install?',
+          initialValue: installWithRsshub,
+        });
+        if (isCancel(askRsshub)) {
+          console.log(colors.muted('Cancelled.'));
+          return;
+        }
+        installWithRsshub = Boolean(askRsshub);
 
         if (!tunnelProvider) {
           const t = await select({
@@ -807,6 +814,18 @@ export function setupCommand(program: Command): void {
         process.exit(1);
       }
 
+      const synapInstallWithOpenclaw =
+        installWithOpenclaw && adminBootstrapMode === 'preseed';
+      if (installWithOpenclaw && adminBootstrapMode === 'token' && !opts.dryRun) {
+        if (!flags.json) {
+          console.log(
+            colors.info(
+              'OpenClaw: token bootstrap has no workspace at install time, so `synap install` runs without --with-openclaw. After you finish /admin/bootstrap, use the admin dashboard prompt or run `./synap services add openclaw` on the server.',
+            ),
+          );
+        }
+      }
+
       if (!flags.json) {
         const synapReachability =
           installDomain === 'localhost'
@@ -853,6 +872,7 @@ export function setupCommand(program: Command): void {
             email: installEmail ?? null,
             mode: installMode,
             withOpenclaw: installWithOpenclaw,
+            synapInstallWithOpenclaw,
             withRsshub: installWithRsshub,
             adminBootstrapMode,
             adminEmail: adminEmail ?? null,
@@ -1028,7 +1048,7 @@ export function setupCommand(program: Command): void {
             synapRepo: repo,
             domain: installDomain,
             email: installEmail,
-            withOpenclaw: installWithOpenclaw,
+            withOpenclaw: synapInstallWithOpenclaw,
             withRsshub: installWithRsshub,
             fromImage: installMode === 'from_image',
             fromSource: installMode === 'from_source',
@@ -1062,7 +1082,7 @@ export function setupCommand(program: Command): void {
             synapRepo: repo,
             domain: installDomain,
             email: installEmail,
-            withOpenclaw: installWithOpenclaw,
+            withOpenclaw: synapInstallWithOpenclaw,
             withRsshub: installWithRsshub,
             fromImage: installMode === 'from_image',
             fromSource: installMode === 'from_source',

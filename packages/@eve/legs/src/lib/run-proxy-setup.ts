@@ -3,7 +3,7 @@ import { TunnelService } from './tunnel.js';
 
 export type LegsProxySetupOptions = {
   domain?: string;
-  tunnel?: 'pangolin' | 'cloudflare';
+  tunnel?: 'pangolin' | 'cloudflare' | 'pangolin_tunnel' | 'cloudflare_tunnel';
   tunnelDomain?: string;
   ssl?: boolean;
   /** Use /opt/eve/traefik instead of Dokploy-managed Traefik */
@@ -46,17 +46,23 @@ export async function runLegsProxySetup(options: LegsProxySetupOptions): Promise
   }
 
   if (options.tunnel) {
-    console.log(`\nStep 3: Setting up ${options.tunnel} tunnel...`);
+    const tunnelMode =
+      options.tunnel === 'cloudflare_tunnel'
+        ? 'cloudflare'
+        : options.tunnel === 'pangolin_tunnel'
+          ? 'pangolin'
+          : options.tunnel;
+    console.log(`\nStep 3: Setting up ${tunnelMode} tunnel...`);
     const tunnel = new TunnelService();
 
-    if (options.tunnel === 'pangolin') {
+    if (tunnelMode === 'pangolin') {
       await tunnel.setupPangolin({ domain: options.tunnelDomain });
       console.log('  ✓ Pangolin tunnel configured');
-    } else if (options.tunnel === 'cloudflare') {
+    } else if (tunnelMode === 'cloudflare') {
       await tunnel.setupCloudflare({ domain: options.tunnelDomain });
       console.log('  ✓ Cloudflare tunnel configured');
     } else {
-      console.warn(`  ⚠ Unknown tunnel provider: ${options.tunnel}`);
+      console.warn(`  ⚠ Unknown tunnel provider: ${String(options.tunnel)}`);
     }
   }
 

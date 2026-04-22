@@ -8,6 +8,8 @@ import {
   printKeyValue,
   formatOrgan,
   printBox,
+  printEveDeprecation,
+  requireDelegationConfirmed,
 } from '../lib/ui.js';
 
 export function statusCommand(program: Command): void {
@@ -18,6 +20,9 @@ export function statusCommand(program: Command): void {
     .option('-w, --watch', 'Watch mode - continuously update')
     .option('-j, --json', 'Output as JSON')
     .action(async (options) => {
+      printEveDeprecation('status', './synap health (on your server)  or  npx @synap-core/cli status (from your laptop)');
+      requireDelegationConfirmed();
+
       try {
         if (options.watch) {
           await watchStatus();

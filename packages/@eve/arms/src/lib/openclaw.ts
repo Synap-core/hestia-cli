@@ -14,6 +14,19 @@ export interface OpenClawConfig {
   synapApiKey?: string;
   dokployApiUrl?: string;
   mcpServers?: Record<string, MCPConfig>;
+  /** Messaging platform bridges */
+  messaging?: {
+    enabled?: boolean;
+    platform?: 'telegram' | 'signal' | 'matrix';
+    botToken?: string;
+  };
+  /** Voice / telephony config */
+  voice?: {
+    enabled?: boolean;
+    provider?: 'twilio' | 'signal' | 'selfhosted';
+    phoneNumber?: string;
+    sipUri?: string;
+  };
 }
 
 const OPENCLAW_CONTAINER = 'eve-arms-openclaw';
@@ -55,6 +68,29 @@ export class OpenClawService {
   }
 
   /**
+   * Configure messaging platform (Telegram, Signal, Matrix).
+   * Writes config and updates running container with env vars.
+   */
+  async configureMessaging(platform: 'telegram' | 'signal' | 'matrix', config: { botToken?: string }): Promise<void> {
+    console.log(`Configuring ${platform} messaging...`);
+    this.config.messaging = { ...this.config.messaging, enabled: true, platform, ...config };
+    console.log(`✅ ${platform} messaging configured`);
+  }
+
+  /**
+   * Configure voice/telephony (Twilio, Signal, self-hosted SIP).
+   */
+  async configureVoice(config: {
+    provider?: 'twilio' | 'signal' | 'selfhosted';
+    phoneNumber?: string;
+    sipUri?: string;
+  }): Promise<void> {
+    console.log('Configuring voice/telephony...');
+    this.config.voice = { ...this.config.voice, enabled: true, ...config };
+    console.log('✅ Voice configured');
+  }
+
+  /**
    * Start OpenClaw container
    */
   async start(): Promise<void> {
@@ -77,6 +113,13 @@ export class OpenClawService {
       '-e', `SYNAP_API_URL=${this.config.synapApiUrl ?? ''}`,
       '-e', `SYNAP_API_KEY=${this.config.synapApiKey ?? ''}`,
       '-e', `DOKPLOY_API_URL=${this.config.dokployApiUrl ?? ''}`,
+      '-e', `MESSAGING_ENABLED=${this.config.messaging?.enabled ?? false}`,
+      '-e', `MESSAGING_PLATFORM=${this.config.messaging?.platform ?? ''}`,
+      '-e', `MESSAGING_BOT_TOKEN=${this.config.messaging?.botToken ?? ''}`,
+      '-e', `VOICE_ENABLED=${this.config.voice?.enabled ?? false}`,
+      '-e', `VOICE_PROVIDER=${this.config.voice?.provider ?? ''}`,
+      '-e', `VOICE_PHONE_NUMBER=${this.config.voice?.phoneNumber ?? ''}`,
+      '-e', `VOICE_SIP_URI=${this.config.voice?.sipUri ?? ''}`,
       '-v', 'eve-arms-openclaw-data:/data',
       '--restart', 'unless-stopped',
       'ghcr.io/openclaw/openclaw:latest',

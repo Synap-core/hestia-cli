@@ -1,43 +1,33 @@
-import { execSync } from 'child_process';
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { readEveSecrets, resolveHubBaseUrl, defaultSkillsDir } from '@eve/dna';
 
-interface OpenClaudeConfig {
-  brainUrl: string;
-  basicAuth?: string;
-  model: string;
-  temperature: number;
-  maxTokens: number;
-  enabled: boolean;
-  synapApiUrl?: string;
-  synapApiKey?: string;
-  hubBaseUrl?: string;
-  skillsDir?: string;
-}
-
+/**
+ * @deprecated OpenClaudeService is deprecated in favor of Hermes daemon polling.
+ * This class is kept for backward compatibility during the migration window.
+ * New code should use HermesDaemon + TaskExecutor for headless task execution.
+ */
 export class OpenClaudeService {
   private isInstalled = false;
-  private config: OpenClaudeConfig | null = null;
+  private _configured = false;
   private configPath: string | null = null;
 
+  /**
+   * @deprecated Hermes daemon handles task execution now.
+   * This method only prints a deprecation warning.
+   */
   async install(): Promise<void> {
-    console.log('Installing OpenClaude...');
-    try {
-      execSync('which openclaude', { stdio: 'ignore' });
-      console.log('OpenClaude already installed');
-    } catch {
-      console.log('Installing OpenClaude CLI...');
-      execSync('npm install -g @openclaude/cli', { stdio: 'inherit' });
-    }
+    console.warn('[OpenClaude] WARNING: OpenClaudeService is deprecated. Use Hermes daemon instead.');
+    console.log('OpenClaude is available via system PATH if installed separately.');
     this.isInstalled = true;
-    console.log('OpenClaude installed successfully');
   }
 
+  /**
+   * @deprecated Hermes reads its config from .eve/hermes-state.json.
+   * This method only saves a deprecation notice.
+   */
   async configure(brainUrl: string): Promise<void> {
-    if (!this.isInstalled) {
-      await this.install();
-    }
+    console.warn('[OpenClaude] WARNING: OpenClaudeService is deprecated. Configure Hermes daemon instead.');
 
     const secrets = await readEveSecrets(process.cwd());
     const resolvedBrainUrl =
@@ -46,120 +36,60 @@ export class OpenClaudeService {
       secrets?.inference?.gatewayUrl ||
       secrets?.inference?.ollamaUrl ||
       'http://127.0.0.1:11434';
-    const basicAuth =
-      secrets?.inference?.gatewayUser && secrets?.inference?.gatewayPass
-        ? Buffer.from(`${secrets.inference.gatewayUser}:${secrets.inference.gatewayPass}`).toString('base64')
-        : undefined;
 
-    console.log(`Configuring OpenClaude with Brain at: ${resolvedBrainUrl}`);
+    console.log(`Legacy config: brain URL = ${resolvedBrainUrl}`);
 
-    // Verify Brain Ollama connection
-    try {
-      const response = await fetch(`${resolvedBrainUrl}/api/tags`, {
-        headers: basicAuth ? { Authorization: `Basic ${basicAuth}` } : undefined,
-      });
-      if (!response.ok) {
-        throw new Error(`Brain Ollama not responding at ${resolvedBrainUrl}`);
-      }
-      const models = await response.json();
-      console.log('Available models:', models.models?.map((m: { name: string }) => m.name).join(', '));
-    } catch (error) {
-      console.warn('Could not connect to Brain Ollama:', error);
-      console.log('Configuration will be saved but may need adjustment');
-    }
-
-    const hubBaseUrl = resolveHubBaseUrl(secrets);
-    const skillsDir = secrets?.builder?.skillsDir ?? defaultSkillsDir();
-
-    this.config = {
-      brainUrl: resolvedBrainUrl,
-      basicAuth,
-      model: 'llama3.2',
-      temperature: 0.7,
-      maxTokens: 2048,
-      enabled: true,
-      synapApiUrl: secrets?.synap?.apiUrl,
-      synapApiKey: secrets?.synap?.apiKey,
-      hubBaseUrl: hubBaseUrl ?? undefined,
-      skillsDir,
-    };
-
-    // Save config
+    // Save minimal config for backward-compat
     const configDir = join(process.cwd(), '.eve');
     if (!existsSync(configDir)) {
       mkdirSync(configDir, { recursive: true });
     }
 
-    this.configPath = join(configDir, 'openclaude.json');
-    writeFileSync(this.configPath, JSON.stringify(this.config, null, 2));
+    const configPath = join(configDir, 'openclaude.json');
+    this.configPath = configPath;
+    this._configured = true;
 
-    console.log('OpenClaude configuration saved');
+    // Only save if config doesn't already exist (don't overwrite Hermes config)
+    if (!existsSync(configPath)) {
+      const legacyConfig = {
+        brainUrl: resolvedBrainUrl,
+        deprecated: true,
+        deprecationNotice: 'Use Hermes daemon instead. See: eve builder hermes start',
+        createdAt: new Date().toISOString(),
+      };
+      writeFileSync(configPath, JSON.stringify(legacyConfig, null, 2));
+    }
+
+    console.log('OpenClaude legacy config saved (deprecated).');
   }
 
+  /**
+   * @deprecated Hermes daemon handles lifecycle now.
+   */
   async start(): Promise<void> {
-    if (!this.config) {
-      // Try to load existing config
-      const configPath = join(process.cwd(), '.eve', 'openclaude.json');
-      if (existsSync(configPath)) {
-        this.config = JSON.parse(readFileSync(configPath, 'utf-8'));
-        this.configPath = configPath;
-      } else {
-        throw new Error('OpenClaude not configured. Run configure() first.');
-      }
+    console.warn('[OpenClaude] WARNING: OpenClaudeService is deprecated. Use Hermes daemon instead.');
+    if (this.configPath && existsSync(this.configPath)) {
+      console.log(`Config loaded from: ${this.configPath}`);
     }
-
-    console.log('Starting OpenClaude AI assistant...');
-    if (this.config) {
-      console.log(`Connected to Brain at: ${this.config.brainUrl}`);
-    }
-    console.log('OpenClaude is ready for code generation');
   }
 
+  /**
+   * @deprecated No-op. Use Hermes daemon + TaskExecutor.
+   */
   async generateCode(prompt: string): Promise<string> {
-    if (!this.config) {
-      throw new Error('OpenClaude not configured');
-    }
-
-    console.log('Generating code with OpenClaude...');
-    console.log(`Prompt: ${prompt}`);
-
-    try {
-      // Call Brain Ollama for code generation
-      const response = await fetch(`${this.config.brainUrl}/api/generate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(this.config.basicAuth ? { Authorization: `Basic ${this.config.basicAuth}` } : {}),
-        },
-        body: JSON.stringify({
-          model: this.config.model,
-          prompt: `You are an expert programmer. Generate clean, well-documented code for the following request:\n\n${prompt}\n\nProvide only the code without explanations unless specifically asked.`,
-          temperature: this.config.temperature,
-          max_tokens: this.config.maxTokens,
-          stream: false,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Brain Ollama error: ${response.statusText}`);
-      }
-
-      const result = await response.json();
-      const generatedCode = result.response || result.text || '';
-
-      console.log('Code generated successfully');
-      return generatedCode;
-    } catch (error) {
-      console.error('Code generation failed:', error);
-      throw error;
-    }
+    console.warn('[OpenClaude] WARNING: OpenClaudeService is deprecated.');
+    console.log('This method is a no-op. Use Hermes daemon for task execution.');
+    return `// Deprecated: Use Hermes daemon instead. Original prompt was: ${prompt}`;
   }
 
-  getConfig(): OpenClaudeConfig | null {
-    return this.config;
+  getConfig(): { brainUrl?: string; deprecated?: boolean } {
+    if (this.configPath && existsSync(this.configPath)) {
+      return JSON.parse(readFileSync(this.configPath, 'utf-8'));
+    }
+    return { deprecated: true };
   }
 
   isConfigured(): boolean {
-    return this.config !== null;
+    return this._configured;
   }
 }

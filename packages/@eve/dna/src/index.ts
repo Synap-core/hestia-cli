@@ -44,12 +44,23 @@ export type {
   DockerComposeService,
   Service,
   ServiceConfig,
+  Task,
+  TaskStatus,
+  TaskPriority,
+  TaskType,
+  MessagingPlatform,
+  MessagingConfig,
+  VoiceProvider,
+  VoiceConfig,
 } from './types.js';
+
+// Constants
+export { DEFAULT_HERMES_CONFIG } from './types.js';
 
 // Managers
 export { ConfigManager, configManager } from './config.js';
 export { CredentialsManager, credentialsManager } from './credentials.js';
-export { EntityStateManager, entityStateManager } from './entity-state.js';
+export { EntityStateManager, entityStateManager, migrateStateDirectory } from './entity-state.js';
 
 // Docker Compose Generator
 export { DockerComposeGenerator, createDockerComposeGenerator } from './docker-compose-generator.js';
@@ -90,6 +101,7 @@ export {
   ensureEveSkillsLayout,
   writeBuilderProjectEnv,
   writeSandboxEnvFile,
+  writeHermesEnvFile,
   copySynapSkillIntoClaudeProject,
   writeClaudeCodeSettings,
 } from './builder-hub-wiring.js';

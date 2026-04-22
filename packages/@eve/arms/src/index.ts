@@ -4,13 +4,15 @@ import { installCommand } from './commands/install.js';
 import { startCommand } from './commands/start.js';
 import { stopCommand } from './commands/stop.js';
 import { mcpCommand } from './commands/mcp.js';
+import { messagingCommand } from './commands/messaging.js';
+import { voiceCommand } from './commands/voice.js';
 
 // Re-export types and classes
 export { openclaw, OpenClawService };
 export type { MCPConfig, OpenClawConfig };
 
 // Export commands
-export { installCommand, startCommand, stopCommand, mcpCommand };
+export { installCommand, startCommand, stopCommand, mcpCommand, messagingCommand, voiceCommand };
 
 /**
  * Register Arms leaf commands on an existing `eve arms` Commander node
@@ -20,6 +22,8 @@ export function registerArmsCommands(arms: Command): void {
   startCommand(arms);
   stopCommand(arms);
   mcpCommand(arms);
+  messagingCommand(arms);
+  voiceCommand(arms);
 
   arms
     .command('status')

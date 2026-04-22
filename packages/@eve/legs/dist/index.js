@@ -296,17 +296,18 @@ async function runLegsProxySetup(options) {
     console.log(`  \u2713 Route: ${organ.path} -> ${target}`);
   }
   if (options.tunnel) {
+    const tunnelMode = options.tunnel === "cloudflare_tunnel" ? "cloudflare" : options.tunnel === "pangolin_tunnel" ? "pangolin" : options.tunnel;
     console.log(`
-Step 3: Setting up ${options.tunnel} tunnel...`);
+Step 3: Setting up ${tunnelMode} tunnel...`);
     const tunnel = new TunnelService();
-    if (options.tunnel === "pangolin") {
+    if (tunnelMode === "pangolin") {
       await tunnel.setupPangolin({ domain: options.tunnelDomain });
       console.log("  \u2713 Pangolin tunnel configured");
-    } else if (options.tunnel === "cloudflare") {
+    } else if (tunnelMode === "cloudflare") {
       await tunnel.setupCloudflare({ domain: options.tunnelDomain });
       console.log("  \u2713 Cloudflare tunnel configured");
     } else {
-      console.warn(`  \u26A0 Unknown tunnel provider: ${options.tunnel}`);
+      console.warn(`  \u26A0 Unknown tunnel provider: ${String(options.tunnel)}`);
     }
   }
   if (options.domain) {
@@ -338,7 +339,10 @@ Tunnel configured with ${options.tunnel}`);
 
 // src/commands/setup.ts
 function setupCommand(program) {
-  program.command("setup").description("Setup Traefik reverse proxy for Eve").option("--domain <domain>", "Custom domain for external access").option("--tunnel <provider>", "Tunnel provider (pangolin, cloudflare)").option("--tunnel-domain <domain>", "Domain for tunnel (if using tunnel)").option("--ssl", "Enable SSL/TLS (requires --domain)").option("--standalone", "Install standalone Traefik (not using Dokploy)").action(async (options) => {
+  program.command("setup").description("Setup Traefik reverse proxy for Eve").option("--domain <domain>", "Custom domain for external access").option(
+    "--tunnel <provider>",
+    "Tunnel provider (pangolin, cloudflare, pangolin_tunnel, cloudflare_tunnel)"
+  ).option("--tunnel-domain <domain>", "Domain for tunnel (if using tunnel)").option("--ssl", "Enable SSL/TLS (requires --domain)").option("--standalone", "Install standalone Traefik (not using Dokploy)").action(async (options) => {
     try {
       await runLegsProxySetup({
         domain: options.domain,

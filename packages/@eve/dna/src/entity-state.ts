@@ -1,12 +1,13 @@
 /**
  * Entity State Manager
- * 
- * Manages the state of the Hestia entity, including organ health,
+ *
+ * Manages the state of the Eve entity, including organ health,
  * installation status, and completeness tracking.
- * State is stored as JSON in ~/.local/share/hestia/state.json
+ * State is stored as JSON in ~/.local/share/eve/state.json
  */
 
-import { readFile, writeFile, mkdir, access } from 'fs/promises';
+import { readFile, writeFile, mkdir, access, readdir, stat } from 'fs/promises';
+import { existsSync, cpSync } from 'node:fs';
 import { join } from 'path';
 import { homedir, hostname } from 'os';
 import { z } from 'zod';
@@ -26,7 +27,7 @@ const StateSchema = z.object({
   organs: z.record(
     z.enum(['brain', 'arms', 'builder', 'eyes', 'legs']),
     z.object({
-      state: z.enum(['missing', 'installing', 'ready', 'error', 'stopped']),
+      state: z.enum(['missing', 'installing', 'starting', 'ready', 'error', 'stopped']),
       installedAt: z.string().optional(),
       version: z.string().optional(),
       lastChecked: z.string().optional(),
@@ -42,6 +43,41 @@ const StateSchema = z.object({
 });
 
 const ORGANS: Organ[] = ['brain', 'arms', 'builder', 'eyes', 'legs'];
+
+const OLD_STATE_DIR = join(homedir(), '.local', 'share', 'eve');
+const NEW_STATE_DIR = join(homedir(), '.local', 'share', 'eve');
+
+/**
+ * Migrates entity state from the legacy eve directory to the new eve directory.
+ * Copies state.json and any ancillary files, then removes the old directory.
+ * Returns true if a migration was performed, false if nothing to migrate.
+ */
+export async function migrateStateDirectory(): Promise<boolean> {
+  if (!existsSync(OLD_STATE_DIR)) return false;
+
+  const oldStatePath = join(OLD_STATE_DIR, 'state.json');
+  if (!existsSync(oldStatePath)) return false;
+
+  // Already migrated? Check if new dir exists with a valid state file
+  if (existsSync(NEW_STATE_DIR)) {
+    const newStatePath = join(NEW_STATE_DIR, 'state.json');
+    if (existsSync(newStatePath)) {
+      // Already on new path — no-op
+      return false;
+    }
+  }
+
+  // Copy state to new location
+  await mkdir(NEW_STATE_DIR, { recursive: true });
+  const { cp } = await import('node:fs/promises');
+  await cp(oldStatePath, join(NEW_STATE_DIR, 'state.json'), { recursive: true });
+
+  // Remove old directory entirely
+  const { rm } = await import('node:fs/promises');
+  await rm(OLD_STATE_DIR, { recursive: true, force: true });
+
+  return true;
+}
 
 const DEFAULT_STATE: EntityState = {
   version: '0.1.0',
@@ -65,7 +101,7 @@ export class EntityStateManager {
     if (this.statePath) {
       return this.statePath;
     }
-    return join(homedir(), '.local', 'share', 'hestia', 'state.json');
+    return join(homedir(), '.local', 'share', 'eve', 'state.json');
   }
 
   async getState(): Promise<EntityState> {
@@ -123,7 +159,7 @@ export class EntityStateManager {
 
   async saveState(state: EntityState): Promise<void> {
     const statePath = this.getStatePath();
-    const stateDir = join(homedir(), '.local', 'share', 'hestia');
+    const stateDir = join(homedir(), '.local', 'share', 'eve');
 
     try {
       await mkdir(stateDir, { recursive: true });
@@ -221,7 +257,7 @@ export class EntityStateManager {
     const steps: string[] = [];
 
     if (state.aiModel === 'none') {
-      steps.push('Configure AI model (run: hestia ai setup)');
+      steps.push('Configure AI model (run: eve ai setup)');
     }
 
     for (const organ of ORGANS) {
@@ -229,13 +265,13 @@ export class EntityStateManager {
       
       switch (organStatus.state) {
         case 'missing':
-          steps.push(`Install ${organ} (run: hestia install ${organ})`);
+          steps.push(`Install ${organ} (run: eve install ${organ})`);
           break;
         case 'error':
           steps.push(`Fix ${organ} error: ${organStatus.errorMessage || 'Unknown error'}`);
           break;
         case 'stopped':
-          steps.push(`Start ${organ} (run: hestia start ${organ})`);
+          steps.push(`Start ${organ} (run: eve start ${organ})`);
           break;
         case 'installing':
           steps.push(`Wait for ${organ} installation to complete`);

@@ -1,3 +1,169 @@
+// src/types.ts
+var SERVICE_REGISTRY = {
+  // Brain Services
+  synap: {
+    image: "ghcr.io/synap-core/backend:latest",
+    containerName: "eve-brain-synap",
+    ports: ["4000:4000"],
+    environment: {
+      NODE_ENV: "production",
+      DATABASE_URL: "postgresql://eve:eve@eve-brain-postgres:5432/synap",
+      REDIS_URL: "redis://eve-brain-redis:6379"
+    },
+    network: "eve-network",
+    restart: "unless-stopped",
+    dependsOn: ["eve-brain-postgres", "eve-brain-redis"]
+  },
+  ollama: {
+    image: "ollama/ollama:latest",
+    containerName: "eve-brain-ollama",
+    ports: ["11434:11434"],
+    volumes: ["ollama-models:/root/.ollama"],
+    network: "eve-network",
+    restart: "unless-stopped"
+  },
+  postgres: {
+    image: "postgres:16-alpine",
+    containerName: "eve-brain-postgres",
+    environment: {
+      POSTGRES_USER: "eve",
+      POSTGRES_PASSWORD: "eve",
+      POSTGRES_DB: "synap"
+    },
+    volumes: ["eve-brain-postgres-data:/var/lib/postgresql/data"],
+    network: "eve-network",
+    restart: "unless-stopped",
+    healthCheck: {
+      command: "pg_isready -U eve",
+      interval: "10s",
+      timeout: "5s",
+      retries: 5
+    }
+  },
+  redis: {
+    image: "redis:7-alpine",
+    containerName: "eve-brain-redis",
+    volumes: ["eve-brain-redis-data:/data"],
+    command: ["redis-server", "--appendonly", "yes"],
+    network: "eve-network",
+    restart: "unless-stopped",
+    healthCheck: {
+      command: "redis-cli ping",
+      interval: "10s",
+      timeout: "5s",
+      retries: 5
+    }
+  },
+  // Arms Services
+  openclaw: {
+    image: "ghcr.io/openclaw/openclaw:latest",
+    containerName: "eve-arms-openclaw",
+    ports: ["3000:3000"],
+    environment: {
+      OLLAMA_URL: "http://eve-brain-ollama:11434",
+      DEFAULT_MODEL: "llama3.2"
+    },
+    volumes: ["eve-arms-openclaw-data:/data"],
+    network: "eve-network",
+    restart: "unless-stopped",
+    dependsOn: ["eve-brain-ollama"]
+  },
+  // Builder Services (CLI tools - no containers by default)
+  opencode: {
+    image: "node:20-alpine",
+    containerName: "eve-builder-opencode",
+    network: "eve-network",
+    restart: "no"
+  },
+  openclaude: {
+    image: "node:20-alpine",
+    containerName: "eve-builder-openclaude",
+    network: "eve-network",
+    restart: "no"
+  },
+  claudecode: {
+    image: "node:22-bookworm-slim",
+    containerName: "eve-builder-claudecode",
+    network: "eve-network",
+    restart: "no"
+  },
+  dokploy: {
+    image: "node:20-alpine",
+    containerName: "eve-builder-dokploy",
+    network: "eve-network",
+    restart: "no"
+  },
+  // Hermes — headless dev orchestrator daemon (V2 spec)
+  hermes: {
+    image: "node:20-alpine",
+    containerName: "eve-builder-hermes",
+    volumes: ["eve-builder-hermes-data:/data"],
+    network: "eve-network",
+    restart: "unless-stopped",
+    environment: {
+      EVE_WORKSPACE_DIR: "/data/workspace"
+    },
+    dependsOn: ["eve-brain-synap"]
+  },
+  // Eyes Services
+  rsshub: {
+    image: "rsshub/rsshub:latest",
+    containerName: "eve-eyes-rsshub",
+    ports: ["1200:1200"],
+    network: "eve-network",
+    restart: "unless-stopped"
+  },
+  // Legs Services
+  traefik: {
+    image: "traefik:v3.0",
+    containerName: "eve-legs-traefik",
+    ports: ["80:80", "443:443", "8080:8080"],
+    volumes: [
+      "/var/run/docker.sock:/var/run/docker.sock:ro",
+      "eve-legs-traefik-certs:/etc/traefik/acme.json"
+    ],
+    network: "eve-network",
+    restart: "unless-stopped"
+  },
+  // Tunnel services (optional)
+  cloudflared: {
+    image: "cloudflare/cloudflared:latest",
+    containerName: "eve-legs-cloudflared",
+    network: "eve-network",
+    restart: "unless-stopped"
+  },
+  pangolin: {
+    image: "pangolin/pangolin:latest",
+    containerName: "eve-legs-pangolin",
+    network: "eve-network",
+    restart: "unless-stopped"
+  },
+  newt: {
+    image: "fosrl/newt:latest",
+    containerName: "eve-legs-newt",
+    network: "eve-network",
+    restart: "unless-stopped"
+  }
+};
+var DEFAULT_HERMES_CONFIG = {
+  enabled: true,
+  pollIntervalMs: 3e4,
+  maxConcurrentTasks: 1
+};
+var DEFAULT_ENTITY_STATE = {
+  version: "0.1.0",
+  initializedAt: (/* @__PURE__ */ new Date()).toISOString(),
+  aiModel: "none",
+  organs: {
+    brain: { state: "missing" },
+    arms: { state: "missing" },
+    builder: { state: "missing" },
+    eyes: { state: "missing" },
+    legs: { state: "missing" }
+  },
+  metadata: {}
+};
+
 // src/config.ts
 import { promises as fs } from "fs";
 import { join } from "path";
@@ -309,6 +475,7 @@ var credentialsManager = new CredentialsManager();
 
 // src/entity-state.ts
 import { readFile, writeFile, mkdir, access } from "fs/promises";
+import { existsSync } from "fs";
 import { join as join3 } from "path";
 import { homedir as homedir3, hostname } from "os";
 import { z as z2 } from "zod";
@@ -319,7 +486,7 @@ var StateSchema = z2.object({
   organs: z2.record(
     z2.enum(["brain", "arms", "builder", "eyes", "legs"]),
     z2.object({
-      state: z2.enum(["missing", "installing", "ready", "error", "stopped"]),
+      state: z2.enum(["missing", "installing", "starting", "ready", "error", "stopped"]),
       installedAt: z2.string().optional(),
       version: z2.string().optional(),
       lastChecked: z2.string().optional(),
@@ -334,6 +501,25 @@ var StateSchema = z2.object({
   })
 });
 var ORGANS = ["brain", "arms", "builder", "eyes", "legs"];
+var OLD_STATE_DIR = join3(homedir3(), ".local", "share", "eve");
+var NEW_STATE_DIR = join3(homedir3(), ".local", "share", "eve");
+async function migrateStateDirectory() {
+  if (!existsSync(OLD_STATE_DIR)) return false;
+  const oldStatePath = join3(OLD_STATE_DIR, "state.json");
+  if (!existsSync(oldStatePath)) return false;
+  if (existsSync(NEW_STATE_DIR)) {
+    const newStatePath = join3(NEW_STATE_DIR, "state.json");
+    if (existsSync(newStatePath)) {
+      return false;
+    }
+  }
+  await mkdir(NEW_STATE_DIR, { recursive: true });
+  const { cp } = await import("fs/promises");
+  await cp(oldStatePath, join3(NEW_STATE_DIR, "state.json"), { recursive: true });
+  const { rm } = await import("fs/promises");
+  await rm(OLD_STATE_DIR, { recursive: true, force: true });
+  return true;
+}
 var DEFAULT_STATE = {
   version: "0.1.0",
   initializedAt: (/* @__PURE__ */ new Date()).toISOString(),
@@ -354,7 +540,7 @@ var EntityStateManager = class {
     if (this.statePath) {
       return this.statePath;
     }
-    return join3(homedir3(), ".local", "share", "hestia", "state.json");
+    return join3(homedir3(), ".local", "share", "eve", "state.json");
   }
   async getState() {
     if (this.state) {
@@ -402,7 +588,7 @@ var EntityStateManager = class {
   }
   async saveState(state) {
     const statePath = this.getStatePath();
-    const stateDir = join3(homedir3(), ".local", "share", "hestia");
+    const stateDir = join3(homedir3(), ".local", "share", "eve");
     try {
       await mkdir(stateDir, { recursive: true });
       StateSchema.parse(state);
@@ -477,19 +663,19 @@ var EntityStateManager = class {
     const state = await this.getState();
     const steps = [];
     if (state.aiModel === "none") {
-      steps.push("Configure AI model (run: hestia ai setup)");
+      steps.push("Configure AI model (run: eve ai setup)");
     }
     for (const organ of ORGANS) {
       const organStatus = state.organs[organ];
       switch (organStatus.state) {
         case "missing":
-          steps.push(`Install ${organ} (run: hestia install ${organ})`);
+          steps.push(`Install ${organ} (run: eve install ${organ})`);
           break;
         case "error":
           steps.push(`Fix ${organ} error: ${organStatus.errorMessage || "Unknown error"}`);
           break;
         case "stopped":
-          steps.push(`Start ${organ} (run: hestia start ${organ})`);
+          steps.push(`Start ${organ} (run: eve start ${organ})`);
           break;
         case "installing":
           steps.push(`Wait for ${organ} installation to complete`);
@@ -532,157 +718,6 @@ var entityStateManager = new EntityStateManager();
 import * as yaml2 from "js-yaml";
 import * as fs3 from "fs/promises";
 import * as path from "path";
-
-// src/types.ts
-var SERVICE_REGISTRY = {
-  // Brain Services
-  synap: {
-    image: "ghcr.io/synap-core/backend:latest",
-    containerName: "eve-brain-synap",
-    ports: ["4000:4000"],
-    environment: {
-      NODE_ENV: "production",
-      DATABASE_URL: "postgresql://eve:eve@eve-brain-postgres:5432/synap",
-      REDIS_URL: "redis://eve-brain-redis:6379"
-    },
-    network: "eve-network",
-    restart: "unless-stopped",
-    dependsOn: ["eve-brain-postgres", "eve-brain-redis"]
-  },
-  ollama: {
-    image: "ollama/ollama:latest",
-    containerName: "eve-brain-ollama",
-    ports: ["11434:11434"],
-    volumes: ["ollama-models:/root/.ollama"],
-    network: "eve-network",
-    restart: "unless-stopped"
-  },
-  postgres: {
-    image: "postgres:16-alpine",
-    containerName: "eve-brain-postgres",
-    environment: {
-      POSTGRES_USER: "eve",
-      POSTGRES_PASSWORD: "eve",
-      POSTGRES_DB: "synap"
-    },
-    volumes: ["eve-brain-postgres-data:/var/lib/postgresql/data"],
-    network: "eve-network",
-    restart: "unless-stopped",
-    healthCheck: {
-      command: "pg_isready -U eve",
-      interval: "10s",
-      timeout: "5s",
-      retries: 5
-    }
-  },
-  redis: {
-    image: "redis:7-alpine",
-    containerName: "eve-brain-redis",
-    volumes: ["eve-brain-redis-data:/data"],
-    command: ["redis-server", "--appendonly", "yes"],
-    network: "eve-network",
-    restart: "unless-stopped",
-    healthCheck: {
-      command: "redis-cli ping",
-      interval: "10s",
-      timeout: "5s",
-      retries: 5
-    }
-  },
-  // Arms Services
-  openclaw: {
-    image: "ghcr.io/openclaw/openclaw:latest",
-    containerName: "eve-arms-openclaw",
-    ports: ["3000:3000"],
-    environment: {
-      OLLAMA_URL: "http://eve-brain-ollama:11434",
-      DEFAULT_MODEL: "llama3.2"
-    },
-    volumes: ["eve-arms-openclaw-data:/data"],
-    network: "eve-network",
-    restart: "unless-stopped",
-    dependsOn: ["eve-brain-ollama"]
-  },
-  // Builder Services (CLI tools - no containers by default)
-  opencode: {
-    image: "node:20-alpine",
-    containerName: "eve-builder-opencode",
-    network: "eve-network",
-    restart: "no"
-  },
-  openclaude: {
-    image: "node:20-alpine",
-    containerName: "eve-builder-openclaude",
-    network: "eve-network",
-    restart: "no"
-  },
-  claudecode: {
-    image: "node:22-bookworm-slim",
-    containerName: "eve-builder-claudecode",
-    network: "eve-network",
-    restart: "no"
-  },
-  dokploy: {
-    image: "node:20-alpine",
-    containerName: "eve-builder-dokploy",
-    network: "eve-network",
-    restart: "no"
-  },
-  // Eyes Services
-  rsshub: {
-    image: "rsshub/rsshub:latest",
-    containerName: "eve-eyes-rsshub",
-    ports: ["1200:1200"],
-    network: "eve-network",
-    restart: "unless-stopped"
-  },
-  // Legs Services
-  traefik: {
-    image: "traefik:v3.0",
-    containerName: "eve-legs-traefik",
-    ports: ["80:80", "443:443", "8080:8080"],
-    volumes: [
-      "/var/run/docker.sock:/var/run/docker.sock:ro",
-      "eve-legs-traefik-certs:/etc/traefik/acme.json"
-    ],
-    network: "eve-network",
-    restart: "unless-stopped"
-  },
-  // Tunnel services (optional)
-  cloudflared: {
-    image: "cloudflare/cloudflared:latest",
-    containerName: "eve-legs-cloudflared",
-    network: "eve-network",
-    restart: "unless-stopped"
-  },
-  pangolin: {
-    image: "pangolin/pangolin:latest",
-    containerName: "eve-legs-pangolin",
-    network: "eve-network",
-    restart: "unless-stopped"
-  },
-  newt: {
-    image: "fosrl/newt:latest",
-    containerName: "eve-legs-newt",
-    network: "eve-network",
-    restart: "unless-stopped"
-  }
-};
-var DEFAULT_ENTITY_STATE = {
-  version: "0.1.0",
-  initializedAt: (/* @__PURE__ */ new Date()).toISOString(),
-  aiModel: "none",
-  organs: {
-    brain: { state: "missing" },
-    arms: { state: "missing" },
-    builder: { state: "missing" },
-    eyes: { state: "missing" },
-    legs: { state: "missing" }
-  },
-  metadata: {}
-};
-
-// src/docker-compose-generator.ts
 var DockerComposeGenerator = class {
   services = /* @__PURE__ */ new Map();
   envVars = /* @__PURE__ */ new Map();
@@ -751,6 +786,25 @@ var DockerComposeGenerator = class {
     for (const service of legsServices) {
       this.addService(service);
     }
+  }
+  /**
+   * Add builder services: hermes (CLI tools like opencode/openclaude/claudecode have no containers)
+   */
+  addBuilderServices() {
+    const builderServices = ["hermes"];
+    for (const service of builderServices) {
+      this.addService(service);
+    }
+  }
+  /**
+   * Add all services across all organs (brain, arms, builder, eyes, legs)
+   */
+  addAllServices() {
+    this.addBrainServices();
+    this.addArmsServices();
+    this.addBuilderServices();
+    this.addEyesServices();
+    this.addLegsServices();
   }
   /**
    * Set an environment variable for substitution
@@ -1154,7 +1208,7 @@ function formatHardwareReport(f) {
 
 // src/secrets-contract.ts
 import { mkdir as mkdir4, readFile as readFile3, writeFile as writeFile4 } from "fs/promises";
-import { existsSync } from "fs";
+import { existsSync as existsSync2 } from "fs";
 import { join as join5 } from "path";
 import { randomBytes } from "crypto";
 import { z as z4 } from "zod";
@@ -1192,16 +1246,40 @@ var SecretsSchema = z4.object({
     gatewayPass: z4.string().optional()
   }).optional(),
   builder: z4.object({
+    /** Selected code engine (defaults to 'openclaude') */
     codeEngine: z4.enum(["opencode", "openclaude", "claudecode"]).optional(),
+    /** Legacy flat fields — may be deprecated when nested subsections are used */
     openclaudeUrl: z4.string().optional(),
     dokployApiUrl: z4.string().optional(),
     dokployApiKey: z4.string().optional(),
     dokployWebhookUrl: z4.string().optional(),
     workspaceDir: z4.string().optional(),
-    skillsDir: z4.string().optional()
+    skillsDir: z4.string().optional(),
+    /** Hermes headless orchestrator daemon */
+    hermes: z4.object({
+      enabled: z4.boolean().optional(),
+      pollIntervalMs: z4.number().optional(),
+      maxConcurrentTasks: z4.number().optional()
+    }).optional()
   }).optional(),
   arms: z4.object({
-    openclawSynapApiKey: z4.string().optional()
+    /** OpenClaw bridge config */
+    openclaw: z4.object({
+      synapApiKey: z4.string().optional()
+    }).optional(),
+    /** Messaging platform bridges (Telegram, Signal, etc.) */
+    messaging: z4.object({
+      enabled: z4.boolean().optional(),
+      platform: z4.enum(["telegram", "signal", "matrix"]).optional(),
+      botToken: z4.string().optional()
+    }).optional(),
+    /** Voice / telephony (SIP, Twilio, etc.) */
+    voice: z4.object({
+      enabled: z4.boolean().optional(),
+      provider: z4.enum(["twilio", "signal", "selfhosted"]).optional(),
+      phoneNumber: z4.string().optional(),
+      sipUri: z4.string().optional()
+    }).optional()
   }).optional()
 });
 function secretsPath(cwd = process.cwd()) {
@@ -1209,7 +1287,7 @@ function secretsPath(cwd = process.cwd()) {
 }
 async function readEveSecrets(cwd = process.cwd()) {
   const path2 = secretsPath(cwd);
-  if (!existsSync(path2)) return null;
+  if (!existsSync2(path2)) return null;
   try {
     const raw = JSON.parse(await readFile3(path2, "utf-8"));
     return SecretsSchema.parse(raw);
@@ -1273,7 +1351,7 @@ function ensureSecretValue(existing) {
 }
 
 // src/builder-hub-wiring.ts
-import { existsSync as existsSync2, mkdirSync, writeFileSync, copyFileSync } from "fs";
+import { existsSync as existsSync3, mkdirSync, writeFileSync, copyFileSync } from "fs";
 import { homedir as homedir5 } from "os";
 import { join as join6 } from "path";
 var DEFAULT_HUB_PATH = "/api/hub";
@@ -1305,7 +1383,7 @@ function ensureEveSkillsLayout(skillsDir = defaultSkillsDir()) {
   const synapDir = join6(skillsDir, "synap");
   mkdirSync(synapDir, { recursive: true });
   const skillPath = join6(synapDir, "SKILL.md");
-  if (!existsSync2(skillPath)) {
+  if (!existsSync3(skillPath)) {
     writeFileSync(skillPath, SYNAP_SKILL_MD, "utf-8");
   }
 }
@@ -1370,6 +1448,26 @@ async function writeClaudeCodeSettings(projectDir, cwd = process.cwd()) {
   };
   writeFileSync(join6(dir, "settings.json"), JSON.stringify(settings, null, 2), "utf-8");
 }
+async function writeHermesEnvFile(cwd = process.cwd()) {
+  const secrets = await readEveSecrets(cwd);
+  const hub = resolveHubBaseUrl(secrets);
+  const hermesConfig = secrets?.builder?.hermes;
+  const eveDir2 = join6(cwd, ".eve");
+  mkdirSync(eveDir2, { recursive: true });
+  const path2 = join6(eveDir2, "hermes.env");
+  const lines = [
+    `SYNAP_API_URL=${secrets?.synap?.apiUrl ?? ""}`,
+    `SYNAP_API_KEY=${secrets?.synap?.apiKey ?? ""}`,
+    `HUB_BASE_URL=${hub ?? ""}`,
+    `HERMES_ENABLED=${hermesConfig?.enabled ?? true}`,
+    `HERMES_POLL_INTERVAL_MS=${hermesConfig?.pollIntervalMs ?? 3e4}`,
+    `HERMES_MAX_CONCURRENT_TASKS=${hermesConfig?.maxConcurrentTasks ?? 1}`,
+    `EVE_WORKSPACE_DIR=${secrets?.builder?.workspaceDir ?? join6(cwd, ".eve", "workspace")}`,
+    ""
+  ];
+  writeFileSync(path2, lines.join("\n"), { mode: 384 });
+  return path2;
+}
 
 // src/index.ts
 var VERSION = "0.1.0";
@@ -1379,6 +1477,7 @@ export {
   BuilderEngineSchema,
   ConfigManager,
   CredentialsManager,
+  DEFAULT_HERMES_CONFIG,
   DEFAULT_HUB_PATH,
   DockerComposeGenerator,
   EntityStateManager,
@@ -1396,6 +1495,7 @@ export {
   entityStateManager,
   formatHardwareReport,
   getSetupProfilePath,
+  migrateStateDirectory,
   probeHardware,
   readEveSecrets,
   readSetupProfile,
@@ -1405,6 +1505,7 @@ export {
   writeBuilderProjectEnv,
   writeClaudeCodeSettings,
   writeEveSecrets,
+  writeHermesEnvFile,
   writeSandboxEnvFile,
   writeSetupProfile,
   writeUsbSetupManifest

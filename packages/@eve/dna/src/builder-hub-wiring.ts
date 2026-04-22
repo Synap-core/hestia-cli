@@ -123,3 +123,28 @@ export async function writeClaudeCodeSettings(projectDir: string, cwd: string = 
   };
   writeFileSync(join(dir, 'settings.json'), JSON.stringify(settings, null, 2), 'utf-8');
 }
+
+/**
+ * Dotenv for Hermes daemon — reads secrets and writes `.eve/hermes.env` for docker compose `env_file`.
+ */
+export async function writeHermesEnvFile(cwd: string = process.cwd()): Promise<string> {
+  const secrets = await readEveSecrets(cwd);
+  const hub = resolveHubBaseUrl(secrets);
+  const hermesConfig = secrets?.builder?.hermes;
+
+  const eveDir = join(cwd, '.eve');
+  mkdirSync(eveDir, { recursive: true });
+  const path = join(eveDir, 'hermes.env');
+  const lines = [
+    `SYNAP_API_URL=${secrets?.synap?.apiUrl ?? ''}`,
+    `SYNAP_API_KEY=${secrets?.synap?.apiKey ?? ''}`,
+    `HUB_BASE_URL=${hub ?? ''}`,
+    `HERMES_ENABLED=${hermesConfig?.enabled ?? true}`,
+    `HERMES_POLL_INTERVAL_MS=${hermesConfig?.pollIntervalMs ?? 30000}`,
+    `HERMES_MAX_CONCURRENT_TASKS=${hermesConfig?.maxConcurrentTasks ?? 1}`,
+    `EVE_WORKSPACE_DIR=${secrets?.builder?.workspaceDir ?? join(cwd, '.eve', 'workspace')}`,
+    '',
+  ];
+  writeFileSync(path, lines.join('\n'), { mode: 0o600 });
+  return path;
+}

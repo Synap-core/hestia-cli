@@ -28,6 +28,7 @@ import {
   SERVICE_TO_ORGAN,
   BrainService,
   ArmsService,
+  BuilderService,
   EyesService,
   LegsService,
 } from './types.js';
@@ -117,10 +118,32 @@ export class DockerComposeGenerator {
    */
   addLegsServices(): void {
     const legsServices: LegsService[] = ['traefik'];
-    
+
     for (const service of legsServices) {
       this.addService(service);
     }
+  }
+
+  /**
+   * Add builder services: hermes (CLI tools like opencode/openclaude/claudecode have no containers)
+   */
+  addBuilderServices(): void {
+    const builderServices: BuilderService[] = ['hermes'];
+
+    for (const service of builderServices) {
+      this.addService(service);
+    }
+  }
+
+  /**
+   * Add all services across all organs (brain, arms, builder, eyes, legs)
+   */
+  addAllServices(): void {
+    this.addBrainServices();
+    this.addArmsServices();
+    this.addBuilderServices();
+    this.addEyesServices();
+    this.addLegsServices();
   }
 
   /**

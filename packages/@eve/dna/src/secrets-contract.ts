@@ -48,18 +48,50 @@ const SecretsSchema = z.object({
     .optional(),
   builder: z
     .object({
+      /** Selected code engine (defaults to 'openclaude') */
       codeEngine: z.enum(['opencode', 'openclaude', 'claudecode']).optional(),
+      /** Legacy flat fields — may be deprecated when nested subsections are used */
       openclaudeUrl: z.string().optional(),
       dokployApiUrl: z.string().optional(),
       dokployApiKey: z.string().optional(),
       dokployWebhookUrl: z.string().optional(),
       workspaceDir: z.string().optional(),
       skillsDir: z.string().optional(),
+      /** Hermes headless orchestrator daemon */
+      hermes: z
+        .object({
+          enabled: z.boolean().optional(),
+          pollIntervalMs: z.number().optional(),
+          maxConcurrentTasks: z.number().optional(),
+        })
+        .optional(),
     })
     .optional(),
   arms: z
     .object({
-      openclawSynapApiKey: z.string().optional(),
+      /** OpenClaw bridge config */
+      openclaw: z
+        .object({
+          synapApiKey: z.string().optional(),
+        })
+        .optional(),
+      /** Messaging platform bridges (Telegram, Signal, etc.) */
+      messaging: z
+        .object({
+          enabled: z.boolean().optional(),
+          platform: z.enum(['telegram', 'signal', 'matrix']).optional(),
+          botToken: z.string().optional(),
+        })
+        .optional(),
+      /** Voice / telephony (SIP, Twilio, etc.) */
+      voice: z
+        .object({
+          enabled: z.boolean().optional(),
+          provider: z.enum(['twilio', 'signal', 'selfhosted']).optional(),
+          phoneNumber: z.string().optional(),
+          sipUri: z.string().optional(),
+        })
+        .optional(),
     })
     .optional(),
 });

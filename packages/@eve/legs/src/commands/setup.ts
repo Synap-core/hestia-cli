@@ -6,7 +6,10 @@ export function setupCommand(program: Command): void {
     .command('setup')
     .description('Setup Traefik reverse proxy for Eve')
     .option('--domain <domain>', 'Custom domain for external access')
-    .option('--tunnel <provider>', 'Tunnel provider (pangolin, cloudflare)')
+    .option(
+      '--tunnel <provider>',
+      'Tunnel provider (pangolin, cloudflare, pangolin_tunnel, cloudflare_tunnel)',
+    )
     .option('--tunnel-domain <domain>', 'Domain for tunnel (if using tunnel)')
     .option('--ssl', 'Enable SSL/TLS (requires --domain)')
     .option('--standalone', 'Install standalone Traefik (not using Dokploy)')

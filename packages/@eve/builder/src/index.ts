@@ -3,11 +3,16 @@ import { OpenCodeService } from './lib/opencode.js';
 import { OpenClaudeService } from './lib/openclaude.js';
 import { DokployService, type DokployStatus, type DokployProject } from './lib/dokploy.js';
 import { ClaudeCodeService } from './lib/claudecode.js';
+import { HermesDaemon } from './lib/hermes-daemon.js';
+import { TaskPoller } from './lib/task-poll.js';
+import { TaskExecutor } from './lib/task-executor.js';
+import { TaskQueue } from './lib/task-queue.js';
 import { runBuilderOrganSetup } from './lib/builder-organ.js';
 import { initCommand } from './commands/init.js';
 import { deployCommand } from './commands/deploy.js';
 import { stackCommand } from './commands/stack.js';
 import { sandboxCommand } from './commands/sandbox.js';
+import { registerHermesCommands } from './commands/hermes.js';
 
 // Re-export services
 export { OpenCodeService } from './lib/opencode.js';
@@ -15,11 +20,18 @@ export { OpenClaudeService } from './lib/openclaude.js';
 export { ClaudeCodeService } from './lib/claudecode.js';
 export { resolveBuilderProjectDir, scaffoldNonOpencodeProject } from './lib/project-paths.js';
 export { runBuilderOrganSetup, type RunBuilderOrganOptions, type RunBuilderOrganResult, type BuilderEngine } from './lib/builder-organ.js';
-export { 
-  DokployService, 
-  type DokployStatus, 
-  type DokployProject 
+export {
+  DokployService,
+  type DokployStatus,
+  type DokployProject
 } from './lib/dokploy.js';
+
+// Re-export Hermes
+export { HermesDaemon } from './lib/hermes-daemon.js';
+export { TaskPoller } from './lib/task-poll.js';
+export { TaskExecutor } from './lib/task-executor.js';
+export { TaskQueue } from './lib/task-queue.js';
+export { registerHermesCommands } from './commands/hermes.js';
 
 // Re-export commands
 export { initCommand } from './commands/init.js';
@@ -96,6 +108,7 @@ export function registerBuilderCommands(builder: Command): void {
   deployCommand(builder);
   stackCommand(builder);
   sandboxCommand(builder);
+  registerHermesCommands(builder);
 
   builder
     .command('generate')

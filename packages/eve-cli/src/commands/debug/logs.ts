@@ -1,6 +1,11 @@
 import { Command } from 'commander';
 import { execa } from 'execa';
-import { printError, printInfo } from '../../lib/ui.js';
+import {
+  printError,
+  printInfo,
+  printEveDeprecation,
+  requireDelegationConfirmed,
+} from '../../lib/ui.js';
 
 export function logsCommand(program: Command): void {
   program
@@ -11,6 +16,9 @@ export function logsCommand(program: Command): void {
     .option('-n, --tail <lines>', 'Number of lines', '100')
     .option('--compose-file <path>', 'Path to docker-compose.yml')
     .action(async (service: string | undefined, opts: { follow?: boolean; tail?: string; composeFile?: string }) => {
+      printEveDeprecation('logs', './synap logs [service] (on your server)');
+      requireDelegationConfirmed();
+
       const composeFile = opts.composeFile || process.env.EVE_COMPOSE_FILE;
       const args = ['compose'];
       if (composeFile) {

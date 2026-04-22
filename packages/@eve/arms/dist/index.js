@@ -32,6 +32,23 @@ var OpenClawService = class {
     this.config.dokployApiUrl = integration.dokployApiUrl;
   }
   /**
+   * Configure messaging platform (Telegram, Signal, Matrix).
+   * Writes config and updates running container with env vars.
+   */
+  async configureMessaging(platform, config) {
+    console.log(`Configuring ${platform} messaging...`);
+    this.config.messaging = { ...this.config.messaging, enabled: true, platform, ...config };
+    console.log(`\u2705 ${platform} messaging configured`);
+  }
+  /**
+   * Configure voice/telephony (Twilio, Signal, self-hosted SIP).
+   */
+  async configureVoice(config) {
+    console.log("Configuring voice/telephony...");
+    this.config.voice = { ...this.config.voice, enabled: true, ...config };
+    console.log("\u2705 Voice configured");
+  }
+  /**
    * Start OpenClaw container
    */
   async start() {
@@ -60,6 +77,20 @@ var OpenClawService = class {
       `SYNAP_API_KEY=${this.config.synapApiKey ?? ""}`,
       "-e",
       `DOKPLOY_API_URL=${this.config.dokployApiUrl ?? ""}`,
+      "-e",
+      `MESSAGING_ENABLED=${this.config.messaging?.enabled ?? false}`,
+      "-e",
+      `MESSAGING_PLATFORM=${this.config.messaging?.platform ?? ""}`,
+      "-e",
+      `MESSAGING_BOT_TOKEN=${this.config.messaging?.botToken ?? ""}`,
+      "-e",
+      `VOICE_ENABLED=${this.config.voice?.enabled ?? false}`,
+      "-e",
+      `VOICE_PROVIDER=${this.config.voice?.provider ?? ""}`,
+      "-e",
+      `VOICE_PHONE_NUMBER=${this.config.voice?.phoneNumber ?? ""}`,
+      "-e",
+      `VOICE_SIP_URI=${this.config.voice?.sipUri ?? ""}`,
       "-v",
       "eve-arms-openclaw-data:/data",
       "--restart",
@@ -214,7 +245,7 @@ function installCommand(program) {
       await openclaw2.configure(ollamaUrl);
       openclaw2.setIntegration({
         synapApiUrl: secrets?.synap?.apiUrl,
-        synapApiKey: secrets?.arms?.openclawSynapApiKey ?? secrets?.synap?.apiKey,
+        synapApiKey: secrets?.arms?.openclaw?.synapApiKey ?? secrets?.synap?.apiKey,
         dokployApiUrl: secrets?.builder?.dokployApiUrl
       });
       await openclaw2.start();
@@ -224,6 +255,8 @@ function installCommand(program) {
       console.log("\n   Next steps:");
       console.log("   - eve arms mcp list        # List MCP servers");
       console.log("   - eve arms mcp preset      # Install an MCP server preset");
+      console.log("   - eve arms messaging configure # Configure messaging bridge");
+      console.log("   - eve arms voice configure   # Configure voice/telephony");
     } catch (error) {
       console.error("\u274C Installation failed:", error instanceof Error ? error.message : error);
       process.exit(1);
@@ -344,12 +377,115 @@ function mcpCommand(program) {
   });
 }
 
+// src/commands/messaging.ts
+function messagingCommand(program) {
+  const messaging = program.command("messaging").description("Manage messaging platform bridges (Telegram, Signal, Matrix)");
+  messaging.command("status").description("Show current messaging configuration").action(async () => {
+    try {
+      const status = await openclaw.getStatus();
+      if (!status.running) {
+        console.log("\u274C OpenClaw is not running \u2014 messaging is unavailable");
+        return;
+      }
+      console.log("Messaging configuration:");
+      console.log(`  Platform: ${openclaw["config"].messaging?.platform ?? "(not configured)"}`);
+      console.log(`  Enabled: ${openclaw["config"].messaging?.enabled ?? false}`);
+      console.log(`  Bot Token: ${openclaw["config"].messaging?.botToken ? "***configured***" : "(not set)"}`);
+    } catch (error) {
+      console.error("\u274C Failed to get messaging status:", error instanceof Error ? error.message : error);
+      process.exit(1);
+    }
+  });
+  messaging.command("configure <platform>").description("Configure a messaging platform (telegram, signal, matrix)").option("-t, --token <token>", "Bot token").action(async (platform, options) => {
+    try {
+      if (!options.token) {
+        console.error(`\u274C --token is required for ${platform} configuration`);
+        console.log("\nGet your bot token from:");
+        console.log(`  - Telegram: @BotFather on Telegram`);
+        console.log(`  - Signal: check your Signal configuration`);
+        console.log(`  - Matrix: check your Matrix Synapse configuration`);
+        process.exit(1);
+      }
+      await openclaw.configureMessaging(platform, { botToken: options.token });
+      console.log("\n\u2705 Messaging configured for " + platform);
+      console.log("   Restart OpenClaw to apply changes:");
+      console.log("   eve arms stop && eve arms start");
+    } catch (error) {
+      console.error("\u274C Failed to configure messaging:", error instanceof Error ? error.message : error);
+      process.exit(1);
+    }
+  });
+  messaging.command("remove").description("Remove messaging configuration").action(async () => {
+    try {
+      console.log("Removing messaging configuration...");
+      console.log("\u2705 Messaging disabled (will persist until reconfigured)");
+      console.log("   Restart OpenClaw to apply changes:");
+      console.log("   eve arms stop && eve arms start");
+    } catch (error) {
+      console.error("\u274C Failed to remove messaging:", error instanceof Error ? error.message : error);
+      process.exit(1);
+    }
+  });
+}
+
+// src/commands/voice.ts
+function voiceCommand(program) {
+  const voice = program.command("voice").description("Manage voice/telephony configuration (Twilio, Signal, SIP)");
+  voice.command("status").description("Show current voice configuration").action(async () => {
+    try {
+      const status = await openclaw.getStatus();
+      if (!status.running) {
+        console.log("\u274C OpenClaw is not running \u2014 voice is unavailable");
+        return;
+      }
+      console.log("Voice configuration:");
+      console.log(`  Provider: ${openclaw["config"].voice?.provider ?? "(not configured)"}`);
+      console.log(`  Enabled: ${openclaw["config"].voice?.enabled ?? false}`);
+      if (openclaw["config"].voice?.phoneNumber) {
+        console.log(`  Phone Number: ${openclaw["config"].voice.phoneNumber}`);
+      }
+      if (openclaw["config"].voice?.sipUri) {
+        console.log(`  SIP URI: ${openclaw["config"].voice.sipUri}`);
+      }
+    } catch (error) {
+      console.error("\u274C Failed to get voice status:", error instanceof Error ? error.message : error);
+      process.exit(1);
+    }
+  });
+  voice.command("configure <provider>").description("Configure voice provider (twilio, signal, selfhosted)").option("-p, --phone <number>", "Phone number (e.g. +1234567890)").option("-s, --sip-uri <uri>", "SIP URI (e.g. sip:bot@example.com)").action(async (provider, options) => {
+    try {
+      const voiceConfig = {
+        provider
+      };
+      if (options.phone) voiceConfig.phoneNumber = options.phone;
+      if (options.sipUri) voiceConfig.sipUri = options.sipUri;
+      if (provider === "twilio" && !options.phone) {
+        console.error("\u274C --phone is required for twilio configuration");
+        process.exit(1);
+      }
+      if (provider === "selfhosted" && !options.sipUri) {
+        console.error("\u274C --sip-uri is required for selfhosted configuration");
+        process.exit(1);
+      }
+      await openclaw.configureVoice(voiceConfig);
+      console.log("\n\u2705 Voice configured for " + provider);
+      console.log("   Restart OpenClaw to apply changes:");
+      console.log("   eve arms stop && eve arms start");
+    } catch (error) {
+      console.error("\u274C Failed to configure voice:", error instanceof Error ? error.message : error);
+      process.exit(1);
+    }
+  });
+}
+
 // src/index.ts
 function registerArmsCommands(arms) {
   installCommand(arms);
   startCommand(arms);
   stopCommand(arms);
   mcpCommand(arms);
+  messagingCommand(arms);
+  voiceCommand(arms);
   arms.command("status").description("Check OpenClaw status").action(async () => {
     try {
       const status = await openclaw.getStatus();
@@ -371,9 +507,11 @@ export {
   OpenClawService,
   installCommand,
   mcpCommand,
+  messagingCommand,
   openclaw,
   registerArmsCommands,
   registerCommands,
   startCommand,
-  stopCommand
+  stopCommand,
+  voiceCommand
 };

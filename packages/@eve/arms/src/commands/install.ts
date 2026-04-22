@@ -56,7 +56,7 @@ export function installCommand(program: Command): void {
         await openclaw.configure(ollamaUrl);
         openclaw.setIntegration({
           synapApiUrl: secrets?.synap?.apiUrl,
-          synapApiKey: secrets?.arms?.openclawSynapApiKey ?? secrets?.synap?.apiKey,
+          synapApiKey: secrets?.arms?.openclaw?.synapApiKey ?? secrets?.synap?.apiKey,
           dokployApiUrl: secrets?.builder?.dokployApiUrl,
         });
         await openclaw.start();
@@ -68,6 +68,8 @@ export function installCommand(program: Command): void {
         console.log('\n   Next steps:');
         console.log('   - eve arms mcp list        # List MCP servers');
         console.log('   - eve arms mcp preset      # Install an MCP server preset');
+        console.log('   - eve arms messaging configure # Configure messaging bridge');
+        console.log('   - eve arms voice configure   # Configure voice/telephony');
       } catch (error) {
         console.error('❌ Installation failed:', error instanceof Error ? error.message : error);
         process.exit(1);

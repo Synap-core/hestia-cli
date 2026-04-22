@@ -1,7 +1,7 @@
-import { execSync } from 'child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'fs';
-import { homedir } from 'os';
-import { join } from 'path';
+import { spawn } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { readEveSecrets, writeBuilderProjectEnv, ensureEveSkillsLayout, defaultSkillsDir } from '@eve/dna';
 
 export class OpenCodeService {
@@ -10,15 +10,27 @@ export class OpenCodeService {
 
   async install(): Promise<void> {
     console.log('Installing OpenCode...');
-    try {
-      // Check if OpenCode is already available
-      execSync('which opencode', { stdio: 'ignore' });
-      console.log('OpenCode already installed');
-    } catch {
-      // Install OpenCode CLI
-      console.log('Installing OpenCode CLI...');
-      execSync('npm install -g @opencode/cli', { stdio: 'inherit' });
-    }
+    const check = spawn('sh', ['-c', 'which opencode'], { stdio: ['pipe', 'pipe', 'ignore'] });
+    await new Promise<void>((resolve, reject) => {
+      check.on('close', (code) => {
+        if (code === 0) {
+          console.log('OpenCode already installed');
+          resolve();
+        } else {
+          // Install OpenCode CLI
+          console.log('Installing OpenCode CLI...');
+          const npm = spawn('sh', ['-c', 'npm install -g @opencode/cli'], {
+            stdio: 'inherit',
+          });
+          npm.on('close', (code) => {
+            if (code && code !== 0) reject(new Error(`npm install failed with code ${code}`));
+            else resolve();
+          });
+          npm.on('error', reject);
+        }
+      });
+      check.on('error', reject);
+    });
     this.isInstalled = true;
     console.log('OpenCode installed successfully');
   }
@@ -29,7 +41,7 @@ export class OpenCodeService {
     }
 
     console.log(`Initializing OpenCode project: ${name}`);
-    
+
     const secrets = await readEveSecrets(process.cwd());
     const workspaceRoot = secrets?.builder?.workspaceDir ?? join(homedir(), '.eve', 'workspace');
     mkdirSync(workspaceRoot, { recursive: true });
@@ -78,18 +90,27 @@ export class OpenCodeService {
     }
 
     console.log('Generating content with OpenCode...');
-    
-    // Run OpenCode generation
-    try {
-      execSync('opencode generate', { 
-        cwd: this.projectPath,
-        stdio: 'inherit' 
+
+    return new Promise<void>((resolve, reject) => {
+      const cmd = `opencode generate`;
+      const proc = spawn('sh', ['-c', cmd], {
+        cwd: this.projectPath ?? undefined,
+        stdio: ['inherit', 'inherit', 'inherit'],
       });
-      console.log('Content generated successfully');
-    } catch (error) {
-      console.error('Generation failed:', error);
-      throw error;
-    }
+
+      proc.on('close', (code: number | null) => {
+        if (code === 0) {
+          console.log('Content generated successfully');
+          resolve();
+        } else {
+          const err = new Error(`Generation exited with code ${code ?? 1}`);
+          console.error(err);
+          reject(err);
+        }
+      });
+
+      proc.on('error', reject);
+    });
   }
 
   async build(): Promise<void> {
@@ -98,17 +119,27 @@ export class OpenCodeService {
     }
 
     console.log('Building OpenCode project...');
-    
-    try {
-      execSync('opencode build', { 
-        cwd: this.projectPath,
-        stdio: 'inherit' 
+
+    return new Promise<void>((resolve, reject) => {
+      const cmd = `opencode build`;
+      const proc = spawn('sh', ['-c', cmd], {
+        cwd: this.projectPath ?? undefined,
+        stdio: ['inherit', 'inherit', 'inherit'],
       });
-      console.log('Build completed successfully');
-    } catch (error) {
-      console.error('Build failed:', error);
-      throw error;
-    }
+
+      proc.on('close', (code: number | null) => {
+        if (code === 0) {
+          console.log('Build completed successfully');
+          resolve();
+        } else {
+          const err = new Error(`Build exited with code ${code ?? 1}`);
+          console.error(err);
+          reject(err);
+        }
+      });
+
+      proc.on('error', reject);
+    });
   }
 
   getProjectPath(): string | null {

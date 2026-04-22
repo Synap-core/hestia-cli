@@ -76,7 +76,7 @@ declare class TunnelService {
 
 type LegsProxySetupOptions = {
     domain?: string;
-    tunnel?: 'pangolin' | 'cloudflare';
+    tunnel?: 'pangolin' | 'cloudflare' | 'pangolin_tunnel' | 'cloudflare_tunnel';
     tunnelDomain?: string;
     ssl?: boolean;
     /** Use /opt/eve/traefik instead of Dokploy-managed Traefik */

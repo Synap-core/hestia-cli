@@ -10,7 +10,7 @@
 // =============================================================================
 
 /** Represents the health/availability state of an organ */
-export type OrganState = 'missing' | 'installing' | 'ready' | 'error' | 'stopped';
+export type OrganState = 'missing' | 'installing' | 'starting' | 'ready' | 'error' | 'stopped';
 
 /** The available organs in the Eve ecosystem */
 export type Organ = 'brain' | 'arms' | 'builder' | 'eyes' | 'legs';
@@ -81,7 +81,7 @@ export interface OrganConfig {
 /** Available services organized by organ */
 export type BrainService = 'synap' | 'ollama' | 'postgres' | 'redis';
 export type ArmsService = 'openclaw';
-export type BuilderService = 'opencode' | 'openclaude' | 'claudecode' | 'dokploy';
+export type BuilderService = 'opencode' | 'openclaude' | 'claudecode' | 'dokploy' | 'hermes';
 export type EyesService = 'rsshub';
 export type LegsService = 'traefik' | 'cloudflared' | 'pangolin' | 'newt';
 
@@ -98,6 +98,7 @@ export const SERVICE_TO_ORGAN: Record<Service, Organ> = {
   openclaude: 'builder',
   claudecode: 'builder',
   dokploy: 'builder',
+  hermes: 'builder',
   rsshub: 'eyes',
   traefik: 'legs',
   cloudflared: 'legs',
@@ -230,6 +231,18 @@ export const SERVICE_REGISTRY: Record<Service, ServiceConfig> = {
     containerName: 'eve-builder-dokploy',
     network: 'eve-network',
     restart: 'no',
+  },
+  // Hermes — headless dev orchestrator daemon (V2 spec)
+  hermes: {
+    image: 'node:20-alpine',
+    containerName: 'eve-builder-hermes',
+    volumes: ['eve-builder-hermes-data:/data'],
+    network: 'eve-network',
+    restart: 'unless-stopped',
+    environment: {
+      EVE_WORKSPACE_DIR: '/data/workspace',
+    },
+    dependsOn: ['eve-brain-synap'],
   },
   // Eyes Services
   rsshub: {
@@ -483,6 +496,108 @@ export interface Secrets {
 }
 
 // =============================================================================
+// TASK TYPES
+// =============================================================================
+
+/** Task lifecycle status */
+export type TaskStatus =
+  | 'pending'
+  | 'assigned'
+  | 'in-progress'
+  | 'reviewing'
+  | 'done'
+  | 'failed'
+  | 'cancelled';
+
+/** Task priority levels */
+export type TaskPriority = 'low' | 'medium' | 'high' | 'critical';
+
+/** Task type categories */
+export type TaskType =
+  | 'code-gen'
+  | 'review'
+  | 'deployment'
+  | 'config'
+  | 'maintenance'
+  | 'data'
+  | 'notification'
+  | 'custom';
+
+/** A task entity managed by the Hermes orchestrator */
+export interface Task {
+  id: string;
+  title: string;
+  description?: string;
+  type: TaskType;
+  status: TaskStatus;
+  priority: TaskPriority;
+  /** Agent slug assigned to this task (e.g., 'orchestrator', 'hermes') */
+  assignedAgentId?: string;
+  /** Synap entity ID this task is linked to */
+  entityId?: string;
+  /** Parent task ID (for subtasks) */
+  parentId?: string;
+  /** Template slug if generated from a template */
+  templateSlug?: string;
+  /** Arbitrary context payload */
+  context?: Record<string, unknown>;
+  /** Result data after completion */
+  result?: Record<string, unknown>;
+  metadata: {
+    createdAt: string;
+    updatedAt: string;
+    startedAt?: string;
+    completedAt?: string;
+    deadline?: string;
+    tags?: string[];
+  };
+}
+
+/** Default Hermes configuration */
+export const DEFAULT_HERMES_CONFIG = {
+  enabled: true,
+  pollIntervalMs: 30_000,
+  maxConcurrentTasks: 1,
+} as const;
+
+// =============================================================================
+// MESSENGING TYPES
+// =============================================================================
+
+/** Supported messaging platforms */
+export type MessagingPlatform = 'telegram' | 'signal' | 'matrix';
+
+/** Messaging platform configuration */
+export interface MessagingConfig {
+  enabled: boolean;
+  platform: MessagingPlatform;
+  botToken?: string;
+  chatId?: string;
+  username?: string;
+  /** Max messages to process per poll */
+  batchSize?: number;
+}
+
+// =============================================================================
+// VOICE TYPES
+// =============================================================================
+
+/** Supported voice/telephony providers */
+export type VoiceProvider = 'twilio' | 'signal' | 'selfhosted';
+
+/** Voice/telephony configuration */
+export interface VoiceConfig {
+  enabled: boolean;
+  provider: VoiceProvider;
+  phoneNumber?: string;
+  sipUri?: string;
+  /** STT model for speech-to-text */
+  sttModel?: string;
+  /** TTS model for text-to-speech */
+  ttsModel?: string;
+}
+
+// =============================================================================
 // ERROR TYPES
 // =============================================================================
 
@@ -596,7 +711,7 @@ export const ORGANS: Organ[] = ['brain', 'arms', 'builder', 'eyes', 'legs'];
 export const SERVICES: Service[] = [
   'synap', 'ollama', 'postgres', 'redis',
   'openclaw',
-  'opencode', 'openclaude', 'claudecode', 'dokploy',
+  'opencode', 'openclaude', 'claudecode', 'dokploy', 'hermes',
   'rsshub',
   'traefik', 'cloudflared', 'pangolin', 'newt',
 ];
