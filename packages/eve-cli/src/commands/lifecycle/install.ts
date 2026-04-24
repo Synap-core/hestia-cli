@@ -140,13 +140,17 @@ export async function runInstall(opts: InstallOptions): Promise<void> {
       printError('Eve requires Docker to manage containers.');
       console.log();
       if (process.platform === 'darwin') {
-        printInfo('macOS: Install Docker Desktop — https://docs.docker.com/desktop/install/mac-install/');
+        printInfo('macOS: Install Docker Desktop and start it, then run:');
+        printInfo('  open -a Docker');
       } else if (process.platform === 'win32') {
-        printInfo('Windows: Install Docker Desktop — https://docs.docker.com/desktop/install/windows-install/');
+        printInfo('Windows: Install Docker Desktop and start the app.');
       } else {
-        printInfo('Linux: Install Docker Engine — https://docs.docker.com/engine/install/');
-        printInfo('  Or use the convenience script (requires root):');
-        printInfo('    curl -fsSL https://get.docker.com | sudo bash');
+        printInfo('Docker may be installed but the daemon is not running. Start it with:');
+        printInfo('  sudo systemctl start docker');
+        printInfo('  sudo systemctl enable docker  # auto-start on boot');
+        printInfo();
+        printInfo('If Docker is not installed, run:');
+        printInfo('  curl -fsSL https://get.docker.com | sudo bash');
       }
       console.log();
       process.exit(1);
