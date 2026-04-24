@@ -131,29 +131,66 @@ export async function runInstall(opts: InstallOptions): Promise<void> {
   if (!opts.dryRun) {
     const spinner = createSpinner('Checking prerequisites...');
     spinner.start();
-    try {
-      await execa('docker', ['version']);
-      spinner.succeed('Docker is running');
-    } catch {
-      spinner.fail('Docker is not running');
-      console.log();
-      printError('Eve requires Docker to manage containers.');
-      console.log();
-      if (process.platform === 'darwin') {
-        printInfo('macOS: Install Docker Desktop and start it, then run:');
-        printInfo('  open -a Docker');
-      } else if (process.platform === 'win32') {
-        printInfo('Windows: Install Docker Desktop and start the app.');
-      } else {
-        printInfo('Docker may be installed but the daemon is not running. Start it with:');
-        printInfo('  sudo systemctl start docker');
-        printInfo('  sudo systemctl enable docker  # auto-start on boot');
-        printInfo();
-        printInfo('If Docker is not installed, run:');
-        printInfo('  curl -fsSL https://get.docker.com | sudo bash');
+
+    // Try checking if docker responds — with retries for daemon startup delay
+    let dockerOk = false;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        await execa('docker', ['version']);
+        dockerOk = true;
+        break;
+      } catch {
+        if (attempt < 4) {
+          await new Promise(resolve => setTimeout(resolve, 1500));
+        }
       }
-      console.log();
-      process.exit(1);
+    }
+
+    if (!dockerOk) {
+      // Try to start Docker daemon on Linux
+      let started = false;
+      if (process.platform === 'linux') {
+        try {
+          spinner.warn('Attempting to start Docker daemon...');
+          await execa('sudo', ['systemctl', 'start', 'docker'], { stdio: 'pipe' });
+          // Wait for daemon to fully initialize
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          for (let retry = 0; retry < 5; retry++) {
+            try {
+              await execa('docker', ['version']);
+              started = true;
+              break;
+            } catch {
+              await new Promise(resolve => setTimeout(resolve, 1500));
+            }
+          }
+          if (started) {
+            spinner.succeed('Docker is running');
+          }
+        } catch {
+          if (!started) spinner.fail('Docker is not running');
+        }
+      }
+      if (!started) {
+        console.log();
+        printError('Eve requires Docker to manage containers.');
+        console.log();
+        if (process.platform === 'darwin') {
+          printInfo('macOS: Install Docker Desktop and start it, then run:');
+          printInfo('  open -a Docker');
+        } else if (process.platform === 'win32') {
+          printInfo('Windows: Install Docker Desktop and start the app.');
+        } else {
+          printInfo('Docker may be installed but the daemon is not running. Start it with:');
+          printInfo('  sudo systemctl start docker');
+          printInfo('  sudo systemctl enable docker  # auto-start on boot');
+          console.log();
+          printInfo('If Docker is not installed, run:');
+          printInfo('  curl -fsSL https://get.docker.com | sudo bash');
+        }
+        console.log();
+        process.exit(1);
+      }
     }
   }
 

@@ -742,25 +742,38 @@ async function runInstall(opts) {
       await execa2("docker", ["version"]);
       spinner.succeed("Docker is running");
     } catch {
-      spinner.fail("Docker is not running");
-      console.log();
-      printError("Eve requires Docker to manage containers.");
-      console.log();
-      if (process.platform === "darwin") {
-        printInfo("macOS: Install Docker Desktop and start it, then run:");
-        printInfo("  open -a Docker");
-      } else if (process.platform === "win32") {
-        printInfo("Windows: Install Docker Desktop and start the app.");
-      } else {
-        printInfo("Docker may be installed but the daemon is not running. Start it with:");
-        printInfo("  sudo systemctl start docker");
-        printInfo("  sudo systemctl enable docker  # auto-start on boot");
-        printInfo();
-        printInfo("If Docker is not installed, run:");
-        printInfo("  curl -fsSL https://get.docker.com | sudo bash");
+      let started = false;
+      if (process.platform === "linux") {
+        try {
+          spinner.warn("Attempting to start Docker daemon...");
+          await execa2("sudo", ["systemctl", "start", "docker"], { stdio: "pipe" });
+          await execa2("docker", ["version"]);
+          started = true;
+          spinner.succeed("Docker is running");
+        } catch {
+          if (!started) spinner.fail("Docker is not running");
+        }
       }
-      console.log();
-      process.exit(1);
+      if (!started) {
+        console.log();
+        printError("Eve requires Docker to manage containers.");
+        console.log();
+        if (process.platform === "darwin") {
+          printInfo("macOS: Install Docker Desktop and start it, then run:");
+          printInfo("  open -a Docker");
+        } else if (process.platform === "win32") {
+          printInfo("Windows: Install Docker Desktop and start the app.");
+        } else {
+          printInfo("Docker may be installed but the daemon is not running. Start it with:");
+          printInfo("  sudo systemctl start docker");
+          printInfo("  sudo systemctl enable docker  # auto-start on boot");
+          console.log();
+          printInfo("If Docker is not installed, run:");
+          printInfo("  curl -fsSL https://get.docker.com | sudo bash");
+        }
+        console.log();
+        process.exit(1);
+      }
     }
   }
   if (!opts.dryRun) {
