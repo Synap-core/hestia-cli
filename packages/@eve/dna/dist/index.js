@@ -479,20 +479,51 @@ import { existsSync } from "fs";
 import { join as join3 } from "path";
 import { homedir as homedir3, hostname } from "os";
 import { z as z2 } from "zod";
-var StateSchema = z2.object({
+var OrganStatusSchema = z2.object({
+  state: z2.enum(["missing", "installing", "starting", "ready", "error", "stopped"]),
+  installedAt: z2.string().optional(),
+  version: z2.string().optional(),
+  lastChecked: z2.string().optional(),
+  errorMessage: z2.string().optional()
+});
+var ComponentEntrySchema = z2.object({
+  organ: z2.enum(["brain", "arms", "builder", "eyes", "legs"]).optional(),
+  state: z2.enum(["missing", "installing", "starting", "ready", "error", "stopped"]),
+  version: z2.string().optional(),
+  installedAt: z2.string().optional(),
+  lastChecked: z2.string().optional(),
+  errorMessage: z2.string().optional(),
+  managedBy: z2.enum(["eve", "synap", "manual"]).optional(),
+  config: z2.record(z2.string(), z2.unknown()).optional()
+});
+var SetupProfileV2Schema = z2.object({
+  version: z2.literal(2),
+  components: z2.array(z2.string()),
+  installedAt: z2.string(),
+  migratedFromV1: z2.enum(["inference_only", "data_pod", "full"]).optional()
+});
+var StateSchemaV1 = z2.object({
   version: z2.string(),
   initializedAt: z2.string(),
   aiModel: z2.enum(["ollama", "none"]),
   organs: z2.record(
     z2.enum(["brain", "arms", "builder", "eyes", "legs"]),
-    z2.object({
-      state: z2.enum(["missing", "installing", "starting", "ready", "error", "stopped"]),
-      installedAt: z2.string().optional(),
-      version: z2.string().optional(),
-      lastChecked: z2.string().optional(),
-      errorMessage: z2.string().optional()
-    })
+    OrganStatusSchema
   ),
+  metadata: z2.object({
+    lastBootTime: z2.string().optional(),
+    hostname: z2.string().optional(),
+    platform: z2.string().optional(),
+    arch: z2.string().optional()
+  })
+});
+var StateSchema = z2.object({
+  version: z2.string(),
+  initializedAt: z2.string(),
+  aiModel: z2.enum(["ollama", "none"]),
+  organs: z2.record(z2.enum(["brain", "arms", "builder", "eyes", "legs"]), OrganStatusSchema),
+  installed: z2.record(z2.string(), ComponentEntrySchema).optional(),
+  setupProfile: SetupProfileV2Schema.optional(),
   metadata: z2.object({
     lastBootTime: z2.string().optional(),
     hostname: z2.string().optional(),
@@ -520,19 +551,49 @@ async function migrateStateDirectory() {
   await rm(OLD_STATE_DIR, { recursive: true, force: true });
   return true;
 }
-var DEFAULT_STATE = {
-  version: "0.1.0",
-  initializedAt: (/* @__PURE__ */ new Date()).toISOString(),
-  aiModel: "none",
-  organs: {
-    brain: { state: "missing" },
-    arms: { state: "missing" },
-    builder: { state: "missing" },
-    eyes: { state: "missing" },
-    legs: { state: "missing" }
-  },
-  metadata: {}
+var ORGAN_TO_COMPONENT = {
+  brain: "synap",
+  arms: "openclaw",
+  builder: "hermes",
+  eyes: "rsshub",
+  legs: "traefik"
 };
+function migrateStateToV2(parsed) {
+  const installed = {};
+  for (const [organName, organStatus] of Object.entries(parsed.organs)) {
+    const organ = organName;
+    const componentId = ORGAN_TO_COMPONENT[organ];
+    installed[componentId] = {
+      organ,
+      state: organStatus.state,
+      version: organStatus.version,
+      installedAt: organStatus.installedAt,
+      lastChecked: organStatus.lastChecked,
+      errorMessage: organStatus.errorMessage,
+      managedBy: "manual",
+      config: {}
+    };
+  }
+  return {
+    version: "0.2.0",
+    initializedAt: parsed.initializedAt,
+    aiModel: parsed.aiModel,
+    installed,
+    setupProfile: void 0,
+    // unknown from legacy
+    organs: {
+      ...DEFAULT_ENTITY_STATE.organs,
+      ...parsed.organs
+    },
+    metadata: parsed.metadata
+  };
+}
+function ensureV2(raw) {
+  if ("installed" in raw && raw.installed) {
+    return raw;
+  }
+  return migrateStateToV2(raw);
+}
 var EntityStateManager = class {
   state = null;
   statePath = null;
@@ -550,15 +611,26 @@ var EntityStateManager = class {
     try {
       await access(statePath);
       const content = await readFile(statePath, "utf-8");
-      const parsed = JSON.parse(content);
-      const validated = StateSchema.parse(parsed);
+      const raw = JSON.parse(content);
+      let validated;
+      try {
+        validated = StateSchema.parse(raw);
+      } catch {
+        const v1 = StateSchemaV1.parse(raw);
+        validated = ensureV2(v1);
+      }
       const mergedState = {
         ...validated,
+        version: "0.2.0",
+        // always report v2
         organs: {
-          ...DEFAULT_STATE.organs,
+          ...DEFAULT_ENTITY_STATE.organs,
           ...validated.organs
         }
       };
+      if (!validated.installed) {
+        await this.saveState(mergedState);
+      }
       this.state = mergedState;
       return mergedState;
     } catch (error) {
@@ -624,7 +696,73 @@ var EntityStateManager = class {
       status.errorMessage = options.errorMessage;
     }
     state.organs[organ] = status;
+    const componentId = ORGAN_TO_COMPONENT[organ];
+    const installedEntry = {
+      organ,
+      state: organState,
+      version: options?.version,
+      installedAt: status.installedAt,
+      lastChecked: status.lastChecked,
+      errorMessage: status.errorMessage,
+      managedBy: options?.managedBy ?? state.installed?.[componentId]?.managedBy ?? "manual",
+      config: options?.config ?? state.installed?.[componentId]?.config
+    };
+    if (!state.installed) {
+      state.installed = {};
+    }
+    state.installed[componentId] = installedEntry;
     await this.saveState(state);
+  }
+  // --- Component-centric v2 methods ---
+  /** Get a component's entry from the v2 `installed` map */
+  async getComponentEntry(componentId) {
+    const state = await this.getState();
+    return state.installed?.[componentId] ?? null;
+  }
+  /** Update a component entry directly */
+  async updateComponentEntry(componentId, entry) {
+    const state = await this.getState();
+    if (!state.installed) {
+      state.installed = {};
+    }
+    const existing = state.installed[componentId] ?? { state: "missing" };
+    state.installed[componentId] = {
+      ...existing,
+      ...entry,
+      lastChecked: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    const organ = entry.organ ?? existing.organ;
+    if (organ && state.installed[componentId].state !== "missing") {
+      state.organs[organ] = {
+        state: state.installed[componentId].state,
+        version: state.installed[componentId].version,
+        installedAt: state.installed[componentId].installedAt,
+        lastChecked: state.installed[componentId].lastChecked,
+        errorMessage: state.installed[componentId].errorMessage
+      };
+    }
+    await this.saveState(state);
+  }
+  /** Register / deregister components in the setup profile */
+  async updateSetupProfile(updates) {
+    const state = await this.getState();
+    state.setupProfile = {
+      version: 2,
+      components: updates.components ?? state.setupProfile?.components ?? [],
+      installedAt: updates.components && !state.setupProfile?.installedAt ? (/* @__PURE__ */ new Date()).toISOString() : state.setupProfile?.installedAt ?? (/* @__PURE__ */ new Date()).toISOString(),
+      migratedFromV1: updates.migratedFromV1 ?? state.setupProfile?.migratedFromV1
+    };
+    await this.saveState(state);
+  }
+  /** Get the list of installed components from the setup profile */
+  async getInstalledComponents() {
+    const state = await this.getState();
+    return state.setupProfile?.components ?? [];
+  }
+  /** Check if a specific component is registered */
+  async isComponentInstalled(componentId) {
+    const components = await this.getInstalledComponents();
+    return components.includes(componentId);
   }
   async setAIModel(model) {
     const state = await this.getState();
@@ -703,7 +841,7 @@ var EntityStateManager = class {
   }
   createDefaultState() {
     return {
-      ...DEFAULT_STATE,
+      ...DEFAULT_ENTITY_STATE,
       metadata: {
         platform: process.platform,
         arch: process.arch,

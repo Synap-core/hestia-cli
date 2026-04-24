@@ -8,8 +8,6 @@ import {
   printKeyValue,
   formatOrgan,
   printBox,
-  printEveDeprecation,
-  requireDelegationConfirmed,
 } from '../lib/ui.js';
 
 export function statusCommand(program: Command): void {
@@ -20,9 +18,6 @@ export function statusCommand(program: Command): void {
     .option('-w, --watch', 'Watch mode - continuously update')
     .option('-j, --json', 'Output as JSON')
     .action(async (options) => {
-      printEveDeprecation('status', './synap health (on your server)  or  npx @synap-core/cli status (from your laptop)');
-      requireDelegationConfirmed();
-
       try {
         if (options.watch) {
           await watchStatus();
@@ -94,6 +89,52 @@ async function showStatus(json = false): Promise<void> {
 
   console.log(table.toString());
   console.log();
+
+  // Component-Level View (v2 installed map)
+  const components = state.installed;
+  if (components && Object.keys(components).length > 0) {
+    const compTable = new Table({
+      head: [
+        colors.primary.bold('Component'),
+        colors.primary.bold('Status'),
+        colors.primary.bold('Version'),
+        colors.primary.bold('Managed By'),
+      ],
+      colWidths: [18, 12, 12, 14],
+      style: {
+        head: [],
+        border: ['grey'],
+      },
+    });
+
+    const COMPONENT_LABELS: Record<string, string> = {
+      synap: 'Synap',
+      openclaw: 'OpenClaw',
+      hermes: 'Hermes',
+      rsshub: 'RSSHub',
+      traefik: 'Traefik',
+      ollama: 'Ollama',
+    };
+
+    for (const [id, comp] of Object.entries(components)) {
+      const statusColor = getStatusColor(comp.state);
+      const managedByColor = comp.managedBy === 'eve'
+        ? colors.success
+        : comp.managedBy === 'synap'
+          ? colors.warning
+          : colors.muted;
+
+      compTable.push([
+        COMPONENT_LABELS[id] || id,
+        statusColor(comp.state),
+        comp.version || '-',
+        managedByColor(comp.managedBy || '—'),
+      ]);
+    }
+
+    console.log(compTable.toString());
+    console.log();
+  }
 
   // Summary
   const readyCount = organs.filter(o => state.organs[o].state === 'ready').length;

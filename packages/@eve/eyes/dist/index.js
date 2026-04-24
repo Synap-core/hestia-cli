@@ -1,158 +1,8 @@
-var __defProp = Object.defineProperty;
-var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __esm = (fn, res) => function __init() {
-  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
-};
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
-};
-var __copyProps = (to, from, except, desc) => {
-  if (from && typeof from === "object" || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
-  }
-  return to;
-};
-var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
-
-// src/lib/rsshub.ts
-var rsshub_exports = {};
-__export(rsshub_exports, {
-  RSSHubService: () => RSSHubService
-});
-import { exec } from "child_process";
-import { promisify } from "util";
-import { execa, resolveSynapDelegate } from "@eve/brain";
-var execAsync, RSSHubService;
-var init_rsshub = __esm({
-  "src/lib/rsshub.ts"() {
-    "use strict";
-    execAsync = promisify(exec);
-    RSSHubService = class {
-      config;
-      feeds = [];
-      constructor(config = {}) {
-        this.config = {
-          port: config.port ?? 1200
-        };
-      }
-      /**
-       * Check if RSSHub is installed
-       */
-      async isInstalled() {
-        try {
-          const { stdout } = await execAsync(
-            'docker images rsshub/rsshub --format "{{.Repository}}"'
-          );
-          return stdout.trim() === "rsshub/rsshub";
-        } catch {
-          return false;
-        }
-      }
-      /**
-       * Check if RSSHub container is running
-       */
-      async isRunning() {
-        try {
-          const { stdout } = await execAsync(
-            'docker ps --filter "name=eve-eyes-rsshub" --format "{{.Names}}"'
-          );
-          return stdout.trim() === "eve-eyes-rsshub";
-        } catch {
-          return false;
-        }
-      }
-      /**
-       * Install RSSHub container
-       */
-      async install(config) {
-        const synapPod = resolveSynapDelegate();
-        if (synapPod) {
-          console.log("RSSHub: enabling Synap compose profile (rsshub + browserless)...");
-          await execa("bash", [synapPod.synapScript, "profiles", "enable", "rsshub"], {
-            cwd: synapPod.repoRoot,
-            env: { ...process.env, SYNAP_DEPLOY_DIR: synapPod.deployDir },
-            stdio: "inherit"
-          });
-          return;
-        }
-        const port = config?.port ?? this.config.port;
-        console.log(`Pulling RSSHub image...`);
-        await execAsync("docker pull rsshub/rsshub:latest");
-        console.log(`Starting RSSHub on port ${port}...`);
-        await execAsync(
-          `docker run -d --name eve-eyes-rsshub --network eve-network -p ${port}:1200 rsshub/rsshub:latest`
-        );
-      }
-      /**
-       * Start RSSHub container
-       */
-      async start() {
-        const synapPod = resolveSynapDelegate();
-        if (synapPod) {
-          await execa("bash", [synapPod.synapScript, "profiles", "enable", "rsshub"], {
-            cwd: synapPod.repoRoot,
-            env: { ...process.env, SYNAP_DEPLOY_DIR: synapPod.deployDir },
-            stdio: "inherit"
-          });
-          console.log("RSSHub profile started (Synap stack)");
-          return;
-        }
-        if (await this.isRunning()) {
-          console.log("RSSHub is already running");
-          return;
-        }
-        await execAsync("docker start eve-eyes-rsshub");
-        console.log("RSSHub started");
-      }
-      /**
-       * Stop RSSHub container
-       */
-      async stop() {
-        await execAsync("docker stop eve-eyes-rsshub");
-        console.log("RSSHub stopped");
-      }
-      /**
-       * Add a feed
-       */
-      async addFeed(name, url) {
-        this.feeds.push({
-          name,
-          url,
-          status: "active",
-          lastFetch: /* @__PURE__ */ new Date()
-        });
-        console.log(`Feed "${name}" added`);
-      }
-      /**
-       * List all feeds
-       */
-      async listFeeds() {
-        return this.feeds;
-      }
-      /**
-       * Remove a feed
-       */
-      async removeFeed(name) {
-        this.feeds = this.feeds.filter((f) => f.name !== name);
-        console.log(`Feed "${name}" removed`);
-      }
-      /**
-       * Sync feeds to Brain
-       */
-      async syncToBrain() {
-        console.log(`Syncing ${this.feeds.length} feeds to Brain...`);
-      }
-    };
-  }
-});
+import {
+  RSSHubService
+} from "./chunk-RTPTV7YU.js";
 
 // src/commands/install.ts
-init_rsshub();
 import { EntityStateManager } from "@eve/dna";
 function installCommand(program) {
   program.command("install").description("Install RSSHub for RSS aggregation").option("-p, --port <port>", "RSSHub port", "1200").action(async (options) => {
@@ -182,7 +32,6 @@ function installCommand(program) {
 }
 
 // src/commands/add-feed.ts
-init_rsshub();
 function addFeedCommand(program) {
   program.command("add-feed <name> <url>").description("Add an RSS feed to monitor").action(async (name, url) => {
     try {
@@ -204,7 +53,6 @@ function addFeedCommand(program) {
 }
 
 // src/commands/list-feeds.ts
-init_rsshub();
 function listFeedsCommand(program) {
   program.command("list-feeds").alias("eyes:ls").description("List all RSS feeds").action(async () => {
     try {
@@ -232,7 +80,6 @@ function listFeedsCommand(program) {
 }
 
 // src/commands/remove-feed.ts
-init_rsshub();
 function removeFeedCommand(program) {
   program.command("remove-feed <name>").alias("eyes:rm").description("Remove an RSS feed").action(async (name) => {
     try {
@@ -250,7 +97,6 @@ function removeFeedCommand(program) {
 }
 
 // src/commands/start.ts
-init_rsshub();
 function startCommand(program) {
   program.command("start").description("Start RSSHub service").action(async () => {
     try {
@@ -266,7 +112,6 @@ function startCommand(program) {
 }
 
 // src/commands/stop.ts
-init_rsshub();
 function stopCommand(program) {
   program.command("stop").description("Stop RSSHub service").action(async () => {
     try {
@@ -282,7 +127,6 @@ function stopCommand(program) {
 }
 
 // src/commands/sync.ts
-init_rsshub();
 function syncCommand(program) {
   program.command("sync").description("Sync RSS feeds to Brain").action(async () => {
     try {
@@ -411,7 +255,6 @@ Outerbase Studio: http://127.0.0.1:${opts.port ?? "4005"}
 }
 
 // src/index.ts
-init_rsshub();
 function registerEyesCommands(eyes) {
   installCommand(eyes);
   addFeedCommand(eyes);
@@ -422,8 +265,8 @@ function registerEyesCommands(eyes) {
   syncCommand(eyes);
   databaseCommand(eyes);
 }
-function createRSSHubService(config) {
-  const { RSSHubService: RSSHubService2 } = (init_rsshub(), __toCommonJS(rsshub_exports));
+async function createRSSHubService(config) {
+  const { RSSHubService: RSSHubService2 } = await import("./rsshub-JREOU6CE.js");
   return new RSSHubService2(config);
 }
 export {

@@ -10,6 +10,13 @@ import { z } from 'zod';
 type OrganState = 'missing' | 'installing' | 'starting' | 'ready' | 'error' | 'stopped';
 /** The available organs in the Eve ecosystem */
 type Organ = 'brain' | 'arms' | 'builder' | 'eyes' | 'legs';
+/** Human-readable organ information */
+interface OrganInfo {
+    name: string;
+    emoji: string;
+    description: string;
+    purpose: string;
+}
 /** The state of a single organ */
 interface OrganStatus {
     state: OrganState;
@@ -104,12 +111,45 @@ interface DockerCompose {
 }
 /** AI model preference */
 type AIModel = 'ollama' | 'none';
-/** The complete state of the Eve entity */
+/** Ownership marker for installed components */
+type ManagedBy = 'eve' | 'synap' | 'manual';
+/** A managed component entry in the v2 state */
+interface ComponentEntry {
+    /** Organ mapping (legacy organ name, for backward compat) */
+    organ?: Organ;
+    /** Component state */
+    state: OrganState;
+    /** Version string */
+    version?: string;
+    /** ISO timestamp of installation */
+    installedAt?: string;
+    /** Last health-check timestamp */
+    lastChecked?: string;
+    /** Error details */
+    errorMessage?: string;
+    /** Who manages this component */
+    managedBy?: ManagedBy;
+    /** Component-specific config */
+    config?: Record<string, unknown>;
+}
+/**
+ * State v2 — component-centric model.
+ *
+ * v2 introduces the `installed` map keyed by component ID:
+ *   traefik | synap | hermes | openclaw | ollama | dokploy | opencode | rsshub
+ *
+ * The legacy `organs` map is preserved for backward compat and
+ * auto-migrated from the `installed` map on read.
+ */
 interface EntityState {
     version: string;
     initializedAt: string;
     aiModel: AIModel;
     organs: Record<Organ, OrganStatus>;
+    /** Component-centric state (v2+, nullable for v1 files) */
+    installed?: Record<string, ComponentEntry>;
+    /** Setup profile reference (v2+) */
+    setupProfile?: SetupProfileV2;
     metadata: {
         lastBootTime?: string;
         hostname?: string;
@@ -117,6 +157,15 @@ interface EntityState {
         arch?: string;
         entityName?: string;
     };
+}
+/** Legacy setup profile kinds (from v1 binary profiles) */
+type LegacySetupProfileKind = 'inference_only' | 'data_pod' | 'full';
+/** Setup profile v2 — replaces binary `profile` string with component array */
+interface SetupProfileV2 {
+    version: 2;
+    components: string[];
+    installedAt: string;
+    migratedFromV1?: LegacySetupProfileKind;
 }
 /** Complete Eve configuration structure */
 interface EveConfig {
@@ -359,7 +408,22 @@ declare class EntityStateManager {
     updateOrgan(organ: Organ, organState: OrganState, options?: {
         version?: string;
         errorMessage?: string;
+        managedBy?: ManagedBy;
+        config?: Record<string, unknown>;
     }): Promise<void>;
+    /** Get a component's entry from the v2 `installed` map */
+    getComponentEntry(componentId: string): Promise<ComponentEntry | null>;
+    /** Update a component entry directly */
+    updateComponentEntry(componentId: string, entry: Partial<ComponentEntry>): Promise<void>;
+    /** Register / deregister components in the setup profile */
+    updateSetupProfile(updates: {
+        components?: string[];
+        migratedFromV1?: LegacySetupProfileKind;
+    }): Promise<void>;
+    /** Get the list of installed components from the setup profile */
+    getInstalledComponents(): Promise<string[]>;
+    /** Check if a specific component is registered */
+    isComponentInstalled(componentId: string): Promise<boolean>;
     setAIModel(model: AIModel): Promise<void>;
     getOrganState(organ: Organ): Promise<OrganStatus>;
     isOrganReady(organ: Organ): Promise<boolean>;
@@ -1098,4 +1162,4 @@ declare function writeHermesEnvFile(cwd?: string): Promise<string>;
 
 declare const VERSION = "0.1.0";
 
-export { type AIModel, AiModeSchema, AiProviderSchema, type BuilderEngine, BuilderEngineSchema, ConfigManager, type Credentials, CredentialsManager, DEFAULT_HERMES_CONFIG, DEFAULT_HUB_PATH, type DNAError, type DockerCompose, DockerComposeGenerator, type DockerComposeService, type EntityState, EntityStateManager, type EveConfig, type EveSecrets, type HardwareFacts, type MessagingConfig, type MessagingPlatform, type Organ, type OrganState, type OrganStatus, type Service, type ServiceConfig, type SetupProfile, type SetupProfileKind, SetupProfileKindSchema, SetupProfileSchema, type Task, type TaskPriority, type TaskStatus, type TaskType, type UsbSetupManifest, UsbSetupManifestSchema, VERSION, type VoiceConfig, type VoiceProvider, configManager, copySynapSkillIntoClaudeProject, createDockerComposeGenerator, credentialsManager, defaultSkillsDir, ensureEveSkillsLayout, ensureSecretValue, entityStateManager, formatHardwareReport, getSetupProfilePath, migrateStateDirectory, probeHardware, readEveSecrets, readSetupProfile, readUsbSetupManifest, resolveHubBaseUrl, secretsPath, writeBuilderProjectEnv, writeClaudeCodeSettings, writeEveSecrets, writeHermesEnvFile, writeSandboxEnvFile, writeSetupProfile, writeUsbSetupManifest };
+export { type AIModel, AiModeSchema, AiProviderSchema, type BuilderEngine, BuilderEngineSchema, type ComponentEntry, ConfigManager, type Credentials, CredentialsManager, DEFAULT_HERMES_CONFIG, DEFAULT_HUB_PATH, type DNAError, type DockerCompose, DockerComposeGenerator, type DockerComposeService, type EntityState, EntityStateManager, type EveConfig, type EveSecrets, type HardwareFacts, type LegacySetupProfileKind, type ManagedBy, type MessagingConfig, type MessagingPlatform, type Organ, type OrganInfo, type OrganState, type OrganStatus, type Service, type ServiceConfig, type SetupProfile, type SetupProfileKind, SetupProfileKindSchema, SetupProfileSchema, type SetupProfileV2, type Task, type TaskPriority, type TaskStatus, type TaskType, type UsbSetupManifest, UsbSetupManifestSchema, VERSION, type VoiceConfig, type VoiceProvider, configManager, copySynapSkillIntoClaudeProject, createDockerComposeGenerator, credentialsManager, defaultSkillsDir, ensureEveSkillsLayout, ensureSecretValue, entityStateManager, formatHardwareReport, getSetupProfilePath, migrateStateDirectory, probeHardware, readEveSecrets, readSetupProfile, readUsbSetupManifest, resolveHubBaseUrl, secretsPath, writeBuilderProjectEnv, writeClaudeCodeSettings, writeEveSecrets, writeHermesEnvFile, writeSandboxEnvFile, writeSetupProfile, writeUsbSetupManifest };

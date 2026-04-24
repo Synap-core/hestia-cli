@@ -74,6 +74,6 @@ declare function registerEyesCommands(eyes: Command): void;
 /**
  * Create an RSSHub service instance
  */
-declare function createRSSHubService(config?: ConstructorParameters<typeof RSSHubService>[0]): RSSHubService;
+declare function createRSSHubService(config?: ConstructorParameters<typeof RSSHubService>[0]): Promise<RSSHubService>;
 
 export { type Feed, type RSSHubConfig, RSSHubService, addFeedCommand, createRSSHubService, databaseCommand, installCommand, listFeedsCommand, registerEyesCommands, removeFeedCommand, startCommand, stopCommand, syncCommand };

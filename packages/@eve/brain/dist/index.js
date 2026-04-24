@@ -1,5 +1,5 @@
 // src/commands/init.ts
-import { EntityStateManager } from "@eve/dna";
+import { EntityStateManager, entityStateManager } from "@eve/dna";
 
 // src/lib/exec.ts
 import { spawn } from "child_process";
@@ -267,6 +267,13 @@ async function runBrainInit(options) {
   }
   const stateManager = new EntityStateManager();
   await stateManager.updateOrgan("brain", "ready");
+  await entityStateManager.updateComponentEntry("synap", {
+    organ: "brain",
+    state: "ready",
+    version: "0.5.0",
+    managedBy: "eve",
+    config: { domain, withRsshub: options.withRsshub }
+  });
   console.log("\n\u2705 Eve brain initialized (Synap Data Pod).");
   if (domain === "localhost") {
     console.log("  API: http://localhost:4000 (backend; Caddy may serve https://localhost when configured)");

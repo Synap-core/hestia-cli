@@ -23,7 +23,7 @@ import {
 import { runBrainInit, runInferenceInit } from '@eve/brain';
 import { runLegsProxySetup } from '@eve/legs';
 import { getGlobalCliFlags, outputJson } from '@eve/cli-kit';
-import { colors, emojis, printEveDeprecation, requireDelegationConfirmed } from '../lib/ui.js';
+import { colors, emojis } from '../lib/ui.js';
 
 export interface SetupCliOptions {
   profile?: string;
@@ -318,9 +318,6 @@ export function setupCommand(program: Command): void {
         'Docs: hestia-cli/docs/EVE_SETUP_PROFILES.md, hestia-cli/docs/AI_ROUTING_CONSOLIDATION_ADR.md, and hestia-cli/README.md\n',
     )
     .action(async (opts: SetupCliOptions) => {
-      printEveDeprecation('setup', './synap install (on your server)');
-      requireDelegationConfirmed();
-
       const flags = getGlobalCliFlags();
       const cwd = process.cwd();
       const existing = await readSetupProfile(cwd);

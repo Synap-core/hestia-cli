@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { EntityStateManager, readEveSecrets } from '@eve/dna';
+import { EntityStateManager, entityStateManager, readEveSecrets } from '@eve/dna';
 import { execa, resolveSynapDelegate } from '@eve/brain';
 import { OpenClawService } from '../lib/openclaw.js';
 
@@ -35,6 +35,13 @@ export function installCommand(program: Command): void {
             stdio: 'inherit',
           });
           await stateManager.updateOrgan('arms', 'ready');
+          // Write v2 component entry (managedBy: eve) alongside organ state
+          await entityStateManager.updateComponentEntry('openclaw', {
+            organ: 'arms',
+            state: 'ready',
+            version: '0.2.0',
+            managedBy: 'eve',
+          });
           console.log('\n🎉 OpenClaw provisioned via Synap.');
           console.log('   See: synap services status openclaw');
           return;

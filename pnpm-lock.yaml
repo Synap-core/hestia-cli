@@ -33,6 +33,9 @@ importers:
       typescript:
         specifier: ^5.3.0
         version: 5.9.3
+      vitest:
+        specifier: ^1.5.0
+        version: 1.6.1(@types/node@20.19.39)
 
   packages/@eve/brain:
     dependencies:
@@ -74,6 +77,9 @@ importers:
       typescript:
         specifier: ^5.3.0
         version: 5.9.3
+      vitest:
+        specifier: ^1.5.0
+        version: 1.6.1(@types/node@20.19.39)
 
   packages/@eve/dna:
     dependencies:
@@ -96,6 +102,9 @@ importers:
       typescript:
         specifier: ^5.3.0
         version: 5.9.3
+      vitest:
+        specifier: ^1.5.0
+        version: 1.6.1(@types/node@20.19.39)
 
   packages/@eve/eyes:
     dependencies:
@@ -118,6 +127,9 @@ importers:
       typescript:
         specifier: ^5.3.0
         version: 5.9.3
+      vitest:
+        specifier: ^1.5.0
+        version: 1.6.1(@types/node@20.19.39)
 
   packages/@eve/legs:
     dependencies:
@@ -137,6 +149,9 @@ importers:
       typescript:
         specifier: ^5.3.0
         version: 5.9.3
+      vitest:
+        specifier: ^1.5.0
+        version: 1.6.1(@types/node@20.19.39)
 
   packages/cli-kit:
     dependencies:
@@ -180,15 +195,9 @@ importers:
       '@eve/eyes':
         specifier: workspace:*
         version: link:../@eve/eyes
-      '@eve/install':
-        specifier: workspace:*
-        version: link:../install
       '@eve/legs':
         specifier: workspace:*
         version: link:../@eve/legs
-      '@eve/usb':
-        specifier: workspace:*
-        version: link:../usb
       boxen:
         specifier: ^7.1.1
         version: 7.1.1

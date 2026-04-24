@@ -11,8 +11,6 @@ import {
   printInfo,
   formatOrgan,
   createSpinner,
-  printEveDeprecation,
-  requireDelegationConfirmed,
 } from '../lib/ui.js';
 
 interface CheckResult {
@@ -30,9 +28,6 @@ export function doctorCommand(program: Command): void {
     .option('-f, --fix', 'Attempt to fix issues automatically')
     .option('-v, --verbose', 'Show verbose output')
     .action(async (options) => {
-      printEveDeprecation('doctor', './synap diagnose (on your server)  or  npx @synap-core/cli status (from your laptop)');
-      requireDelegationConfirmed();
-
       try {
         await runDiagnostics(options.fix, options.verbose);
       } catch (error) {

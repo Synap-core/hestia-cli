@@ -1,5 +1,5 @@
 import type { Command } from 'commander';
-import { EntityStateManager } from '@eve/dna';
+import { EntityStateManager, entityStateManager } from '@eve/dna';
 
 import { OllamaService } from '../lib/ollama.js';
 import { execa, ensureNetwork } from '../lib/exec.js';
@@ -129,6 +129,15 @@ export async function runBrainInit(options: BrainInitOptions): Promise<void> {
   const stateManager = new EntityStateManager();
   await stateManager.updateOrgan('brain', 'ready');
 
+  // Write v2 component entry (managedBy: eve) alongside organ state
+  await entityStateManager.updateComponentEntry('synap', {
+    organ: 'brain',
+    state: 'ready',
+    version: '0.5.0',
+    managedBy: 'eve',
+    config: { domain, withRsshub: options.withRsshub },
+  });
+
   console.log('\n✅ Eve brain initialized (Synap Data Pod).');
   if (domain === 'localhost') {
     console.log('  API: http://localhost:4000 (backend; Caddy may serve https://localhost when configured)');
@@ -172,23 +181,6 @@ export function initCommand(program: Command): void {
           adminBootstrapMode?: 'preseed' | 'token';
         },
       ) => {
-        // Deprecation banner: brain init is a thin shim around the Synap bash
-        // script. Keep it reachable behind --confirm-delegation so existing
-        // automation breaks loudly rather than silently running under Eve.
-        console.log(
-          `
-⚠️  \`eve brain init\` is deprecated.
-    This command delegates to the Synap bash script.
-    Please use instead:
-        ./synap install (on your server)  or  npx @synap-core/cli init (on your laptop)
-    (eve organs/brain/arms subcommands remain available for Eve Entity System use.)
-`
-        );
-        if (!process.argv.includes('--confirm-delegation')) {
-          console.log('    Pass --confirm-delegation to proceed anyway (not recommended).\n');
-          process.exit(2);
-        }
-
         try {
           await runBrainInit({
             withAi: options.withAi,

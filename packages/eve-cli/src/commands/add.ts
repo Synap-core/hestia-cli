@@ -1,0 +1,344 @@
+/**
+ * `eve add <component>` — add a component to an existing entity.
+ *
+ * Resolves the component from the shared registry, checks prerequisites,
+ * runs the appropriate organ install, then updates state.json and setup-profile.json.
+ */
+
+import type { Command } from 'commander';
+import { execa } from 'execa';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
+import {
+  entityStateManager,
+  readEveSecrets,
+  writeEveSecrets,
+  ensureEveSkillsLayout,
+  defaultSkillsDir,
+} from '@eve/dna';
+import { runBrainInit, runInferenceInit } from '@eve/brain';
+import { runLegsProxySetup } from '@eve/legs';
+import {
+  colors,
+  emojis,
+  printHeader,
+  printSuccess,
+  printError,
+  printInfo,
+  printWarning,
+  createSpinner,
+} from '../lib/ui.js';
+import {
+  COMPONENTS,
+  type ComponentInfo,
+  resolveComponent,
+  selectedIds,
+  allComponentIds,
+} from '../lib/components.js';
+
+// Organ → install function mapping for add operations.
+// Each add operation is lighter than a fresh install — no full setup wizard.
+
+interface AddFn {
+  label: string;
+  fn: () => Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
+// Component-specific add implementations
+// ---------------------------------------------------------------------------
+
+async function addTraefik(): Promise<void> {
+  await runLegsProxySetup({ standalone: true });
+}
+
+async function addSynap(): Promise<void> {
+  const envRepo = process.env.SYNAP_REPO_ROOT;
+  if (!envRepo || !existsSync(envRepo)) {
+    printWarning(
+      'Synap installation requires a synap-backend checkout.\n' +
+      `  Pass --synap-repo <path> or set SYNAP_REPO_ROOT.\n` +
+      '  See: https://github.com/synap/synap-backend',
+    );
+    process.exit(1);
+  }
+  const flags = process.argv.slice(2);
+  const opts = {
+    domain: (flags.includes('--domain') ? flags[flags.indexOf('--domain') + 1] : undefined) || 'localhost',
+    email: process.env.LETSENCRYPT_EMAIL,
+  };
+  await runBrainInit({
+    synapRepo: envRepo,
+    domain: opts.domain,
+    email: opts.email,
+    adminBootstrapMode: 'token',
+    withAi: false,
+    withOpenclaw: false,
+    withRsshub: false,
+  });
+}
+
+async function addOllama(model?: string): Promise<void> {
+  await runInferenceInit({ model, withGateway: true, internalOllamaOnly: true });
+}
+
+async function addOpenclaw(): Promise<void> {
+  // Check brain is ready
+  const state = await entityStateManager.getState();
+  const brainStatus = state.organs.brain;
+  if (brainStatus.state !== 'ready') {
+    printError('Brain is not ready. Please install Synap first: `eve add synap`');
+    process.exit(1);
+  }
+
+  // Check for synap delegate (bash script path)
+  const synapScript = process.env.SYNAP_SETUP_SCRIPT;
+  if (synapScript && existsSync(synapScript)) {
+    await execa('bash', [synapScript, 'profiles', 'enable', 'openclaw'], {
+      env: { ...process.env, SYNAP_DEPLOY_DIR: process.env.SYNAP_DEPLOY_DIR || '', SYNAP_ASSUME_YES: '1' },
+      stdio: 'inherit',
+    });
+    await execa('bash', [synapScript, 'services', 'add', 'openclaw'], {
+      env: { ...process.env, SYNAP_DEPLOY_DIR: process.env.SYNAP_DEPLOY_DIR || '', SYNAP_ASSUME_YES: '1' },
+      stdio: 'inherit',
+    });
+  } else {
+    printWarning('OpenClaw add via Synap delegate not available.');
+    printInfo('  Set SYNAP_SETUP_SCRIPT to point to synap-backend/setup.sh for auto-provisioning.');
+    printInfo('  Otherwise install OpenClaw manually: https://github.com/danielmiessler/openclaw');
+  }
+}
+
+async function addRsshub(): Promise<void> {
+  // Check brain is ready
+  const state = await entityStateManager.getState();
+  const brainStatus = state.organs.brain;
+  if (brainStatus.state !== 'ready') {
+    printError('Brain is not ready. Please install Synap first: `eve add synap`');
+    process.exit(1);
+  }
+
+  // Import the RSSHubService dynamically to avoid hard deps
+  const { RSSHubService } = await import('@eve/eyes');
+  const rsshub = new RSSHubService();
+  if (await rsshub.isInstalled()) {
+    printInfo('RSSHub is already installed. Use `eve eyes:start` to start it.');
+    return;
+  }
+  await rsshub.install({ port: 1200 });
+  await entityStateManager.updateOrgan('eyes', 'ready');
+  printSuccess('RSSHub installed successfully!');
+  printInfo('  URL: http://localhost:1200');
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+export interface AddOptions {
+  synapRepo?: string;
+  model?: string;
+}
+
+/**
+ * Add a component to the current entity.
+ *
+ * This is the shared implementation for both the `eve add` command and
+ * programmatic use.
+ */
+export async function runAdd(
+  componentId: string,
+  opts: AddOptions = {},
+): Promise<void> {
+  const comp = resolveComponent(componentId);
+  const existing = await entityStateManager.isComponentInstalled(componentId);
+  if (existing) {
+    printWarning(`${comp.label} is already installed.`);
+    printInfo(`  Run "eve ${comp.organ} status" to check its state.`);
+    return;
+  }
+
+  // Check prerequisites
+  const currentComponents = await entityStateManager.getInstalledComponents();
+  const missingDeps = (comp.requires ?? []).filter(dep => !currentComponents.includes(dep));
+  if (missingDeps.length > 0) {
+    const depNames = missingDeps.map(dep => {
+      const info = COMPONENTS.find(c => c.id === dep);
+      return info ? info.label : dep;
+    });
+    printError(`Missing prerequisites: ${depNames.join(', ')}`);
+    printInfo(`  Install them first: ${missingDeps.map(d => `eve add ${d}`).join(' / ')}`);
+    process.exit(1);
+  }
+
+  // Resolve synap repo from env or option
+  if (opts.synapRepo) {
+    process.env.SYNAP_REPO_ROOT = opts.synapRepo;
+  }
+
+  printHeader(`Adding ${comp.label}`, comp.emoji);
+  console.log();
+  printInfo(comp.description.split('\n')[0]);
+  console.log();
+
+  // Determine and run the add function
+  let step: AddFn;
+  try {
+    step = buildAddStep(comp.id, opts);
+  } catch (err) {
+    printError(String(err));
+    process.exit(1);
+  }
+
+  const spinner = createSpinner(step.label);
+  spinner.start();
+  try {
+    await step.fn();
+    spinner.succeed(step.label);
+  } catch (err) {
+    spinner.fail(step.label);
+    printError(`Failed to add ${comp.label}: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+
+  // Update state
+  await updateStateAfterAdd(comp.id);
+
+  console.log();
+  printSuccess(`${comp.label} added successfully!`);
+  console.log();
+  printInfo('Next steps:');
+  printInfo(`  - Run "eve status" to check entity state`);
+  printInfo(`  - Run "eve ${comp.organ} status" for ${comp.label} status`);
+  console.log();
+}
+
+// ---------------------------------------------------------------------------
+// Step builder
+// ---------------------------------------------------------------------------
+
+function buildAddStep(
+  componentId: string,
+  opts: AddOptions,
+): AddFn {
+  const model = opts.model || 'llama3.1:8b';
+
+  switch (componentId) {
+    case 'traefik':
+      return {
+        label: 'Setting up Traefik routing...',
+        fn: addTraefik,
+      };
+    case 'synap':
+      return {
+        label: 'Installing Synap Data Pod...',
+        fn: addSynap,
+      };
+    case 'ollama':
+      return {
+        label: 'Setting up Ollama + AI gateway...',
+        fn: () => addOllama(model),
+      };
+    case 'openclaw':
+      return {
+        label: 'Installing OpenClaw...',
+        fn: addOpenclaw,
+      };
+    case 'rsshub':
+      return {
+        label: 'Installing RSSHub...',
+        fn: addRsshub,
+      };
+    case 'hermes':
+    case 'dokploy':
+    case 'opencode':
+    case 'openclaude':
+      return {
+        label: 'Builder organ (manual setup)',
+        async fn() {
+          // These need manual config — note to user
+          const info = COMPONENTS.find(c => c.id === componentId);
+          if (info) {
+            printWarning(`${info.label} requires manual configuration.`);
+            printInfo(`  Run "eve builder init" to set up the builder organ with all add-ons.`);
+          }
+        },
+      };
+    default:
+      throw new Error(`No add handler for component: ${componentId}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// State update
+// ---------------------------------------------------------------------------
+
+async function updateStateAfterAdd(componentId: string): Promise<void> {
+  const organMap: Record<string, 'brain' | 'arms' | 'builder' | 'eyes' | 'legs'> = {
+    synap: 'brain',
+    ollama: 'brain',
+    openclaw: 'arms',
+    hermes: 'builder',
+    rsshub: 'eyes',
+    traefik: 'legs',
+    dokploy: 'builder',
+    opencode: 'builder',
+    openclaude: 'builder',
+  };
+
+  const organ = organMap[componentId];
+  if (organ) {
+    await entityStateManager.updateOrgan(organ, 'ready', { version: '0.1.0' });
+  }
+
+  await entityStateManager.updateComponentEntry(componentId, {
+    state: 'ready',
+    version: '0.1.0',
+    managedBy: 'eve',
+  });
+
+  // Update setup profile v2 components list
+  const current = await entityStateManager.getInstalledComponents();
+  if (!current.includes(componentId)) {
+    await entityStateManager.updateSetupProfile({ components: [...current, componentId] });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Command
+// ---------------------------------------------------------------------------
+
+export function addCommand(program: Command): void {
+  program
+    .command('add')
+    .description('Add a component to an existing entity')
+    .argument('[component]', 'Component ID to add (traefik, synap, ollama, openclaw, rsshub, hermes, dokploy, opencode, openclaude)')
+    .option('--synap-repo <path>', 'Path to synap-backend checkout (for synap component)')
+    .option('--model <model>', 'Ollama model (for ollama component)', 'llama3.1:8b')
+    .action(async (component: string | undefined, opts: { synapRepo?: string; model?: string }) => {
+      if (!component) {
+        console.log();
+        printHeader('Eve — Add Component', emojis.entity);
+        console.log();
+        printInfo('Usage: eve add <component>');
+        console.log();
+        printInfo('Available components:');
+        for (const comp of COMPONENTS) {
+          const installed = await entityStateManager.isComponentInstalled(comp.id);
+          const tag = installed ? colors.success(' [installed]') : colors.muted(`[requires: ${(comp.requires ?? []).join(', ') || 'none'}]`);
+          console.log(`  ${comp.emoji} ${colors.primary.bold(comp.label)}${tag}`);
+          console.log(`    ${comp.description.split('\n')[0]}`);
+        }
+        console.log();
+        printInfo('Examples:');
+        printInfo('  eve add ollama              # Add local AI inference');
+        printInfo('  eve add openclaw            # Add AI agent layer');
+        printInfo('  eve add rsshub              # Add data perception');
+        console.log();
+        return;
+      }
+
+      await runAdd(component, opts);
+    });
+}

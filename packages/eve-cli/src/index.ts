@@ -17,13 +17,16 @@ import { statusCommand } from './commands/status.js';
 import { doctorCommand } from './commands/doctor.js';
 import { growCommand } from './commands/grow.js';
 import { birthCommand } from './commands/lifecycle/birth.js';
+import { installCommand } from './commands/lifecycle/install.js';
 import { setupCommand } from './commands/setup.js';
+import { addCommand } from './commands/add.js';
+import { removeCommand } from './commands/remove.js';
 import { logsCommand } from './commands/debug/logs.js';
 import { inspectCommand } from './commands/debug/inspect.js';
 import { configCommands } from './commands/manage/config-cmd.js';
 import { backupUpdateCommands } from './commands/manage/backup-update.js';
 import { aiCommandGroup } from './commands/ai.js';
-import { colors, emojis, printEveDeprecation, requireDelegationConfirmed } from './lib/ui.js';
+import { colors, emojis } from './lib/ui.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -74,6 +77,9 @@ program.addHelpText(
 
 // --- Lifecycle ---
 setupCommand(program);
+installCommand(program);
+addCommand(program);
+removeCommand(program);
 
 program
   .command('init')
@@ -109,9 +115,6 @@ program
       adminPassword?: string;
       adminBootstrapMode?: 'token' | 'preseed';
     }) => {
-      printEveDeprecation('init', './synap install (on your server)  or  npx @synap-core/cli init (on your laptop)');
-      requireDelegationConfirmed();
-
       try {
         if (!opts.synapRepo && !process.env.SYNAP_REPO_ROOT) {
           const rootFlags = program.opts() as { yes?: boolean; json?: boolean };

@@ -11,29 +11,68 @@ import { existsSync, cpSync } from 'node:fs';
 import { join } from 'path';
 import { homedir, hostname } from 'os';
 import { z } from 'zod';
-import type { 
-  EntityState, 
-  Organ, 
-  OrganState, 
-  OrganStatus, 
-  AIModel, 
-  DNAError 
+import type {
+  EntityState,
+  Organ,
+  OrganState,
+  OrganStatus,
+  AIModel,
+  DNAError,
+  ComponentEntry,
+  ManagedBy,
+  LegacySetupProfileKind,
 } from './types.js';
+import { DEFAULT_ENTITY_STATE } from './types.js';
 
-const StateSchema = z.object({
+const OrganStatusSchema = z.object({
+  state: z.enum(['missing', 'installing', 'starting', 'ready', 'error', 'stopped']),
+  installedAt: z.string().optional(),
+  version: z.string().optional(),
+  lastChecked: z.string().optional(),
+  errorMessage: z.string().optional(),
+});
+
+const ComponentEntrySchema = z.object({
+  organ: z.enum(['brain', 'arms', 'builder', 'eyes', 'legs']).optional(),
+  state: z.enum(['missing', 'installing', 'starting', 'ready', 'error', 'stopped']),
+  version: z.string().optional(),
+  installedAt: z.string().optional(),
+  lastChecked: z.string().optional(),
+  errorMessage: z.string().optional(),
+  managedBy: z.enum(['eve', 'synap', 'manual']).optional(),
+  config: z.record(z.string(), z.unknown()).optional(),
+});
+
+const SetupProfileV2Schema = z.object({
+  version: z.literal(2),
+  components: z.array(z.string()),
+  installedAt: z.string(),
+  migratedFromV1: z.enum(['inference_only', 'data_pod', 'full']).optional(),
+});
+
+const StateSchemaV1 = z.object({
   version: z.string(),
   initializedAt: z.string(),
   aiModel: z.enum(['ollama', 'none']),
   organs: z.record(
     z.enum(['brain', 'arms', 'builder', 'eyes', 'legs']),
-    z.object({
-      state: z.enum(['missing', 'installing', 'starting', 'ready', 'error', 'stopped']),
-      installedAt: z.string().optional(),
-      version: z.string().optional(),
-      lastChecked: z.string().optional(),
-      errorMessage: z.string().optional(),
-    })
+    OrganStatusSchema,
   ),
+  metadata: z.object({
+    lastBootTime: z.string().optional(),
+    hostname: z.string().optional(),
+    platform: z.string().optional(),
+    arch: z.string().optional(),
+  }),
+});
+
+const StateSchema = z.object({
+  version: z.string(),
+  initializedAt: z.string(),
+  aiModel: z.enum(['ollama', 'none']),
+  organs: z.record(z.enum(['brain', 'arms', 'builder', 'eyes', 'legs']), OrganStatusSchema),
+  installed: z.record(z.string(), ComponentEntrySchema).optional(),
+  setupProfile: SetupProfileV2Schema.optional(),
   metadata: z.object({
     lastBootTime: z.string().optional(),
     hostname: z.string().optional(),
@@ -79,19 +118,85 @@ export async function migrateStateDirectory(): Promise<boolean> {
   return true;
 }
 
-const DEFAULT_STATE: EntityState = {
-  version: '0.1.0',
-  initializedAt: new Date().toISOString(),
-  aiModel: 'none',
-  organs: {
-    brain: { state: 'missing' },
-    arms: { state: 'missing' },
-    builder: { state: 'missing' },
-    eyes: { state: 'missing' },
-    legs: { state: 'missing' },
-  },
-  metadata: {},
+// =============================================================================
+// V1 → V2 Migration
+// =============================================================================
+
+/**
+ * Organ → component ID mapping (v1 organ names → v2 component IDs).
+ */
+const ORGAN_TO_COMPONENT: Record<Organ, string> = {
+  brain: 'synap',
+  arms: 'openclaw',
+  builder: 'hermes',
+  eyes: 'rsshub',
+  legs: 'traefik',
 };
+
+/**
+ * Map a v1 setup profile kind to the equivalent v2 component IDs.
+ */
+function profileKindToComponents(kind: LegacySetupProfileKind): string[] {
+  switch (kind) {
+    case 'inference_only':
+      return ['traefik', 'ollama'];
+    case 'data_pod':
+      return ['traefik', 'synap'];
+    case 'full':
+      return ['traefik', 'synap', 'hermes', 'openclaw'];
+    default:
+      return ['traefik'];
+  }
+}
+
+/**
+ * Migrate a parsed v1 state object to v2 format by populating
+ * the `installed` map from the `organs` map.
+ */
+function migrateStateToV2(parsed: z.infer<typeof StateSchemaV1>): EntityState {
+  const installed: Record<string, ComponentEntry> = {};
+
+  for (const [organName, organStatus] of Object.entries(parsed.organs)) {
+    const organ = organName as Organ;
+    const componentId = ORGAN_TO_COMPONENT[organ];
+    installed[componentId] = {
+      organ,
+      state: organStatus.state,
+      version: organStatus.version,
+      installedAt: organStatus.installedAt,
+      lastChecked: organStatus.lastChecked,
+      errorMessage: organStatus.errorMessage,
+      managedBy: 'manual' as const,
+      config: {},
+    };
+  }
+
+  return {
+    version: '0.2.0',
+    initializedAt: parsed.initializedAt,
+    aiModel: parsed.aiModel,
+    installed,
+    setupProfile: undefined, // unknown from legacy
+    organs: {
+      ...DEFAULT_ENTITY_STATE.organs,
+      ...parsed.organs,
+    },
+    metadata: parsed.metadata,
+  };
+}
+
+/**
+ * Upgrade a raw state object to v2 if it's v1.
+ * This is idempotent — calling it on an already-v2 object is safe.
+ */
+function ensureV2(raw: z.infer<typeof StateSchemaV1> | z.infer<typeof StateSchema>): EntityState {
+  // Already has `installed` — it's v2
+  if ('installed' in raw && raw.installed) {
+    // Still need to normalise organs from installed if they look stale
+    return raw as EntityState;
+  }
+  return migrateStateToV2(raw as z.infer<typeof StateSchemaV1>);
+}
 
 export class EntityStateManager {
   private state: EntityState | null = null;
@@ -114,18 +219,31 @@ export class EntityStateManager {
     try {
       await access(statePath);
       const content = await readFile(statePath, 'utf-8');
-      const parsed = JSON.parse(content) as unknown;
-      
-      const validated = StateSchema.parse(parsed);
-      
+      const raw = JSON.parse(content) as unknown;
+
+      // Try v2 schema first, fall back to v1 for migration
+      let validated: z.infer<typeof StateSchema>;
+      try {
+        validated = StateSchema.parse(raw);
+      } catch {
+        const v1 = StateSchemaV1.parse(raw);
+        validated = ensureV2(v1) as unknown as z.infer<typeof StateSchema>;
+      }
+
       const mergedState: EntityState = {
         ...validated,
+        version: '0.2.0', // always report v2
         organs: {
-          ...DEFAULT_STATE.organs,
+          ...DEFAULT_ENTITY_STATE.organs,
           ...validated.organs,
         },
       };
-      
+
+      // Persist the upgrade if the file was v1
+      if (!validated.installed) {
+        await this.saveState(mergedState);
+      }
+
       this.state = mergedState;
       return mergedState;
     } catch (error) {
@@ -135,21 +253,21 @@ export class EntityStateManager {
         this.state = defaultState;
         return defaultState;
       }
-      
+
       if (error instanceof z.ZodError) {
         const dnaError = new Error(`Invalid state format: ${error.message}`) as DNAError;
         dnaError.code = 'INVALID_STATE';
         dnaError.path = statePath;
         throw dnaError;
       }
-      
+
       if (error instanceof SyntaxError) {
         const dnaError = new Error(`Invalid state JSON: ${error.message}`) as DNAError;
         dnaError.code = 'INVALID_STATE';
         dnaError.path = statePath;
         throw dnaError;
       }
-      
+
       const dnaError = new Error(`Failed to load state: ${(error as Error).message}`) as DNAError;
       dnaError.code = 'STATE_LOAD_ERROR';
       dnaError.path = statePath;
@@ -184,12 +302,14 @@ export class EntityStateManager {
     }
   }
 
-  async updateOrgan(organ: Organ, organState: OrganState, options?: { 
-    version?: string; 
+  async updateOrgan(organ: Organ, organState: OrganState, options?: {
+    version?: string;
     errorMessage?: string;
+    managedBy?: ManagedBy;
+    config?: Record<string, unknown>;
   }): Promise<void> {
     const state = await this.getState();
-    
+
     const status: OrganStatus = {
       state: organState,
       lastChecked: new Date().toISOString(),
@@ -208,7 +328,93 @@ export class EntityStateManager {
     }
 
     state.organs[organ] = status;
+
+    // Also sync the v2 `installed` map
+    const componentId = ORGAN_TO_COMPONENT[organ];
+    const installedEntry: ComponentEntry = {
+      organ,
+      state: organState,
+      version: options?.version,
+      installedAt: status.installedAt,
+      lastChecked: status.lastChecked,
+      errorMessage: status.errorMessage,
+      managedBy: options?.managedBy ?? state.installed?.[componentId]?.managedBy ?? 'manual',
+      config: options?.config ?? state.installed?.[componentId]?.config,
+    };
+    if (!state.installed) {
+      state.installed = {};
+    }
+    state.installed[componentId] = installedEntry;
+
     await this.saveState(state);
+  }
+
+  // --- Component-centric v2 methods ---
+
+  /** Get a component's entry from the v2 `installed` map */
+  async getComponentEntry(componentId: string): Promise<ComponentEntry | null> {
+    const state = await this.getState();
+    return state.installed?.[componentId] ?? null;
+  }
+
+  /** Update a component entry directly */
+  async updateComponentEntry(
+    componentId: string,
+    entry: Partial<ComponentEntry>,
+  ): Promise<void> {
+    const state = await this.getState();
+    if (!state.installed) {
+      state.installed = {};
+    }
+    const existing = state.installed[componentId] ?? { state: 'missing' as OrganState };
+    state.installed[componentId] = {
+      ...existing,
+      ...entry,
+      lastChecked: new Date().toISOString(),
+    };
+
+    // Sync back to organs for backward compat
+    const organ = entry.organ ?? existing.organ;
+    if (organ && state.installed[componentId].state !== 'missing') {
+      state.organs[organ] = {
+        state: state.installed[componentId].state,
+        version: state.installed[componentId].version,
+        installedAt: state.installed[componentId].installedAt,
+        lastChecked: state.installed[componentId].lastChecked,
+        errorMessage: state.installed[componentId].errorMessage,
+      };
+    }
+
+    await this.saveState(state);
+  }
+
+  /** Register / deregister components in the setup profile */
+  async updateSetupProfile(updates: {
+    components?: string[];
+    migratedFromV1?: LegacySetupProfileKind;
+  }): Promise<void> {
+    const state = await this.getState();
+    state.setupProfile = {
+      version: 2,
+      components: updates.components ?? state.setupProfile?.components ?? [],
+      installedAt: updates.components && !state.setupProfile?.installedAt
+        ? new Date().toISOString()
+        : state.setupProfile?.installedAt ?? new Date().toISOString(),
+      migratedFromV1: updates.migratedFromV1 ?? state.setupProfile?.migratedFromV1,
+    };
+    await this.saveState(state);
+  }
+
+  /** Get the list of installed components from the setup profile */
+  async getInstalledComponents(): Promise<string[]> {
+    const state = await this.getState();
+    return state.setupProfile?.components ?? [];
+  }
+
+  /** Check if a specific component is registered */
+  async isComponentInstalled(componentId: string): Promise<boolean> {
+    const components = await this.getInstalledComponents();
+    return components.includes(componentId);
   }
 
   async setAIModel(model: AIModel): Promise<void> {
@@ -305,7 +511,7 @@ export class EntityStateManager {
 
   private createDefaultState(): EntityState {
     return {
-      ...DEFAULT_STATE,
+      ...DEFAULT_ENTITY_STATE,
       metadata: {
         platform: process.platform,
         arch: process.arch,

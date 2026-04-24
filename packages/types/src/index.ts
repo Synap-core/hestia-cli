@@ -249,6 +249,7 @@ export interface OptionalServiceConfig {
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
+  name?: string;
 }
 
 export interface ChatCompletionRequest {
@@ -258,12 +259,6 @@ export interface ChatCompletionRequest {
   maxTokens?: number;
   tools?: Tool[];
   stream?: boolean;
-}
-
-export interface ChatMessage {
-  role: "system" | "user" | "assistant";
-  content: string;
-  name?: string;
 }
 
 export interface Tool {

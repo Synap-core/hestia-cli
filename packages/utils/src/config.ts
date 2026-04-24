@@ -10,7 +10,7 @@ import * as path from "path";
 import * as os from "os";
 import YAML from "yaml";
 import { z } from "zod";
-import type { eveConfig, PackageConfig, IntelligenceConfig } from "@eve/types";
+import type { HestiaConfig as eveConfig, PackageConfig, IntelligenceConfig } from "@eve/types";
 
 // Configuration schema for validation
 const packageConfigSchema = z.object({

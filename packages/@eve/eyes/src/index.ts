@@ -43,9 +43,9 @@ export function registerEyesCommands(eyes: Command): void {
 /**
  * Create an RSSHub service instance
  */
-export function createRSSHubService(
+export async function createRSSHubService(
   config?: ConstructorParameters<typeof import('./lib/rsshub.js').RSSHubService>[0]
-): import('./lib/rsshub.js').RSSHubService {
-  const { RSSHubService } = require('./lib/rsshub.js');
+): Promise<import('./lib/rsshub.js').RSSHubService> {
+  const { RSSHubService } = await import('./lib/rsshub.js');
   return new RSSHubService(config);
 }

@@ -3,7 +3,7 @@
  *
  * Handles loading, validation, and saving of eve configuration.
  */
-import type { eveConfig, PackageConfig, IntelligenceConfig } from "@eve/types";
+import type { HestiaConfig as eveConfig, PackageConfig, IntelligenceConfig } from "@eve/types";
 export declare const defaultConfig: eveConfig;
 export declare function getConfigPaths(): {
     configDir: string;

@@ -7,8 +7,6 @@ import {
   printInfo,
   printError,
   colors,
-  printEveDeprecation,
-  requireDelegationConfirmed,
 } from '../../lib/ui.js';
 
 async function confirmDestructiveReset(): Promise<boolean> {
@@ -53,9 +51,6 @@ export function backupUpdateCommands(program: Command): void {
     .command('update')
     .description('Guidance for updating Eve / Synap images (use synap-backend deploy on the Data Pod)')
     .action(() => {
-      printEveDeprecation('update', './synap update (on your server)');
-      requireDelegationConfirmed();
-
       printInfo(
         'Eve does not replace your Data Pod updater. For Synap: use your deploy directory `./synap update` or pull new images and run migrations as documented in synap-backend/deploy.'
       );

@@ -373,12 +373,56 @@ export interface AIConfig {
 // ENTITY STATE TYPES
 // =============================================================================
 
-/** The complete state of the Eve entity */
+/** Ownership marker for installed components */
+export type ManagedBy = 'eve' | 'synap' | 'manual';
+
+/** Organ state as a status object */
+export type OrganStateObj = {
+  state: OrganState;
+  installedAt?: string;
+  version?: string;
+  lastChecked?: string;
+  errorMessage?: string;
+};
+
+/** A managed component entry in the v2 state */
+export interface ComponentEntry {
+  /** Organ mapping (legacy organ name, for backward compat) */
+  organ?: Organ;
+  /** Component state */
+  state: OrganState;
+  /** Version string */
+  version?: string;
+  /** ISO timestamp of installation */
+  installedAt?: string;
+  /** Last health-check timestamp */
+  lastChecked?: string;
+  /** Error details */
+  errorMessage?: string;
+  /** Who manages this component */
+  managedBy?: ManagedBy;
+  /** Component-specific config */
+  config?: Record<string, unknown>;
+}
+
+/**
+ * State v2 — component-centric model.
+ *
+ * v2 introduces the `installed` map keyed by component ID:
+ *   traefik | synap | hermes | openclaw | ollama | dokploy | opencode | rsshub
+ *
+ * The legacy `organs` map is preserved for backward compat and
+ * auto-migrated from the `installed` map on read.
+ */
 export interface EntityState {
   version: string;
   initializedAt: string;
   aiModel: AIModel;
   organs: Record<Organ, OrganStatus>;
+  /** Component-centric state (v2+, nullable for v1 files) */
+  installed?: Record<string, ComponentEntry>;
+  /** Setup profile reference (v2+) */
+  setupProfile?: SetupProfileV2;
   metadata: {
     lastBootTime?: string;
     hostname?: string;
@@ -386,6 +430,17 @@ export interface EntityState {
     arch?: string;
     entityName?: string;
   };
+}
+
+/** Legacy setup profile kinds (from v1 binary profiles) */
+export type LegacySetupProfileKind = 'inference_only' | 'data_pod' | 'full';
+
+/** Setup profile v2 — replaces binary `profile` string with component array */
+export interface SetupProfileV2 {
+  version: 2;
+  components: string[]; // component IDs
+  installedAt: string;
+  migratedFromV1?: LegacySetupProfileKind; // legacy profile kind if migrated
 }
 
 /** Entity state file schema (without methods) */
