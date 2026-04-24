@@ -1,5 +1,5 @@
 import type { Command } from 'commander';
-import { confirm, select, isCancel } from '@clack/prompts';
+import { confirm, select, multiselect, isCancel } from '@clack/prompts';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -136,7 +136,19 @@ export async function runInstall(opts: InstallOptions): Promise<void> {
       spinner.succeed('Docker is running');
     } catch {
       spinner.fail('Docker is not running');
-      printError('Eve requires Docker. Please install Docker Desktop or Docker Engine first.');
+      console.log();
+      printError('Eve requires Docker to manage containers.');
+      console.log();
+      if (process.platform === 'darwin') {
+        printInfo('macOS: Install Docker Desktop — https://docs.docker.com/desktop/install/mac-install/');
+      } else if (process.platform === 'win32') {
+        printInfo('Windows: Install Docker Desktop — https://docs.docker.com/desktop/install/windows-install/');
+      } else {
+        printInfo('Linux: Install Docker Engine — https://docs.docker.com/engine/install/');
+        printInfo('  Or use the convenience script (requires root):');
+        printInfo('    curl -fsSL https://get.docker.com | sudo bash');
+      }
+      console.log();
       process.exit(1);
     }
   }
@@ -448,32 +460,36 @@ async function interactiveComponentSelect(): Promise<Record<string, boolean>> {
   if (isCancel(selectedText)) return result;
 
   if (selectedText === 'custom') {
-    // Multi-select
     const choices = COMPONENTS.filter(c => !c.alwaysInstall).map(c => ({
       value: c.id,
       label: `${c.emoji} ${c.label}`,
       hint: c.description.split('\n')[0],
     }));
 
-    const selected = await select({
+    // Default to all non-add-on components
+    const initialValue = COMPONENTS.filter(c => c.category !== 'add-on' && !c.alwaysInstall).map(c => c.id);
+
+    const selected = await multiselect({
       message: 'Select components (space to toggle, enter to confirm)',
       options: choices,
-      maxItems: undefined,
-    } as Parameters<typeof select>[0]);
+      initialValue,
+      required: false,
+    } as Parameters<typeof multiselect>[0]);
 
     if (isCancel(selected)) return result;
-    for (const id of defaultSelected) {
-      result[id] = true;
+
+    // Start with always-install components
+    for (const comp of COMPONENTS) {
+      if (comp.alwaysInstall) result[comp.id] = true;
     }
+
+    // Add selected components
     if (Array.isArray(selected)) {
       for (const id of selected) {
         result[id] = true;
       }
     }
-    // Always infrastructure
-    for (const comp of COMPONENTS) {
-      if (comp.alwaysInstall) result[comp.id] = true;
-    }
+
     return result;
   }
 
