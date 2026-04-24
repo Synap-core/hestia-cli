@@ -1,5 +1,5 @@
 import type { Command } from 'commander';
-import { confirm, select, multiselect, isCancel } from '@clack/prompts';
+import { confirm, select, isCancel } from '@clack/prompts';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -460,34 +460,48 @@ async function interactiveComponentSelect(): Promise<Record<string, boolean>> {
   if (isCancel(selectedText)) return result;
 
   if (selectedText === 'custom') {
-    const choices = COMPONENTS.filter(c => !c.alwaysInstall).map(c => ({
-      value: c.id,
-      label: `${c.emoji} ${c.label}`,
-      hint: c.description.split('\n')[0],
-    }));
+    const configurable = COMPONENTS.filter(c => !c.alwaysInstall);
 
-    // Default to all non-add-on components
-    const initialValue = COMPONENTS.filter(c => c.category !== 'add-on' && !c.alwaysInstall).map(c => c.id);
+    // Track selections: default non-add-on to true, add-ons to false
+    const selected = new Set<string>();
+    for (const comp of configurable) {
+      if (comp.category !== 'add-on') selected.add(comp.id);
+    }
 
-    const selected = await multiselect({
-      message: 'Select components (space to toggle, enter to confirm)',
-      options: choices,
-      initialValue,
-      required: false,
-    } as Parameters<typeof multiselect>[0]);
+    // Loop: show all components with toggle options until user picks "End"
+    let running = true;
+    while (running) {
+      const opts = configurable.map(c => ({
+        value: c.id,
+        label: `${selected.has(c.id) ? '✓' : '○'} ${c.emoji} ${c.label}`,
+        hint: selected.has(c.id) ? 'On' : 'Off',
+      }));
 
-    if (isCancel(selected)) return result;
+      const chosen = await select({
+        message: 'Toggle components, then End to confirm',
+        options: [...opts, { value: 'end', label: 'End', hint: 'Proceed with current selection' }],
+        // Pre-select first non-selected if any, else first selected
+        initialValue: opts.find(o => !selected.has(o.value))?.value ?? opts[0]?.value ?? 'end',
+      });
+
+      if (isCancel(chosen)) return result;
+      if (chosen === 'end') break;
+
+      // Toggle the chosen component
+      if (selected.has(chosen)) {
+        selected.delete(chosen);
+      } else {
+        selected.add(chosen);
+      }
+    }
 
     // Start with always-install components
     for (const comp of COMPONENTS) {
       if (comp.alwaysInstall) result[comp.id] = true;
     }
 
-    // Add selected components
-    if (Array.isArray(selected)) {
-      for (const id of selected) {
-        result[id] = true;
-      }
+    for (const id of selected) {
+      result[id] = true;
     }
 
     return result;

@@ -596,7 +596,7 @@ function birthCommand(program2) {
 }
 
 // src/commands/lifecycle/install.ts
-import { select as select2, multiselect, isCancel as isCancel2 } from "@clack/prompts";
+import { select as select2, isCancel as isCancel2 } from "@clack/prompts";
 import { existsSync } from "fs";
 import {
   entityStateManager as entityStateManager4,
@@ -989,26 +989,37 @@ async function interactiveComponentSelect() {
   });
   if (isCancel2(selectedText)) return result;
   if (selectedText === "custom") {
-    const choices = COMPONENTS.filter((c) => !c.alwaysInstall).map((c) => ({
-      value: c.id,
-      label: `${c.emoji} ${c.label}`,
-      hint: c.description.split("\n")[0]
-    }));
-    const initialValue = COMPONENTS.filter((c) => c.category !== "add-on" && !c.alwaysInstall).map((c) => c.id);
-    const selected = await multiselect({
-      message: "Select components (space to toggle, enter to confirm)",
-      options: choices,
-      initialValue,
-      required: false
-    });
-    if (isCancel2(selected)) return result;
+    const configurable = COMPONENTS.filter((c) => !c.alwaysInstall);
+    const selected = /* @__PURE__ */ new Set();
+    for (const comp of configurable) {
+      if (comp.category !== "add-on") selected.add(comp.id);
+    }
+    let running = true;
+    while (running) {
+      const opts = configurable.map((c) => ({
+        value: c.id,
+        label: `${selected.has(c.id) ? "\u2713" : "\u25CB"} ${c.emoji} ${c.label}`,
+        hint: selected.has(c.id) ? "On" : "Off"
+      }));
+      const chosen = await select2({
+        message: "Toggle components, then End to confirm",
+        options: [...opts, { value: "end", label: "End", hint: "Proceed with current selection" }],
+        // Pre-select first non-selected if any, else first selected
+        initialValue: opts.find((o) => !selected.has(o.value))?.value ?? opts[0]?.value ?? "end"
+      });
+      if (isCancel2(chosen)) return result;
+      if (chosen === "end") break;
+      if (selected.has(chosen)) {
+        selected.delete(chosen);
+      } else {
+        selected.add(chosen);
+      }
+    }
     for (const comp of COMPONENTS) {
       if (comp.alwaysInstall) result[comp.id] = true;
     }
-    if (Array.isArray(selected)) {
-      for (const id of selected) {
-        result[id] = true;
-      }
+    for (const id of selected) {
+      result[id] = true;
     }
     return result;
   }
