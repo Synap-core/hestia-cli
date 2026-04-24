@@ -4,7 +4,7 @@
 import { Command } from "commander";
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
-import { dirname as dirname2, join as join4 } from "path";
+import { dirname as dirname2, join as join3 } from "path";
 import { execa as execa10 } from "execa";
 import { setGlobalCliFlags } from "@eve/cli-kit";
 import {
@@ -596,10 +596,8 @@ function birthCommand(program2) {
 }
 
 // src/commands/lifecycle/install.ts
-import { select as select2, isCancel as isCancel2 } from "@clack/prompts";
+import { select as select2, multiselect, isCancel as isCancel2 } from "@clack/prompts";
 import { existsSync } from "fs";
-import { join } from "path";
-import { homedir } from "os";
 import {
   entityStateManager as entityStateManager4,
   writeSetupProfile,
@@ -745,7 +743,19 @@ async function runInstall(opts) {
       spinner.succeed("Docker is running");
     } catch {
       spinner.fail("Docker is not running");
-      printError("Eve requires Docker. Please install Docker Desktop or Docker Engine first.");
+      console.log();
+      printError("Eve requires Docker to manage containers.");
+      console.log();
+      if (process.platform === "darwin") {
+        printInfo("macOS: Install Docker Desktop \u2014 https://docs.docker.com/desktop/install/mac-install/");
+      } else if (process.platform === "win32") {
+        printInfo("Windows: Install Docker Desktop \u2014 https://docs.docker.com/desktop/install/windows-install/");
+      } else {
+        printInfo("Linux: Install Docker Engine \u2014 https://docs.docker.com/engine/install/");
+        printInfo("  Or use the convenience script (requires root):");
+        printInfo("    curl -fsSL https://get.docker.com | sudo bash");
+      }
+      console.log();
       process.exit(1);
     }
   }
@@ -774,12 +784,6 @@ async function runInstall(opts) {
         fallbackProvider: opts.fallbackProvider,
         syncToSynap: true,
         providers: []
-      },
-      builder: {
-        skillsDir,
-        workspaceDir: join(homedir(), ".eve", "workspace"),
-        dokployApiKey: ensureSecretValue(prevSecrets?.builder?.dokployApiKey || process.env.DOKPLOY_API_KEY || ""),
-        dokployApiUrl: prevSecrets?.builder?.dokployApiUrl || process.env.DOKPLOY_API_URL || "http://127.0.0.1:3000"
       }
     };
     if (componentSet["synap"]) {
@@ -990,22 +994,21 @@ async function interactiveComponentSelect() {
       label: `${c.emoji} ${c.label}`,
       hint: c.description.split("\n")[0]
     }));
-    const selected = await select2({
+    const initialValue = COMPONENTS.filter((c) => c.category !== "add-on" && !c.alwaysInstall).map((c) => c.id);
+    const selected = await multiselect({
       message: "Select components (space to toggle, enter to confirm)",
       options: choices,
-      maxItems: void 0
+      initialValue,
+      required: false
     });
     if (isCancel2(selected)) return result;
-    for (const id of defaultSelected) {
-      result[id] = true;
+    for (const comp of COMPONENTS) {
+      if (comp.alwaysInstall) result[comp.id] = true;
     }
     if (Array.isArray(selected)) {
       for (const id of selected) {
         result[id] = true;
       }
-    }
-    for (const comp of COMPONENTS) {
-      if (comp.alwaysInstall) result[comp.id] = true;
     }
     return result;
   }
@@ -1110,10 +1113,10 @@ function execa2(cmd, args, opts) {
 
 // src/commands/setup.ts
 import { select as select3, confirm as confirm3, isCancel as isCancel3, text } from "@clack/prompts";
-import { homedir as homedir2, tmpdir } from "os";
+import { homedir, tmpdir } from "os";
 import { existsSync as existsSync2 } from "fs";
 import { mkdir, readdir, rm } from "fs/promises";
-import { dirname, join as join2, resolve } from "path";
+import { dirname, join, resolve } from "path";
 import { execa as execa3 } from "execa";
 import {
   readSetupProfile,
@@ -1174,7 +1177,7 @@ function prevAiModeFromUsb(usb) {
 var SYNAP_BACKEND_REPO_URL = "https://github.com/synap-core/backend.git";
 var SYNAP_BACKEND_TARBALL_URL = "https://codeload.github.com/synap-core/backend/tar.gz/refs/heads/main";
 function looksLikeSynapRepo(repoRoot) {
-  return existsSync2(join2(repoRoot, "synap")) && existsSync2(join2(repoRoot, "deploy", "docker-compose.yml"));
+  return existsSync2(join(repoRoot, "synap")) && existsSync2(join(repoRoot, "deploy", "docker-compose.yml"));
 }
 function findLocalSynapRepo(startDir) {
   const candidates = /* @__PURE__ */ new Set();
@@ -1182,17 +1185,17 @@ function findLocalSynapRepo(startDir) {
   let cursor = resolvedStart;
   for (let i = 0; i < 8; i += 1) {
     candidates.add(cursor);
-    candidates.add(join2(cursor, "synap-backend"));
+    candidates.add(join(cursor, "synap-backend"));
     const parent = dirname(cursor);
     if (parent === cursor) break;
     cursor = parent;
   }
-  const home = homedir2();
+  const home = homedir();
   for (const p of [
     "/opt/synap-backend",
     "/srv/synap-backend",
-    join2(home, "synap-backend"),
-    join2(home, "synap", "synap-backend")
+    join(home, "synap-backend"),
+    join(home, "synap", "synap-backend")
   ]) {
     candidates.add(p);
   }
@@ -1291,7 +1294,7 @@ async function ensureSynapRepoForProfile(requestedPath, cwd, nonInteractive, jso
         }
       );
     } catch {
-      const archivePath = join2(tmpdir(), `synap-backend-${Date.now()}.tar.gz`);
+      const archivePath = join(tmpdir(), `synap-backend-${Date.now()}.tar.gz`);
       try {
         if (!jsonMode) {
           console.log(
@@ -1905,7 +1908,7 @@ ${formatHardwareReport(facts)}
         dokployApiUrl: prevSecrets?.builder?.dokployApiUrl ?? process.env.DOKPLOY_API_URL ?? "http://127.0.0.1:3000",
         dokployApiKey: ensureSecretValue2(prevSecrets?.builder?.dokployApiKey ?? process.env.DOKPLOY_API_KEY),
         dokployWebhookUrl: prevSecrets?.builder?.dokployWebhookUrl ?? process.env.DOKPLOY_WEBHOOK_URL ?? void 0,
-        workspaceDir: prevSecrets?.builder?.workspaceDir ?? join2(homedir2(), ".eve", "workspace"),
+        workspaceDir: prevSecrets?.builder?.workspaceDir ?? join(homedir(), ".eve", "workspace"),
         skillsDir
       }
     };
@@ -2268,6 +2271,7 @@ function addCommand(program2) {
 
 // src/commands/remove.ts
 import { execa as execa5 } from "execa";
+import { join as join2 } from "path";
 import {
   entityStateManager as entityStateManager6
 } from "@eve/dna";
@@ -2276,7 +2280,7 @@ async function removeTraefik() {
   spinner.start();
   try {
     await execa5("docker", ["compose", "down", "--volumes"], {
-      cwd: join3(process.cwd(), ".eve", "traefik"),
+      cwd: join2(process.cwd(), ".eve", "traefik"),
       stdio: "inherit"
     });
   } catch {
@@ -2499,9 +2503,6 @@ function removeCommand(program2) {
     }
     await runRemove(component);
   });
-}
-function join3(...paths) {
-  return join3(...paths);
 }
 
 // src/commands/debug/logs.ts
@@ -2940,7 +2941,7 @@ function aiCommandGroup(program2) {
 // src/index.ts
 var __filename = fileURLToPath(import.meta.url);
 var __dirname = dirname2(__filename);
-var pkg = JSON.parse(readFileSync(join4(__dirname, "../package.json"), "utf-8"));
+var pkg = JSON.parse(readFileSync(join3(__dirname, "../package.json"), "utf-8"));
 var program = new Command();
 program.configureHelp({
   sortSubcommands: true,

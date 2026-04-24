@@ -292,19 +292,6 @@ function initCommand(program) {
     "Path to backend checkout; required for official synap install"
   ).option("--domain <host>", "With --synap-repo: DOMAIN for synap install", "localhost").option("--email <email>", "With --synap-repo: SSL contact (required if domain isn't localhost)").option("--with-openclaw", "With --synap-repo: pass --with-openclaw to synap install").option("--with-rsshub", "With --synap-repo: pass --with-rsshub to synap install").option("--from-image", "With --synap-repo: synap install --from-image").option("--from-source", "With --synap-repo: synap install --from-source").option("--admin-email <email>", "With --synap-repo: admin bootstrap email for synap install").option("--admin-password <secret>", "With --synap-repo: admin password for preseed bootstrap").option("--admin-bootstrap-mode <mode>", "With --synap-repo: preseed | token (default token)").action(
     async (options) => {
-      console.log(
-        `
-\u26A0\uFE0F  \`eve brain init\` is deprecated.
-    This command delegates to the Synap bash script.
-    Please use instead:
-        ./synap install (on your server)  or  npx @synap-core/cli init (on your laptop)
-    (eve organs/brain/arms subcommands remain available for Eve Entity System use.)
-`
-      );
-      if (!process.argv.includes("--confirm-delegation")) {
-        console.log("    Pass --confirm-delegation to proceed anyway (not recommended).\n");
-        process.exit(2);
-      }
       try {
         await runBrainInit({
           withAi: options.withAi,
