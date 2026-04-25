@@ -748,9 +748,8 @@ async function runInstall(opts) {
         "/usr/bin/docker",
         "/usr/bin/containerd"
       ];
-      const { existsSync: existsSync4 } = await import("fs");
       for (const c of candidates) {
-        if (existsSync4(c)) {
+        if (existsSync(c)) {
           dockerPath = c;
           break;
         }
