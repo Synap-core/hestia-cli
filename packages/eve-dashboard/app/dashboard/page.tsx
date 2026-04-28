@@ -1,0 +1,312 @@
+"use client";
+
+import { useEffect, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
+import {
+  Card, CardBody, CardHeader, Chip, Button, Divider, Spinner, addToast,
+} from "@heroui/react";
+import { RefreshCw, RotateCcw, Wifi, WifiOff } from "lucide-react";
+
+type OrganStatus = {
+  state: "missing" | "installing" | "starting" | "ready" | "error" | "stopped";
+  installedAt?: string;
+  version?: string;
+  lastChecked?: string;
+  errorMessage?: string;
+};
+
+type EntityState = {
+  version: string;
+  initializedAt: string;
+  aiModel: string;
+  organs: Record<string, OrganStatus>;
+  installed?: Record<string, { organ?: string; state: string; version?: string }>;
+  metadata?: { hostname?: string; platform?: string };
+};
+
+type SecretsSummary = {
+  ai: {
+    mode?: string;
+    defaultProvider?: string;
+    providers: Array<{ id: string; configured: boolean; hasKey: boolean }>;
+  };
+  synap: { configured: boolean; hasApiKey: boolean; apiUrl?: string };
+  arms: { openclaw: { configured: boolean }; messaging: { configured: boolean } };
+};
+
+const ORGANS = [
+  { id: "brain", emoji: "🧠", label: "Brain", desc: "Synap pod + data stores" },
+  { id: "arms", emoji: "🦾", label: "Arms", desc: "OpenClaw / MCP" },
+  { id: "builder", emoji: "🏗️", label: "Builder", desc: "Code engine" },
+  { id: "eyes", emoji: "👁️", label: "Eyes", desc: "RSSHub / feeds" },
+  { id: "legs", emoji: "🦿", label: "Legs", desc: "Traefik / domains" },
+] as const;
+
+function statusColor(state: string): "success" | "danger" | "default" | "warning" | "primary" {
+  switch (state) {
+    case "ready": return "success";
+    case "error": return "danger";
+    case "stopped": return "default";
+    case "missing": return "warning";
+    case "installing":
+    case "starting": return "primary";
+    default: return "default";
+  }
+}
+
+export default function DashboardPage() {
+  const router = useRouter();
+  const [state, setState] = useState<EntityState | null>(null);
+  const [secrets, setSecrets] = useState<SecretsSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [restarting, setRestarting] = useState<string | null>(null);
+
+  const fetchData = useCallback(async () => {
+    try {
+      const [stateRes, secretsRes] = await Promise.all([
+        fetch("/api/state", { credentials: "include" }),
+        fetch("/api/secrets-summary", { credentials: "include" }),
+      ]);
+
+      if (stateRes.status === 401 || secretsRes.status === 401) {
+        router.push("/login");
+        return;
+      }
+
+      if (stateRes.ok) setState(await stateRes.json() as EntityState);
+      if (secretsRes.ok) setSecrets(await secretsRes.json() as SecretsSummary);
+    } catch {
+      addToast({ title: "Failed to load state", color: "danger" });
+    } finally {
+      setLoading(false);
+    }
+  }, [router]);
+
+  useEffect(() => {
+    void fetchData();
+  }, [fetchData]);
+
+  async function restartOrgan(organ: string) {
+    setRestarting(organ);
+    try {
+      const res = await fetch(`/api/actions/${organ}/restart`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (res.status === 401) { router.push("/login"); return; }
+      if (res.ok) {
+        addToast({ title: `${organ} restart triggered`, color: "success" });
+        setTimeout(() => void fetchData(), 2000);
+      } else {
+        const d = await res.json() as { error?: string };
+        addToast({ title: d.error ?? "Restart failed", color: "danger" });
+      }
+    } catch {
+      addToast({ title: "Restart request failed", color: "danger" });
+    } finally {
+      setRestarting(null);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Spinner size="lg" color="primary" />
+      </div>
+    );
+  }
+
+  const organs = state?.organs ?? {};
+  const readyCount = Object.values(organs).filter((o) => o.state === "ready").length;
+
+  return (
+    <div className="space-y-8">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">System Status</h1>
+          {state?.metadata?.hostname && (
+            <p className="text-sm text-default-400 mt-0.5 font-mono">{state.metadata.hostname}</p>
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          <Chip size="sm" color={readyCount === 5 ? "success" : readyCount > 2 ? "warning" : "danger"} variant="flat">
+            {readyCount}/5 organs ready
+          </Chip>
+          <Button
+            variant="bordered"
+            size="sm"
+            startContent={<RefreshCw className="w-3.5 h-3.5" />}
+            onPress={() => { setLoading(true); void fetchData(); }}
+          >
+            Refresh
+          </Button>
+        </div>
+      </div>
+
+      {/* Organ cards */}
+      <div>
+        <h2 className="text-sm font-semibold text-default-500 uppercase tracking-wider mb-3">Organs</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+          {ORGANS.map(({ id, emoji, label, desc }) => {
+            const organ = organs[id];
+            const organState = organ?.state ?? "missing";
+            return (
+              <Card key={id} className="bg-content1 border border-divider">
+                <CardHeader className="pb-1 flex justify-between items-start">
+                  <div>
+                    <span className="text-xl mr-1">{emoji}</span>
+                    <span className="font-semibold text-foreground">{label}</span>
+                  </div>
+                  <Chip size="sm" color={statusColor(organState)} variant="flat">
+                    {organState}
+                  </Chip>
+                </CardHeader>
+                <CardBody className="pt-1 space-y-3">
+                  <p className="text-xs text-default-400">{desc}</p>
+                  {organ?.version && (
+                    <p className="text-xs text-default-300 font-mono">v{organ.version}</p>
+                  )}
+                  {organ?.errorMessage && (
+                    <p className="text-xs text-danger truncate" title={organ.errorMessage}>
+                      {organ.errorMessage}
+                    </p>
+                  )}
+                  {organ?.lastChecked && (
+                    <p className="text-xs text-default-300">
+                      Checked {new Date(organ.lastChecked).toLocaleTimeString()}
+                    </p>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="light"
+                    color="default"
+                    startContent={
+                      restarting === id
+                        ? <Spinner size="sm" color="default" />
+                        : <RotateCcw className="w-3.5 h-3.5" />
+                    }
+                    isDisabled={restarting !== null || organState === "missing"}
+                    onPress={() => void restartOrgan(id)}
+                    className="w-full"
+                  >
+                    Restart
+                  </Button>
+                </CardBody>
+              </Card>
+            );
+          })}
+        </div>
+      </div>
+
+      <Divider />
+
+      {/* AI Providers */}
+      <div>
+        <h2 className="text-sm font-semibold text-default-500 uppercase tracking-wider mb-3">AI Providers</h2>
+        <Card className="bg-content1 border border-divider">
+          <CardBody>
+            {!secrets ? (
+              <p className="text-default-400 text-sm">No provider config found</p>
+            ) : (
+              <div className="space-y-3">
+                {secrets.ai.defaultProvider && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-default-500 w-32">Default provider</span>
+                    <Chip size="sm" color="primary" variant="flat">{secrets.ai.defaultProvider}</Chip>
+                    {secrets.ai.mode && (
+                      <Chip size="sm" variant="flat" color="default">{secrets.ai.mode}</Chip>
+                    )}
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  {secrets.ai.providers.map((p) => (
+                    <div key={p.id} className="flex items-center gap-1.5 bg-content2 rounded-lg px-3 py-1.5">
+                      <Chip
+                        size="sm"
+                        color={p.configured && p.hasKey ? "success" : "default"}
+                        variant="dot"
+                      >
+                        {p.id}
+                      </Chip>
+                      <span className="text-xs text-default-400">
+                        {p.configured && p.hasKey ? "configured" : "not configured"}
+                      </span>
+                    </div>
+                  ))}
+                  {secrets.ai.providers.length === 0 && (
+                    <p className="text-default-400 text-sm">No providers configured</p>
+                  )}
+                </div>
+              </div>
+            )}
+          </CardBody>
+        </Card>
+      </div>
+
+      <Divider />
+
+      {/* Wiring status */}
+      <div>
+        <h2 className="text-sm font-semibold text-default-500 uppercase tracking-wider mb-3">Wiring</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Card className="bg-content1 border border-divider">
+            <CardBody>
+              <div className="flex items-center gap-3">
+                {secrets?.synap.configured ? (
+                  <Wifi className="w-5 h-5 text-success" />
+                ) : (
+                  <WifiOff className="w-5 h-5 text-default-400" />
+                )}
+                <div>
+                  <p className="font-medium text-foreground text-sm">Synap Pod</p>
+                  {secrets?.synap.apiUrl ? (
+                    <p className="text-xs text-default-400 font-mono truncate max-w-[200px]">
+                      {secrets.synap.apiUrl}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-default-400">Not configured</p>
+                  )}
+                </div>
+                <div className="ml-auto">
+                  <Chip
+                    size="sm"
+                    color={secrets?.synap.hasApiKey ? "success" : "warning"}
+                    variant="flat"
+                  >
+                    {secrets?.synap.hasApiKey ? "API key set" : "No API key"}
+                  </Chip>
+                </div>
+              </div>
+            </CardBody>
+          </Card>
+
+          <Card className="bg-content1 border border-divider">
+            <CardBody>
+              <div className="flex items-center gap-3">
+                {secrets?.arms.openclaw.configured ? (
+                  <Wifi className="w-5 h-5 text-success" />
+                ) : (
+                  <WifiOff className="w-5 h-5 text-default-400" />
+                )}
+                <div>
+                  <p className="font-medium text-foreground text-sm">OpenClaw</p>
+                  <p className="text-xs text-default-400">Arms organ bridge</p>
+                </div>
+                <div className="ml-auto">
+                  <Chip
+                    size="sm"
+                    color={secrets?.arms.openclaw.configured ? "success" : "warning"}
+                    variant="flat"
+                  >
+                    {secrets?.arms.openclaw.configured ? "wired" : "not wired"}
+                  </Chip>
+                </div>
+              </div>
+            </CardBody>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,3 @@
+{
+  "/api/actions/[organ]/restart/route": "app/api/actions/[organ]/restart/route.js"
+}

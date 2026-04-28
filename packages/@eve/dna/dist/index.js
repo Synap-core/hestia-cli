@@ -1418,6 +1418,11 @@ var SecretsSchema = z4.object({
       phoneNumber: z4.string().optional(),
       sipUri: z4.string().optional()
     }).optional()
+  }).optional(),
+  /** Eve web dashboard config */
+  dashboard: z4.object({
+    secret: z4.string().optional(),
+    port: z4.number().optional()
   }).optional()
 });
 function secretsPath(cwd = process.cwd()) {
@@ -1467,6 +1472,10 @@ async function writeEveSecrets(partial, cwd = process.cwd()) {
     current.arms,
     partial.arms
   );
+  const mergedDashboard = mergeNested(
+    current.dashboard,
+    partial.dashboard
+  );
   const next = {
     ...current,
     ...partial,
@@ -1475,6 +1484,7 @@ async function writeEveSecrets(partial, cwd = process.cwd()) {
     inference: mergedInference,
     builder: mergedBuilder,
     arms: mergedArms,
+    dashboard: mergedDashboard,
     version: "1",
     updatedAt: (/* @__PURE__ */ new Date()).toISOString()
   };

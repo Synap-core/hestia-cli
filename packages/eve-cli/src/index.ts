@@ -26,6 +26,7 @@ import { inspectCommand } from './commands/debug/inspect.js';
 import { configCommands } from './commands/manage/config-cmd.js';
 import { backupUpdateCommands } from './commands/manage/backup-update.js';
 import { aiCommandGroup } from './commands/ai.js';
+import { uiCommand } from './commands/ui.js';
 import { colors, emojis } from './lib/ui.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -175,6 +176,9 @@ backupUpdateCommands(program);
 
 // --- AI ---
 aiCommandGroup(program);
+
+// --- UI ---
+uiCommand(program);
 
 // --- Organs ---
 const brain = program.command('brain').description('Intelligence & memory (Synap, Ollama)');

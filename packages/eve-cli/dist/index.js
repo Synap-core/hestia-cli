@@ -3,9 +3,9 @@
 // src/index.ts
 import { Command } from "commander";
 import { readFileSync } from "fs";
-import { fileURLToPath } from "url";
-import { dirname as dirname2, join as join3 } from "path";
-import { execa as execa10 } from "execa";
+import { fileURLToPath as fileURLToPath2 } from "url";
+import { dirname as dirname2, join as join5 } from "path";
+import { execa as execa11 } from "execa";
 import { setGlobalCliFlags } from "@eve/cli-kit";
 import {
   registerBrainCommands,
@@ -598,6 +598,7 @@ function birthCommand(program2) {
 // src/commands/lifecycle/install.ts
 import { select as select2, isCancel as isCancel2 } from "@clack/prompts";
 import { existsSync } from "fs";
+import { join } from "path";
 import {
   entityStateManager as entityStateManager4,
   writeSetupProfile,
@@ -608,7 +609,7 @@ import {
   ensureSecretValue
 } from "@eve/dna";
 import { getGlobalCliFlags as getGlobalCliFlags2, outputJson } from "@eve/cli-kit";
-import { runBrainInit as runBrainInit2 } from "@eve/brain";
+import { runBrainInit as runBrainInit2, runInferenceInit, resolveSynapDelegate } from "@eve/brain";
 import { runLegsProxySetup } from "@eve/legs";
 
 // src/lib/components.ts
@@ -701,9 +702,7 @@ function selectedIds(selected) {
 }
 
 // src/commands/lifecycle/install.ts
-import { runInferenceInit } from "@eve/brain";
 import { RSSHubService } from "@eve/eyes";
-import { OpenClawService } from "@eve/arms";
 async function runInstall(opts) {
   const flags = getGlobalCliFlags2();
   const jsonMode = Boolean(flags.json);
@@ -964,17 +963,35 @@ function buildInstallSteps(components, opts) {
     });
   }
   if (hasOpenclaw) {
-    const hasOllamaStep = hasOllama || hasSynap;
     steps.push({
       label: "Setting up OpenClaw...",
       async fn() {
-        const ollamaUrl = hasOllama ? "http://127.0.0.1:11434" : hasSynap ? "http://eve-brain-ollama:11434" : "http://127.0.0.1:11434";
+        const { OpenClawService } = await import("@eve/arms");
+        const ollamaUrl = "http://127.0.0.1:11434";
         const openclaw = new OpenClawService();
         await openclaw.install();
-        if (hasOllamaStep) {
-          await openclaw.configure(ollamaUrl);
-        }
+        await openclaw.configure(ollamaUrl);
         await openclaw.start();
+        const synapPod = resolveSynapDelegate();
+        if (synapPod && hasSynap) {
+          console.log("  Delegating Synap\u2194OpenClaw wiring to synap-cli...");
+          try {
+            const { homedir: homedir2 } = await import("os");
+            const { existsSync: existsSync4 } = await import("fs");
+            const podConfigPath = join(homedir2(), ".synap", "pod-config.json");
+            if (existsSync4(podConfigPath)) {
+              await spawnAsync("npx", ["-p", "@synap-core/cli", "synap", "finish", "--skip-ai-key", "--skip-domain"], {
+                env: { ...process.env, SYNAP_DEPLOY_DIR: synapPod.deployDir },
+                cwd: synapPod.repoRoot
+              });
+            } else {
+              console.log("  No pod-config found \u2014 skipping synap-cli finish.");
+              console.log('  Run "synap connect --target=openclaw" then "synap finish" manually for full wiring.');
+            }
+          } catch (err) {
+            console.log(`  synap-cli finish warning: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
       }
     });
   }
@@ -1194,13 +1211,27 @@ Run "eve status" to see current state.
 function execa2(cmd, args, opts) {
   return import("execa").then((mod) => mod.execa(cmd, args, { ...opts || {}, shell: true }));
 }
+function spawnAsync(cmd, args, opts) {
+  return import("execa").then(
+    (mod) => mod.spawn(cmd, args, {
+      env: { ...process.env, ...opts?.env || {} },
+      cwd: opts?.cwd,
+      stdio: "inherit"
+    }).on("spawn", () => {
+    }).on("close", ({ exitCode }) => {
+      if (exitCode !== 0) {
+        throw new Error(`${cmd} exited with code ${exitCode}`);
+      }
+    })
+  );
+}
 
 // src/commands/setup.ts
 import { select as select3, confirm as confirm3, isCancel as isCancel3, text } from "@clack/prompts";
 import { homedir, tmpdir } from "os";
 import { existsSync as existsSync2 } from "fs";
 import { mkdir, readdir, rm } from "fs/promises";
-import { dirname, join, resolve } from "path";
+import { dirname, join as join2, resolve } from "path";
 import { execa as execa3 } from "execa";
 import {
   readSetupProfile,
@@ -1261,7 +1292,7 @@ function prevAiModeFromUsb(usb) {
 var SYNAP_BACKEND_REPO_URL = "https://github.com/synap-core/backend.git";
 var SYNAP_BACKEND_TARBALL_URL = "https://codeload.github.com/synap-core/backend/tar.gz/refs/heads/main";
 function looksLikeSynapRepo(repoRoot) {
-  return existsSync2(join(repoRoot, "synap")) && existsSync2(join(repoRoot, "deploy", "docker-compose.yml"));
+  return existsSync2(join2(repoRoot, "synap")) && existsSync2(join2(repoRoot, "deploy", "docker-compose.yml"));
 }
 function findLocalSynapRepo(startDir) {
   const candidates = /* @__PURE__ */ new Set();
@@ -1269,7 +1300,7 @@ function findLocalSynapRepo(startDir) {
   let cursor = resolvedStart;
   for (let i = 0; i < 8; i += 1) {
     candidates.add(cursor);
-    candidates.add(join(cursor, "synap-backend"));
+    candidates.add(join2(cursor, "synap-backend"));
     const parent = dirname(cursor);
     if (parent === cursor) break;
     cursor = parent;
@@ -1278,8 +1309,8 @@ function findLocalSynapRepo(startDir) {
   for (const p of [
     "/opt/synap-backend",
     "/srv/synap-backend",
-    join(home, "synap-backend"),
-    join(home, "synap", "synap-backend")
+    join2(home, "synap-backend"),
+    join2(home, "synap", "synap-backend")
   ]) {
     candidates.add(p);
   }
@@ -1378,7 +1409,7 @@ async function ensureSynapRepoForProfile(requestedPath, cwd, nonInteractive, jso
         }
       );
     } catch {
-      const archivePath = join(tmpdir(), `synap-backend-${Date.now()}.tar.gz`);
+      const archivePath = join2(tmpdir(), `synap-backend-${Date.now()}.tar.gz`);
       try {
         if (!jsonMode) {
           console.log(
@@ -1992,7 +2023,7 @@ ${formatHardwareReport(facts)}
         dokployApiUrl: prevSecrets?.builder?.dokployApiUrl ?? process.env.DOKPLOY_API_URL ?? "http://127.0.0.1:3000",
         dokployApiKey: ensureSecretValue2(prevSecrets?.builder?.dokployApiKey ?? process.env.DOKPLOY_API_KEY),
         dokployWebhookUrl: prevSecrets?.builder?.dokployWebhookUrl ?? process.env.DOKPLOY_WEBHOOK_URL ?? void 0,
-        workspaceDir: prevSecrets?.builder?.workspaceDir ?? join(homedir(), ".eve", "workspace"),
+        workspaceDir: prevSecrets?.builder?.workspaceDir ?? join2(homedir(), ".eve", "workspace"),
         skillsDir
       }
     };
@@ -2355,7 +2386,7 @@ function addCommand(program2) {
 
 // src/commands/remove.ts
 import { execa as execa5 } from "execa";
-import { join as join2 } from "path";
+import { join as join3 } from "path";
 import {
   entityStateManager as entityStateManager6
 } from "@eve/dna";
@@ -2364,7 +2395,7 @@ async function removeTraefik() {
   spinner.start();
   try {
     await execa5("docker", ["compose", "down", "--volumes"], {
-      cwd: join2(process.cwd(), ".eve", "traefik"),
+      cwd: join3(process.cwd(), ".eve", "traefik"),
       stdio: "inherit"
     });
   } catch {
@@ -3022,10 +3053,65 @@ function aiCommandGroup(program2) {
   });
 }
 
-// src/index.ts
+// src/commands/ui.ts
+import { randomBytes } from "crypto";
+import { join as join4 } from "path";
+import { fileURLToPath } from "url";
+import { execa as execa10 } from "execa";
+import { readEveSecrets as readEveSecrets5, writeEveSecrets as writeEveSecrets5 } from "@eve/dna";
 var __filename = fileURLToPath(import.meta.url);
-var __dirname = dirname2(__filename);
-var pkg = JSON.parse(readFileSync(join3(__dirname, "../package.json"), "utf-8"));
+var packagesDir = join4(__filename, "..", "..", "..");
+function dashboardDir() {
+  return join4(packagesDir, "eve-dashboard");
+}
+function uiCommand(program2) {
+  program2.command("ui").description("Open the Eve web dashboard").option("--port <port>", "Dashboard port", "7979").option("--no-open", "Do not open browser automatically").action(async (opts) => {
+    const port = parseInt(opts.port, 10);
+    let secrets = await readEveSecrets5(process.cwd());
+    if (!secrets?.dashboard?.secret) {
+      const secret = randomBytes(32).toString("hex");
+      await writeEveSecrets5({ dashboard: { secret, port } });
+      secrets = await readEveSecrets5(process.cwd());
+      console.log();
+      console.log(colors.primary.bold("Dashboard key generated \u2014 save this somewhere safe:"));
+      console.log(colors.muted("\u2500".repeat(66)));
+      console.log(colors.primary.bold(secret));
+      console.log(colors.muted("\u2500".repeat(66)));
+      console.log(colors.muted("You will be prompted for this key when you open the dashboard."));
+    } else {
+      console.log();
+      console.log(colors.muted("Your dashboard key:"));
+      console.log(colors.primary.bold(secrets.dashboard.secret));
+    }
+    const url = `http://localhost:${port}`;
+    console.log();
+    console.log(`${emojis.entity}  Starting Eve Dashboard \u2192 ${colors.primary(url)}`);
+    console.log();
+    if (opts.open) {
+      setTimeout(() => {
+        const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+        execa10(opener, [url]).catch(() => {
+        });
+      }, 2500);
+    }
+    const finalSecrets = await readEveSecrets5(process.cwd());
+    const dir = dashboardDir();
+    await execa10("pnpm", ["start", "--port", String(port)], {
+      cwd: dir,
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        PORT: String(port),
+        EVE_DASHBOARD_SECRET: finalSecrets?.dashboard?.secret ?? ""
+      }
+    });
+  });
+}
+
+// src/index.ts
+var __filename2 = fileURLToPath2(import.meta.url);
+var __dirname = dirname2(__filename2);
+var pkg = JSON.parse(readFileSync(join5(__dirname, "../package.json"), "utf-8"));
 var program = new Command();
 program.configureHelp({
   sortSubcommands: true,
@@ -3088,7 +3174,7 @@ program.command("init").description(
         if (opts.adminBootstrapMode) {
           forwardArgs.push("--admin-bootstrap-mode", opts.adminBootstrapMode);
         }
-        await execa10("node", [__filename, ...forwardArgs], {
+        await execa11("node", [__filename2, ...forwardArgs], {
           stdio: "inherit",
           env: process.env
         });
@@ -3122,6 +3208,7 @@ inspectCommand(program);
 configCommands(program);
 backupUpdateCommands(program);
 aiCommandGroup(program);
+uiCommand(program);
 var brain = program.command("brain").description("Intelligence & memory (Synap, Ollama)");
 registerBrainCommands(brain);
 var arms = program.command("arms").description("Action \u2014 OpenClaw & MCP");

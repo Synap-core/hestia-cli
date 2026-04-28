@@ -1,6 +1,6 @@
 import {
   RSSHubService
-} from "./chunk-FH3QUDFE.js";
+} from "./chunk-CZLNC57C.js";
 
 // src/commands/install.ts
 import { EntityStateManager } from "@eve/dna";
@@ -266,7 +266,7 @@ function registerEyesCommands(eyes) {
   databaseCommand(eyes);
 }
 async function createRSSHubService(config) {
-  const { RSSHubService: RSSHubService2 } = await import("./rsshub-4RUO3VIP.js");
+  const { RSSHubService: RSSHubService2 } = await import("./rsshub-GOJBTNOD.js");
   return new RSSHubService2(config);
 }
 export {

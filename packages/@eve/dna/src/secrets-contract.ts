@@ -94,6 +94,13 @@ const SecretsSchema = z.object({
         .optional(),
     })
     .optional(),
+  /** Eve web dashboard config */
+  dashboard: z
+    .object({
+      secret: z.string().optional(),
+      port: z.number().optional(),
+    })
+    .optional(),
 });
 
 export type EveSecrets = z.infer<typeof SecretsSchema>;
@@ -154,6 +161,10 @@ export async function writeEveSecrets(
     current.arms as Record<string, unknown> | undefined,
     partial.arms as Record<string, unknown> | undefined,
   );
+  const mergedDashboard = mergeNested(
+    current.dashboard as Record<string, unknown> | undefined,
+    partial.dashboard as Record<string, unknown> | undefined,
+  );
 
   const next: EveSecrets = {
     ...current,
@@ -163,6 +174,7 @@ export async function writeEveSecrets(
     inference: mergedInference as EveSecrets['inference'],
     builder: mergedBuilder as EveSecrets['builder'],
     arms: mergedArms as EveSecrets['arms'],
+    dashboard: mergedDashboard as EveSecrets['dashboard'],
     version: '1',
     updatedAt: new Date().toISOString(),
   };

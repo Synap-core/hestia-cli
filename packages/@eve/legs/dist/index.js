@@ -63,6 +63,10 @@ accessLog: {}
       execSync("docker network create eve-network", { stdio: "ignore" });
     } catch {
     }
+    try {
+      spawnSync("docker", ["rm", "-f", "traefik"], { stdio: "inherit" });
+    } catch {
+    }
     const dockerArgs = [
       "run",
       "-d",
@@ -86,16 +90,11 @@ accessLog: {}
       "eve-network",
       "traefik:v3.0"
     ];
-    try {
-      const result = spawnSync("docker", dockerArgs, { stdio: "inherit" });
-      if (result.status !== 0) {
-        throw new Error(`docker run exited with code ${result.status}`);
-      }
-      console.log("Traefik container started");
-    } catch (error) {
-      console.error("Failed to start Traefik:", error);
-      throw error;
+    const result = spawnSync("docker", dockerArgs, { stdio: "inherit" });
+    if (result.status !== 0) {
+      throw new Error(`docker run exited with code ${result.status}`);
     }
+    console.log("Traefik container started");
   }
   async configureDokployTraefik() {
     console.log("Configuring Dokploy Traefik...");

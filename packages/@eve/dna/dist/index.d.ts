@@ -979,6 +979,17 @@ declare const SecretsSchema: z.ZodObject<{
             sipUri?: string | undefined;
         } | undefined;
     }>>;
+    /** Eve web dashboard config */
+    dashboard: z.ZodOptional<z.ZodObject<{
+        secret: z.ZodOptional<z.ZodString>;
+        port: z.ZodOptional<z.ZodNumber>;
+    }, "strip", z.ZodTypeAny, {
+        port?: number | undefined;
+        secret?: string | undefined;
+    }, {
+        port?: number | undefined;
+        secret?: string | undefined;
+    }>>;
 }, "strip", z.ZodTypeAny, {
     version: "1";
     updatedAt: string;
@@ -1036,6 +1047,10 @@ declare const SecretsSchema: z.ZodObject<{
         gatewayUser?: string | undefined;
         gatewayPass?: string | undefined;
     } | undefined;
+    dashboard?: {
+        port?: number | undefined;
+        secret?: string | undefined;
+    } | undefined;
 }, {
     version: "1";
     updatedAt: string;
@@ -1092,6 +1107,10 @@ declare const SecretsSchema: z.ZodObject<{
         gatewayUrl?: string | undefined;
         gatewayUser?: string | undefined;
         gatewayPass?: string | undefined;
+    } | undefined;
+    dashboard?: {
+        port?: number | undefined;
+        secret?: string | undefined;
     } | undefined;
 }>;
 type EveSecrets = z.infer<typeof SecretsSchema>;

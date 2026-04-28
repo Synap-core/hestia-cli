@@ -1,6 +1,7 @@
 packages:
   - "packages/@eve/*"
   - "packages/eve-cli"
+  - "packages/eve-dashboard"
   - "packages/cli-kit"
   - "packages/types"
   - "packages/utils"

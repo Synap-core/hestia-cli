@@ -15,7 +15,7 @@ import {
   ensureSecretValue,
 } from '@eve/dna';
 import { getGlobalCliFlags, outputJson } from '@eve/cli-kit';
-import { runBrainInit, runInferenceInit } from '@eve/brain';
+import { runBrainInit, runInferenceInit, resolveSynapDelegate } from '@eve/brain';
 import { runLegsProxySetup } from '@eve/legs';
 import {
   colors,
@@ -34,9 +34,7 @@ import {
   allComponentIds,
   addonComponentIds,
 } from '../../lib/components.js';
-import { runInferenceInit } from '@eve/brain';
 import { RSSHubService } from '@eve/eyes';
-import { OpenClawService } from '@eve/arms';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -413,19 +411,44 @@ function buildInstallSteps(
     });
   }
 
-  // 4. OpenClaw
+  // 4. OpenClaw (Docker lifecycle + synap-cli wiring when available)
   if (hasOpenclaw) {
-    const hasOllamaStep = hasOllama || hasSynap; // synap pulls ollama too
     steps.push({
       label: 'Setting up OpenClaw...',
       async fn() {
-        const ollamaUrl = hasOllama ? 'http://127.0.0.1:11434' : (hasSynap ? 'http://eve-brain-ollama:11434' : 'http://127.0.0.1:11434');
+        const { OpenClawService } = await import('@eve/arms');
+
+        const ollamaUrl = 'http://127.0.0.1:11434';
         const openclaw = new OpenClawService();
+
+        // Pull and start OpenClaw container
         await openclaw.install();
-        if (hasOllamaStep) {
-          await openclaw.configure(ollamaUrl);
-        }
+        await openclaw.configure(ollamaUrl);
         await openclaw.start();
+
+        // If we have a synap-backend checkout AND synap was installed,
+        // delegate wiring to synap-cli (skill install, entity seed, IS config)
+        const synapPod = resolveSynapDelegate();
+        if (synapPod && hasSynap) {
+          console.log('  Delegating Synap↔OpenClaw wiring to synap-cli...');
+          try {
+            // Check if pod-config exists (from prior init/connect)
+            const { homedir } = await import('node:os');
+            const { existsSync } = await import('node:fs');
+            const podConfigPath = join(homedir(), '.synap', 'pod-config.json');
+            if (existsSync(podConfigPath)) {
+              await spawnAsync('npx', ['-p', '@synap-core/cli', 'synap', 'finish', '--skip-ai-key', '--skip-domain'], {
+                env: { ...process.env, SYNAP_DEPLOY_DIR: synapPod.deployDir },
+                cwd: synapPod.repoRoot,
+              });
+            } else {
+              console.log('  No pod-config found — skipping synap-cli finish.');
+              console.log('  Run "synap connect --target=openclaw" then "synap finish" manually for full wiring.');
+            }
+          } catch (err) {
+            console.log(`  synap-cli finish warning: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
       },
     });
   }
@@ -763,4 +786,22 @@ export function installCommand(program: Command): void {
 
 function execa(cmd: string, args: string[], opts?: Record<string, unknown>): Promise<{ stdout: string }> {
   return import('execa').then(mod => mod.execa(cmd, args, { ...(opts || {}), shell: true }));
+}
+
+function spawnAsync(
+  cmd: string,
+  args: string[],
+  opts?: { env?: Record<string, string>; cwd?: string },
+): Promise<void> {
+  return import('execa').then(mod =>
+    mod.spawn(cmd, args, {
+      env: { ...process.env, ...(opts?.env || {}) },
+      cwd: opts?.cwd,
+      stdio: 'inherit',
+    }).on('spawn', () => {}).on('close', ({ exitCode }) => {
+      if (exitCode !== 0) {
+        throw new Error(`${cmd} exited with code ${exitCode}`);
+      }
+    })
+  );
 }
