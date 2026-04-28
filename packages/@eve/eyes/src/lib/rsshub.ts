@@ -32,9 +32,9 @@ export class RSSHubService {
   async isInstalled(): Promise<boolean> {
     try {
       const { stdout } = await execAsync(
-        'docker images rsshub/rsshub --format "{{.Repository}}"'
+        'docker images diygod/rsshub --format "{{.Repository}}"'
       );
-      return stdout.trim() === 'rsshub/rsshub';
+      return stdout.trim() === 'diygod/rsshub';
     } catch {
       return false;
     }
@@ -78,11 +78,11 @@ export class RSSHubService {
     }
 
     console.log(`Pulling RSSHub image...`);
-    await execAsync('docker pull rsshub/rsshub:latest');
+    await execAsync('docker pull diygod/rsshub:latest');
 
     console.log(`Starting RSSHub on port ${port}...`);
     await execAsync(
-      `docker run -d --name eve-eyes-rsshub --network eve-network -p ${port}:1200 rsshub/rsshub:latest`,
+      `docker run -d --name eve-eyes-rsshub --network eve-network -p ${port}:1200 diygod/rsshub:latest`,
     );
   }
 
