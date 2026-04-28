@@ -152,7 +152,7 @@ async function showStatus(json = false): Promise<void> {
     console.log();
     console.log(colors.warning.bold(`${emojis.info} Next Steps:`));
     for (const organ of missingOrgans) {
-      console.log(`  ${colors.muted('→')} Install ${formatOrgan(organ)}: ${colors.info(`eve ${organ} install`)}`);
+      console.log(`  ${colors.muted('→')} Install ${formatOrgan(organ)}: ${colors.info(`eve install --components=${organ}`)}`);
     }
   }
   console.log();

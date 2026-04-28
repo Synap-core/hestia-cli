@@ -1,7 +1,7 @@
 import type { Command } from 'commander';
 import { writeEveSecrets, readEveSecrets, getAccessUrls, getServerIp } from '@eve/dna';
 import { TraefikService } from '@eve/legs';
-import { colors, printSuccess, printInfo } from '../lib/ui.js';
+import { colors, printSuccess, printInfo, printWarning } from '../lib/ui.js';
 
 export function domainCommand(program: Command): void {
   const domain = program
@@ -14,6 +14,12 @@ export function domainCommand(program: Command): void {
     .option('--ssl', "Enable SSL with Let's Encrypt")
     .option('--email <email>', "Email for Let's Encrypt notifications")
     .action(async (domainName: string, opts: { ssl?: boolean; email?: string }) => {
+      if (opts.ssl && !opts.email) {
+        printWarning("--ssl requires --email <address> for Let's Encrypt certificate provisioning.");
+        printWarning("Example: eve domain set " + domainName + " --ssl --email you@example.com");
+        process.exit(1);
+      }
+
       await writeEveSecrets({ domain: { primary: domainName, ssl: !!opts.ssl, email: opts.email } });
 
       try {

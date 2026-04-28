@@ -259,6 +259,8 @@ export const SERVICE_REGISTRY: Record<Service, ServiceConfig> = {
     ports: ['80:80', '443:443', '8080:8080'],
     volumes: [
       '/var/run/docker.sock:/var/run/docker.sock:ro',
+      '/opt/traefik/traefik.yml:/etc/traefik/traefik.yml:ro',
+      '/opt/traefik/dynamic:/etc/traefik/dynamic:ro',
       'eve-legs-traefik-certs:/etc/traefik/acme.json',
     ],
     network: 'eve-network',

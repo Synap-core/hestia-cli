@@ -236,7 +236,7 @@ async function showStatus(json = false) {
     console.log();
     console.log(colors.warning.bold(`${emojis.info} Next Steps:`));
     for (const organ of missingOrgans) {
-      console.log(`  ${colors.muted("\u2192")} Install ${formatOrgan(organ)}: ${colors.info(`eve ${organ} install`)}`);
+      console.log(`  ${colors.muted("\u2192")} Install ${formatOrgan(organ)}: ${colors.info(`eve install --components=${organ}`)}`);
     }
   }
   console.log();
@@ -349,6 +349,58 @@ async function runDiagnostics(attemptFix = false, verbose = false) {
     networkCheck.fail("Cannot check networks");
     checks.push({ name: "Network", status: "fail", message: "Failed to check Docker networks" });
   }
+  const EXPECTED_CONTAINERS = {
+    "eve-brain-synap": "brain",
+    "eve-brain-ollama": "brain",
+    "eve-arms-openclaw": "arms",
+    "eve-eyes-rsshub": "eyes",
+    "eve-legs-traefik": "legs"
+  };
+  const containerCheck = createSpinner("Checking running containers...");
+  containerCheck.start();
+  try {
+    const { stdout: psOut } = await execa("docker", [
+      "ps",
+      "--format",
+      "{{.Names}}	{{.Status}}"
+    ]);
+    const running = /* @__PURE__ */ new Map();
+    for (const line of psOut.split("\n").filter(Boolean)) {
+      const [name, ...statusParts] = line.split("	");
+      if (name) running.set(name.trim(), statusParts.join(" ").trim());
+    }
+    const { stdout: allOut } = await execa("docker", [
+      "ps",
+      "-a",
+      "--format",
+      "{{.Names}}	{{.Status}}"
+    ]);
+    const all = /* @__PURE__ */ new Map();
+    for (const line of allOut.split("\n").filter(Boolean)) {
+      const [name, ...statusParts] = line.split("	");
+      if (name) all.set(name.trim(), statusParts.join(" ").trim());
+    }
+    containerCheck.succeed("Container check complete");
+    for (const [containerName, organ] of Object.entries(EXPECTED_CONTAINERS)) {
+      if (running.has(containerName)) {
+        checks.push({
+          name: containerName,
+          status: "pass",
+          message: `Running \u2014 ${running.get(containerName)}`
+        });
+      } else if (all.has(containerName)) {
+        checks.push({
+          name: containerName,
+          status: "fail",
+          message: `Stopped \u2014 ${all.get(containerName)}`,
+          fix: `docker start ${containerName}  or  eve install --components=${organ}`
+        });
+      }
+    }
+  } catch {
+    containerCheck.fail("Could not query Docker containers");
+    checks.push({ name: "Containers", status: "fail", message: "docker ps failed \u2014 is Docker running?" });
+  }
   const stateCheck = createSpinner("Checking entity state...");
   stateCheck.start();
   try {
@@ -359,23 +411,23 @@ async function runDiagnostics(attemptFix = false, verbose = false) {
       const organState = state.organs[organ];
       if (organState.state === "ready") {
         checks.push({
-          name: `${formatOrgan(organ)}`,
+          name: `${formatOrgan(organ)} (state)`,
           status: "pass",
-          message: "Organ is healthy"
+          message: "Organ marked ready in state"
         });
       } else if (organState.state === "error") {
         checks.push({
-          name: `${formatOrgan(organ)}`,
+          name: `${formatOrgan(organ)} (state)`,
           status: "fail",
           message: organState.errorMessage || "Organ has errors",
-          fix: `Run: eve ${organ} status`
+          fix: `eve install --components=${organ}`
         });
       } else if (organState.state === "missing") {
         checks.push({
-          name: `${formatOrgan(organ)}`,
+          name: `${formatOrgan(organ)} (state)`,
           status: "warn",
           message: "Organ not installed",
-          fix: `Run: eve ${organ} install`
+          fix: `eve install --components=${organ}`
         });
       }
     }
@@ -987,9 +1039,9 @@ function buildInstallSteps(components, opts) {
           console.log("  Delegating Synap\u2194OpenClaw wiring to synap-cli...");
           try {
             const { homedir: homedir2 } = await import("os");
-            const { existsSync: existsSync4 } = await import("fs");
+            const { existsSync: existsSync5 } = await import("fs");
             const podConfigPath = join(homedir2(), ".synap", "pod-config.json");
-            if (existsSync4(podConfigPath)) {
+            if (existsSync5(podConfigPath)) {
               await spawnAsync("npx", ["-p", "@synap-core/cli", "synap", "finish", "--skip-ai-key", "--skip-domain"], {
                 env: { ...process.env, SYNAP_DEPLOY_DIR: synapPod.deployDir },
                 cwd: synapPod.repoRoot
@@ -3065,6 +3117,7 @@ function aiCommandGroup(program2) {
 
 // src/commands/ui.ts
 import { randomBytes } from "crypto";
+import { existsSync as existsSync4 } from "fs";
 import { join as join4 } from "path";
 import { fileURLToPath } from "url";
 import { execa as execa10 } from "execa";
@@ -3075,8 +3128,9 @@ function dashboardDir() {
   return join4(packagesDir, "eve-dashboard");
 }
 function uiCommand(program2) {
-  program2.command("ui").description("Open the Eve web dashboard").option("--port <port>", "Dashboard port", "7979").option("--no-open", "Do not open browser automatically").action(async (opts) => {
+  program2.command("ui").description("Open the Eve web dashboard").option("--port <port>", "Dashboard port", "7979").option("--no-open", "Do not open browser automatically").option("--rebuild", "Force rebuild of the dashboard before starting").action(async (opts) => {
     const port = parseInt(opts.port, 10);
+    const dir = dashboardDir();
     let secrets = await readEveSecrets5(process.cwd());
     if (!secrets?.dashboard?.secret) {
       const secret = randomBytes(32).toString("hex");
@@ -3093,6 +3147,20 @@ function uiCommand(program2) {
       console.log(colors.muted("Your dashboard key:"));
       console.log(colors.primary.bold(secrets.dashboard.secret));
     }
+    const nextDir = join4(dir, ".next");
+    if (opts.rebuild || !existsSync4(nextDir)) {
+      console.log();
+      const spinner = createSpinner("Building dashboard (first run \u2014 takes ~30s)...");
+      spinner.start();
+      try {
+        await execa10("pnpm", ["build"], { cwd: dir, env: { ...process.env } });
+        spinner.succeed("Dashboard built");
+      } catch (err) {
+        spinner.fail("Dashboard build failed");
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+    }
     const url = `http://localhost:${port}`;
     console.log();
     console.log(`${emojis.entity}  Starting Eve Dashboard \u2192 ${colors.primary(url)}`);
@@ -3105,7 +3173,6 @@ function uiCommand(program2) {
       }, 2500);
     }
     const finalSecrets = await readEveSecrets5(process.cwd());
-    const dir = dashboardDir();
     await execa10("pnpm", ["start", "--port", String(port)], {
       cwd: dir,
       stdio: "inherit",
@@ -3124,6 +3191,11 @@ import { TraefikService } from "@eve/legs";
 function domainCommand(program2) {
   const domain = program2.command("domain").description("Configure domain access and Traefik routing");
   domain.command("set <domain>").description("Set primary domain and configure Traefik subdomains").option("--ssl", "Enable SSL with Let's Encrypt").option("--email <email>", "Email for Let's Encrypt notifications").action(async (domainName, opts) => {
+    if (opts.ssl && !opts.email) {
+      printWarning("--ssl requires --email <address> for Let's Encrypt certificate provisioning.");
+      printWarning("Example: eve domain set " + domainName + " --ssl --email you@example.com");
+      process.exit(1);
+    }
     await writeEveSecrets6({ domain: { primary: domainName, ssl: !!opts.ssl, email: opts.email } });
     try {
       const traefik = new TraefikService();
