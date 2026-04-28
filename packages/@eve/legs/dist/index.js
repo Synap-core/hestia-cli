@@ -549,8 +549,56 @@ Edit PANGOLIN_ENDPOINT, NEWT_ID, NEWT_SECRET then run: eve legs newt up`);
   });
 }
 
+// src/commands/restart.ts
+import { spawnSync as spawnSync2 } from "child_process";
+import { existsSync as existsSync4 } from "fs";
+var CONTAINER = "eve-legs-traefik";
+var CONFIG_DIR = "/opt/traefik";
+function restartCommand(program) {
+  program.command("restart").description("Recreate the Traefik container with correct volume mounts").action(() => {
+    if (!existsSync4(`${CONFIG_DIR}/traefik.yml`)) {
+      console.error(`No Traefik config found at ${CONFIG_DIR}/traefik.yml`);
+      console.error("Run: eve domain set <domain> --ssl --email <email> first");
+      process.exit(1);
+    }
+    console.log(`Removing existing ${CONTAINER} container (if any)...`);
+    spawnSync2("docker", ["rm", "-f", CONTAINER], { stdio: "inherit" });
+    console.log("Starting Traefik with correct volume mounts...");
+    const result = spawnSync2("docker", [
+      "run",
+      "-d",
+      "--name",
+      CONTAINER,
+      "--restart",
+      "unless-stopped",
+      "-p",
+      "80:80",
+      "-p",
+      "443:443",
+      "-p",
+      "8080:8080",
+      "-v",
+      "/var/run/docker.sock:/var/run/docker.sock:ro",
+      "-v",
+      `${CONFIG_DIR}/traefik.yml:/etc/traefik/traefik.yml:ro`,
+      "-v",
+      `${CONFIG_DIR}/dynamic:/etc/traefik/dynamic:ro`,
+      "-v",
+      "eve-legs-traefik-certs:/etc/traefik/acme.json",
+      "--network",
+      "eve-network",
+      "traefik:v3.0"
+    ], { stdio: "inherit" });
+    if (result.status !== 0) {
+      console.error("Failed to start Traefik container");
+      process.exit(1);
+    }
+    console.log("\u2713 Traefik running \u2014 routes are live");
+  });
+}
+
 // src/lib/inference-gateway.ts
-import { execSync as execSync4, spawnSync as spawnSync2 } from "child_process";
+import { execSync as execSync4, spawnSync as spawnSync3 } from "child_process";
 import { mkdirSync as mkdirSync4, writeFileSync as writeFileSync4 } from "fs";
 import { join as join4 } from "path";
 import { randomBytes } from "crypto";
@@ -568,7 +616,7 @@ var InferenceGateway = class {
   }
   /** APR1 hash line for Traefik usersFile (user:hash). */
   htpasswdLine(username, plainPassword) {
-    const r = spawnSync2("openssl", ["passwd", "-apr1", plainPassword], { encoding: "utf-8" });
+    const r = spawnSync3("openssl", ["passwd", "-apr1", plainPassword], { encoding: "utf-8" });
     if (r.error || r.status !== 0) {
       throw new Error(`openssl passwd -apr1 failed: ${r.stderr || r.error?.message || "unknown"}`);
     }
@@ -708,6 +756,7 @@ function registerLegsCommands(legs) {
   setupCommand(legs);
   domainCommand(legs);
   newtCommand(legs);
+  restartCommand(legs);
 }
 function registerCommands(program) {
   const legs = program.command("legs").description("Traefik, domains, and tunnels");
@@ -726,6 +775,7 @@ export {
   newtCommand,
   registerCommands,
   registerLegsCommands,
+  restartCommand,
   runLegsProxySetup,
   setupCommand
 };

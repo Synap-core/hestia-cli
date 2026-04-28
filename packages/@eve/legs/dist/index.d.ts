@@ -95,6 +95,8 @@ declare function domainCommand(program: Command): void;
 
 declare function newtCommand(program: Command): void;
 
+declare function restartCommand(program: Command): void;
+
 /** Register Legs leaf commands on an existing `eve legs` Commander node */
 declare function registerLegsCommands(legs: Command): void;
 /** @deprecated Use registerLegsCommands on the `legs` subcommand */
@@ -104,4 +106,4 @@ declare const _default: {
     registerCommands: typeof registerCommands;
 };
 
-export { InferenceGateway, type InferenceGatewayResult, type LegsProxySetupOptions, type Route, TraefikService, type TunnelConfig, TunnelService, _default as default, domainCommand, newtCommand, registerCommands, registerLegsCommands, runLegsProxySetup, setupCommand };
+export { InferenceGateway, type InferenceGatewayResult, type LegsProxySetupOptions, type Route, TraefikService, type TunnelConfig, TunnelService, _default as default, domainCommand, newtCommand, registerCommands, registerLegsCommands, restartCommand, runLegsProxySetup, setupCommand };
