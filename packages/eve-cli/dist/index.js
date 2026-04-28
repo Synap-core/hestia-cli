@@ -3119,7 +3119,7 @@ function uiCommand(program2) {
 }
 
 // src/commands/domain.ts
-import { writeEveSecrets as writeEveSecrets6, readEveSecrets as readEveSecrets6, getAccessUrls } from "@eve/dna";
+import { writeEveSecrets as writeEveSecrets6, readEveSecrets as readEveSecrets6, getAccessUrls, getServerIp as getServerIp2 } from "@eve/dna";
 import { TraefikService } from "@eve/legs";
 function domainCommand(program2) {
   const domain = program2.command("domain").description("Configure domain access and Traefik routing");
@@ -3142,9 +3142,25 @@ function domainCommand(program2) {
         console.log(`  ${svc.emoji}  ${svc.label.padEnd(20)} ${colors.primary(svc.domainUrl)}`);
       }
     }
+    const serverIp = getServerIp2();
+    const subdomains = ["eve", "pod", "openclaw", "feeds", "ai", "traefik"];
     console.log();
+    console.log(colors.primary.bold("DNS records to create:"));
+    console.log(colors.muted("\u2500".repeat(60)));
+    console.log(colors.muted(`  Type   Name                        Value`));
+    console.log(colors.muted("\u2500".repeat(60)));
+    for (const sub of subdomains) {
+      const name = `${sub}.${domainName}`.padEnd(30);
+      const value = serverIp ?? colors.warning("<your-server-ip>");
+      console.log(`  ${colors.primary("A")}      ${name}  ${value}`);
+    }
+    console.log(colors.muted("\u2500".repeat(60)));
+    if (!serverIp) {
+      printInfo("Could not detect server IP automatically \u2014 replace <your-server-ip> above.");
+    }
     if (opts.ssl) {
-      printInfo("Point each subdomain's DNS A record to your server IP before SSL can provision.");
+      console.log();
+      printInfo("SSL will provision automatically once DNS records propagate (usually 1\u20135 min).");
     }
   });
   domain.command("show").description("Show all access URLs (local, server IP, domain)").action(async () => {

@@ -1,5 +1,5 @@
 import type { Command } from 'commander';
-import { writeEveSecrets, readEveSecrets, getAccessUrls } from '@eve/dna';
+import { writeEveSecrets, readEveSecrets, getAccessUrls, getServerIp } from '@eve/dna';
 import { TraefikService } from '@eve/legs';
 import { colors, printSuccess, printInfo } from '../lib/ui.js';
 
@@ -35,9 +35,25 @@ export function domainCommand(program: Command): void {
           console.log(`  ${svc.emoji}  ${svc.label.padEnd(20)} ${colors.primary(svc.domainUrl)}`);
         }
       }
+      const serverIp = getServerIp();
+      const subdomains = ['eve', 'pod', 'openclaw', 'feeds', 'ai', 'traefik'];
       console.log();
+      console.log(colors.primary.bold('DNS records to create:'));
+      console.log(colors.muted('─'.repeat(60)));
+      console.log(colors.muted(`  Type   Name                        Value`));
+      console.log(colors.muted('─'.repeat(60)));
+      for (const sub of subdomains) {
+        const name = `${sub}.${domainName}`.padEnd(30);
+        const value = serverIp ?? colors.warning('<your-server-ip>');
+        console.log(`  ${colors.primary('A')}      ${name}  ${value}`);
+      }
+      console.log(colors.muted('─'.repeat(60)));
+      if (!serverIp) {
+        printInfo('Could not detect server IP automatically — replace <your-server-ip> above.');
+      }
       if (opts.ssl) {
-        printInfo("Point each subdomain's DNS A record to your server IP before SSL can provision.");
+        console.log();
+        printInfo('SSL will provision automatically once DNS records propagate (usually 1–5 min).');
       }
     });
 
