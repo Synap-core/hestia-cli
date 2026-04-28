@@ -17,7 +17,6 @@ const SERVICE_DEFS = [
   { id: 'openclaw', label: 'OpenClaw', emoji: '🦾', port: 3000, subdomain: 'openclaw' },
   { id: 'feeds', label: 'RSSHub Feeds', emoji: '👁️', port: 1200, subdomain: 'feeds' },
   { id: 'ollama', label: 'Ollama AI', emoji: '🤖', port: 11434, subdomain: 'ai' },
-  { id: 'traefik', label: 'Traefik Dashboard', emoji: '🦿', port: 8080, subdomain: 'traefik' },
 ] as const;
 
 export function getAccessUrls(secrets: EveSecrets | null): ServiceAccess[] {

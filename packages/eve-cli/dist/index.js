@@ -18,6 +18,7 @@ import { registerBuilderCommands } from "@eve/builder";
 
 // src/commands/status.ts
 import Table from "cli-table3";
+import { execSync } from "child_process";
 import { entityStateManager } from "@eve/dna";
 import { getGlobalCliFlags } from "@eve/cli-kit";
 
@@ -130,6 +131,32 @@ ${body}`, {
 }
 
 // src/commands/status.ts
+var ORGAN_CONTAINERS = {
+  brain: ["eve-brain-synap", "eve-brain-ollama"],
+  arms: ["eve-arms-openclaw"],
+  builder: [],
+  eyes: ["eve-eyes-rsshub"],
+  legs: ["eve-legs-traefik"]
+};
+function getLiveRunningContainers() {
+  try {
+    const out = execSync('docker ps --format "{{.Names}}"', {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"]
+    }).trim();
+    return new Set(out.split("\n").filter(Boolean).map((n) => n.trim()));
+  } catch {
+    return /* @__PURE__ */ new Set();
+  }
+}
+function getOrganLiveState(organ, running) {
+  const containers = ORGAN_CONTAINERS[organ];
+  if (containers.length === 0) return "unknown";
+  const runningCount = containers.filter((c) => running.has(c)).length;
+  if (runningCount === containers.length) return "running";
+  if (runningCount > 0) return "partial";
+  return "stopped";
+}
 function statusCommand(program2) {
   program2.command("status").alias("s").description("Show comprehensive entity status").option("-w, --watch", "Watch mode - continuously update").option("-j, --json", "Output as JSON").action(async (options) => {
     try {
@@ -150,6 +177,7 @@ async function showStatus(json = false) {
     console.log(JSON.stringify(state, null, 2));
     return;
   }
+  const liveContainers = getLiveRunningContainers();
   console.log();
   console.log(colors.primary.bold(`${emojis.entity} Entity Status`));
   console.log(colors.primary("\u2550".repeat(50)));
@@ -166,10 +194,11 @@ async function showStatus(json = false) {
     head: [
       colors.primary.bold("Organ"),
       colors.primary.bold("Status"),
+      colors.primary.bold("Live"),
       colors.primary.bold("Version"),
       colors.primary.bold("Last Check")
     ],
-    colWidths: [15, 12, 12, 25],
+    colWidths: [15, 12, 10, 12, 22],
     style: {
       head: [],
       border: ["grey"]
@@ -179,9 +208,16 @@ async function showStatus(json = false) {
   for (const organ of organs) {
     const organState = state.organs[organ];
     const statusColor = getStatusColor(organState.state);
+    const liveState = getOrganLiveState(organ, liveContainers);
+    let liveLabel;
+    if (liveState === "running") liveLabel = colors.success("\u25CF up");
+    else if (liveState === "partial") liveLabel = colors.warning("\u25D1 partial");
+    else if (liveState === "stopped") liveLabel = colors.error("\u25CB down");
+    else liveLabel = colors.muted("\u2014");
     table.push([
       formatOrgan(organ),
       statusColor(organState.state),
+      liveLabel,
       organState.version || "-",
       organState.lastChecked ? new Date(organState.lastChecked).toLocaleString() : "Never"
     ]);
@@ -231,10 +267,20 @@ async function showStatus(json = false) {
     "",
     getCompletenessBar(percent)
   ]);
+  const staleOrgans = organs.filter(
+    (o) => state.organs[o].state === "ready" && getOrganLiveState(o, liveContainers) === "stopped"
+  );
   const missingOrgans = organs.filter((o) => state.organs[o].state === "missing");
-  if (missingOrgans.length > 0) {
+  if (staleOrgans.length > 0 || missingOrgans.length > 0) {
     console.log();
-    console.log(colors.warning.bold(`${emojis.info} Next Steps:`));
+    console.log(colors.warning.bold(`${emojis.info} Action needed:`));
+    for (const organ of staleOrgans) {
+      const containers = ORGAN_CONTAINERS[organ];
+      console.log(`  ${colors.error("\u25CB")} ${formatOrgan(organ)} containers are down`);
+      for (const c of containers) {
+        console.log(`      ${colors.muted("\u2192")} ${colors.info(`docker start ${c}`)}`);
+      }
+    }
     for (const organ of missingOrgans) {
       console.log(`  ${colors.muted("\u2192")} Install ${formatOrgan(organ)}: ${colors.info(`eve install --components=${organ}`)}`);
     }
@@ -3215,7 +3261,7 @@ function domainCommand(program2) {
       }
     }
     const serverIp = getServerIp2();
-    const subdomains = ["eve", "pod", "openclaw", "feeds", "ai", "traefik"];
+    const subdomains = ["eve", "pod", "openclaw", "feeds", "ai"];
     console.log();
     console.log(colors.primary.bold("DNS records to create:"));
     console.log(colors.muted("\u2500".repeat(60)));

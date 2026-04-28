@@ -42,7 +42,7 @@ export function domainCommand(program: Command): void {
         }
       }
       const serverIp = getServerIp();
-      const subdomains = ['eve', 'pod', 'openclaw', 'feeds', 'ai', 'traefik'];
+      const subdomains = ['eve', 'pod', 'openclaw', 'feeds', 'ai'];
       console.log();
       console.log(colors.primary.bold('DNS records to create:'));
       console.log(colors.muted('─'.repeat(60)));

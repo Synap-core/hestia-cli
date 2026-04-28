@@ -1532,8 +1532,7 @@ var SERVICE_DEFS = [
   { id: "pod", label: "Synap Pod", emoji: "\u{1F9E0}", port: 4e3, subdomain: "pod" },
   { id: "openclaw", label: "OpenClaw", emoji: "\u{1F9BE}", port: 3e3, subdomain: "openclaw" },
   { id: "feeds", label: "RSSHub Feeds", emoji: "\u{1F441}\uFE0F", port: 1200, subdomain: "feeds" },
-  { id: "ollama", label: "Ollama AI", emoji: "\u{1F916}", port: 11434, subdomain: "ai" },
-  { id: "traefik", label: "Traefik Dashboard", emoji: "\u{1F9BF}", port: 8080, subdomain: "traefik" }
+  { id: "ollama", label: "Ollama AI", emoji: "\u{1F916}", port: 11434, subdomain: "ai" }
 ];
 function getAccessUrls(secrets) {
   const serverIp = getServerIp();

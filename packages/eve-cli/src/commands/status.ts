@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import Table from 'cli-table3';
+import { execSync } from 'child_process';
 import { entityStateManager, type Organ } from '@eve/dna';
 import { getGlobalCliFlags } from '@eve/cli-kit';
 import {
@@ -9,6 +10,35 @@ import {
   formatOrgan,
   printBox,
 } from '../lib/ui.js';
+
+const ORGAN_CONTAINERS: Record<Organ, string[]> = {
+  brain:   ['eve-brain-synap', 'eve-brain-ollama'],
+  arms:    ['eve-arms-openclaw'],
+  builder: [],
+  eyes:    ['eve-eyes-rsshub'],
+  legs:    ['eve-legs-traefik'],
+};
+
+function getLiveRunningContainers(): Set<string> {
+  try {
+    const out = execSync('docker ps --format "{{.Names}}"', {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'ignore'],
+    }).trim();
+    return new Set(out.split('\n').filter(Boolean).map(n => n.trim()));
+  } catch {
+    return new Set();
+  }
+}
+
+function getOrganLiveState(organ: Organ, running: Set<string>): 'running' | 'partial' | 'stopped' | 'unknown' {
+  const containers = ORGAN_CONTAINERS[organ];
+  if (containers.length === 0) return 'unknown';
+  const runningCount = containers.filter(c => running.has(c)).length;
+  if (runningCount === containers.length) return 'running';
+  if (runningCount > 0) return 'partial';
+  return 'stopped';
+}
 
 export function statusCommand(program: Command): void {
   program
@@ -33,11 +63,13 @@ export function statusCommand(program: Command): void {
 
 async function showStatus(json = false): Promise<void> {
   const state = await entityStateManager.getState();
-  
+
   if (json) {
     console.log(JSON.stringify(state, null, 2));
     return;
   }
+
+  const liveContainers = getLiveRunningContainers();
 
   // Header
   console.log();
@@ -50,7 +82,7 @@ async function showStatus(json = false): Promise<void> {
   printKeyValue('Version', state.version);
   printKeyValue('Initialized', new Date(state.initializedAt).toLocaleDateString());
   printKeyValue('AI Model', state.aiModel === 'none' ? 'Not configured' : state.aiModel);
-  
+
   if (state.metadata.lastBootTime) {
     printKeyValue('Last Boot', new Date(state.metadata.lastBootTime).toLocaleString());
   }
@@ -61,10 +93,11 @@ async function showStatus(json = false): Promise<void> {
     head: [
       colors.primary.bold('Organ'),
       colors.primary.bold('Status'),
+      colors.primary.bold('Live'),
       colors.primary.bold('Version'),
       colors.primary.bold('Last Check'),
     ],
-    colWidths: [15, 12, 12, 25],
+    colWidths: [15, 12, 10, 12, 22],
     style: {
       head: [],
       border: ['grey'],
@@ -72,16 +105,24 @@ async function showStatus(json = false): Promise<void> {
   });
 
   const organs: Organ[] = ['brain', 'arms', 'builder', 'eyes', 'legs'];
-  
+
   for (const organ of organs) {
     const organState = state.organs[organ];
     const statusColor = getStatusColor(organState.state);
-    
+    const liveState = getOrganLiveState(organ, liveContainers);
+
+    let liveLabel: string;
+    if (liveState === 'running') liveLabel = colors.success('● up');
+    else if (liveState === 'partial') liveLabel = colors.warning('◑ partial');
+    else if (liveState === 'stopped') liveLabel = colors.error('○ down');
+    else liveLabel = colors.muted('—');
+
     table.push([
       formatOrgan(organ),
       statusColor(organState.state),
+      liveLabel,
       organState.version || '-',
-      organState.lastChecked 
+      organState.lastChecked
         ? new Date(organState.lastChecked).toLocaleString()
         : 'Never',
     ]);
@@ -146,11 +187,22 @@ async function showStatus(json = false): Promise<void> {
     getCompletenessBar(percent),
   ]);
 
-  // Next steps
+  // Stale-state warning — state.json says ready but container is down
+  const staleOrgans = organs.filter(o =>
+    state.organs[o].state === 'ready' && getOrganLiveState(o, liveContainers) === 'stopped',
+  );
   const missingOrgans = organs.filter(o => state.organs[o].state === 'missing');
-  if (missingOrgans.length > 0) {
+
+  if (staleOrgans.length > 0 || missingOrgans.length > 0) {
     console.log();
-    console.log(colors.warning.bold(`${emojis.info} Next Steps:`));
+    console.log(colors.warning.bold(`${emojis.info} Action needed:`));
+    for (const organ of staleOrgans) {
+      const containers = ORGAN_CONTAINERS[organ];
+      console.log(`  ${colors.error('○')} ${formatOrgan(organ)} containers are down`);
+      for (const c of containers) {
+        console.log(`      ${colors.muted('→')} ${colors.info(`docker start ${c}`)}`);
+      }
+    }
     for (const organ of missingOrgans) {
       console.log(`  ${colors.muted('→')} Install ${formatOrgan(organ)}: ${colors.info(`eve install --components=${organ}`)}`);
     }
