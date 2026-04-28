@@ -34,6 +34,9 @@ import {
   allComponentIds,
   addonComponentIds,
 } from '../../lib/components.js';
+import { runInferenceInit } from '@eve/brain';
+import { RSSHubService } from '@eve/eyes';
+import { OpenClawService } from '@eve/arms';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -337,7 +340,13 @@ function buildInstallSteps(
   const hasSynap = components.includes('synap');
   const hasOllama = components.includes('ollama');
   const hasTraefik = components.includes('traefik');
-  const hasBuilder = components.includes('hermes') || components.includes('dokploy') || components.includes('opencode') || components.includes('openclaude');
+  const hasOpenclaw = components.includes('openclaw');
+  const hasRsshub = components.includes('rsshub');
+  const hasHermes = components.includes('hermes');
+  const hasDokploy = components.includes('dokploy');
+  const hasOpenCode = components.includes('opencode');
+  const hasOpenClaude = components.includes('openclaude');
+  const hasBuilder = hasHermes || hasDokploy || hasOpenCode || hasOpenClaude;
   const hasTunnel = opts.tunnel;
 
   // 1. Traefik
@@ -374,7 +383,7 @@ function buildInstallSteps(
             fromImage: opts.fromImage,
             fromSource: opts.fromSource,
             withOpenclaw: false,
-            withRsshub: opts.withRsshub || components.includes('rsshub'),
+            withRsshub: opts.withRsshub || hasRsshub,
             withAi: false,
           });
         },
@@ -404,12 +413,45 @@ function buildInstallSteps(
     });
   }
 
-  // 4. Builder / Hermes — skip; needs manual config (name + engines)
+  // 4. OpenClaw
+  if (hasOpenclaw) {
+    const hasOllamaStep = hasOllama || hasSynap; // synap pulls ollama too
+    steps.push({
+      label: 'Setting up OpenClaw...',
+      async fn() {
+        const ollamaUrl = hasOllama ? 'http://127.0.0.1:11434' : (hasSynap ? 'http://eve-brain-ollama:11434' : 'http://127.0.0.1:11434');
+        const openclaw = new OpenClawService();
+        await openclaw.install();
+        if (hasOllamaStep) {
+          await openclaw.configure(ollamaUrl);
+        }
+        await openclaw.start();
+      },
+    });
+  }
+
+  // 5. RSSHub
+  if (hasRsshub) {
+    steps.push({
+      label: 'Setting up RSSHub...',
+      async fn() {
+        const rsshub = new RSSHubService();
+        await rsshub.install();
+        await rsshub.start();
+      },
+    });
+  }
+
+  // 6. Builder components (hermes, dokploy, opencode, openclaude)
   if (hasBuilder) {
+    const builderNames = [hasHermes && 'Hermes', hasDokploy && 'Dokploy', hasOpenCode && 'OpenCode', hasOpenClaude && 'OpenClaude']
+      .filter(Boolean)
+      .join(', ');
     steps.push({
       label: 'Builder organ',
       async fn() {
-        console.log('  Skipping: builder organ requires manual configuration. Run "eve builder init" to set up.');
+        console.log(`  Skipping: builder organ (${builderNames}) requires manual configuration.`);
+        console.log('  Run "eve builder init" to set up.');
       },
     });
   }

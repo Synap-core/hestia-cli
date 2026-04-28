@@ -608,7 +608,7 @@ import {
   ensureSecretValue
 } from "@eve/dna";
 import { getGlobalCliFlags as getGlobalCliFlags2, outputJson } from "@eve/cli-kit";
-import { runBrainInit as runBrainInit2, runInferenceInit } from "@eve/brain";
+import { runBrainInit as runBrainInit2 } from "@eve/brain";
 import { runLegsProxySetup } from "@eve/legs";
 
 // src/lib/components.ts
@@ -701,6 +701,9 @@ function selectedIds(selected) {
 }
 
 // src/commands/lifecycle/install.ts
+import { runInferenceInit } from "@eve/brain";
+import { RSSHubService } from "@eve/eyes";
+import { OpenClawService } from "@eve/arms";
 async function runInstall(opts) {
   const flags = getGlobalCliFlags2();
   const jsonMode = Boolean(flags.json);
@@ -895,7 +898,13 @@ function buildInstallSteps(components, opts) {
   const hasSynap = components.includes("synap");
   const hasOllama = components.includes("ollama");
   const hasTraefik = components.includes("traefik");
-  const hasBuilder = components.includes("hermes") || components.includes("dokploy") || components.includes("opencode") || components.includes("openclaude");
+  const hasOpenclaw = components.includes("openclaw");
+  const hasRsshub = components.includes("rsshub");
+  const hasHermes = components.includes("hermes");
+  const hasDokploy = components.includes("dokploy");
+  const hasOpenCode = components.includes("opencode");
+  const hasOpenClaude = components.includes("openclaude");
+  const hasBuilder = hasHermes || hasDokploy || hasOpenCode || hasOpenClaude;
   const hasTunnel = opts.tunnel;
   if (hasTraefik) {
     steps.push({
@@ -928,7 +937,7 @@ function buildInstallSteps(components, opts) {
             fromImage: opts.fromImage,
             fromSource: opts.fromSource,
             withOpenclaw: false,
-            withRsshub: opts.withRsshub || components.includes("rsshub"),
+            withRsshub: opts.withRsshub || hasRsshub,
             withAi: false
           });
         }
@@ -954,11 +963,38 @@ function buildInstallSteps(components, opts) {
       }
     });
   }
+  if (hasOpenclaw) {
+    const hasOllamaStep = hasOllama || hasSynap;
+    steps.push({
+      label: "Setting up OpenClaw...",
+      async fn() {
+        const ollamaUrl = hasOllama ? "http://127.0.0.1:11434" : hasSynap ? "http://eve-brain-ollama:11434" : "http://127.0.0.1:11434";
+        const openclaw = new OpenClawService();
+        await openclaw.install();
+        if (hasOllamaStep) {
+          await openclaw.configure(ollamaUrl);
+        }
+        await openclaw.start();
+      }
+    });
+  }
+  if (hasRsshub) {
+    steps.push({
+      label: "Setting up RSSHub...",
+      async fn() {
+        const rsshub = new RSSHubService();
+        await rsshub.install();
+        await rsshub.start();
+      }
+    });
+  }
   if (hasBuilder) {
+    const builderNames = [hasHermes && "Hermes", hasDokploy && "Dokploy", hasOpenCode && "OpenCode", hasOpenClaude && "OpenClaude"].filter(Boolean).join(", ");
     steps.push({
       label: "Builder organ",
       async fn() {
-        console.log('  Skipping: builder organ requires manual configuration. Run "eve builder init" to set up.');
+        console.log(`  Skipping: builder organ (${builderNames}) requires manual configuration.`);
+        console.log('  Run "eve builder init" to set up.');
       }
     });
   }
@@ -2155,8 +2191,8 @@ async function addRsshub() {
     printError("Brain is not ready. Please install Synap first: `eve add synap`");
     process.exit(1);
   }
-  const { RSSHubService } = await import("@eve/eyes");
-  const rsshub = new RSSHubService();
+  const { RSSHubService: RSSHubService2 } = await import("@eve/eyes");
+  const rsshub = new RSSHubService2();
   if (await rsshub.isInstalled()) {
     printInfo("RSSHub is already installed. Use `eve eyes:start` to start it.");
     return;
@@ -2410,8 +2446,8 @@ async function removeRsshub() {
       const containers = stdout.trim().split("\n").filter(Boolean);
       await execa5("docker", ["rm", "-f", ...containers], { stdio: "inherit" });
     }
-    const { RSSHubService } = await import("@eve/eyes");
-    const rsshub = new RSSHubService();
+    const { RSSHubService: RSSHubService2 } = await import("@eve/eyes");
+    const rsshub = new RSSHubService2();
     await rsshub.stop();
   } catch {
     printWarning("RSSHub removal failed \u2014 check manually.");
