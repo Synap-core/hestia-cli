@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 
@@ -86,22 +86,25 @@ accessLog: {}
     }
 
     // Run Traefik container
-    const dockerCmd = `
-      docker run -d \\
-        --name traefik \\
-        --restart unless-stopped \\
-        -p 80:80 \\
-        -p 443:443 \\
-        -p 8080:8080 \\
-        -v ${this.configDir}/traefik.yml:/etc/traefik/traefik.yml \\
-        -v ${this.dynamicConfigDir}:${this.dynamicConfigDir} \\
-        -v /var/run/docker.sock:/var/run/docker.sock \\
-        --network eve-network \\
-        traefik:v3.0
-    `;
+    const dockerArgs = [
+      'run', '-d',
+      '--name', 'traefik',
+      '--restart', 'unless-stopped',
+      '-p', '80:80',
+      '-p', '443:443',
+      '-p', '8080:8080',
+      '-v', `${this.configDir}/traefik.yml:/etc/traefik/traefik.yml`,
+      '-v', `${this.dynamicConfigDir}:${this.dynamicConfigDir}`,
+      '-v', '/var/run/docker.sock:/var/run/docker.sock',
+      '--network', 'eve-network',
+      'traefik:v3.0',
+    ];
 
     try {
-      execSync(dockerCmd.replace(/\\/g, ''), { stdio: 'inherit' });
+      const result = spawnSync('docker', dockerArgs, { stdio: 'inherit' });
+      if (result.status !== 0) {
+        throw new Error(`docker run exited with code ${result.status}`);
+      }
       console.log('Traefik container started');
     } catch (error) {
       console.error('Failed to start Traefik:', error);

@@ -1,5 +1,5 @@
 // src/lib/traefik.ts
-import { execSync } from "child_process";
+import { execSync, spawnSync } from "child_process";
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
 var TraefikService = class {
@@ -63,21 +63,34 @@ accessLog: {}
       execSync("docker network create eve-network", { stdio: "ignore" });
     } catch {
     }
-    const dockerCmd = `
-      docker run -d \\
-        --name traefik \\
-        --restart unless-stopped \\
-        -p 80:80 \\
-        -p 443:443 \\
-        -p 8080:8080 \\
-        -v ${this.configDir}/traefik.yml:/etc/traefik/traefik.yml \\
-        -v ${this.dynamicConfigDir}:${this.dynamicConfigDir} \\
-        -v /var/run/docker.sock:/var/run/docker.sock \\
-        --network eve-network \\
-        traefik:v3.0
-    `;
+    const dockerArgs = [
+      "run",
+      "-d",
+      "--name",
+      "traefik",
+      "--restart",
+      "unless-stopped",
+      "-p",
+      "80:80",
+      "-p",
+      "443:443",
+      "-p",
+      "8080:8080",
+      "-v",
+      `${this.configDir}/traefik.yml:/etc/traefik/traefik.yml`,
+      "-v",
+      `${this.dynamicConfigDir}:${this.dynamicConfigDir}`,
+      "-v",
+      "/var/run/docker.sock:/var/run/docker.sock",
+      "--network",
+      "eve-network",
+      "traefik:v3.0"
+    ];
     try {
-      execSync(dockerCmd.replace(/\\/g, ""), { stdio: "inherit" });
+      const result = spawnSync("docker", dockerArgs, { stdio: "inherit" });
+      if (result.status !== 0) {
+        throw new Error(`docker run exited with code ${result.status}`);
+      }
       console.log("Traefik container started");
     } catch (error) {
       console.error("Failed to start Traefik:", error);
@@ -492,7 +505,7 @@ Edit PANGOLIN_ENDPOINT, NEWT_ID, NEWT_SECRET then run: eve legs newt up`);
 }
 
 // src/lib/inference-gateway.ts
-import { execSync as execSync4, spawnSync } from "child_process";
+import { execSync as execSync4, spawnSync as spawnSync2 } from "child_process";
 import { mkdirSync as mkdirSync4, writeFileSync as writeFileSync4 } from "fs";
 import { join as join4 } from "path";
 import { randomBytes } from "crypto";
@@ -510,7 +523,7 @@ var InferenceGateway = class {
   }
   /** APR1 hash line for Traefik usersFile (user:hash). */
   htpasswdLine(username, plainPassword) {
-    const r = spawnSync("openssl", ["passwd", "-apr1", plainPassword], { encoding: "utf-8" });
+    const r = spawnSync2("openssl", ["passwd", "-apr1", plainPassword], { encoding: "utf-8" });
     if (r.error || r.status !== 0) {
       throw new Error(`openssl passwd -apr1 failed: ${r.stderr || r.error?.message || "unknown"}`);
     }
