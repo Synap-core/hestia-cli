@@ -715,5 +715,5 @@ export function installCommand(program: Command): void {
 // ---------------------------------------------------------------------------
 
 function execa(cmd: string, args: string[], opts?: Record<string, unknown>): Promise<{ stdout: string }> {
-  return import('execa').then(mod => (mod as any).default(cmd, args, { ...(opts || {}), shell: true }));
+  return import('execa').then(mod => mod.execa(cmd, args, { ...(opts || {}), shell: true }));
 }

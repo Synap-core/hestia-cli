@@ -1152,7 +1152,7 @@ Run "eve status" to see current state.
   });
 }
 function execa2(cmd, args, opts) {
-  return import("execa").then((mod) => mod.default(cmd, args, { ...opts || {}, shell: true }));
+  return import("execa").then((mod) => mod.execa(cmd, args, { ...opts || {}, shell: true }));
 }
 
 // src/commands/setup.ts
