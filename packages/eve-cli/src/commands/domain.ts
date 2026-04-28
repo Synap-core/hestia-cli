@@ -29,7 +29,7 @@ export function domainCommand(program: Command): void {
 
       console.log();
       console.log(colors.primary.bold('Access URLs:'));
-      console.log(colors.dim('─'.repeat(60)));
+      console.log(colors.muted('─'.repeat(60)));
       for (const svc of urls) {
         if (svc.domainUrl) {
           console.log(`  ${svc.emoji}  ${svc.label.padEnd(20)} ${colors.primary(svc.domainUrl)}`);
@@ -51,19 +51,19 @@ export function domainCommand(program: Command): void {
 
       console.log();
       console.log(colors.primary.bold('Eve — Access URLs'));
-      console.log(colors.dim('─'.repeat(70)));
+      console.log(colors.muted('─'.repeat(70)));
 
       for (const svc of urls) {
         console.log();
         console.log(`  ${svc.emoji}  ${colors.primary.bold(svc.label)}`);
-        console.log(`     ${colors.dim('Local:')}    ${svc.localUrl}`);
-        if (svc.serverUrl) console.log(`     ${colors.dim('Server:')}   ${svc.serverUrl}`);
-        if (svc.domainUrl) console.log(`     ${colors.dim('Domain:')}   ${colors.primary(svc.domainUrl)}`);
+        console.log(`     ${colors.muted('Local:')}    ${svc.localUrl}`);
+        if (svc.serverUrl) console.log(`     ${colors.muted('Server:')}   ${svc.serverUrl}`);
+        if (svc.domainUrl) console.log(`     ${colors.muted('Domain:')}   ${colors.primary(svc.domainUrl)}`);
       }
 
       console.log();
       if (!domainSet) {
-        console.log(colors.dim("  Tip: run `eve domain set yourdomain.com --ssl` to configure domain access"));
+        console.log(colors.muted("  Tip: run `eve domain set yourdomain.com --ssl` to configure domain access"));
       }
     });
 

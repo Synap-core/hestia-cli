@@ -894,8 +894,8 @@ async function runInstall(opts) {
     const serverIp = getServerIp();
     if (serverIp) {
       console.log();
-      console.log(colors.dim(`  Your server IP: ${serverIp}`));
-      console.log(colors.dim(`  Dashboard: http://${serverIp}:7979  (open port 7979 in your firewall)`));
+      console.log(colors.muted(`  Your server IP: ${serverIp}`));
+      console.log(colors.muted(`  Dashboard: http://${serverIp}:7979  (open port 7979 in your firewall)`));
     }
     console.log();
   } else {
@@ -3136,7 +3136,7 @@ function domainCommand(program2) {
     const urls = getAccessUrls(secrets);
     console.log();
     console.log(colors.primary.bold("Access URLs:"));
-    console.log(colors.dim("\u2500".repeat(60)));
+    console.log(colors.muted("\u2500".repeat(60)));
     for (const svc of urls) {
       if (svc.domainUrl) {
         console.log(`  ${svc.emoji}  ${svc.label.padEnd(20)} ${colors.primary(svc.domainUrl)}`);
@@ -3153,17 +3153,17 @@ function domainCommand(program2) {
     const domainSet = !!secrets?.domain?.primary;
     console.log();
     console.log(colors.primary.bold("Eve \u2014 Access URLs"));
-    console.log(colors.dim("\u2500".repeat(70)));
+    console.log(colors.muted("\u2500".repeat(70)));
     for (const svc of urls) {
       console.log();
       console.log(`  ${svc.emoji}  ${colors.primary.bold(svc.label)}`);
-      console.log(`     ${colors.dim("Local:")}    ${svc.localUrl}`);
-      if (svc.serverUrl) console.log(`     ${colors.dim("Server:")}   ${svc.serverUrl}`);
-      if (svc.domainUrl) console.log(`     ${colors.dim("Domain:")}   ${colors.primary(svc.domainUrl)}`);
+      console.log(`     ${colors.muted("Local:")}    ${svc.localUrl}`);
+      if (svc.serverUrl) console.log(`     ${colors.muted("Server:")}   ${svc.serverUrl}`);
+      if (svc.domainUrl) console.log(`     ${colors.muted("Domain:")}   ${colors.primary(svc.domainUrl)}`);
     }
     console.log();
     if (!domainSet) {
-      console.log(colors.dim("  Tip: run `eve domain set yourdomain.com --ssl` to configure domain access"));
+      console.log(colors.muted("  Tip: run `eve domain set yourdomain.com --ssl` to configure domain access"));
     }
   });
   domain.command("unset").description("Remove domain configuration").action(async () => {

@@ -321,8 +321,8 @@ export async function runInstall(opts: InstallOptions): Promise<void> {
     const serverIp = getServerIp();
     if (serverIp) {
       console.log();
-      console.log(colors.dim(`  Your server IP: ${serverIp}`));
-      console.log(colors.dim(`  Dashboard: http://${serverIp}:7979  (open port 7979 in your firewall)`));
+      console.log(colors.muted(`  Your server IP: ${serverIp}`));
+      console.log(colors.muted(`  Dashboard: http://${serverIp}:7979  (open port 7979 in your firewall)`));
     }
     console.log();
   } else {
