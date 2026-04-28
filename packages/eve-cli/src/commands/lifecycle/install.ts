@@ -166,7 +166,12 @@ export async function runInstall(opts: InstallOptions): Promise<void> {
       }
     }
 
+    if (dockerOk) {
+      spinner.succeed('Docker is running');
+    }
+
     if (!dockerOk) {
+      spinner.fail('Docker is not running');
       console.log();
       printError('Eve requires Docker to manage containers.');
       console.log();
