@@ -5,6 +5,24 @@ import { existsSync } from 'fs';
 const CONTAINER = 'eve-legs-traefik';
 const CONFIG_DIR = '/opt/traefik';
 
+function reconnectSynapToEveNetwork(): void {
+  try {
+    const name = execSync(
+      `docker ps --filter "label=com.docker.compose.project=synap-backend" --filter "label=com.docker.compose.service=backend" --format "{{.Names}}"`,
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
+    ).trim().split('\n')[0]?.trim();
+    if (!name) return;
+    try {
+      execSync(`docker network connect eve-network ${name}`, { stdio: ['pipe', 'pipe', 'ignore'] });
+      console.log(`  Reconnected ${name} → eve-network`);
+    } catch {
+      // Already connected
+    }
+  } catch {
+    // Synap not running — skip
+  }
+}
+
 function freePort(port: number): void {
   try {
     // Find any container binding this port and stop it
@@ -76,6 +94,7 @@ export function restartCommand(program: Command): void {
         process.exit(1);
       }
 
+      reconnectSynapToEveNetwork();
       console.log('✓ Traefik running — routes are live');
     });
 }

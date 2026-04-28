@@ -29,6 +29,34 @@ function getDockerGateway(): string {
   return '172.17.0.1';
 }
 
+/**
+ * Finds the synap-backend API container (managed by the synap CLI's docker-compose,
+ * project name = "synap-backend", service = "backend").
+ * Returns the container name, or null if not running.
+ */
+function getSynapBackendContainer(): string | null {
+  try {
+    const out = execSync(
+      `docker ps --filter "label=com.docker.compose.project=synap-backend" --filter "label=com.docker.compose.service=backend" --format "{{.Names}}"`,
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
+    ).trim();
+    return out.split('\n')[0]?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Connects a container to eve-network (no-op if already connected or container absent). */
+function connectToEveNetwork(containerName: string): void {
+  try {
+    execSync(`docker network connect eve-network ${containerName}`, {
+      stdio: ['pipe', 'pipe', 'ignore'],
+    });
+  } catch {
+    // Already connected or container doesn't exist — both are fine
+  }
+}
+
 function buildStaticConfig(ssl: boolean, email?: string): string {
   const acmeSection = ssl && email
     ? `
@@ -130,9 +158,22 @@ export class TraefikService {
   async configureSubdomains(domain: string, ssl: boolean, email?: string): Promise<void> {
     const dockerGateway = getDockerGateway();
 
+    // Synap backend runs in its own docker-compose project ("synap-backend").
+    // Its container is NOT on eve-network by default — connect it so Traefik can reach it.
+    const synapContainer = getSynapBackendContainer();
+    if (synapContainer) {
+      connectToEveNetwork(synapContainer);
+      console.log(`  Connected ${synapContainer} → eve-network`);
+    } else {
+      console.warn('  Warning: Synap backend container not found — pod.domain routing will 502 until `eve brain init` is run');
+    }
+    const podUpstream = synapContainer
+      ? `http://${synapContainer}:4000`
+      : `http://${dockerGateway}:4000`;
+
     const services: Array<{ id: string; subdomain: string; upstream: string }> = [
       { id: 'eve-dashboard', subdomain: 'eve',      upstream: `http://${dockerGateway}:7979` },
-      { id: 'pod',           subdomain: 'pod',      upstream: 'http://eve-brain-synap:4000' },
+      { id: 'pod',           subdomain: 'pod',      upstream: podUpstream },
       { id: 'openclaw',      subdomain: 'openclaw', upstream: 'http://eve-arms-openclaw:3000' },
       { id: 'feeds',         subdomain: 'feeds',    upstream: 'http://eve-eyes-rsshub:1200' },
       { id: 'ollama',        subdomain: 'ai',       upstream: 'http://eve-brain-ollama:11434' },

@@ -23,6 +23,25 @@ function getDockerGateway() {
   }
   return "172.17.0.1";
 }
+function getSynapBackendContainer() {
+  try {
+    const out = execSync(
+      `docker ps --filter "label=com.docker.compose.project=synap-backend" --filter "label=com.docker.compose.service=backend" --format "{{.Names}}"`,
+      { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }
+    ).trim();
+    return out.split("\n")[0]?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+function connectToEveNetwork(containerName) {
+  try {
+    execSync(`docker network connect eve-network ${containerName}`, {
+      stdio: ["pipe", "pipe", "ignore"]
+    });
+  } catch {
+  }
+}
 function buildStaticConfig(ssl, email) {
   const acmeSection = ssl && email ? `
 certificatesResolvers:
@@ -120,9 +139,17 @@ var TraefikService = class {
   }
   async configureSubdomains(domain, ssl, email) {
     const dockerGateway = getDockerGateway();
+    const synapContainer = getSynapBackendContainer();
+    if (synapContainer) {
+      connectToEveNetwork(synapContainer);
+      console.log(`  Connected ${synapContainer} \u2192 eve-network`);
+    } else {
+      console.warn("  Warning: Synap backend container not found \u2014 pod.domain routing will 502 until `eve brain init` is run");
+    }
+    const podUpstream = synapContainer ? `http://${synapContainer}:4000` : `http://${dockerGateway}:4000`;
     const services = [
       { id: "eve-dashboard", subdomain: "eve", upstream: `http://${dockerGateway}:7979` },
-      { id: "pod", subdomain: "pod", upstream: "http://eve-brain-synap:4000" },
+      { id: "pod", subdomain: "pod", upstream: podUpstream },
       { id: "openclaw", subdomain: "openclaw", upstream: "http://eve-arms-openclaw:3000" },
       { id: "feeds", subdomain: "feeds", upstream: "http://eve-eyes-rsshub:1200" },
       { id: "ollama", subdomain: "ai", upstream: "http://eve-brain-ollama:11434" }
@@ -576,6 +603,21 @@ import { spawnSync as spawnSync2, execSync as execSync4 } from "child_process";
 import { existsSync as existsSync4 } from "fs";
 var CONTAINER = "eve-legs-traefik";
 var CONFIG_DIR = "/opt/traefik";
+function reconnectSynapToEveNetwork() {
+  try {
+    const name = execSync4(
+      `docker ps --filter "label=com.docker.compose.project=synap-backend" --filter "label=com.docker.compose.service=backend" --format "{{.Names}}"`,
+      { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }
+    ).trim().split("\n")[0]?.trim();
+    if (!name) return;
+    try {
+      execSync4(`docker network connect eve-network ${name}`, { stdio: ["pipe", "pipe", "ignore"] });
+      console.log(`  Reconnected ${name} \u2192 eve-network`);
+    } catch {
+    }
+  } catch {
+  }
+}
 function freePort(port) {
   try {
     const out = execSync4(
@@ -643,6 +685,7 @@ function restartCommand(program) {
       spawnSync2("docker", ["ps", "--format", "{{.Names}}	{{.Ports}}"], { stdio: "inherit" });
       process.exit(1);
     }
+    reconnectSynapToEveNetwork();
     console.log("\u2713 Traefik running \u2014 routes are live");
   });
 }

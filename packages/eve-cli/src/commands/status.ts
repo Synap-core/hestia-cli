@@ -11,32 +11,64 @@ import {
   printBox,
 } from '../lib/ui.js';
 
+// 'eve-brain-synap-proxy' is a synthetic alias resolved via docker label lookup
+// in getLiveContainerState() — the real container is synap-backend-backend-1.
 const ORGAN_CONTAINERS: Record<Organ, string[]> = {
-  brain:   ['eve-brain-synap', 'eve-brain-ollama'],
+  brain:   ['eve-brain-synap-proxy', 'eve-brain-ollama'],
   arms:    ['eve-arms-openclaw'],
   builder: [],
   eyes:    ['eve-eyes-rsshub'],
   legs:    ['eve-legs-traefik'],
 };
 
-function getLiveRunningContainers(): Set<string> {
+interface LiveContainerState {
+  running: Set<string>;
+  all: Set<string>;
+}
+
+function getLiveContainerState(): LiveContainerState {
+  const running = new Set<string>();
+  const all = new Set<string>();
   try {
-    const out = execSync('docker ps --format "{{.Names}}"', {
+    const outRunning = execSync('docker ps --format "{{.Names}}"', {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'ignore'],
     }).trim();
-    return new Set(out.split('\n').filter(Boolean).map(n => n.trim()));
-  } catch {
-    return new Set();
-  }
+    for (const n of outRunning.split('\n').filter(Boolean)) running.add(n.trim());
+  } catch {}
+  try {
+    const outAll = execSync('docker ps -a --format "{{.Names}}"', {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'ignore'],
+    }).trim();
+    for (const n of outAll.split('\n').filter(Boolean)) all.add(n.trim());
+  } catch {}
+  // Also detect synap-backend containers (different naming from synap compose)
+  try {
+    const synapName = execSync(
+      `docker ps --filter "label=com.docker.compose.project=synap-backend" --filter "label=com.docker.compose.service=backend" --format "{{.Names}}"`,
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
+    ).trim().split('\n')[0]?.trim();
+    if (synapName) running.add('eve-brain-synap-proxy');
+  } catch {}
+  try {
+    const synapNameAll = execSync(
+      `docker ps -a --filter "label=com.docker.compose.project=synap-backend" --filter "label=com.docker.compose.service=backend" --format "{{.Names}}"`,
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
+    ).trim().split('\n')[0]?.trim();
+    if (synapNameAll) all.add('eve-brain-synap-proxy');
+  } catch {}
+  return { running, all };
 }
 
-function getOrganLiveState(organ: Organ, running: Set<string>): 'running' | 'partial' | 'stopped' | 'unknown' {
+function getOrganLiveState(organ: Organ, state: LiveContainerState): 'running' | 'partial' | 'stopped' | 'not-installed' | 'unknown' {
   const containers = ORGAN_CONTAINERS[organ];
   if (containers.length === 0) return 'unknown';
-  const runningCount = containers.filter(c => running.has(c)).length;
+  const runningCount = containers.filter(c => state.running.has(c)).length;
   if (runningCount === containers.length) return 'running';
   if (runningCount > 0) return 'partial';
+  const existsCount = containers.filter(c => state.all.has(c)).length;
+  if (existsCount === 0) return 'not-installed';
   return 'stopped';
 }
 
@@ -69,7 +101,7 @@ async function showStatus(json = false): Promise<void> {
     return;
   }
 
-  const liveContainers = getLiveRunningContainers();
+  const liveContainers = getLiveContainerState();
 
   // Header
   console.log();
@@ -115,6 +147,7 @@ async function showStatus(json = false): Promise<void> {
     if (liveState === 'running') liveLabel = colors.success('● up');
     else if (liveState === 'partial') liveLabel = colors.warning('◑ partial');
     else if (liveState === 'stopped') liveLabel = colors.error('○ down');
+    else if (liveState === 'not-installed') liveLabel = colors.muted('✗ none');
     else liveLabel = colors.muted('—');
 
     table.push([
@@ -187,9 +220,28 @@ async function showStatus(json = false): Promise<void> {
     getCompletenessBar(percent),
   ]);
 
-  // Stale-state warning — state.json says ready but container is down
-  const staleOrgans = organs.filter(o =>
-    state.organs[o].state === 'ready' && getOrganLiveState(o, liveContainers) === 'stopped',
+  // Stale-state warning — state.json says ready but containers are down or missing
+  const FIX_COMMANDS: Record<Organ, string> = {
+    brain:   'npx eve brain init --synap-repo /path/to/synap-backend',
+    arms:    'npx eve install --components=arms',
+    builder: 'npx eve install --components=builder',
+    eyes:    'npx eve install --components=eyes',
+    legs:    'npx eve install --components=legs',
+  };
+  const RESTART_COMMANDS: Record<Organ, string> = {
+    brain:   'docker start $(docker ps -a --filter "label=com.docker.compose.project=synap-backend" --filter "label=com.docker.compose.service=backend" -q)',
+    arms:    'docker start eve-arms-openclaw',
+    builder: 'docker start eve-builder-hermes',
+    eyes:    'docker start eve-eyes-rsshub',
+    legs:    'docker start eve-legs-traefik',
+  };
+
+  const staleOrgans = organs.filter(o => {
+    const live = getOrganLiveState(o, liveContainers);
+    return state.organs[o].state === 'ready' && (live === 'stopped' || live === 'not-installed');
+  });
+  const notInstalledOrgans = organs.filter(o =>
+    state.organs[o].state === 'ready' && getOrganLiveState(o, liveContainers) === 'not-installed',
   );
   const missingOrgans = organs.filter(o => state.organs[o].state === 'missing');
 
@@ -197,14 +249,17 @@ async function showStatus(json = false): Promise<void> {
     console.log();
     console.log(colors.warning.bold(`${emojis.info} Action needed:`));
     for (const organ of staleOrgans) {
-      const containers = ORGAN_CONTAINERS[organ];
-      console.log(`  ${colors.error('○')} ${formatOrgan(organ)} containers are down`);
-      for (const c of containers) {
-        console.log(`      ${colors.muted('→')} ${colors.info(`docker start ${c}`)}`);
+      const isNotInstalled = notInstalledOrgans.includes(organ);
+      if (isNotInstalled) {
+        console.log(`  ${colors.error('✗')} ${formatOrgan(organ)} — never installed or container removed`);
+        console.log(`      ${colors.muted('→')} ${colors.info(FIX_COMMANDS[organ])}`);
+      } else {
+        console.log(`  ${colors.error('○')} ${formatOrgan(organ)} — container stopped`);
+        console.log(`      ${colors.muted('→')} ${colors.info(RESTART_COMMANDS[organ])}`);
       }
     }
     for (const organ of missingOrgans) {
-      console.log(`  ${colors.muted('→')} Install ${formatOrgan(organ)}: ${colors.info(`eve install --components=${organ}`)}`);
+      console.log(`  ${colors.muted('→')} Install ${formatOrgan(organ)}: ${colors.info(FIX_COMMANDS[organ])}`);
     }
   }
   console.log();
