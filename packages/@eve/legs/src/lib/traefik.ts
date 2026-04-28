@@ -85,6 +85,13 @@ accessLog: {}
       // Network already exists
     }
 
+    // Remove existing traefik container (idempotent re-run)
+    try {
+      spawnSync('docker', ['rm', '-f', 'traefik'], { stdio: 'inherit' });
+    } catch {
+      // container doesn't exist — safe to ignore
+    }
+
     // Run Traefik container
     const dockerArgs = [
       'run', '-d',
@@ -100,16 +107,11 @@ accessLog: {}
       'traefik:v3.0',
     ];
 
-    try {
-      const result = spawnSync('docker', dockerArgs, { stdio: 'inherit' });
-      if (result.status !== 0) {
-        throw new Error(`docker run exited with code ${result.status}`);
-      }
-      console.log('Traefik container started');
-    } catch (error) {
-      console.error('Failed to start Traefik:', error);
-      throw error;
+    const result = spawnSync('docker', dockerArgs, { stdio: 'inherit' });
+    if (result.status !== 0) {
+      throw new Error(`docker run exited with code ${result.status}`);
     }
+    console.log('Traefik container started');
   }
 
   private async configureDokployTraefik(): Promise<void> {

@@ -71,6 +71,12 @@ export class RSSHubService {
 
     const port = config?.port ?? this.config.port;
 
+    const alreadyRunning = await this.isRunning();
+    if (alreadyRunning) {
+      console.log('RSSHub is already running');
+      return;
+    }
+
     console.log(`Pulling RSSHub image...`);
     await execAsync('docker pull rsshub/rsshub:latest');
 
