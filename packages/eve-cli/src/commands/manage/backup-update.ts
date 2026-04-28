@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { execa } from 'execa';
+import { execSync, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { existsSync } from 'node:fs';
@@ -7,9 +8,106 @@ import { join } from 'node:path';
 import { getGlobalCliFlags } from '@eve/cli-kit';
 import {
   printInfo,
+  printSuccess,
+  printWarning,
   printError,
   colors,
+  createSpinner,
 } from '../../lib/ui.js';
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+function getSynapBackendContainer(): string | null {
+  try {
+    const out = execSync(
+      'docker ps --filter "label=com.docker.compose.project=synap-backend" --filter "label=com.docker.compose.service=backend" --format "{{.Names}}"',
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
+    ).trim();
+    return out.split('\n')[0]?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function connectToEveNetwork(name: string): void {
+  try {
+    execSync(`docker network connect eve-network ${name}`, { stdio: ['pipe', 'pipe', 'ignore'] });
+  } catch { /* already connected */ }
+}
+
+interface UpdateTarget {
+  id: string;
+  label: string;
+  image?: string;
+  container?: string;
+  update: () => Promise<void>;
+}
+
+function buildUpdateTargets(deployDir: string | undefined): UpdateTarget[] {
+  const targets: UpdateTarget[] = [];
+
+  // 1. Synap Data Pod (brain)
+  if (deployDir) {
+    targets.push({
+      id: 'synap',
+      label: '🧠 Synap Data Pod',
+      update: async () => {
+        const env = { ...process.env, COMPOSE_PROJECT_NAME: 'synap-backend' };
+        await execa('docker', ['compose', 'pull', 'backend', 'realtime', '--ignore-pull-failures'], { cwd: deployDir, env, stdio: 'inherit' });
+        await execa('docker', ['compose', 'run', '--rm', 'backend-migrate'], { cwd: deployDir, env, stdio: 'inherit' });
+        await execa('docker', ['compose', 'up', '-d', '--no-deps', 'backend', 'realtime'], { cwd: deployDir, env, stdio: 'inherit' });
+        // Reconnect to eve-network (container gets recreated)
+        const name = getSynapBackendContainer();
+        if (name) connectToEveNetwork(name);
+      },
+    });
+  }
+
+  // 2. Ollama (brain - AI)
+  targets.push({
+    id: 'ollama',
+    label: '🤖 Ollama',
+    update: async () => {
+      spawnSync('docker', ['pull', 'ollama/ollama:latest'], { stdio: 'inherit' });
+      spawnSync('docker', ['restart', 'eve-brain-ollama'], { stdio: 'inherit' });
+    },
+  });
+
+  // 3. OpenClaw (arms)
+  targets.push({
+    id: 'openclaw',
+    label: '🦾 OpenClaw',
+    update: async () => {
+      spawnSync('docker', ['pull', 'ghcr.io/openclaw/openclaw:latest'], { stdio: 'inherit' });
+      spawnSync('docker', ['restart', 'eve-arms-openclaw'], { stdio: 'inherit' });
+    },
+  });
+
+  // 4. RSSHub (eyes)
+  targets.push({
+    id: 'rsshub',
+    label: '👁️  RSSHub',
+    update: async () => {
+      spawnSync('docker', ['pull', 'diygod/rsshub:latest'], { stdio: 'inherit' });
+      spawnSync('docker', ['restart', 'eve-eyes-rsshub'], { stdio: 'inherit' });
+    },
+  });
+
+  // 5. Traefik (legs)
+  targets.push({
+    id: 'traefik',
+    label: '🦿 Traefik',
+    update: async () => {
+      spawnSync('docker', ['pull', 'traefik:v3.0'], { stdio: 'inherit' });
+      spawnSync('docker', ['restart', 'eve-legs-traefik'], { stdio: 'inherit' });
+      // Reconnect synap to eve-network — Traefik restart doesn't affect other containers
+      const name = getSynapBackendContainer();
+      if (name) connectToEveNetwork(name);
+    },
+  });
+
+  return targets;
+}
 
 async function confirmDestructiveReset(): Promise<boolean> {
   const flags = getGlobalCliFlags();
@@ -51,50 +149,53 @@ export function backupUpdateCommands(program: Command): void {
 
   program
     .command('update')
-    .description('Pull latest images and restart Synap Data Pod (works for image-based installs)')
-    .option('--synap-only', 'Only update Synap backend (not other Eve containers)')
-    .action(async (opts: { synapOnly?: boolean }) => {
-      // Detect image-based install at /opt/synap-backend
+    .description('Pull latest images and restart all Eve organs (Synap, Ollama, OpenClaw, RSSHub, Traefik)')
+    .option('--only <organs>', 'Comma-separated organs to update, e.g. synap,ollama')
+    .option('--skip <organs>', 'Comma-separated organs to skip, e.g. traefik')
+    .action(async (opts: { only?: string; skip?: string }) => {
       const deployDirs = ['/opt/synap-backend', process.env.SYNAP_DEPLOY_DIR].filter(Boolean) as string[];
       const deployDir = deployDirs.find(d => existsSync(join(d, 'docker-compose.yml')));
 
-      if (deployDir) {
-        printInfo(`Found Synap deploy at ${colors.info(deployDir)}`);
-        const env = { ...process.env, COMPOSE_PROJECT_NAME: 'synap-backend' };
+      const targets = buildUpdateTargets(deployDir);
+
+      const only = opts.only ? new Set(opts.only.split(',').map(s => s.trim())) : null;
+      const skip = opts.skip ? new Set(opts.skip.split(',').map(s => s.trim())) : new Set<string>();
+
+      const toUpdate = targets.filter(t =>
+        (!only || only.has(t.id)) && !skip.has(t.id),
+      );
+
+      console.log();
+      console.log(colors.primary.bold('Eve Update'));
+      console.log(colors.muted('─'.repeat(50)));
+
+      const results: { label: string; ok: boolean; msg?: string }[] = [];
+
+      for (const target of toUpdate) {
+        const spinner = createSpinner(`Updating ${target.label}...`);
+        spinner.start();
         try {
-          printInfo('Pulling latest backend images...');
-          await execa('docker', ['compose', 'pull', 'backend', 'realtime', '--ignore-pull-failures'], {
-            cwd: deployDir,
-            env,
-            stdio: 'inherit',
-          });
-
-          printInfo('Running database migrations...');
-          await execa('docker', ['compose', 'run', '--rm', 'backend-migrate'], {
-            cwd: deployDir,
-            env,
-            stdio: 'inherit',
-          });
-
-          printInfo('Restarting backend + realtime...');
-          await execa('docker', ['compose', 'up', '-d', 'backend', 'realtime'], {
-            cwd: deployDir,
-            env,
-            stdio: 'inherit',
-          });
-
-          printInfo(`${colors.success('✓')} Synap Data Pod updated.`);
+          await target.update();
+          spinner.succeed(`${target.label} updated`);
+          results.push({ label: target.label, ok: true });
         } catch (e) {
-          printError(e instanceof Error ? e.message : String(e));
-          process.exit(1);
+          const msg = e instanceof Error ? e.message : String(e);
+          spinner.warn(`${target.label} — skipped (${msg.split('\n')[0]})`);
+          results.push({ label: target.label, ok: false, msg });
         }
-        return;
       }
 
-      // Fallback: delegate to synap-backend checkout
-      printInfo('No image-based install found at /opt/synap-backend.');
-      printInfo('If using a synap-backend checkout, run: ./synap update  (in your deploy dir)');
-      printInfo(`Or pull images manually: ${colors.muted('docker compose pull && docker compose up -d')}`);
+      console.log();
+      const failed = results.filter(r => !r.ok);
+      if (failed.length === 0) {
+        printSuccess('All organs updated.');
+      } else {
+        printWarning(`${results.filter(r => r.ok).length}/${results.length} updated. Skipped:`);
+        for (const f of failed) {
+          console.log(`  ${colors.muted('→')} ${f.label}: ${colors.muted(f.msg?.split('\n')[0] ?? '')}`);
+        }
+      }
+      console.log();
     });
 
   program

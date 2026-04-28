@@ -3,7 +3,7 @@ import {
 } from "./chunk-WOPPVXOT.js";
 
 // src/commands/init.ts
-import { EntityStateManager, entityStateManager } from "@eve/dna";
+import { EntityStateManager, entityStateManager, readEveSecrets, getServerIp } from "@eve/dna";
 
 // src/lib/exec.ts
 import { spawn } from "child_process";
@@ -265,11 +265,23 @@ async function runBrainInit(options) {
     });
     console.log("\n\u2705 Synap Data Pod installed from image.");
     if (result.bootstrapToken) {
+      const secrets = await readEveSecrets(process.cwd()).catch(() => null);
+      const configuredDomain = domain !== "localhost" ? domain : secrets?.domain?.primary;
+      const ssl = secrets?.domain?.ssl ?? false;
+      const serverIp = getServerIp();
       console.log(`
-  Admin bootstrap token (save this):`);
+  Admin bootstrap token (save this \u2014 one-time use):`);
       console.log(`  ${result.bootstrapToken}`);
       console.log(`
-  Use it at: ${domain === "localhost" ? "http://localhost:4000" : `https://${domain}`}/admin/bootstrap`);
+  Complete setup at:`);
+      if (configuredDomain) {
+        const proto = ssl ? "https" : "http";
+        console.log(`    ${proto}://${configuredDomain}/admin/bootstrap`);
+      }
+      if (serverIp) {
+        console.log(`    http://${serverIp}:4000/admin/bootstrap`);
+      }
+      console.log(`    http://localhost:4000/admin/bootstrap`);
     }
     return;
   }

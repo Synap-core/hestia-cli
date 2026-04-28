@@ -1,5 +1,5 @@
 import type { Command } from 'commander';
-import { EntityStateManager, entityStateManager } from '@eve/dna';
+import { EntityStateManager, entityStateManager, readEveSecrets, getServerIp } from '@eve/dna';
 
 import { OllamaService } from '../lib/ollama.js';
 import { execa, ensureNetwork } from '../lib/exec.js';
@@ -88,9 +88,23 @@ export async function runBrainInit(options: BrainInitOptions): Promise<void> {
 
     console.log('\n✅ Synap Data Pod installed from image.');
     if (result.bootstrapToken) {
-      console.log(`\n  Admin bootstrap token (save this):`);
+      // Resolve the best URL to show — prefer configured domain > server IP > localhost
+      const secrets = await readEveSecrets(process.cwd()).catch(() => null);
+      const configuredDomain = domain !== 'localhost' ? domain : secrets?.domain?.primary;
+      const ssl = secrets?.domain?.ssl ?? false;
+      const serverIp = getServerIp();
+
+      console.log(`\n  Admin bootstrap token (save this — one-time use):`);
       console.log(`  ${result.bootstrapToken}`);
-      console.log(`\n  Use it at: ${domain === 'localhost' ? 'http://localhost:4000' : `https://${domain}`}/admin/bootstrap`);
+      console.log(`\n  Complete setup at:`);
+      if (configuredDomain) {
+        const proto = ssl ? 'https' : 'http';
+        console.log(`    ${proto}://${configuredDomain}/admin/bootstrap`);
+      }
+      if (serverIp) {
+        console.log(`    http://${serverIp}:4000/admin/bootstrap`);
+      }
+      console.log(`    http://localhost:4000/admin/bootstrap`);
     }
     return;
   }

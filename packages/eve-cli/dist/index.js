@@ -2920,11 +2920,81 @@ function configCommands(program2) {
 
 // src/commands/manage/backup-update.ts
 import { execa as execa8 } from "execa";
+import { execSync as execSync2, spawnSync } from "child_process";
 import { createInterface } from "readline/promises";
 import { stdin as input, stdout as output } from "process";
 import { existsSync as existsSync4 } from "fs";
 import { join as join4 } from "path";
 import { getGlobalCliFlags as getGlobalCliFlags6 } from "@eve/cli-kit";
+function getSynapBackendContainer() {
+  try {
+    const out = execSync2(
+      'docker ps --filter "label=com.docker.compose.project=synap-backend" --filter "label=com.docker.compose.service=backend" --format "{{.Names}}"',
+      { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }
+    ).trim();
+    return out.split("\n")[0]?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+function connectToEveNetwork(name) {
+  try {
+    execSync2(`docker network connect eve-network ${name}`, { stdio: ["pipe", "pipe", "ignore"] });
+  } catch {
+  }
+}
+function buildUpdateTargets(deployDir) {
+  const targets = [];
+  if (deployDir) {
+    targets.push({
+      id: "synap",
+      label: "\u{1F9E0} Synap Data Pod",
+      update: async () => {
+        const env = { ...process.env, COMPOSE_PROJECT_NAME: "synap-backend" };
+        await execa8("docker", ["compose", "pull", "backend", "realtime", "--ignore-pull-failures"], { cwd: deployDir, env, stdio: "inherit" });
+        await execa8("docker", ["compose", "run", "--rm", "backend-migrate"], { cwd: deployDir, env, stdio: "inherit" });
+        await execa8("docker", ["compose", "up", "-d", "--no-deps", "backend", "realtime"], { cwd: deployDir, env, stdio: "inherit" });
+        const name = getSynapBackendContainer();
+        if (name) connectToEveNetwork(name);
+      }
+    });
+  }
+  targets.push({
+    id: "ollama",
+    label: "\u{1F916} Ollama",
+    update: async () => {
+      spawnSync("docker", ["pull", "ollama/ollama:latest"], { stdio: "inherit" });
+      spawnSync("docker", ["restart", "eve-brain-ollama"], { stdio: "inherit" });
+    }
+  });
+  targets.push({
+    id: "openclaw",
+    label: "\u{1F9BE} OpenClaw",
+    update: async () => {
+      spawnSync("docker", ["pull", "ghcr.io/openclaw/openclaw:latest"], { stdio: "inherit" });
+      spawnSync("docker", ["restart", "eve-arms-openclaw"], { stdio: "inherit" });
+    }
+  });
+  targets.push({
+    id: "rsshub",
+    label: "\u{1F441}\uFE0F  RSSHub",
+    update: async () => {
+      spawnSync("docker", ["pull", "diygod/rsshub:latest"], { stdio: "inherit" });
+      spawnSync("docker", ["restart", "eve-eyes-rsshub"], { stdio: "inherit" });
+    }
+  });
+  targets.push({
+    id: "traefik",
+    label: "\u{1F9BF} Traefik",
+    update: async () => {
+      spawnSync("docker", ["pull", "traefik:v3.0"], { stdio: "inherit" });
+      spawnSync("docker", ["restart", "eve-legs-traefik"], { stdio: "inherit" });
+      const name = getSynapBackendContainer();
+      if (name) connectToEveNetwork(name);
+    }
+  });
+  return targets;
+}
 async function confirmDestructiveReset() {
   const flags = getGlobalCliFlags6();
   if (flags.nonInteractive) return true;
@@ -2955,41 +3025,43 @@ function backupUpdateCommands(program2) {
       process.exit(1);
     }
   });
-  program2.command("update").description("Pull latest images and restart Synap Data Pod (works for image-based installs)").option("--synap-only", "Only update Synap backend (not other Eve containers)").action(async (opts) => {
+  program2.command("update").description("Pull latest images and restart all Eve organs (Synap, Ollama, OpenClaw, RSSHub, Traefik)").option("--only <organs>", "Comma-separated organs to update, e.g. synap,ollama").option("--skip <organs>", "Comma-separated organs to skip, e.g. traefik").action(async (opts) => {
     const deployDirs = ["/opt/synap-backend", process.env.SYNAP_DEPLOY_DIR].filter(Boolean);
     const deployDir = deployDirs.find((d) => existsSync4(join4(d, "docker-compose.yml")));
-    if (deployDir) {
-      printInfo(`Found Synap deploy at ${colors.info(deployDir)}`);
-      const env = { ...process.env, COMPOSE_PROJECT_NAME: "synap-backend" };
+    const targets = buildUpdateTargets(deployDir);
+    const only = opts.only ? new Set(opts.only.split(",").map((s) => s.trim())) : null;
+    const skip = opts.skip ? new Set(opts.skip.split(",").map((s) => s.trim())) : /* @__PURE__ */ new Set();
+    const toUpdate = targets.filter(
+      (t) => (!only || only.has(t.id)) && !skip.has(t.id)
+    );
+    console.log();
+    console.log(colors.primary.bold("Eve Update"));
+    console.log(colors.muted("\u2500".repeat(50)));
+    const results = [];
+    for (const target of toUpdate) {
+      const spinner = createSpinner(`Updating ${target.label}...`);
+      spinner.start();
       try {
-        printInfo("Pulling latest backend images...");
-        await execa8("docker", ["compose", "pull", "backend", "realtime", "--ignore-pull-failures"], {
-          cwd: deployDir,
-          env,
-          stdio: "inherit"
-        });
-        printInfo("Running database migrations...");
-        await execa8("docker", ["compose", "run", "--rm", "backend-migrate"], {
-          cwd: deployDir,
-          env,
-          stdio: "inherit"
-        });
-        printInfo("Restarting backend + realtime...");
-        await execa8("docker", ["compose", "up", "-d", "backend", "realtime"], {
-          cwd: deployDir,
-          env,
-          stdio: "inherit"
-        });
-        printInfo(`${colors.success("\u2713")} Synap Data Pod updated.`);
+        await target.update();
+        spinner.succeed(`${target.label} updated`);
+        results.push({ label: target.label, ok: true });
       } catch (e) {
-        printError(e instanceof Error ? e.message : String(e));
-        process.exit(1);
+        const msg = e instanceof Error ? e.message : String(e);
+        spinner.warn(`${target.label} \u2014 skipped (${msg.split("\n")[0]})`);
+        results.push({ label: target.label, ok: false, msg });
       }
-      return;
     }
-    printInfo("No image-based install found at /opt/synap-backend.");
-    printInfo("If using a synap-backend checkout, run: ./synap update  (in your deploy dir)");
-    printInfo(`Or pull images manually: ${colors.muted("docker compose pull && docker compose up -d")}`);
+    console.log();
+    const failed = results.filter((r) => !r.ok);
+    if (failed.length === 0) {
+      printSuccess("All organs updated.");
+    } else {
+      printWarning(`${results.filter((r) => r.ok).length}/${results.length} updated. Skipped:`);
+      for (const f of failed) {
+        console.log(`  ${colors.muted("\u2192")} ${f.label}: ${colors.muted(f.msg?.split("\n")[0] ?? "")}`);
+      }
+    }
+    console.log();
   });
   program2.command("recreate").description("Full cleanup + full recreation (remove stale Docker data and rebuild stack)").option("--no-prune", "Skip docker system prune").action(async (opts) => {
     try {
