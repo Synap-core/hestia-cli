@@ -60,10 +60,15 @@ export class SynapService {
     // Fallback: start existing containers via Docker directly
     const containers = getSynapContainerIds();
     if (containers.length === 0) {
-      throw new Error(
-        'No synap-backend containers found and no synap repo configured.\n' +
-        'Run: npx eve brain init --synap-repo <path-to-synap-backend>',
-      );
+      // Never installed — run the from-image install automatically
+      console.log('Synap Data Pod not found — installing from Docker image...\n');
+      const { installSynapFromImage } = await import('./synap-image-install.js');
+      const result = await installSynapFromImage();
+      if (result.bootstrapToken) {
+        console.log(`\n  Admin bootstrap token: ${result.bootstrapToken}`);
+        console.log(`  Use at: http://localhost:4000/admin/bootstrap`);
+      }
+      return;
     }
     console.log(`Starting ${containers.length} synap-backend container(s) directly...`);
     for (const name of containers) {

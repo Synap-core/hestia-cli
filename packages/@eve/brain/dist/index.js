@@ -1,3 +1,7 @@
+import {
+  installSynapFromImage
+} from "./chunk-WOPPVXOT.js";
+
 // src/commands/init.ts
 import { EntityStateManager, entityStateManager } from "@eve/dna";
 
@@ -234,17 +238,41 @@ async function runBrainInit(options) {
   if (repo) {
     process.env.SYNAP_REPO_ROOT = repo;
   }
-  const delegate = resolveSynapDelegate();
-  if (!delegate) {
-    throw new Error(
-      "Legacy Eve-managed Synap install path has been removed. Provide a valid `--synap-repo` (or `SYNAP_REPO_ROOT`) pointing to a synap-backend checkout with `synap` and `deploy/docker-compose.yml`."
-    );
-  }
   const domain = options.domain?.trim() || "localhost";
   const email = options.email?.trim() || process.env.LETSENCRYPT_EMAIL?.trim() || process.env.SYNAP_LETSENCRYPT_EMAIL?.trim();
   const adminEmail = options.adminEmail?.trim() || process.env.ADMIN_EMAIL?.trim();
   const adminPassword = options.adminPassword?.trim() || process.env.ADMIN_PASSWORD?.trim();
   const adminBootstrapMode = options.adminBootstrapMode ?? "token";
+  const delegate = options.fromImage ? null : resolveSynapDelegate();
+  if (!delegate) {
+    console.log("Installing Synap Data Pod from Docker image (ghcr.io/synap-core/backend)...\n");
+    const { installSynapFromImage: installSynapFromImage2 } = await import("./synap-image-install-QRCLVZ6Y.js");
+    const result = await installSynapFromImage2({
+      domain,
+      email,
+      adminEmail,
+      adminPassword,
+      adminBootstrapMode
+    });
+    const stateManager2 = new EntityStateManager();
+    await stateManager2.updateOrgan("brain", "ready");
+    await entityStateManager.updateComponentEntry("synap", {
+      organ: "brain",
+      state: "ready",
+      version: "latest",
+      managedBy: "eve",
+      config: { domain, repoRoot: result.deployDir }
+    });
+    console.log("\n\u2705 Synap Data Pod installed from image.");
+    if (result.bootstrapToken) {
+      console.log(`
+  Admin bootstrap token (save this):`);
+      console.log(`  ${result.bootstrapToken}`);
+      console.log(`
+  Use it at: ${domain === "localhost" ? "http://localhost:4000" : `https://${domain}`}/admin/bootstrap`);
+    }
+    return;
+  }
   if (domain !== "localhost" && !email) {
     throw new Error(
       "Non-localhost domain requires --email (or LETSENCRYPT_EMAIL) for synap install."
@@ -316,11 +344,11 @@ async function runBrainInit(options) {
 }
 function initCommand(program) {
   program.command("init").description(
-    "Initialize brain via Synap Data Pod (requires --synap-repo or SYNAP_REPO_ROOT)"
+    "Install the Synap Data Pod. Uses pre-built Docker image by default; pass --synap-repo to use a local checkout."
   ).option("--with-ai", "Include local Ollama sidecar (optional)").option("--model <model>", "AI model to use", "llama3.1:8b").option(
     "--synap-repo <path>",
-    "Path to backend checkout; required for official synap install"
-  ).option("--domain <host>", "With --synap-repo: DOMAIN for synap install", "localhost").option("--email <email>", "With --synap-repo: SSL contact (required if domain isn't localhost)").option("--with-openclaw", "With --synap-repo: pass --with-openclaw to synap install").option("--with-rsshub", "With --synap-repo: pass --with-rsshub to synap install").option("--from-image", "With --synap-repo: synap install --from-image").option("--from-source", "With --synap-repo: synap install --from-source").option("--admin-email <email>", "With --synap-repo: admin bootstrap email for synap install").option("--admin-password <secret>", "With --synap-repo: admin password for preseed bootstrap").option("--admin-bootstrap-mode <mode>", "With --synap-repo: preseed | token (default token)").action(
+    "Path to synap-backend checkout (optional \u2014 auto-detected or uses Docker image)"
+  ).option("--domain <host>", "Domain for the data pod", "localhost").option("--email <email>", "SSL contact email (required if domain is not localhost)").option("--with-openclaw", "With --synap-repo: pass --with-openclaw to synap install").option("--with-rsshub", "With --synap-repo: pass --with-rsshub to synap install").option("--from-image", "Force from-image install even if synap-repo is found").option("--from-source", "With --synap-repo: build from source instead of pulling image").option("--admin-email <email>", "Admin email for bootstrap").option("--admin-password <secret>", "Admin password (preseed bootstrap mode)").option("--admin-bootstrap-mode <mode>", "preseed | token (default: token)").action(
     async (options) => {
       try {
         await runBrainInit({
@@ -428,9 +456,15 @@ var SynapService = class {
     }
     const containers = getSynapContainerIds();
     if (containers.length === 0) {
-      throw new Error(
-        "No synap-backend containers found and no synap repo configured.\nRun: npx eve brain init --synap-repo <path-to-synap-backend>"
-      );
+      console.log("Synap Data Pod not found \u2014 installing from Docker image...\n");
+      const { installSynapFromImage: installSynapFromImage2 } = await import("./synap-image-install-QRCLVZ6Y.js");
+      const result = await installSynapFromImage2();
+      if (result.bootstrapToken) {
+        console.log(`
+  Admin bootstrap token: ${result.bootstrapToken}`);
+        console.log(`  Use at: http://localhost:4000/admin/bootstrap`);
+      }
+      return;
     }
     console.log(`Starting ${containers.length} synap-backend container(s) directly...`);
     for (const name of containers) {
@@ -535,6 +569,7 @@ export {
   ensureNetwork,
   execa,
   initCommand,
+  installSynapFromImage,
   registerBrainCommands,
   resolveSynapDelegate,
   runBrainInit,

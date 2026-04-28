@@ -61,6 +61,7 @@ export interface InstallOptions {
   skipHardware?: boolean;
   skipInteractive?: boolean;
   nvidiaSmi?: boolean;
+  synapRepo?: string;
   /** Skip writing setup profile & secrets */
   dryRun?: boolean;
 }
@@ -280,6 +281,7 @@ export async function runInstall(opts: InstallOptions): Promise<void> {
   // 6. Execute installations
   // -----------------------------------------------------------------
   const steps = buildInstallSteps(installList, opts);
+  const skippedComponents = new Set<string>();
 
   for (const step of steps) {
     if (jsonMode) {
@@ -289,7 +291,12 @@ export async function runInstall(opts: InstallOptions): Promise<void> {
     spinner.start();
     try {
       await step.fn();
-      spinner.succeed(step.label);
+      if (step.skips?.length) {
+        spinner.warn(`${step.label} — skipped (no repo found)`);
+        step.skips.forEach(c => skippedComponents.add(c));
+      } else {
+        spinner.succeed(step.label);
+      }
     } catch (err) {
       spinner.fail(step.label);
       printError(`Failed to install ${step.label}: ${err instanceof Error ? err.message : String(err)}`);
@@ -300,7 +307,8 @@ export async function runInstall(opts: InstallOptions): Promise<void> {
   // -----------------------------------------------------------------
   // 7. Update entity state & setup profile
   // -----------------------------------------------------------------
-  await updateEntityStateFromComponents(installList, opts);
+  const installedComponents = installList.filter(c => !skippedComponents.has(c));
+  await updateEntityStateFromComponents(installedComponents, opts);
 
   // -----------------------------------------------------------------
   // 8. Done
@@ -336,6 +344,8 @@ export async function runInstall(opts: InstallOptions): Promise<void> {
 
 interface InstallStep {
   label: string;
+  /** Components to mark as skipped (not installed) rather than ready */
+  skips?: string[];
   fn: () => Promise<void>;
 }
 
@@ -376,13 +386,16 @@ function buildInstallSteps(
 
   // 2. Synap
   if (hasSynap) {
-    const envRepo = process.env.SYNAP_REPO_ROOT;
-    if (envRepo && existsSync(envRepo)) {
+    const synapRepo = opts.synapRepo || process.env.SYNAP_REPO_ROOT;
+    const delegate = resolveSynapDelegate();
+    const resolvedRepo = synapRepo || delegate?.repoRoot;
+
+    if (resolvedRepo) {
       steps.push({
         label: 'Installing Synap Data Pod...',
         async fn() {
           await runBrainInit({
-            synapRepo: envRepo,
+            synapRepo: resolvedRepo,
             domain: opts.domain,
             email: opts.email,
             adminBootstrapMode: opts.adminBootstrapMode || 'token',
@@ -397,11 +410,17 @@ function buildInstallSteps(
         },
       });
     } else {
-      // No synap repo — skip; note to user
+      // No synap repo — install from Docker image automatically
       steps.push({
-        label: 'Synap Data Pod',
+        label: 'Installing Synap Data Pod (from Docker image)...',
         async fn() {
-          console.log('  Skipping: no synap-backend checkout found (pass --synap-repo or set SYNAP_REPO_ROOT to install).');
+          await runBrainInit({
+            domain: opts.domain,
+            email: opts.email,
+            adminBootstrapMode: opts.adminBootstrapMode || 'token',
+            adminEmail: opts.adminEmail,
+            adminPassword: opts.adminPassword,
+          });
         },
       });
     }

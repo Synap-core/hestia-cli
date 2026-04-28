@@ -4,7 +4,7 @@
 import { Command } from "commander";
 import { readFileSync } from "fs";
 import { fileURLToPath as fileURLToPath2 } from "url";
-import { dirname as dirname2, join as join5 } from "path";
+import { dirname as dirname2, join as join6 } from "path";
 import { execa as execa11 } from "execa";
 import { setGlobalCliFlags } from "@eve/cli-kit";
 import {
@@ -1010,6 +1010,7 @@ async function runInstall(opts) {
     return;
   }
   const steps = buildInstallSteps(installList, opts);
+  const skippedComponents = /* @__PURE__ */ new Set();
   for (const step of steps) {
     if (jsonMode) {
       console.error(`[install] ${step.label}`);
@@ -1018,14 +1019,20 @@ async function runInstall(opts) {
     spinner.start();
     try {
       await step.fn();
-      spinner.succeed(step.label);
+      if (step.skips?.length) {
+        spinner.warn(`${step.label} \u2014 skipped (no repo found)`);
+        step.skips.forEach((c) => skippedComponents.add(c));
+      } else {
+        spinner.succeed(step.label);
+      }
     } catch (err) {
       spinner.fail(step.label);
       printError(`Failed to install ${step.label}: ${err instanceof Error ? err.message : String(err)}`);
       process.exit(1);
     }
   }
-  await updateEntityStateFromComponents(installList, opts);
+  const installedComponents = installList.filter((c) => !skippedComponents.has(c));
+  await updateEntityStateFromComponents(installedComponents, opts);
   if (!jsonMode) {
     console.log();
     printSuccess("Entity installation complete.");
@@ -1079,13 +1086,15 @@ function buildInstallSteps(components, opts) {
     });
   }
   if (hasSynap) {
-    const envRepo = process.env.SYNAP_REPO_ROOT;
-    if (envRepo && existsSync(envRepo)) {
+    const synapRepo = opts.synapRepo || process.env.SYNAP_REPO_ROOT;
+    const delegate = resolveSynapDelegate();
+    const resolvedRepo = synapRepo || delegate?.repoRoot;
+    if (resolvedRepo) {
       steps.push({
         label: "Installing Synap Data Pod...",
         async fn() {
           await runBrainInit2({
-            synapRepo: envRepo,
+            synapRepo: resolvedRepo,
             domain: opts.domain,
             email: opts.email,
             adminBootstrapMode: opts.adminBootstrapMode || "token",
@@ -1101,9 +1110,15 @@ function buildInstallSteps(components, opts) {
       });
     } else {
       steps.push({
-        label: "Synap Data Pod",
+        label: "Installing Synap Data Pod (from Docker image)...",
         async fn() {
-          console.log("  Skipping: no synap-backend checkout found (pass --synap-repo or set SYNAP_REPO_ROOT to install).");
+          await runBrainInit2({
+            domain: opts.domain,
+            email: opts.email,
+            adminBootstrapMode: opts.adminBootstrapMode || "token",
+            adminEmail: opts.adminEmail,
+            adminPassword: opts.adminPassword
+          });
         }
       });
     }
@@ -1135,9 +1150,9 @@ function buildInstallSteps(components, opts) {
           console.log("  Delegating Synap\u2194OpenClaw wiring to synap-cli...");
           try {
             const { homedir: homedir2 } = await import("os");
-            const { existsSync: existsSync5 } = await import("fs");
+            const { existsSync: existsSync6 } = await import("fs");
             const podConfigPath = join(homedir2(), ".synap", "pod-config.json");
-            if (existsSync5(podConfigPath)) {
+            if (existsSync6(podConfigPath)) {
               await spawnAsync("npx", ["-p", "@synap-core/cli", "synap", "finish", "--skip-ai-key", "--skip-domain"], {
                 env: { ...process.env, SYNAP_DEPLOY_DIR: synapPod.deployDir },
                 cwd: synapPod.repoRoot
@@ -2907,6 +2922,8 @@ function configCommands(program2) {
 import { execa as execa8 } from "execa";
 import { createInterface } from "readline/promises";
 import { stdin as input, stdout as output } from "process";
+import { existsSync as existsSync4 } from "fs";
+import { join as join4 } from "path";
 import { getGlobalCliFlags as getGlobalCliFlags6 } from "@eve/cli-kit";
 async function confirmDestructiveReset() {
   const flags = getGlobalCliFlags6();
@@ -2938,11 +2955,41 @@ function backupUpdateCommands(program2) {
       process.exit(1);
     }
   });
-  program2.command("update").description("Guidance for updating Eve / Synap images (use synap-backend deploy on the Data Pod)").action(() => {
-    printInfo(
-      "Eve does not replace your Data Pod updater. For Synap: use your deploy directory `./synap update` or pull new images and run migrations as documented in synap-backend/deploy."
-    );
-    printInfo(`Compose hint: ${colors.muted("docker compose pull && docker compose up -d")} in the directory that owns your stack.`);
+  program2.command("update").description("Pull latest images and restart Synap Data Pod (works for image-based installs)").option("--synap-only", "Only update Synap backend (not other Eve containers)").action(async (opts) => {
+    const deployDirs = ["/opt/synap-backend", process.env.SYNAP_DEPLOY_DIR].filter(Boolean);
+    const deployDir = deployDirs.find((d) => existsSync4(join4(d, "docker-compose.yml")));
+    if (deployDir) {
+      printInfo(`Found Synap deploy at ${colors.info(deployDir)}`);
+      const env = { ...process.env, COMPOSE_PROJECT_NAME: "synap-backend" };
+      try {
+        printInfo("Pulling latest backend images...");
+        await execa8("docker", ["compose", "pull", "backend", "realtime", "--ignore-pull-failures"], {
+          cwd: deployDir,
+          env,
+          stdio: "inherit"
+        });
+        printInfo("Running database migrations...");
+        await execa8("docker", ["compose", "run", "--rm", "backend-migrate"], {
+          cwd: deployDir,
+          env,
+          stdio: "inherit"
+        });
+        printInfo("Restarting backend + realtime...");
+        await execa8("docker", ["compose", "up", "-d", "backend", "realtime"], {
+          cwd: deployDir,
+          env,
+          stdio: "inherit"
+        });
+        printInfo(`${colors.success("\u2713")} Synap Data Pod updated.`);
+      } catch (e) {
+        printError(e instanceof Error ? e.message : String(e));
+        process.exit(1);
+      }
+      return;
+    }
+    printInfo("No image-based install found at /opt/synap-backend.");
+    printInfo("If using a synap-backend checkout, run: ./synap update  (in your deploy dir)");
+    printInfo(`Or pull images manually: ${colors.muted("docker compose pull && docker compose up -d")}`);
   });
   program2.command("recreate").description("Full cleanup + full recreation (remove stale Docker data and rebuild stack)").option("--no-prune", "Skip docker system prune").action(async (opts) => {
     try {
@@ -3213,15 +3260,15 @@ function aiCommandGroup(program2) {
 
 // src/commands/ui.ts
 import { randomBytes } from "crypto";
-import { existsSync as existsSync4 } from "fs";
-import { join as join4 } from "path";
+import { existsSync as existsSync5 } from "fs";
+import { join as join5 } from "path";
 import { fileURLToPath } from "url";
 import { execa as execa10 } from "execa";
 import { readEveSecrets as readEveSecrets5, writeEveSecrets as writeEveSecrets5 } from "@eve/dna";
 var __filename = fileURLToPath(import.meta.url);
-var packagesDir = join4(__filename, "..", "..", "..");
+var packagesDir = join5(__filename, "..", "..", "..");
 function dashboardDir() {
-  return join4(packagesDir, "eve-dashboard");
+  return join5(packagesDir, "eve-dashboard");
 }
 function uiCommand(program2) {
   program2.command("ui").description("Open the Eve web dashboard").option("--port <port>", "Dashboard port", "7979").option("--no-open", "Do not open browser automatically").option("--rebuild", "Force rebuild of the dashboard before starting").action(async (opts) => {
@@ -3243,8 +3290,8 @@ function uiCommand(program2) {
       console.log(colors.muted("Your dashboard key:"));
       console.log(colors.primary.bold(secrets.dashboard.secret));
     }
-    const nextDir = join4(dir, ".next");
-    if (opts.rebuild || !existsSync4(nextDir)) {
+    const nextDir = join5(dir, ".next");
+    if (opts.rebuild || !existsSync5(nextDir)) {
       console.log();
       const spinner = createSpinner("Building dashboard (first run \u2014 takes ~30s)...");
       spinner.start();
@@ -3364,7 +3411,7 @@ function domainCommand(program2) {
 // src/index.ts
 var __filename2 = fileURLToPath2(import.meta.url);
 var __dirname = dirname2(__filename2);
-var pkg = JSON.parse(readFileSync(join5(__dirname, "../package.json"), "utf-8"));
+var pkg = JSON.parse(readFileSync(join6(__dirname, "../package.json"), "utf-8"));
 var program = new Command();
 program.configureHelp({
   sortSubcommands: true,

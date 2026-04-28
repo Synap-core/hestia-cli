@@ -70,6 +70,21 @@ declare class OllamaService {
     private containerExists;
 }
 
+interface SynapImageInstallOptions {
+    deployDir?: string;
+    domain?: string;
+    email?: string;
+    adminEmail?: string;
+    adminPassword?: string;
+    adminBootstrapMode?: 'token' | 'preseed';
+}
+interface SynapImageInstallResult {
+    bootstrapToken: string;
+    deployDir: string;
+    containerName: string | null;
+}
+declare function installSynapFromImage(opts?: SynapImageInstallOptions): Promise<SynapImageInstallResult>;
+
 interface BrainInitOptions {
     withAi?: boolean;
     model?: string;
@@ -111,4 +126,4 @@ declare function stopCommand(program: Command): void;
 /** Register leaf commands on an existing `eve brain` Commander node */
 declare function registerBrainCommands(brain: Command): void;
 
-export { type AIModelStatus, type BrainInitOptions, type InferenceInitOptions, OllamaService, type SynapDelegatePaths, type SynapHealth, SynapService, ensureNetwork, execa, initCommand, registerBrainCommands, resolveSynapDelegate, runBrainInit, runInferenceInit, startCommand, statusCommand, stopCommand };
+export { type AIModelStatus, type BrainInitOptions, type InferenceInitOptions, OllamaService, type SynapDelegatePaths, type SynapHealth, type SynapImageInstallOptions, type SynapImageInstallResult, SynapService, ensureNetwork, execa, initCommand, installSynapFromImage, registerBrainCommands, resolveSynapDelegate, runBrainInit, runInferenceInit, startCommand, statusCommand, stopCommand };

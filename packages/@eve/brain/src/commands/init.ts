@@ -56,19 +56,44 @@ export async function runBrainInit(options: BrainInitOptions): Promise<void> {
     process.env.SYNAP_REPO_ROOT = repo;
   }
 
-  const delegate = resolveSynapDelegate();
-
-  if (!delegate) {
-    throw new Error(
-      'Legacy Eve-managed Synap install path has been removed. Provide a valid `--synap-repo` (or `SYNAP_REPO_ROOT`) pointing to a synap-backend checkout with `synap` and `deploy/docker-compose.yml`.',
-    );
-  }
-
   const domain = options.domain?.trim() || 'localhost';
   const email = options.email?.trim() || process.env.LETSENCRYPT_EMAIL?.trim() || process.env.SYNAP_LETSENCRYPT_EMAIL?.trim();
   const adminEmail = options.adminEmail?.trim() || process.env.ADMIN_EMAIL?.trim();
   const adminPassword = options.adminPassword?.trim() || process.env.ADMIN_PASSWORD?.trim();
   const adminBootstrapMode = options.adminBootstrapMode ?? 'token';
+
+  const delegate = options.fromImage ? null : resolveSynapDelegate();
+
+  if (!delegate) {
+    // No synap-backend checkout (or --from-image forced) — install from pre-built Docker image
+    console.log('Installing Synap Data Pod from Docker image (ghcr.io/synap-core/backend)...\n');
+    const { installSynapFromImage } = await import('../lib/synap-image-install.js');
+    const result = await installSynapFromImage({
+      domain,
+      email,
+      adminEmail,
+      adminPassword,
+      adminBootstrapMode,
+    });
+
+    const stateManager = new EntityStateManager();
+    await stateManager.updateOrgan('brain', 'ready');
+    await entityStateManager.updateComponentEntry('synap', {
+      organ: 'brain',
+      state: 'ready',
+      version: 'latest',
+      managedBy: 'eve',
+      config: { domain, repoRoot: result.deployDir },
+    });
+
+    console.log('\n✅ Synap Data Pod installed from image.');
+    if (result.bootstrapToken) {
+      console.log(`\n  Admin bootstrap token (save this):`);
+      console.log(`  ${result.bootstrapToken}`);
+      console.log(`\n  Use it at: ${domain === 'localhost' ? 'http://localhost:4000' : `https://${domain}`}/admin/bootstrap`);
+    }
+    return;
+  }
 
   if (domain !== 'localhost' && !email) {
     throw new Error(
@@ -153,23 +178,23 @@ export function initCommand(program: Command): void {
   program
     .command('init')
     .description(
-      'Initialize brain via Synap Data Pod (requires --synap-repo or SYNAP_REPO_ROOT)',
+      'Install the Synap Data Pod. Uses pre-built Docker image by default; pass --synap-repo to use a local checkout.',
     )
     .option('--with-ai', 'Include local Ollama sidecar (optional)')
     .option('--model <model>', 'AI model to use', 'llama3.1:8b')
     .option(
       '--synap-repo <path>',
-      'Path to backend checkout; required for official synap install',
+      'Path to synap-backend checkout (optional — auto-detected or uses Docker image)',
     )
-    .option('--domain <host>', 'With --synap-repo: DOMAIN for synap install', 'localhost')
-    .option('--email <email>', "With --synap-repo: SSL contact (required if domain isn't localhost)")
+    .option('--domain <host>', 'Domain for the data pod', 'localhost')
+    .option('--email <email>', 'SSL contact email (required if domain is not localhost)')
     .option('--with-openclaw', 'With --synap-repo: pass --with-openclaw to synap install')
     .option('--with-rsshub', 'With --synap-repo: pass --with-rsshub to synap install')
-    .option('--from-image', 'With --synap-repo: synap install --from-image')
-    .option('--from-source', 'With --synap-repo: synap install --from-source')
-    .option('--admin-email <email>', 'With --synap-repo: admin bootstrap email for synap install')
-    .option('--admin-password <secret>', 'With --synap-repo: admin password for preseed bootstrap')
-    .option('--admin-bootstrap-mode <mode>', "With --synap-repo: preseed | token (default token)")
+    .option('--from-image', 'Force from-image install even if synap-repo is found')
+    .option('--from-source', 'With --synap-repo: build from source instead of pulling image')
+    .option('--admin-email <email>', 'Admin email for bootstrap')
+    .option('--admin-password <secret>', 'Admin password (preseed bootstrap mode)')
+    .option('--admin-bootstrap-mode <mode>', 'preseed | token (default: token)')
     .action(
       async (
         options: BrainInitOptions & {
