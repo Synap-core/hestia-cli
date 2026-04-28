@@ -13,6 +13,7 @@ import {
   ensureEveSkillsLayout,
   defaultSkillsDir,
   ensureSecretValue,
+  getServerIp,
 } from '@eve/dna';
 import { getGlobalCliFlags, outputJson } from '@eve/cli-kit';
 import { runBrainInit, runInferenceInit, resolveSynapDelegate } from '@eve/brain';
@@ -311,9 +312,18 @@ export async function runInstall(opts: InstallOptions): Promise<void> {
     printInfo(`  Components installed: ${installList.join(', ')}`);
     console.log();
     printInfo('Next steps:');
-    printInfo(`  - Run "eve status" to check entity state`);
-    printInfo(`  - Run "eve grow organ" to add more capabilities later`);
-    printInfo(`  - Run "eve add <component>" to add add-ons (dokploy, opencode, openclaude)`);
+    printInfo(`  - Run "eve status"               to check entity state`);
+    printInfo(`  - Run "eve ui"                   to open the web dashboard`);
+    printInfo(`  - Run "eve domain show"          to see all access URLs`);
+    printInfo(`  - Run "eve domain set <domain>"  to configure remote domain access`);
+    printInfo(`  - Run "eve grow organ"           to add more capabilities later`);
+    printInfo(`  - Run "eve add <component>"      to add add-ons (dokploy, opencode, openclaude)`);
+    const serverIp = getServerIp();
+    if (serverIp) {
+      console.log();
+      console.log(colors.dim(`  Your server IP: ${serverIp}`));
+      console.log(colors.dim(`  Dashboard: http://${serverIp}:7979  (open port 7979 in your firewall)`));
+    }
     console.log();
   } else {
     outputJson({ ok: true, components: installList });

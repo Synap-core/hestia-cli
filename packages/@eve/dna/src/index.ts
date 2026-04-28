@@ -99,6 +99,9 @@ export {
   ensureSecretValue,
 } from './secrets-contract.js';
 
+export { getServerIp } from './server-ip.js';
+export { type ServiceAccess, getAccessUrls } from './access-urls.js';
+
 export {
   DEFAULT_HUB_PATH,
   resolveHubBaseUrl,

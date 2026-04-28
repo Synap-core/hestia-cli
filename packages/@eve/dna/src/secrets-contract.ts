@@ -101,6 +101,15 @@ const SecretsSchema = z.object({
       port: z.number().optional(),
     })
     .optional(),
+  /** Primary domain + SSL config */
+  domain: z
+    .object({
+      primary: z.string().optional(),
+      ssl: z.boolean().optional(),
+      email: z.string().optional(),
+      subdomains: z.record(z.string()).optional(),
+    })
+    .optional(),
 });
 
 export type EveSecrets = z.infer<typeof SecretsSchema>;
@@ -165,6 +174,10 @@ export async function writeEveSecrets(
     current.dashboard as Record<string, unknown> | undefined,
     partial.dashboard as Record<string, unknown> | undefined,
   );
+  const mergedDomain = mergeNested(
+    current.domain as Record<string, unknown> | undefined,
+    partial.domain as Record<string, unknown> | undefined,
+  );
 
   const next: EveSecrets = {
     ...current,
@@ -175,6 +188,7 @@ export async function writeEveSecrets(
     builder: mergedBuilder as EveSecrets['builder'],
     arms: mergedArms as EveSecrets['arms'],
     dashboard: mergedDashboard as EveSecrets['dashboard'],
+    domain: mergedDomain as EveSecrets['domain'],
     version: '1',
     updatedAt: new Date().toISOString(),
   };

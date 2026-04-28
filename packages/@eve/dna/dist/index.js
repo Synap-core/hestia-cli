@@ -1423,6 +1423,13 @@ var SecretsSchema = z4.object({
   dashboard: z4.object({
     secret: z4.string().optional(),
     port: z4.number().optional()
+  }).optional(),
+  /** Primary domain + SSL config */
+  domain: z4.object({
+    primary: z4.string().optional(),
+    ssl: z4.boolean().optional(),
+    email: z4.string().optional(),
+    subdomains: z4.record(z4.string()).optional()
   }).optional()
 });
 function secretsPath(cwd = process.cwd()) {
@@ -1476,6 +1483,10 @@ async function writeEveSecrets(partial, cwd = process.cwd()) {
     current.dashboard,
     partial.dashboard
   );
+  const mergedDomain = mergeNested(
+    current.domain,
+    partial.domain
+  );
   const next = {
     ...current,
     ...partial,
@@ -1485,6 +1496,7 @@ async function writeEveSecrets(partial, cwd = process.cwd()) {
     builder: mergedBuilder,
     arms: mergedArms,
     dashboard: mergedDashboard,
+    domain: mergedDomain,
     version: "1",
     updatedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
@@ -1496,6 +1508,45 @@ async function writeEveSecrets(partial, cwd = process.cwd()) {
 }
 function ensureSecretValue(existing) {
   return existing && existing.trim().length > 0 ? existing : randomBytes(24).toString("base64url");
+}
+
+// src/server-ip.ts
+import { networkInterfaces } from "os";
+function getServerIp() {
+  const nets = networkInterfaces();
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name] ?? []) {
+      if (net.family === "IPv4" && !net.internal) {
+        return net.address;
+      }
+    }
+  }
+  return null;
+}
+
+// src/access-urls.ts
+var SERVICE_DEFS = [
+  { id: "eve", label: "Eve Dashboard", emoji: "\u{1F33F}", port: 7979, subdomain: "eve" },
+  { id: "pod", label: "Synap Pod", emoji: "\u{1F9E0}", port: 4e3, subdomain: "pod" },
+  { id: "openclaw", label: "OpenClaw", emoji: "\u{1F9BE}", port: 3e3, subdomain: "openclaw" },
+  { id: "feeds", label: "RSSHub Feeds", emoji: "\u{1F441}\uFE0F", port: 1200, subdomain: "feeds" },
+  { id: "ollama", label: "Ollama AI", emoji: "\u{1F916}", port: 11434, subdomain: "ai" },
+  { id: "traefik", label: "Traefik Dashboard", emoji: "\u{1F9BF}", port: 8080, subdomain: "traefik" }
+];
+function getAccessUrls(secrets) {
+  const serverIp = getServerIp();
+  const domain = secrets?.domain?.primary;
+  const ssl = secrets?.domain?.ssl ?? false;
+  const protocol = ssl ? "https" : "http";
+  return SERVICE_DEFS.map((def) => ({
+    id: def.id,
+    label: def.label,
+    emoji: def.emoji,
+    port: def.port,
+    localUrl: `http://localhost:${def.port}`,
+    serverUrl: serverIp ? `http://${serverIp}:${def.port}` : null,
+    domainUrl: domain ? `${protocol}://${def.subdomain}.${domain}` : null
+  }));
 }
 
 // src/builder-hub-wiring.ts
@@ -1642,6 +1693,8 @@ export {
   ensureSecretValue,
   entityStateManager,
   formatHardwareReport,
+  getAccessUrls,
+  getServerIp,
   getSetupProfilePath,
   migrateStateDirectory,
   probeHardware,

@@ -990,6 +990,23 @@ declare const SecretsSchema: z.ZodObject<{
         port?: number | undefined;
         secret?: string | undefined;
     }>>;
+    /** Primary domain + SSL config */
+    domain: z.ZodOptional<z.ZodObject<{
+        primary: z.ZodOptional<z.ZodString>;
+        ssl: z.ZodOptional<z.ZodBoolean>;
+        email: z.ZodOptional<z.ZodString>;
+        subdomains: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
+    }, "strip", z.ZodTypeAny, {
+        primary?: string | undefined;
+        ssl?: boolean | undefined;
+        email?: string | undefined;
+        subdomains?: Record<string, string> | undefined;
+    }, {
+        primary?: string | undefined;
+        ssl?: boolean | undefined;
+        email?: string | undefined;
+        subdomains?: Record<string, string> | undefined;
+    }>>;
 }, "strip", z.ZodTypeAny, {
     version: "1";
     updatedAt: string;
@@ -1050,6 +1067,12 @@ declare const SecretsSchema: z.ZodObject<{
     dashboard?: {
         port?: number | undefined;
         secret?: string | undefined;
+    } | undefined;
+    domain?: {
+        primary?: string | undefined;
+        ssl?: boolean | undefined;
+        email?: string | undefined;
+        subdomains?: Record<string, string> | undefined;
     } | undefined;
 }, {
     version: "1";
@@ -1112,12 +1135,31 @@ declare const SecretsSchema: z.ZodObject<{
         port?: number | undefined;
         secret?: string | undefined;
     } | undefined;
+    domain?: {
+        primary?: string | undefined;
+        ssl?: boolean | undefined;
+        email?: string | undefined;
+        subdomains?: Record<string, string> | undefined;
+    } | undefined;
 }>;
 type EveSecrets = z.infer<typeof SecretsSchema>;
 declare function secretsPath(cwd?: string): string;
 declare function readEveSecrets(cwd?: string): Promise<EveSecrets | null>;
 declare function writeEveSecrets(partial: Omit<EveSecrets, 'version' | 'updatedAt'>, cwd?: string): Promise<EveSecrets>;
 declare function ensureSecretValue(existing?: string): string;
+
+declare function getServerIp(): string | null;
+
+interface ServiceAccess {
+    id: string;
+    label: string;
+    emoji: string;
+    localUrl: string;
+    serverUrl: string | null;
+    domainUrl: string | null;
+    port: number;
+}
+declare function getAccessUrls(secrets: EveSecrets | null): ServiceAccess[];
 
 /** Default Hub Protocol path on the Synap API host (Better Auth / Hub REST). */
 declare const DEFAULT_HUB_PATH = "/api/hub";
@@ -1181,4 +1223,4 @@ declare function writeHermesEnvFile(cwd?: string): Promise<string>;
 
 declare const VERSION = "0.1.0";
 
-export { type AIModel, AiModeSchema, AiProviderSchema, type BuilderEngine, BuilderEngineSchema, type ComponentEntry, ConfigManager, type Credentials, CredentialsManager, DEFAULT_HERMES_CONFIG, DEFAULT_HUB_PATH, type DNAError, type DockerCompose, DockerComposeGenerator, type DockerComposeService, type EntityState, EntityStateManager, type EveConfig, type EveSecrets, type HardwareFacts, type LegacySetupProfileKind, type ManagedBy, type MessagingConfig, type MessagingPlatform, type Organ, type OrganInfo, type OrganState, type OrganStatus, type Service, type ServiceConfig, type SetupProfile, type SetupProfileKind, SetupProfileKindSchema, SetupProfileSchema, type SetupProfileV2, type Task, type TaskPriority, type TaskStatus, type TaskType, type UsbSetupManifest, UsbSetupManifestSchema, VERSION, type VoiceConfig, type VoiceProvider, configManager, copySynapSkillIntoClaudeProject, createDockerComposeGenerator, credentialsManager, defaultSkillsDir, ensureEveSkillsLayout, ensureSecretValue, entityStateManager, formatHardwareReport, getSetupProfilePath, migrateStateDirectory, probeHardware, readEveSecrets, readSetupProfile, readUsbSetupManifest, resolveHubBaseUrl, secretsPath, writeBuilderProjectEnv, writeClaudeCodeSettings, writeEveSecrets, writeHermesEnvFile, writeSandboxEnvFile, writeSetupProfile, writeUsbSetupManifest };
+export { type AIModel, AiModeSchema, AiProviderSchema, type BuilderEngine, BuilderEngineSchema, type ComponentEntry, ConfigManager, type Credentials, CredentialsManager, DEFAULT_HERMES_CONFIG, DEFAULT_HUB_PATH, type DNAError, type DockerCompose, DockerComposeGenerator, type DockerComposeService, type EntityState, EntityStateManager, type EveConfig, type EveSecrets, type HardwareFacts, type LegacySetupProfileKind, type ManagedBy, type MessagingConfig, type MessagingPlatform, type Organ, type OrganInfo, type OrganState, type OrganStatus, type Service, type ServiceAccess, type ServiceConfig, type SetupProfile, type SetupProfileKind, SetupProfileKindSchema, SetupProfileSchema, type SetupProfileV2, type Task, type TaskPriority, type TaskStatus, type TaskType, type UsbSetupManifest, UsbSetupManifestSchema, VERSION, type VoiceConfig, type VoiceProvider, configManager, copySynapSkillIntoClaudeProject, createDockerComposeGenerator, credentialsManager, defaultSkillsDir, ensureEveSkillsLayout, ensureSecretValue, entityStateManager, formatHardwareReport, getAccessUrls, getServerIp, getSetupProfilePath, migrateStateDirectory, probeHardware, readEveSecrets, readSetupProfile, readUsbSetupManifest, resolveHubBaseUrl, secretsPath, writeBuilderProjectEnv, writeClaudeCodeSettings, writeEveSecrets, writeHermesEnvFile, writeSandboxEnvFile, writeSetupProfile, writeUsbSetupManifest };

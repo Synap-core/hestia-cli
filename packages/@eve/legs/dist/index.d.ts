@@ -19,6 +19,7 @@ declare class TraefikService {
     configureDomain(domain: string): Promise<void>;
     enableSSL(): Promise<void>;
     getRoutes(): Route[];
+    configureSubdomains(domain: string, ssl: boolean, email?: string): Promise<void>;
     getStatus(): {
         installed: boolean;
         running: boolean;

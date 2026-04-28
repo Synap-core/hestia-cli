@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   Card, CardBody, CardHeader, Chip, Button, Divider, Spinner, addToast,
 } from "@heroui/react";
-import { RefreshCw, RotateCcw, Wifi, WifiOff } from "lucide-react";
+import { RefreshCw, RotateCcw, Wifi, WifiOff, Copy, ExternalLink } from "lucide-react";
 
 type OrganStatus = {
   state: "missing" | "installing" | "starting" | "ready" | "error" | "stopped";
@@ -34,6 +34,21 @@ type SecretsSummary = {
   arms: { openclaw: { configured: boolean }; messaging: { configured: boolean } };
 };
 
+type ServiceAccess = {
+  id: string;
+  label: string;
+  emoji: string;
+  localUrl: string;
+  serverUrl: string | null;
+  domainUrl: string | null;
+  port: number;
+};
+
+type AccessData = {
+  urls: ServiceAccess[];
+  domain: { primary?: string; ssl?: boolean } | null;
+};
+
 const ORGANS = [
   { id: "brain", emoji: "🧠", label: "Brain", desc: "Synap pod + data stores" },
   { id: "arms", emoji: "🦾", label: "Arms", desc: "OpenClaw / MCP" },
@@ -54,27 +69,66 @@ function statusColor(state: string): "success" | "danger" | "default" | "warning
   }
 }
 
+function CopyButton({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={() => {
+        void navigator.clipboard.writeText(value).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        });
+      }}
+      className="ml-1 text-default-400 hover:text-default-600 transition-colors"
+      title="Copy"
+    >
+      <Copy className={`w-3 h-3 ${copied ? "text-success" : ""}`} />
+    </button>
+  );
+}
+
+function UrlCell({ url }: { url: string | null }) {
+  if (!url) return <span className="text-default-300 text-xs">—</span>;
+  return (
+    <span className="flex items-center gap-1">
+      <a
+        href={url}
+        target="_blank"
+        rel="noreferrer"
+        className="text-xs text-primary hover:underline font-mono truncate max-w-[180px]"
+      >
+        {url}
+      </a>
+      <ExternalLink className="w-3 h-3 text-default-400 shrink-0" />
+      <CopyButton value={url} />
+    </span>
+  );
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const [state, setState] = useState<EntityState | null>(null);
   const [secrets, setSecrets] = useState<SecretsSummary | null>(null);
+  const [access, setAccess] = useState<AccessData | null>(null);
   const [loading, setLoading] = useState(true);
   const [restarting, setRestarting] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
-      const [stateRes, secretsRes] = await Promise.all([
+      const [stateRes, secretsRes, accessRes] = await Promise.all([
         fetch("/api/state", { credentials: "include" }),
         fetch("/api/secrets-summary", { credentials: "include" }),
+        fetch("/api/access", { credentials: "include" }),
       ]);
 
-      if (stateRes.status === 401 || secretsRes.status === 401) {
+      if ([stateRes, secretsRes, accessRes].some(r => r.status === 401)) {
         router.push("/login");
         return;
       }
 
       if (stateRes.ok) setState(await stateRes.json() as EntityState);
       if (secretsRes.ok) setSecrets(await secretsRes.json() as SecretsSummary);
+      if (accessRes.ok) setAccess(await accessRes.json() as AccessData);
     } catch {
       addToast({ title: "Failed to load state", color: "danger" });
     } finally {
@@ -118,6 +172,7 @@ export default function DashboardPage() {
 
   const organs = state?.organs ?? {};
   const readyCount = Object.values(organs).filter((o) => o.state === "ready").length;
+  const hasDomain = !!access?.domain?.primary;
 
   return (
     <div className="space-y-8">
@@ -197,6 +252,58 @@ export default function DashboardPage() {
             );
           })}
         </div>
+      </div>
+
+      <Divider />
+
+      {/* Access URLs */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-default-500 uppercase tracking-wider">Access</h2>
+          {hasDomain && (
+            <Chip size="sm" color="success" variant="flat">
+              {access?.domain?.ssl ? "https" : "http"}://{access?.domain?.primary}
+            </Chip>
+          )}
+        </div>
+
+        {!hasDomain && (
+          <div className="mb-4 p-3 bg-warning-50 border border-warning-200 rounded-xl text-warning-700 text-sm dark:bg-warning-900/20 dark:border-warning-800 dark:text-warning-400">
+            No domain configured — run{" "}
+            <code className="bg-warning-100 dark:bg-warning-900/40 px-1.5 py-0.5 rounded font-mono text-xs">
+              eve domain set yourdomain.com --ssl
+            </code>{" "}
+            to enable remote access.
+          </div>
+        )}
+
+        <Card className="bg-content1 border border-divider">
+          <CardBody className="p-0">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-divider">
+                  <th className="text-left text-xs text-default-400 font-medium px-4 py-2.5">Service</th>
+                  <th className="text-left text-xs text-default-400 font-medium px-4 py-2.5">Local</th>
+                  <th className="text-left text-xs text-default-400 font-medium px-4 py-2.5">Server IP</th>
+                  <th className="text-left text-xs text-default-400 font-medium px-4 py-2.5">Domain</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(access?.urls ?? []).map((svc, i) => (
+                  <tr key={svc.id} className={i > 0 ? "border-t border-divider" : ""}>
+                    <td className="px-4 py-2.5 font-medium text-foreground whitespace-nowrap">
+                      <span className="mr-1.5">{svc.emoji}</span>
+                      {svc.label}
+                    </td>
+                    <td className="px-4 py-2.5"><UrlCell url={svc.localUrl} /></td>
+                    <td className="px-4 py-2.5"><UrlCell url={svc.serverUrl} /></td>
+                    <td className="px-4 py-2.5"><UrlCell url={svc.domainUrl} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </CardBody>
+        </Card>
       </div>
 
       <Divider />

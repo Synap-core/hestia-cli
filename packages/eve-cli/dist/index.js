@@ -606,7 +606,8 @@ import {
   writeEveSecrets,
   ensureEveSkillsLayout,
   defaultSkillsDir,
-  ensureSecretValue
+  ensureSecretValue,
+  getServerIp
 } from "@eve/dna";
 import { getGlobalCliFlags as getGlobalCliFlags2, outputJson } from "@eve/cli-kit";
 import { runBrainInit as runBrainInit2, runInferenceInit, resolveSynapDelegate } from "@eve/brain";
@@ -884,9 +885,18 @@ async function runInstall(opts) {
     printInfo(`  Components installed: ${installList.join(", ")}`);
     console.log();
     printInfo("Next steps:");
-    printInfo(`  - Run "eve status" to check entity state`);
-    printInfo(`  - Run "eve grow organ" to add more capabilities later`);
-    printInfo(`  - Run "eve add <component>" to add add-ons (dokploy, opencode, openclaude)`);
+    printInfo(`  - Run "eve status"               to check entity state`);
+    printInfo(`  - Run "eve ui"                   to open the web dashboard`);
+    printInfo(`  - Run "eve domain show"          to see all access URLs`);
+    printInfo(`  - Run "eve domain set <domain>"  to configure remote domain access`);
+    printInfo(`  - Run "eve grow organ"           to add more capabilities later`);
+    printInfo(`  - Run "eve add <component>"      to add add-ons (dokploy, opencode, openclaude)`);
+    const serverIp = getServerIp();
+    if (serverIp) {
+      console.log();
+      console.log(colors.dim(`  Your server IP: ${serverIp}`));
+      console.log(colors.dim(`  Dashboard: http://${serverIp}:7979  (open port 7979 in your firewall)`));
+    }
     console.log();
   } else {
     outputJson({ ok: true, components: installList });
@@ -3108,6 +3118,65 @@ function uiCommand(program2) {
   });
 }
 
+// src/commands/domain.ts
+import { writeEveSecrets as writeEveSecrets6, readEveSecrets as readEveSecrets6, getAccessUrls } from "@eve/dna";
+import { TraefikService } from "@eve/legs";
+function domainCommand(program2) {
+  const domain = program2.command("domain").description("Configure domain access and Traefik routing");
+  domain.command("set <domain>").description("Set primary domain and configure Traefik subdomains").option("--ssl", "Enable SSL with Let's Encrypt").option("--email <email>", "Email for Let's Encrypt notifications").action(async (domainName, opts) => {
+    await writeEveSecrets6({ domain: { primary: domainName, ssl: !!opts.ssl, email: opts.email } });
+    try {
+      const traefik = new TraefikService();
+      await traefik.configureSubdomains(domainName, !!opts.ssl, opts.email);
+      printSuccess(`Traefik routes configured for ${domainName}`);
+    } catch {
+      printInfo("Traefik config could not be written \u2014 run this command on your server to apply routes.");
+    }
+    const secrets = await readEveSecrets6(process.cwd());
+    const urls = getAccessUrls(secrets);
+    console.log();
+    console.log(colors.primary.bold("Access URLs:"));
+    console.log(colors.dim("\u2500".repeat(60)));
+    for (const svc of urls) {
+      if (svc.domainUrl) {
+        console.log(`  ${svc.emoji}  ${svc.label.padEnd(20)} ${colors.primary(svc.domainUrl)}`);
+      }
+    }
+    console.log();
+    if (opts.ssl) {
+      printInfo("Point each subdomain's DNS A record to your server IP before SSL can provision.");
+    }
+  });
+  domain.command("show").description("Show all access URLs (local, server IP, domain)").action(async () => {
+    const secrets = await readEveSecrets6(process.cwd());
+    const urls = getAccessUrls(secrets);
+    const domainSet = !!secrets?.domain?.primary;
+    console.log();
+    console.log(colors.primary.bold("Eve \u2014 Access URLs"));
+    console.log(colors.dim("\u2500".repeat(70)));
+    for (const svc of urls) {
+      console.log();
+      console.log(`  ${svc.emoji}  ${colors.primary.bold(svc.label)}`);
+      console.log(`     ${colors.dim("Local:")}    ${svc.localUrl}`);
+      if (svc.serverUrl) console.log(`     ${colors.dim("Server:")}   ${svc.serverUrl}`);
+      if (svc.domainUrl) console.log(`     ${colors.dim("Domain:")}   ${colors.primary(svc.domainUrl)}`);
+    }
+    console.log();
+    if (!domainSet) {
+      console.log(colors.dim("  Tip: run `eve domain set yourdomain.com --ssl` to configure domain access"));
+    }
+  });
+  domain.command("unset").description("Remove domain configuration").action(async () => {
+    const secrets = await readEveSecrets6(process.cwd());
+    if (secrets?.domain?.primary) {
+      await writeEveSecrets6({ domain: { primary: void 0, ssl: void 0, email: void 0 } });
+      printSuccess("Domain configuration removed");
+    } else {
+      printInfo("No domain configured");
+    }
+  });
+}
+
 // src/index.ts
 var __filename2 = fileURLToPath2(import.meta.url);
 var __dirname = dirname2(__filename2);
@@ -3209,6 +3278,7 @@ configCommands(program);
 backupUpdateCommands(program);
 aiCommandGroup(program);
 uiCommand(program);
+domainCommand(program);
 var brain = program.command("brain").description("Intelligence & memory (Synap, Ollama)");
 registerBrainCommands(brain);
 var arms = program.command("arms").description("Action \u2014 OpenClaw & MCP");
