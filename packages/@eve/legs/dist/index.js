@@ -602,6 +602,14 @@ function restartCommand(program) {
     console.log("Freeing ports 80 / 443...");
     freePort(80);
     freePort(443);
+    const acmePath = `${CONFIG_DIR}/acme.json`;
+    if (!existsSync4(acmePath)) {
+      execSync4(`touch ${acmePath} && chmod 600 ${acmePath}`);
+      console.log(`Created ${acmePath} (600)`);
+    } else {
+      execSync4(`chmod 600 ${acmePath}`);
+      console.log(`Fixed permissions on ${acmePath} \u2192 600`);
+    }
     console.log(`Removing existing ${CONTAINER} container (if any)...`);
     spawnSync2("docker", ["rm", "-f", CONTAINER], { stdio: "inherit" });
     console.log("Starting Traefik with correct volume mounts...");
@@ -625,7 +633,7 @@ function restartCommand(program) {
       "-v",
       `${CONFIG_DIR}/dynamic:/etc/traefik/dynamic:ro`,
       "-v",
-      "eve-legs-traefik-certs:/etc/traefik/acme.json",
+      `${acmePath}:/etc/traefik/acme.json`,
       "--network",
       "eve-network",
       "traefik:v3.0"

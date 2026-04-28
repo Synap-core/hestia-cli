@@ -39,6 +39,17 @@ export function restartCommand(program: Command): void {
       freePort(80);
       freePort(443);
 
+      // acme.json must be a file (not a directory) with mode 600.
+      // Named volumes mount as directories — use a bind-mount file instead.
+      const acmePath = `${CONFIG_DIR}/acme.json`;
+      if (!existsSync(acmePath)) {
+        execSync(`touch ${acmePath} && chmod 600 ${acmePath}`);
+        console.log(`Created ${acmePath} (600)`);
+      } else {
+        execSync(`chmod 600 ${acmePath}`);
+        console.log(`Fixed permissions on ${acmePath} → 600`);
+      }
+
       console.log(`Removing existing ${CONTAINER} container (if any)...`);
       spawnSync('docker', ['rm', '-f', CONTAINER], { stdio: 'inherit' });
 
@@ -53,7 +64,7 @@ export function restartCommand(program: Command): void {
         '-v', '/var/run/docker.sock:/var/run/docker.sock:ro',
         '-v', `${CONFIG_DIR}/traefik.yml:/etc/traefik/traefik.yml:ro`,
         '-v', `${CONFIG_DIR}/dynamic:/etc/traefik/dynamic:ro`,
-        '-v', 'eve-legs-traefik-certs:/etc/traefik/acme.json',
+        '-v', `${acmePath}:/etc/traefik/acme.json`,
         '--network', 'eve-network',
         'traefik:v3.0',
       ], { stdio: 'inherit' });
