@@ -1,5 +1,5 @@
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 
 export interface SynapDelegatePaths {
   repoRoot: string;
@@ -7,27 +7,65 @@ export interface SynapDelegatePaths {
   deployDir: string;
 }
 
+const CANDIDATE_PATHS = [
+  '/opt/synap',
+  '/opt/synap-backend',
+  '/srv/synap',
+  '/home/synap/synap-backend',
+  '/root/synap-backend',
+];
+
+function tryPath(root: string): SynapDelegatePaths | null {
+  if (!existsSync(root)) return null;
+  const script = join(root, 'synap');
+  if (!existsSync(script)) return null;
+  const deployDir = join(root, 'deploy');
+  if (!existsSync(join(deployDir, 'docker-compose.yml'))) return null;
+  return { repoRoot: root, synapScript: script, deployDir };
+}
+
 /**
- * When SYNAP_REPO_ROOT points at a synap-backend checkout (with deploy/ + synap script),
- * Eve delegates install/ops to the official bash CLI instead of Eve-managed Docker brain.
- *
- * When managedBy: 'eve' (detected via state.json), the delegate becomes a bridge —
- * Eve CLI owns lifecycle (start/stop/update) and calls synap commands only for
- * Synap-specific operations (profile management, etc.).
- * When managedBy: 'manual', Eve reads Synap's state but doesn't modify it.
+ * Resolves the synap-backend checkout path in this order:
+ * 1. SYNAP_CLI env override
+ * 2. SYNAP_REPO_ROOT env var
+ * 3. Saved path in .eve/state.json (written by `eve brain init`)
+ * 4. Well-known installation paths (/opt/synap, /opt/synap-backend, …)
+ * 5. null — caller must prompt for the path
  */
-export function resolveSynapDelegate(): SynapDelegatePaths | null {
-  const repoRoot = process.env.SYNAP_REPO_ROOT?.trim();
-  if (!repoRoot || !existsSync(repoRoot)) {
-    return null;
+export function resolveSynapDelegate(cwd?: string): SynapDelegatePaths | null {
+  // 1. Explicit env override for the synap script itself
+  const cliOverride = process.env.SYNAP_CLI?.trim();
+  if (cliOverride && existsSync(cliOverride)) {
+    const root = resolve(cliOverride, '..');
+    const d = tryPath(root);
+    if (d) return d;
   }
-  const script = process.env.SYNAP_CLI?.trim() || join(repoRoot, 'synap');
-  if (!existsSync(script)) {
-    return null;
+
+  // 2. SYNAP_REPO_ROOT env var
+  const envRoot = process.env.SYNAP_REPO_ROOT?.trim();
+  if (envRoot) {
+    const d = tryPath(envRoot);
+    if (d) return d;
   }
-  const deployDir = join(repoRoot, 'deploy');
-  if (!existsSync(join(deployDir, 'docker-compose.yml'))) {
-    return null;
+
+  // 3. Saved in state.json
+  const statePath = join(cwd ?? process.cwd(), '.eve', 'state.json');
+  if (existsSync(statePath)) {
+    try {
+      const state = JSON.parse(readFileSync(statePath, 'utf-8'));
+      const savedRoot: string | undefined = state?.installed?.synap?.config?.repoRoot;
+      if (savedRoot) {
+        const d = tryPath(savedRoot);
+        if (d) return d;
+      }
+    } catch {}
   }
-  return { repoRoot, synapScript: script, deployDir };
+
+  // 4. Common installation paths
+  for (const candidate of CANDIDATE_PATHS) {
+    const d = tryPath(candidate);
+    if (d) return d;
+  }
+
+  return null;
 }

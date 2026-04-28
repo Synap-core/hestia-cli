@@ -135,7 +135,7 @@ export async function runBrainInit(options: BrainInitOptions): Promise<void> {
     state: 'ready',
     version: '0.5.0',
     managedBy: 'eve',
-    config: { domain, withRsshub: options.withRsshub },
+    config: { domain, withRsshub: options.withRsshub, repoRoot: delegate.repoRoot },
   });
 
   console.log('\n✅ Eve brain initialized (Synap Data Pod).');

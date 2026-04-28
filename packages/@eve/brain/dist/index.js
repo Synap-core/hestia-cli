@@ -4,7 +4,7 @@ import { EntityStateManager, entityStateManager } from "@eve/dna";
 // src/lib/exec.ts
 import { spawn } from "child_process";
 function execa(command, args, options) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve2, reject) => {
     const child = spawn(command, args, {
       stdio: options?.stdio === "inherit" ? "inherit" : "pipe",
       cwd: options?.cwd,
@@ -24,7 +24,7 @@ function execa(command, args, options) {
     }
     child.on("close", (code) => {
       if (code === 0) {
-        resolve({ stdout: stdout.trim(), stderr: stderr.trim() });
+        resolve2({ stdout: stdout.trim(), stderr: stderr.trim() });
       } else {
         reject(new Error(`Command failed with code ${code}: ${stderr || stdout}`));
       }
@@ -94,7 +94,7 @@ var OllamaService = class {
   async pullModel(model, startOpts) {
     console.log(`Pulling model: ${model}...`);
     await this.start(startOpts);
-    await new Promise((resolve) => setTimeout(resolve, 2e3));
+    await new Promise((resolve2) => setTimeout(resolve2, 2e3));
     await execa("docker", [
       "exec",
       this.containerName,
@@ -161,22 +161,52 @@ var OllamaService = class {
 };
 
 // src/lib/synap-delegate.ts
-import { existsSync } from "fs";
-import { join } from "path";
-function resolveSynapDelegate() {
-  const repoRoot = process.env.SYNAP_REPO_ROOT?.trim();
-  if (!repoRoot || !existsSync(repoRoot)) {
-    return null;
+import { existsSync, readFileSync } from "fs";
+import { join, resolve } from "path";
+var CANDIDATE_PATHS = [
+  "/opt/synap",
+  "/opt/synap-backend",
+  "/srv/synap",
+  "/home/synap/synap-backend",
+  "/root/synap-backend"
+];
+function tryPath(root) {
+  if (!existsSync(root)) return null;
+  const script = join(root, "synap");
+  if (!existsSync(script)) return null;
+  const deployDir = join(root, "deploy");
+  if (!existsSync(join(deployDir, "docker-compose.yml"))) return null;
+  return { repoRoot: root, synapScript: script, deployDir };
+}
+function resolveSynapDelegate(cwd) {
+  const cliOverride = process.env.SYNAP_CLI?.trim();
+  if (cliOverride && existsSync(cliOverride)) {
+    const root = resolve(cliOverride, "..");
+    const d = tryPath(root);
+    if (d) return d;
   }
-  const script = process.env.SYNAP_CLI?.trim() || join(repoRoot, "synap");
-  if (!existsSync(script)) {
-    return null;
+  const envRoot = process.env.SYNAP_REPO_ROOT?.trim();
+  if (envRoot) {
+    const d = tryPath(envRoot);
+    if (d) return d;
   }
-  const deployDir = join(repoRoot, "deploy");
-  if (!existsSync(join(deployDir, "docker-compose.yml"))) {
-    return null;
+  const statePath = join(cwd ?? process.cwd(), ".eve", "state.json");
+  if (existsSync(statePath)) {
+    try {
+      const state = JSON.parse(readFileSync(statePath, "utf-8"));
+      const savedRoot = state?.installed?.synap?.config?.repoRoot;
+      if (savedRoot) {
+        const d = tryPath(savedRoot);
+        if (d) return d;
+      }
+    } catch {
+    }
   }
-  return { repoRoot, synapScript: script, deployDir };
+  for (const candidate of CANDIDATE_PATHS) {
+    const d = tryPath(candidate);
+    if (d) return d;
+  }
+  return null;
 }
 
 // src/commands/init.ts
@@ -272,7 +302,7 @@ async function runBrainInit(options) {
     state: "ready",
     version: "0.5.0",
     managedBy: "eve",
-    config: { domain, withRsshub: options.withRsshub }
+    config: { domain, withRsshub: options.withRsshub, repoRoot: delegate.repoRoot }
   });
   console.log("\n\u2705 Eve brain initialized (Synap Data Pod).");
   if (domain === "localhost") {
@@ -353,6 +383,19 @@ function statusCommand(program) {
 }
 
 // src/lib/synap.ts
+import { execSync, spawnSync } from "child_process";
+function getSynapContainerIds(runningOnly = false) {
+  try {
+    const flag = runningOnly ? "" : "-a";
+    const out = execSync(
+      `docker ps ${flag} --filter "label=com.docker.compose.project=synap-backend" --format "{{.Names}}"`,
+      { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }
+    ).trim();
+    return out.split("\n").filter(Boolean);
+  } catch {
+    return [];
+  }
+}
 var SynapService = class {
   delegate() {
     return resolveSynapDelegate();
@@ -361,7 +404,7 @@ var SynapService = class {
     const d = this.delegate();
     if (!d) {
       throw new Error(
-        "Synap delegate not configured. Set SYNAP_REPO_ROOT to a valid synap-backend checkout (must contain `synap` and `deploy/docker-compose.yml`), then run `eve setup --profile data_pod --synap-repo <path>`."
+        "Synap repo not found. Pass --synap-repo <path> or set SYNAP_REPO_ROOT to a synap-backend checkout.\nTried: SYNAP_REPO_ROOT env, saved state, /opt/synap, /opt/synap-backend."
       );
     }
     return d;
@@ -373,22 +416,50 @@ var SynapService = class {
     );
   }
   async start() {
-    const d = this.requireDelegate();
-    console.log("Starting Synap stack via synap CLI...");
-    await execa("bash", [d.synapScript, "start"], {
-      cwd: d.repoRoot,
-      env: { ...process.env, SYNAP_DEPLOY_DIR: d.deployDir },
-      stdio: "inherit"
-    });
+    const d = this.delegate();
+    if (d) {
+      console.log("Starting Synap stack via synap CLI...");
+      await execa("bash", [d.synapScript, "start"], {
+        cwd: d.repoRoot,
+        env: { ...process.env, SYNAP_DEPLOY_DIR: d.deployDir },
+        stdio: "inherit"
+      });
+      return;
+    }
+    const containers = getSynapContainerIds();
+    if (containers.length === 0) {
+      throw new Error(
+        "No synap-backend containers found and no synap repo configured.\nRun: npx eve brain init --synap-repo <path-to-synap-backend>"
+      );
+    }
+    console.log(`Starting ${containers.length} synap-backend container(s) directly...`);
+    for (const name of containers) {
+      const result = spawnSync("docker", ["start", name], { stdio: "inherit" });
+      if (result.status !== 0) {
+        throw new Error(`Failed to start container: ${name}`);
+      }
+    }
   }
   async stop() {
-    const d = this.requireDelegate();
-    console.log("Stopping Synap stack via synap CLI...");
-    await execa("bash", [d.synapScript, "stop"], {
-      cwd: d.repoRoot,
-      env: { ...process.env, SYNAP_DEPLOY_DIR: d.deployDir },
-      stdio: "inherit"
-    });
+    const d = this.delegate();
+    if (d) {
+      console.log("Stopping Synap stack via synap CLI...");
+      await execa("bash", [d.synapScript, "stop"], {
+        cwd: d.repoRoot,
+        env: { ...process.env, SYNAP_DEPLOY_DIR: d.deployDir },
+        stdio: "inherit"
+      });
+      return;
+    }
+    const containers = getSynapContainerIds(true);
+    if (containers.length === 0) {
+      console.log("No running synap-backend containers found.");
+      return;
+    }
+    console.log(`Stopping ${containers.length} synap-backend container(s) directly...`);
+    for (const name of containers) {
+      spawnSync("docker", ["stop", name], { stdio: "inherit" });
+    }
   }
   async isHealthy() {
     this.requireDelegate();

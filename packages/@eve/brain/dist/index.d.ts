@@ -21,15 +21,14 @@ interface SynapDelegatePaths {
     deployDir: string;
 }
 /**
- * When SYNAP_REPO_ROOT points at a synap-backend checkout (with deploy/ + synap script),
- * Eve delegates install/ops to the official bash CLI instead of Eve-managed Docker brain.
- *
- * When managedBy: 'eve' (detected via state.json), the delegate becomes a bridge —
- * Eve CLI owns lifecycle (start/stop/update) and calls synap commands only for
- * Synap-specific operations (profile management, etc.).
- * When managedBy: 'manual', Eve reads Synap's state but doesn't modify it.
+ * Resolves the synap-backend checkout path in this order:
+ * 1. SYNAP_CLI env override
+ * 2. SYNAP_REPO_ROOT env var
+ * 3. Saved path in .eve/state.json (written by `eve brain init`)
+ * 4. Well-known installation paths (/opt/synap, /opt/synap-backend, …)
+ * 5. null — caller must prompt for the path
  */
-declare function resolveSynapDelegate(): SynapDelegatePaths | null;
+declare function resolveSynapDelegate(cwd?: string): SynapDelegatePaths | null;
 
 interface ExecResult {
     stdout: string;
