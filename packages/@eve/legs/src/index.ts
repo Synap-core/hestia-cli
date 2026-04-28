@@ -3,6 +3,7 @@ import { setupCommand } from './commands/setup.js';
 import { domainCommand } from './commands/domain.js';
 import { newtCommand } from './commands/newt.js';
 import { restartCommand } from './commands/restart.js';
+import { statusCommand } from './commands/status.js';
 
 // Export services
 export { TraefikService, Route } from './lib/traefik.js';
@@ -15,6 +16,7 @@ export { setupCommand } from './commands/setup.js';
 export { domainCommand } from './commands/domain.js';
 export { newtCommand } from './commands/newt.js';
 export { restartCommand } from './commands/restart.js';
+export { statusCommand } from './commands/status.js';
 
 /** Register Legs leaf commands on an existing `eve legs` Commander node */
 export function registerLegsCommands(legs: Command): void {
@@ -22,6 +24,7 @@ export function registerLegsCommands(legs: Command): void {
   domainCommand(legs);
   newtCommand(legs);
   restartCommand(legs);
+  statusCommand(legs);
 }
 
 /** @deprecated Use registerLegsCommands on the `legs` subcommand */
