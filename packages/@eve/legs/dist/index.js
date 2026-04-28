@@ -550,10 +550,26 @@ Edit PANGOLIN_ENDPOINT, NEWT_ID, NEWT_SECRET then run: eve legs newt up`);
 }
 
 // src/commands/restart.ts
-import { spawnSync as spawnSync2 } from "child_process";
+import { spawnSync as spawnSync2, execSync as execSync4 } from "child_process";
 import { existsSync as existsSync4 } from "fs";
 var CONTAINER = "eve-legs-traefik";
 var CONFIG_DIR = "/opt/traefik";
+function freePort(port) {
+  try {
+    const out = execSync4(
+      `docker ps --format '{{.Names}}\\t{{.Ports}}' | grep ':${port}->'`,
+      { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }
+    ).trim();
+    for (const line of out.split("\n").filter(Boolean)) {
+      const name = line.split("	")[0]?.trim();
+      if (name && name !== CONTAINER) {
+        console.log(`  Stopping container holding port ${port}: ${name}`);
+        spawnSync2("docker", ["stop", name], { stdio: "inherit" });
+      }
+    }
+  } catch {
+  }
+}
 function restartCommand(program) {
   program.command("restart").description("Recreate the Traefik container with correct volume mounts").action(() => {
     if (!existsSync4(`${CONFIG_DIR}/traefik.yml`)) {
@@ -561,6 +577,9 @@ function restartCommand(program) {
       console.error("Run: eve domain set <domain> --ssl --email <email> first");
       process.exit(1);
     }
+    console.log("Freeing ports 80 / 443...");
+    freePort(80);
+    freePort(443);
     console.log(`Removing existing ${CONTAINER} container (if any)...`);
     spawnSync2("docker", ["rm", "-f", CONTAINER], { stdio: "inherit" });
     console.log("Starting Traefik with correct volume mounts...");
@@ -590,7 +609,8 @@ function restartCommand(program) {
       "traefik:v3.0"
     ], { stdio: "inherit" });
     if (result.status !== 0) {
-      console.error("Failed to start Traefik container");
+      console.error("\nFailed to start Traefik. Containers currently using port 80/443:");
+      spawnSync2("docker", ["ps", "--format", "{{.Names}}	{{.Ports}}"], { stdio: "inherit" });
       process.exit(1);
     }
     console.log("\u2713 Traefik running \u2014 routes are live");
@@ -598,7 +618,7 @@ function restartCommand(program) {
 }
 
 // src/lib/inference-gateway.ts
-import { execSync as execSync4, spawnSync as spawnSync3 } from "child_process";
+import { execSync as execSync5, spawnSync as spawnSync3 } from "child_process";
 import { mkdirSync as mkdirSync4, writeFileSync as writeFileSync4 } from "fs";
 import { join as join4 } from "path";
 import { randomBytes } from "crypto";
@@ -690,15 +710,15 @@ Example:
       this.cwd
     );
     try {
-      execSync4("docker network create eve-network", { stdio: "ignore" });
+      execSync5("docker network create eve-network", { stdio: "ignore" });
     } catch {
     }
     const running = this.isGatewayRunning();
     if (!running) {
       if (this.gatewayContainerExists()) {
-        execSync4(`docker start ${GATEWAY_CONTAINER}`, { stdio: "inherit" });
+        execSync5(`docker start ${GATEWAY_CONTAINER}`, { stdio: "inherit" });
       } else {
-        execSync4(
+        execSync5(
           [
             "docker",
             "run",
@@ -733,7 +753,7 @@ Example:
   }
   gatewayContainerExists() {
     try {
-      execSync4(`docker container inspect ${GATEWAY_CONTAINER}`, { stdio: "ignore" });
+      execSync5(`docker container inspect ${GATEWAY_CONTAINER}`, { stdio: "ignore" });
       return true;
     } catch {
       return false;
@@ -741,7 +761,7 @@ Example:
   }
   isGatewayRunning() {
     try {
-      const out = execSync4(`docker inspect -f '{{.State.Running}}' ${GATEWAY_CONTAINER}`, {
+      const out = execSync5(`docker inspect -f '{{.State.Running}}' ${GATEWAY_CONTAINER}`, {
         encoding: "utf-8"
       }).trim();
       return out === "true";

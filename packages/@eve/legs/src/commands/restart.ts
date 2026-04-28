@@ -1,9 +1,28 @@
 import { Command } from 'commander';
-import { spawnSync } from 'child_process';
+import { spawnSync, execSync } from 'child_process';
 import { existsSync } from 'fs';
 
 const CONTAINER = 'eve-legs-traefik';
 const CONFIG_DIR = '/opt/traefik';
+
+function freePort(port: number): void {
+  try {
+    // Find any container binding this port and stop it
+    const out = execSync(
+      `docker ps --format '{{.Names}}\\t{{.Ports}}' | grep ':${port}->'`,
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
+    ).trim();
+    for (const line of out.split('\n').filter(Boolean)) {
+      const name = line.split('\t')[0]?.trim();
+      if (name && name !== CONTAINER) {
+        console.log(`  Stopping container holding port ${port}: ${name}`);
+        spawnSync('docker', ['stop', name], { stdio: 'inherit' });
+      }
+    }
+  } catch {
+    // Nothing using that port
+  }
+}
 
 export function restartCommand(program: Command): void {
   program
@@ -15,6 +34,10 @@ export function restartCommand(program: Command): void {
         console.error('Run: eve domain set <domain> --ssl --email <email> first');
         process.exit(1);
       }
+
+      console.log('Freeing ports 80 / 443...');
+      freePort(80);
+      freePort(443);
 
       console.log(`Removing existing ${CONTAINER} container (if any)...`);
       spawnSync('docker', ['rm', '-f', CONTAINER], { stdio: 'inherit' });
@@ -36,7 +59,9 @@ export function restartCommand(program: Command): void {
       ], { stdio: 'inherit' });
 
       if (result.status !== 0) {
-        console.error('Failed to start Traefik container');
+        // Show what's still using the ports
+        console.error('\nFailed to start Traefik. Containers currently using port 80/443:');
+        spawnSync('docker', ['ps', '--format', '{{.Names}}\t{{.Ports}}'], { stdio: 'inherit' });
         process.exit(1);
       }
 
