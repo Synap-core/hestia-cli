@@ -977,8 +977,15 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
     console.log('  Generated .env with random secrets');
   } else {
     console.log('  Existing .env preserved — reusing secrets');
+    // Always ensure BACKEND_VERSION is current — old installs may have written "latest"
+    // which points to a stale release image instead of the rolling main build.
+    let existing = readFileSync(envPath, 'utf-8');
+    if (/^BACKEND_VERSION=(?!main$)/m.test(existing)) {
+      existing = existing.replace(/^BACKEND_VERSION=.*/m, 'BACKEND_VERSION=main');
+      writeFileSync(envPath, existing, { encoding: 'utf-8', mode: 0o600 });
+      console.log('  Updated BACKEND_VERSION → main');
+    }
     // Extract existing bootstrap token if present
-    const existing = readFileSync(envPath, 'utf-8');
     const m = existing.match(/^ADMIN_BOOTSTRAP_TOKEN=(.+)$/m);
     if (m?.[1]) return { bootstrapToken: m[1], deployDir, containerName: getSynapBackendContainer() };
   }
@@ -987,7 +994,7 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
   console.log('  Pulling backend image (ghcr.io/synap-core/backend:main)...');
   spawnSync('docker', ['compose', 'pull', 'backend', '--ignore-pull-failures'], {
     cwd: deployDir, stdio: 'inherit',
-    env: { ...process.env, COMPOSE_PROJECT_NAME: 'synap-backend' },
+    env: { ...process.env, COMPOSE_PROJECT_NAME: 'synap-backend', BACKEND_VERSION: 'main' },
   });
 
   // 5. Start infrastructure services
