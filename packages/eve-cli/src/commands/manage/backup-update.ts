@@ -53,7 +53,7 @@ function buildUpdateTargets(deployDir: string | undefined): UpdateTarget[] {
       label: '🧠 Synap Data Pod',
       update: async () => {
         const env = { ...process.env, COMPOSE_PROJECT_NAME: 'synap-backend' };
-        await execa('docker', ['compose', 'pull', 'backend', 'realtime', '--ignore-pull-failures'], { cwd: deployDir, env, stdio: 'inherit' });
+        await execa('docker', ['compose', 'pull', 'backend', 'realtime', 'backend-migrate', '--ignore-pull-failures'], { cwd: deployDir, env, stdio: 'inherit' });
         await execa('docker', ['compose', 'run', '--rm', 'backend-migrate'], { cwd: deployDir, env, stdio: 'inherit' });
         await execa('docker', ['compose', 'up', '-d', '--no-deps', 'backend', 'realtime'], { cwd: deployDir, env, stdio: 'inherit' });
         // Reconnect to eve-network (container gets recreated)

@@ -227,6 +227,7 @@ services:
       - sh
       - -c
       - |
+        set -e
         DB_SCRIPTS=''
         for p in \\
           /app/node_modules/@synap/database/dist/scripts \\
@@ -241,7 +242,11 @@ services:
         fi
         echo "Using database scripts: $$DB_SCRIPTS"
         node "$$DB_SCRIPTS/migrate.js"
-        node "$$DB_SCRIPTS/init-hub-keys.js"
+        if [ -f "$$DB_SCRIPTS/init-hub-keys.js" ]; then
+          node "$$DB_SCRIPTS/init-hub-keys.js"
+        else
+          echo "⚠ init-hub-keys.js not found in $$DB_SCRIPTS — skipping hub key seeding (image may be outdated, pull latest to fix)"
+        fi
     # One-shot service — runs once and exits. 'no' is correct for standalone Compose
     # (deploy.restart_policy is Docker Swarm only and is ignored here)
     restart: "no"
@@ -983,9 +988,9 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
     if (m?.[1]) return { bootstrapToken: m[1], deployDir, containerName: getSynapBackendContainer() };
   }
 
-  // 4. Pull backend image
+  // 4. Pull backend image (backend + backend-migrate share the same image tag)
   console.log('  Pulling backend image (ghcr.io/synap-core/backend:latest)...');
-  spawnSync('docker', ['compose', 'pull', 'backend', '--ignore-pull-failures'], {
+  spawnSync('docker', ['compose', 'pull', 'backend', 'backend-migrate', '--ignore-pull-failures'], {
     cwd: deployDir, stdio: 'inherit',
     env: { ...process.env, COMPOSE_PROJECT_NAME: 'synap-backend' },
   });
