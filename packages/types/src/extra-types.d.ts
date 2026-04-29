@@ -3,11 +3,10 @@
  */
 /**
  * Available AI chat UI providers
- * - lobechat: Modern UI with plugin ecosystem
- * - openwebui: Native Ollama integration
- * - librechat: ChatGPT-like interface
+ * - openwebui: Primary — Synap IS endpoint + MCP support, SQLite, no external DB
+ * - lobechat: Alternative — modern UI with plugin marketplace (Ollama-focused)
  */
-export type AIChatProvider = "lobechat" | "openwebui" | "librechat";
+export type AIChatProvider = "lobechat" | "openwebui";
 /**
  * Configuration for a single AI chat provider
  */

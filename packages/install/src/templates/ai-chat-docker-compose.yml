@@ -3,29 +3,84 @@
 # All services are optional and can be enabled via Docker profiles
 #
 # Usage:
-#   docker compose --profile lobechat up -d      # Start LobeChat
-#   docker compose --profile openwebui up -d      # Start Open WebUI
-#   docker compose --profile librechat up -d      # Start LibreChat
-#   docker compose --profile ai-chat-all up -d      # Start all chat UIs
+#   docker compose --profile openwebui up -d    # Start Open WebUI (Synap-integrated)
+#   docker compose --profile lobechat up -d     # Start LobeChat (Ollama only)
+#   docker compose --profile ai-chat-all up -d  # Start all chat UIs
 
 version: '3.8'
 
 services:
   # ═══════════════════════════════════════════════════════════════════════════
-  # LOBECHAT - Modern, Beautiful AI Chat Interface
+  # OPEN WEBUI — Synap-integrated chat UI (PRIMARY)
   # ═══════════════════════════════════════════════════════════════════════════
-  # Features: Plugin ecosystem, agent support, voice input, beautiful UI
-  # Best for: Users who want a modern, feature-rich experience with plugins
-  # Default Port: 3010
-  # Documentation: https://github.com/lobehub/lobe-chat
+  # Integration points:
+  #   1. Synap IS as custom OpenAI-compat endpoint (synap/auto, synap/balanced…)
+  #   2. Synap Hub MCP server for memory, entities, skills (POST /mcp)
+  #   3. Ollama as local/offline fallback (auto-discovered via OLLAMA_BASE_URL)
   #
-  # Key differentiators:
-  # - Modern, polished UI design
-  # - Extensive plugin marketplace
-  # - Built-in agent/agent framework
-  # - Voice input support
-  # - Mobile-responsive
-  # - Supports multiple AI providers (Ollama, OpenAI, Anthropic, etc.)
+  # Required: SYNAP_API_KEY, SYNAP_IS_URL (IS base URL)
+  # Optional: OLLAMA_BASE_URL, OPENAI_API_KEY
+  #
+  # No external database — Open WebUI uses SQLite by default.
+  # Data persisted in the hestia-openwebui-data volume.
+  # ═══════════════════════════════════════════════════════════════════════════
+  openwebui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: hestia-openwebui
+    restart: unless-stopped
+    profiles:
+      - openwebui
+      - ai-chat-all
+    environment:
+      # ── Core ──────────────────────────────────────────────────────────────
+      - ENV=production
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-change-me-in-production}
+      - SCARF_NO_ANALYTICS=true
+      - DO_NOT_TRACK=true
+
+      # ── Synap IS as primary OpenAI-compat endpoint ────────────────────────
+      # The IS exposes /v1/chat/completions with synap/* model aliases.
+      # OPENAI_API_BASE_URL must NOT have a trailing /v1 — Open WebUI appends it.
+      - ENABLE_OPENAI_API=true
+      - OPENAI_API_BASE_URL=${SYNAP_IS_URL:-http://intelligence-hub:3001}/v1
+      - OPENAI_API_KEY=${SYNAP_API_KEY}
+
+      # ── Ollama (local/offline fallback, auto-discovered) ──────────────────
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://eve-brain-ollama:11434}
+
+      # ── MCP — Synap Hub (memory, entities, skills as tools) ──────────────
+      # Open WebUI calls MCP servers via its built-in tool runner.
+      # Auth header is injected via WEBUI_MCP_CONFIG (JSON).
+      - WEBUI_MCP_CONFIG=${WEBUI_MCP_CONFIG:-}
+
+      # ── Features ──────────────────────────────────────────────────────────
+      - ENABLE_RAG=true
+      - ENABLE_WEB_SEARCH=true
+      - WEB_SEARCH_ENGINE=duckduckgo
+      - ENABLE_IMAGE_GENERATION=false
+
+      # ── User management ───────────────────────────────────────────────────
+      - ENABLE_SIGNUP=${ENABLE_SIGNUP:-true}
+      - DEFAULT_USER_ROLE=${DEFAULT_USER_ROLE:-user}
+      - ENABLE_COMMUNITY_SHARING=false
+    ports:
+      - "3011:8080"
+    volumes:
+      - hestia-openwebui-data:/app/backend/data
+    networks:
+      - hestia-network
+      - eve-network   # must share network with IS + synap-backend for MCP + endpoint access
+    labels:
+      - "hestia.service=openwebui"
+      - "hestia.description=Synap-integrated chat UI (IS endpoint + Hub MCP tools)"
+      - "hestia.port=3011"
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # LOBECHAT - Modern AI Chat Interface (Ollama-focused, optional)
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Best for: users who want a polished UI with a plugin marketplace.
+  # Does NOT have native MCP support — use Open WebUI for Synap integration.
+  # Default Port: 3010
   # ═══════════════════════════════════════════════════════════════════════════
   lobechat:
     image: lobehub/lobe-chat:latest
@@ -34,30 +89,12 @@ services:
     profiles:
       - lobechat
       - ai-chat-all
-    depends_on:
-      - ollama
     environment:
-      # Core configuration
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - OPENAI_PROXY_URL=${OPENAI_PROXY_URL:-}
+      - OLLAMA_PROXY_URL=${OLLAMA_BASE_URL:-http://eve-brain-ollama:11434}
+      - OLLAMA_MODEL_LIST=${OLLAMA_MODEL_LIST:-llama3.2,llama3.1:8b,mistral}
       - ACCESS_CODE=${LOBECHAT_ACCESS_CODE:-}
-      - NEXT_PUBLIC_CUSTOM_MODELS=${NEXT_PUBLIC_CUSTOM_MODELS:-}
-      
-      # Ollama integration (primary backend)
-      - OLLAMA_PROXY_URL=http://ollama:11434
-      - OLLAMA_MODEL_LIST=${OLLAMA_MODEL_LIST:-llama3.2,llama3.1:8b,mistral,gemma2}
-      
-      # Additional AI providers (optional)
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
-      - AZURE_API_KEY=${AZURE_API_KEY:-}
-      - AZURE_ENDPOINT=${AZURE_ENDPOINT:-}
-      - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
-      
-      # Features
-      - SYSTEM_AGENT=${SYSTEM_AGENT:-}
-      - PLUGIN_SETTINGS=${PLUGIN_SETTINGS:-}
-      - DEFAULT_AGENT_CONFIG=${DEFAULT_AGENT_CONFIG:-}
     ports:
       - "3010:3210"
     volumes:
@@ -66,174 +103,14 @@ services:
       - hestia-network
     labels:
       - "hestia.service=lobechat"
-      - "hestia.description=Modern AI Chat UI with plugin ecosystem"
+      - "hestia.description=Modern AI Chat UI with plugin ecosystem (Ollama-focused)"
       - "hestia.port=3010"
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # OPEN WEBUI - Formerly Ollama WebUI
-  # ═══════════════════════════════════════════════════════════════════════════
-  # Features: Native Ollama integration, voice input, RAG support, document QA
-  # Best for: Users who want direct Ollama integration with native feel
-  # Default Port: 3011
-  # Documentation: https://github.com/open-webui/open-webui
-  #
-  # Key differentiators:
-  # - Native Ollama integration (detects all local models automatically)
-  # - Built-in RAG (Retrieval Augmented Generation) for documents
-  # - Document upload and Q&A
-  # - Voice input and output
-  # - Pipelines for custom processing
-  # - User management and permissions
-  # - Web search integration
-  # - Function calling support
-  # ═══════════════════════════════════════════════════════════════════════════
-  openwebui:
-    image: ghcr.io/open-webui/open-webui:latest
-    container_name: hestia-openwebui
-    restart: unless-stopped
-    profiles:
-      - openwebui
-      - ai-chat-all
-    depends_on:
-      - ollama
-    environment:
-      # Core configuration
-      - OLLAMA_BASE_URL=http://ollama:11434
-      - OLLAMA_API_BASE_URL=http://ollama:11434/api
-      
-      # WebUI settings
-      - ENV=production
-      - WEBUI_SECRET_KEY=${OPENWEBUI_SECRET_KEY:-hestia-secret-change-in-production}
-      - SCARF_NO_ANALYTICS=true
-      - DO_NOT_TRACK=true
-      
-      # Model configuration
-      - ENABLE_OPENAI_API=${ENABLE_OPENAI_API:-false}
-      - OPENAI_API_BASE_URL=${OPENAI_API_BASE_URL:-}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - OPENAI_API_MODELS=${OPENAI_API_MODELS:-}
-      
-      # Additional providers (optional)
-      - ENABLE_ANTHROPIC_API=${ENABLE_ANTHROPIC_API:-false}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - ENABLE_GOOGLE_API=${ENABLE_GOOGLE_API:-false}
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
-      
-      # Features
-      - ENABLE_RAG=${ENABLE_RAG:-true}
-      - RAG_EMBEDDING_MODEL=${RAG_EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
-      - ENABLE_WEB_SEARCH=${ENABLE_WEB_SEARCH:-true}
-      - WEB_SEARCH_ENGINE=${WEB_SEARCH_ENGINE:-duckduckgo}
-      - ENABLE_IMAGE_GENERATION=${ENABLE_IMAGE_GENERATION:-false}
-      - IMAGE_GENERATION_ENGINE=${IMAGE_GENERATION_ENGINE:-}
-      
-      # User management
-      - ENABLE_SIGNUP=${ENABLE_SIGNUP:-true}
-      - DEFAULT_USER_ROLE=${DEFAULT_USER_ROLE:-user}
-      - ENABLE_COMMUNITY_SHARING=${ENABLE_COMMUNITY_SHARING:-false}
-      
-      # Storage
-      - UPLOAD_DIR=${OPENWEBUI_UPLOAD_DIR:-/app/backend/data/uploads}
-      - DATA_DIR=${OPENWEBUI_DATA_DIR:-/app/backend/data}
-    ports:
-      - "3011:8080"
-    volumes:
-      - hestia-openwebui-data:/app/backend/data
-    networks:
-      - hestia-network
-    labels:
-      - "hestia.service=openwebui"
-      - "hestia.description=Open WebUI with native Ollama integration"
-      - "hestia.port=3011"
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # LIBRECHAT - ChatGPT Clone with Multi-Model Support
-  # ═══════════════════════════════════════════════════════════════════════════
-  # Features: ChatGPT-like UI, multi-model support, conversation branching
-  # Best for: Users who want a ChatGPT-like experience with choice of backend
-  # Default Port: 3012
-  # Documentation: https://github.com/danny-avila/LibreChat
-  #
-  # Key differentiators:
-  # - ChatGPT-like interface and conversation style
-  # - Conversation branching (fork conversations)
-  # - Multiple AI endpoint support simultaneously
-  # - Preset management for different models
-  # - Plugins and tools support
-  # - Message editing and regeneration
-  # - Conversation sharing
-  # - Authentication and multi-user support
-  # ═══════════════════════════════════════════════════════════════════════════
-  librechat:
-    image: ghcr.io/danny-avila/librechat:latest
-    container_name: hestia-librechat
-    restart: unless-stopped
-    profiles:
-      - librechat
-      - ai-chat-all
-    depends_on:
-      - ollama
-    environment:
-      # Core configuration
-      - HOST=0.0.0.0
-      - PORT=3080
-      - NODE_ENV=production
-      
-      # Session and auth
-      - SESSION_EXPIRY=${SESSION_EXPIRY:-86400000}
-      - REFRESH_TOKEN_EXPIRY=${REFRESH_TOKEN_EXPIRY:-604800000}
-      - JWT_SECRET=${LIBRECHAT_JWT_SECRET:-hestia-jwt-secret-change-me}
-      - JWT_REFRESH_SECRET=${LIBRECHAT_JWT_REFRESH_SECRET:-hestia-refresh-secret-change-me}
-      
-      # Ollama integration (primary backend)
-      - OLLAMA_API_URL=http://ollama:11434
-      - OLLAMA_MODELS=${OLLAMA_MODELS:-llama3.2,llama3.1:8b,mistral}
-      
-      # OpenAI API compatibility (optional)
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - OPENAI_MODELS=${OPENAI_MODELS:-gpt-4,gpt-4-turbo,gpt-3.5-turbo}
-      
-      # Anthropic Claude (optional)
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - ANTHROPIC_MODELS=${ANTHROPIC_MODELS:-claude-3-5-sonnet,claude-3-opus,claude-3-haiku}
-      
-      # Google Gemini (optional)
-      - GOOGLE_KEY=${GOOGLE_API_KEY:-}
-      - GOOGLE_MODELS=${GOOGLE_MODELS:-gemini-pro,gemini-pro-vision}
-      
-      # Azure OpenAI (optional)
-      - AZURE_API_KEY=${AZURE_API_KEY:-}
-      - AZURE_OPENAI_API_INSTANCE_NAME=${AZURE_OPENAI_API_INSTANCE_NAME:-}
-      - AZURE_OPENAI_API_DEPLOYMENT_NAME=${AZURE_OPENAI_API_DEPLOYMENT_NAME:-}
-      - AZURE_OPENAI_API_VERSION=${AZURE_OPENAI_API_VERSION:-2024-02-01}
-      
-      # Features
-      - TITLE_CONVO=${TITLE_CONVO:-true}
-      - SAVE_MESSAGE=false  # Disable for privacy-first deployments
-      - APP_TITLE=${LIBRECHAT_APP_TITLE:-Hestia Chat}
-      - CUSTOM_FOOTER=${LIBRECHAT_CUSTOM_FOOTER:-Powered by Hestia}
-      - SHOW_BIRTHDAY_ICON=${SHOW_BIRTHDAY_ICON:-false}
-      
-      # Plugins
-      - PLUGINS_INDEX_SOURCE=${PLUGINS_INDEX_SOURCE:-https://raw.githubusercontent.com/danny-avila/LibreChat/main/plugins.json}
-    ports:
-      - "3012:3080"
-    volumes:
-      - hestia-librechat-data:/app/.config/LibreChat
-    networks:
-      - hestia-network
-    labels:
-      - "hestia.service=librechat"
-      - "hestia.description=ChatGPT clone with multi-model support"
-      - "hestia.port=3012"
 
 # ═══════════════════════════════════════════════════════════════════════════
 # VOLUMES for AI Chat Services
 # ═══════════════════════════════════════════════════════════════════════════
 volumes:
-  hestia-lobechat-data:
-    driver: local
   hestia-openwebui-data:
     driver: local
-  hestia-librechat-data:
+  hestia-lobechat-data:
     driver: local

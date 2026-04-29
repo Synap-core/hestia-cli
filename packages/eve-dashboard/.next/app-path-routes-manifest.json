@@ -1,6 +1,7 @@
 {
   "/_global-error/page": "/_global-error",
   "/_not-found/page": "/_not-found",
+  "/api/access/route": "/api/access",
   "/api/actions/[organ]/restart/route": "/api/actions/[organ]/restart",
   "/api/auth/signout/route": "/api/auth/signout",
   "/api/auth/verify/route": "/api/auth/verify",

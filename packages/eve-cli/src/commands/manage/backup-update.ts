@@ -53,7 +53,7 @@ function buildUpdateTargets(deployDir: string | undefined): UpdateTarget[] {
       label: '🧠 Synap Data Pod',
       update: async () => {
         const env = { ...process.env, COMPOSE_PROJECT_NAME: 'synap-backend' };
-        await execa('docker', ['compose', 'pull', 'backend', 'realtime', '--ignore-pull-failures'], { cwd: deployDir, env, stdio: 'inherit' });
+        await execa('docker', ['compose', 'pull', 'backend', 'backend-migrate', 'realtime', '--ignore-pull-failures'], { cwd: deployDir, env, stdio: 'inherit' });
         await execa('docker', ['compose', 'run', '--rm', 'backend-migrate'], { cwd: deployDir, env, stdio: 'inherit' });
         await execa('docker', ['compose', 'up', '-d', '--no-deps', 'backend', 'realtime'], { cwd: deployDir, env, stdio: 'inherit' });
         // Reconnect to eve-network (container gets recreated)
@@ -106,6 +106,16 @@ function buildUpdateTargets(deployDir: string | undefined): UpdateTarget[] {
     },
   });
 
+  // 6. Open WebUI (chat UI)
+  targets.push({
+    id: 'openwebui',
+    label: '💬 Open WebUI',
+    update: async () => {
+      spawnSync('docker', ['pull', 'ghcr.io/open-webui/open-webui:main'], { stdio: 'inherit' });
+      spawnSync('docker', ['restart', 'hestia-openwebui'], { stdio: 'inherit' });
+    },
+  });
+
   return targets;
 }
 
@@ -131,7 +141,7 @@ export function backupUpdateCommands(program: Command): void {
         const { stdout } = await execa('docker', ['volume', 'ls', '--format', '{{.Name}}']);
         const vols = stdout
           .split('\n')
-          .filter((n) => n.includes('eve') || n.includes('ollama') || n.includes('synap'));
+          .filter((n) => n.includes('eve') || n.includes('ollama') || n.includes('synap') || n.includes('openwebui'));
         if (vols.length === 0) {
           printInfo('No matching volumes found. Create the stack with eve brain init first.');
           return;
@@ -149,7 +159,7 @@ export function backupUpdateCommands(program: Command): void {
 
   program
     .command('update')
-    .description('Pull latest images and restart all Eve organs (Synap, Ollama, OpenClaw, RSSHub, Traefik)')
+    .description('Pull latest images and restart all Eve organs (Synap, Ollama, OpenClaw, RSSHub, Traefik, Open WebUI)')
     .option('--only <organs>', 'Comma-separated organs to update, e.g. synap,ollama')
     .option('--skip <organs>', 'Comma-separated organs to skip, e.g. traefik')
     .action(async (opts: { only?: string; skip?: string }) => {

@@ -188,6 +188,7 @@ async function showStatus(json = false): Promise<void> {
       rsshub: 'RSSHub',
       traefik: 'Traefik',
       ollama: 'Ollama',
+      openwebui: 'Open WebUI',
     };
 
     for (const [id, comp] of Object.entries(components)) {

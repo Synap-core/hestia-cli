@@ -2,12 +2,13 @@ import type { Command } from 'commander';
 import { select, confirm, isCancel, text } from '@clack/prompts';
 import { homedir, tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, readdir, rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { execa } from 'execa';
 import {
   readSetupProfile,
   writeSetupProfile,
+  getSetupProfilePath,
   readUsbSetupManifest,
   probeHardware,
   formatHardwareReport,
@@ -33,6 +34,9 @@ export interface SetupCliOptions {
   model?: string;
   withOpenclaw?: boolean;
   withRsshub?: boolean;
+  adminEmail?: string;
+  adminPassword?: string;
+  adminBootstrapMode?: 'preseed' | 'token';
   fromImage?: boolean;
   fromSource?: boolean;
   skipHardware?: boolean;
@@ -100,9 +104,9 @@ function prevAiModeFromUsb(
   return undefined;
 }
 
-const SYNAP_BACKEND_REPO_URL = 'https://github.com/Synap-core/synap-backend.git';
+const SYNAP_BACKEND_REPO_URL = 'https://github.com/synap-core/backend.git';
 const SYNAP_BACKEND_TARBALL_URL =
-  'https://codeload.github.com/Synap-core/synap-backend/tar.gz/refs/heads/main';
+  'https://codeload.github.com/synap-core/backend/tar.gz/refs/heads/main';
 
 function looksLikeSynapRepo(repoRoot: string): boolean {
   return (
@@ -137,6 +141,15 @@ function findLocalSynapRepo(startDir: string): string | null {
     if (looksLikeSynapRepo(candidate)) return candidate;
   }
   return null;
+}
+
+async function isDirectoryEmpty(path: string): Promise<boolean> {
+  try {
+    const entries = await readdir(path);
+    return entries.length === 0;
+  } catch {
+    return false;
+  }
 }
 
 async function ensureSynapRepoForProfile(
@@ -186,9 +199,25 @@ async function ensureSynapRepoForProfile(
   }
 
   if (existsSync(targetDir) && !looksLikeSynapRepo(targetDir)) {
-    throw new Error(
-      `Cannot auto-clone: target exists but is not a synap-backend checkout (${targetDir}).`,
-    );
+    const empty = await isDirectoryEmpty(targetDir);
+    if (empty) {
+      await rm(targetDir, { recursive: true, force: true });
+    } else if (!nonInteractive && !jsonMode) {
+      const cleanup = await confirm({
+        message: `${targetDir} exists but is not a valid synap-backend checkout. Remove it and retry download?`,
+        initialValue: true,
+      });
+      if (isCancel(cleanup) || !cleanup) {
+        throw new Error(
+          `Cannot continue with invalid checkout at ${targetDir}. Pass --synap-repo to a valid checkout or remove that folder.`,
+        );
+      }
+      await rm(targetDir, { recursive: true, force: true });
+    } else {
+      throw new Error(
+        `Cannot auto-clone: target exists but is not a valid synap-backend checkout (${targetDir}). Remove it first or pass --synap-repo.`,
+      );
+    }
   }
 
   if (!existsSync(targetDir)) {
@@ -257,16 +286,19 @@ export function setupCommand(program: Command): void {
     .option('--profile <p>', 'inference_only | data_pod | full')
     .option('--dry-run', 'Resolve profile and print plan; do not write state or install')
     .option('--synap-repo <path>', 'data_pod / full: path to synap-backend checkout')
-    .option('--domain <host>', 'data_pod / full: synap install --domain', 'localhost')
+    .option('--domain <host>', 'data_pod / full: synap install --domain (default: localhost, or from saved setup profile)')
     .option('--email <email>', 'data_pod / full: required if domain is not localhost')
-    .option('--model <m>', 'inference_only / full: default Ollama model', 'llama3.1:8b')
+    .option('--model <m>', 'inference_only / full: default Ollama model (default: llama3.1:8b)')
     .option('--with-openclaw', 'data_pod / full: synap install --with-openclaw')
     .option('--with-rsshub', 'data_pod / full: synap install --with-rsshub')
+    .option('--admin-email <email>', 'data_pod / full: synap install --admin-email')
+    .option('--admin-password <secret>', 'data_pod / full: synap install --admin-password (preseed mode)')
+    .option('--admin-bootstrap-mode <mode>', 'data_pod / full: preseed | token (default token)')
     .option('--from-image', 'synap install --from-image')
     .option('--from-source', 'synap install --from-source')
     .option('--skip-hardware', 'Skip optional hardware summary')
     .option('--nvidia-smi', 'With hardware summary in non-interactive mode, run nvidia-smi')
-    .option('--ai-mode <m>', 'local | provider | hybrid (AI foundation first)', 'hybrid')
+    .option('--ai-mode <m>', 'local | provider | hybrid (AI foundation first); default after merge: hybrid')
     .option(
       '--ai-provider <p>',
       'Default provider for Eve provider routing: openrouter | anthropic | openai | ollama',
@@ -288,6 +320,34 @@ export function setupCommand(program: Command): void {
     .action(async (opts: SetupCliOptions) => {
       const flags = getGlobalCliFlags();
       const cwd = process.cwd();
+      const existing = await readSetupProfile(cwd);
+      let loadedExistingPrefs = false;
+
+      if (
+        !existing &&
+        existsSync(getSetupProfilePath(cwd)) &&
+        !flags.nonInteractive &&
+        !flags.json &&
+        !opts.dryRun
+      ) {
+        console.log(
+          colors.warning(
+            `${emojis.warning} ${getSetupProfilePath(cwd)} is present but invalid or unreadable. Fix or remove it to enable "load saved preferences".`,
+          ),
+        );
+      }
+
+      if (existing && !flags.nonInteractive && !opts.dryRun && !flags.json) {
+        const load = await confirm({
+          message: `Load latest saved setup preferences from .eve/setup-profile.json (${existing.profile})?`,
+          initialValue: true,
+        });
+        if (isCancel(load)) {
+          console.log(colors.muted('Cancelled.'));
+          return;
+        }
+        loadedExistingPrefs = Boolean(load);
+      }
 
       let profile = parseProfile(opts.profile);
       const usb = await readUsbSetupManifest();
@@ -298,6 +358,9 @@ export function setupCommand(program: Command): void {
             `${emojis.info} Found USB/setup manifest → suggested profile: ${colors.info(profile)}`,
           );
         }
+      }
+      if (!profile && loadedExistingPrefs && existing?.profile) {
+        profile = existing.profile;
       }
 
       if (!profile && !flags.nonInteractive) {
@@ -335,9 +398,16 @@ export function setupCommand(program: Command): void {
       }
 
       // AI foundation first (local/provider/hybrid) before Synap and side systems
-      let aiMode = parseAiMode(opts.aiMode) ?? prevAiModeFromUsb(usb);
-      let defaultProvider = parseAiProvider(opts.aiProvider);
-      let fallbackProvider = parseAiProvider(opts.fallbackProvider);
+      let aiMode =
+        parseAiMode(opts.aiMode) ??
+        prevAiModeFromUsb(usb) ??
+        (loadedExistingPrefs ? existing?.aiMode : undefined);
+      let defaultProvider =
+        parseAiProvider(opts.aiProvider) ??
+        (loadedExistingPrefs ? existing?.aiDefaultProvider : undefined);
+      let fallbackProvider =
+        parseAiProvider(opts.fallbackProvider) ??
+        (loadedExistingPrefs ? existing?.aiFallbackProvider : undefined);
 
       if (!opts.dryRun && !flags.nonInteractive && !flags.json) {
         if (!aiMode) {
@@ -412,18 +482,67 @@ export function setupCommand(program: Command): void {
         process.exit(1);
       }
 
-      let installDomain = (opts.domain?.trim() || 'localhost');
+      // No Commander default for --domain: a default of "localhost" prevented loading saved synapHost/domainHint.
+      const domainArg = opts.domain?.trim();
+      const explicitDomain = domainArg !== undefined && domainArg.length > 0 ? domainArg : undefined;
+      let installDomain =
+        explicitDomain ??
+        (loadedExistingPrefs
+          ? existing?.network?.synapHost?.trim() || existing?.domainHint?.trim()
+          : undefined) ??
+        'localhost';
       let installEmail = opts.email?.trim() || process.env.LETSENCRYPT_EMAIL?.trim() || undefined;
+      if (!installEmail && loadedExistingPrefs) {
+        installEmail = existing?.synapInstall?.tlsEmail?.trim() || installEmail;
+      }
       let installMode: 'auto' | 'from_image' | 'from_source' =
         opts.fromImage ? 'from_image' : opts.fromSource ? 'from_source' : 'auto';
+      if (!opts.fromImage && !opts.fromSource && loadedExistingPrefs && existing?.synapInstall?.mode) {
+        installMode = existing.synapInstall.mode;
+      }
       let installWithOpenclaw = Boolean(opts.withOpenclaw);
+      if (!opts.withOpenclaw && loadedExistingPrefs && typeof existing?.synapInstall?.withOpenclaw === 'boolean') {
+        installWithOpenclaw = existing.synapInstall.withOpenclaw;
+      }
       let installWithRsshub = Boolean(opts.withRsshub);
+      if (!opts.withRsshub && loadedExistingPrefs && typeof existing?.synapInstall?.withRsshub === 'boolean') {
+        installWithRsshub = existing.synapInstall.withRsshub;
+      }
+      let adminBootstrapMode: 'preseed' | 'token' =
+        opts.adminBootstrapMode === 'preseed' || opts.adminBootstrapMode === 'token'
+          ? opts.adminBootstrapMode
+          : 'token';
+      if (
+        !opts.adminBootstrapMode &&
+        loadedExistingPrefs &&
+        (existing?.synapInstall?.adminBootstrapMode === 'preseed' ||
+          existing?.synapInstall?.adminBootstrapMode === 'token')
+      ) {
+        adminBootstrapMode = existing.synapInstall.adminBootstrapMode;
+      }
+      let adminEmail = opts.adminEmail?.trim() || process.env.ADMIN_EMAIL?.trim() || installEmail;
+      if (!opts.adminEmail?.trim() && loadedExistingPrefs && existing?.synapInstall?.adminEmail?.trim()) {
+        adminEmail = existing.synapInstall.adminEmail.trim();
+      }
+      let adminPassword = opts.adminPassword?.trim() || process.env.ADMIN_PASSWORD?.trim();
       let exposureMode: 'local' | 'public' = installDomain !== 'localhost' ? 'public' : 'local';
 
       let tunnelProvider = parseTunnel(opts.tunnel) ?? usb?.tunnel_provider;
+      if (!opts.tunnel && !usb?.tunnel_provider && loadedExistingPrefs) {
+        tunnelProvider = existing?.network?.legs?.tunnelProvider ?? existing?.tunnelProvider;
+      }
       let tunnelDomain =
         (opts.tunnelDomain?.trim() || usb?.tunnel_domain || '').trim() || undefined;
+      if (!tunnelDomain && loadedExistingPrefs) {
+        tunnelDomain = existing?.network?.legs?.host?.trim() || existing?.tunnelDomain?.trim() || undefined;
+      }
       let legsHostStrategy: 'same_as_synap' | 'custom' | undefined;
+      if (loadedExistingPrefs) {
+        const prior = existing?.network?.legs?.hostStrategy;
+        if (prior === 'same_as_synap' || prior === 'custom') {
+          legsHostStrategy = prior;
+        }
+      }
 
       if (
         !opts.dryRun &&
@@ -510,9 +629,68 @@ export function setupCommand(program: Command): void {
           installMode = mode as 'auto' | 'from_image' | 'from_source';
         }
 
+        const bootstrapMode = await select({
+          message: 'Admin bootstrap mode for Synap',
+          options: [
+            {
+              value: 'token' as const,
+              label: 'Token (recommended)',
+              hint: 'Generate bootstrap token; create first admin later in UI/CLI.',
+            },
+            {
+              value: 'preseed' as const,
+              label: 'Preseed admin now',
+              hint: 'Create first admin during install (needs email + password).',
+            },
+          ],
+          initialValue: adminBootstrapMode,
+        });
+        if (isCancel(bootstrapMode)) {
+          console.log(colors.muted('Cancelled.'));
+          return;
+        }
+        adminBootstrapMode = bootstrapMode as 'preseed' | 'token';
+
+        if (adminBootstrapMode === 'preseed') {
+          const ae = await text({
+            message: 'Admin email for initial Synap admin account',
+            initialValue: adminEmail ?? '',
+            placeholder: 'admin@example.com',
+          });
+          if (isCancel(ae)) {
+            console.log(colors.muted('Cancelled.'));
+            return;
+          }
+          adminEmail = ae.trim();
+          if (!adminEmail) {
+            console.error('Preseed mode requires an admin email.');
+            process.exit(1);
+          }
+          if (!adminPassword) {
+            const ap = await text({
+              message: 'Admin password for initial account',
+              initialValue: '',
+              placeholder: 'Choose a strong password',
+            });
+            if (isCancel(ap)) {
+              console.log(colors.muted('Cancelled.'));
+              return;
+            }
+            adminPassword = ap.trim();
+          }
+          if (!adminPassword) {
+            console.error('Preseed mode requires an admin password.');
+            process.exit(1);
+          }
+        }
+
         const askOpenclaw = await confirm({
-          message: 'Install OpenClaw during Synap install?',
-          initialValue: installWithOpenclaw,
+          message:
+            adminBootstrapMode === 'preseed'
+              ? 'Install OpenClaw during Synap install? (A workspace exists after preseed, so the add-on can provision immediately.)'
+              : 'Enable OpenClaw for this pod? (Token bootstrap has no workspace yet — Synap install skips the add-on; the admin UI will offer setup after you register.)',
+          initialValue:
+            adminBootstrapMode === 'preseed' ? installWithOpenclaw : false,
         });
         if (isCancel(askOpenclaw)) {
           console.log(colors.muted('Cancelled.'));
@@ -611,9 +789,38 @@ export function setupCommand(program: Command): void {
         console.error('Invalid --ai-provider (use openrouter|anthropic|openai|ollama).');
         process.exit(1);
       }
+      if (
+        flags.nonInteractive &&
+        opts.adminBootstrapMode &&
+        opts.adminBootstrapMode !== 'token' &&
+        opts.adminBootstrapMode !== 'preseed'
+      ) {
+        console.error('Invalid --admin-bootstrap-mode (use token|preseed).');
+        process.exit(1);
+      }
       if (installDomain !== 'localhost' && !installEmail) {
         console.error('Non-localhost domain requires --email (or LETSENCRYPT_EMAIL).');
         process.exit(1);
+      }
+      if (adminBootstrapMode === 'preseed' && !adminEmail) {
+        console.error('Preseed admin bootstrap requires --admin-email (or ADMIN_EMAIL).');
+        process.exit(1);
+      }
+      if (adminBootstrapMode === 'preseed' && !adminPassword) {
+        console.error('Preseed admin bootstrap requires --admin-password (or ADMIN_PASSWORD).');
+        process.exit(1);
+      }
+
+      const synapInstallWithOpenclaw =
+        installWithOpenclaw && adminBootstrapMode === 'preseed';
+      if (installWithOpenclaw && adminBootstrapMode === 'token' && !opts.dryRun) {
+        if (!flags.json) {
+          console.log(
+            colors.info(
+              'OpenClaw: token bootstrap has no workspace at install time, so `synap install` runs without --with-openclaw. After you finish /admin/bootstrap, use the admin dashboard prompt or run `./synap services add openclaw` on the server.',
+            ),
+          );
+        }
       }
 
       if (!flags.json) {
@@ -633,8 +840,7 @@ export function setupCommand(program: Command): void {
         );
       }
 
-      const existing = await readSetupProfile(cwd);
-      if (existing && !flags.nonInteractive && !opts.dryRun) {
+      if (existing && !flags.nonInteractive && !opts.dryRun && !loadedExistingPrefs) {
         const ok = await confirm({
           message: `Existing setup profile (${existing.profile}). Overwrite and continue?`,
           initialValue: false,
@@ -663,7 +869,10 @@ export function setupCommand(program: Command): void {
             email: installEmail ?? null,
             mode: installMode,
             withOpenclaw: installWithOpenclaw,
+            synapInstallWithOpenclaw,
             withRsshub: installWithRsshub,
+            adminBootstrapMode,
+            adminEmail: adminEmail ?? null,
           },
         };
         if (flags.json) outputJson(plan);
@@ -714,6 +923,14 @@ export function setupCommand(program: Command): void {
                   host: tunnelDomain,
                 }
               : undefined,
+          },
+          synapInstall: {
+            mode: installMode,
+            tlsEmail: installEmail,
+            withOpenclaw: installWithOpenclaw,
+            withRsshub: installWithRsshub,
+            adminBootstrapMode,
+            adminEmail,
           },
         },
         cwd,
@@ -813,7 +1030,7 @@ export function setupCommand(program: Command): void {
       try {
         if (profile === 'inference_only') {
           await runInferenceInit({
-            model: opts.model,
+            model: opts.model ?? 'llama3.1:8b',
             withGateway: true,
             internalOllamaOnly: false,
           });
@@ -828,10 +1045,13 @@ export function setupCommand(program: Command): void {
             synapRepo: repo,
             domain: installDomain,
             email: installEmail,
-            withOpenclaw: installWithOpenclaw,
+            withOpenclaw: synapInstallWithOpenclaw,
             withRsshub: installWithRsshub,
             fromImage: installMode === 'from_image',
             fromSource: installMode === 'from_source',
+            adminBootstrapMode,
+            adminEmail,
+            adminPassword,
             withAi: false,
           });
           if (tunnelProvider) {
@@ -859,14 +1079,17 @@ export function setupCommand(program: Command): void {
             synapRepo: repo,
             domain: installDomain,
             email: installEmail,
-            withOpenclaw: installWithOpenclaw,
+            withOpenclaw: synapInstallWithOpenclaw,
             withRsshub: installWithRsshub,
             fromImage: installMode === 'from_image',
             fromSource: installMode === 'from_source',
+            adminBootstrapMode,
+            adminEmail,
+            adminPassword,
             withAi: false,
           });
           await runInferenceInit({
-            model: opts.model,
+            model: opts.model ?? 'llama3.1:8b',
             withGateway: true,
             internalOllamaOnly: true,
           });

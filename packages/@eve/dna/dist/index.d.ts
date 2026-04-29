@@ -66,6 +66,8 @@ interface ServiceConfig {
     command?: string[];
     /** Entrypoint override */
     entrypoint?: string;
+    /** Env files to load (docker compose env_file) */
+    envFile?: string[];
     /** Dependencies that must be healthy before starting */
     dependsOn?: string[];
 }
@@ -75,6 +77,7 @@ interface DockerComposeService {
     container_name: string;
     ports?: string[];
     environment?: Record<string, string>;
+    env_file?: string[];
     volumes?: string[];
     networks?: string[];
     restart?: string;

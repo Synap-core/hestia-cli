@@ -133,6 +133,8 @@ export interface ServiceConfig {
   command?: string[];
   /** Entrypoint override */
   entrypoint?: string;
+  /** Env files to load (docker compose env_file) */
+  envFile?: string[];
   /** Dependencies that must be healthy before starting */
   dependsOn?: string[];
 }
@@ -232,17 +234,24 @@ export const SERVICE_REGISTRY: Record<Service, ServiceConfig> = {
     network: 'eve-network',
     restart: 'no',
   },
-  // Hermes — headless dev orchestrator daemon (V2 spec)
+  // Hermes — headless task orchestrator daemon
+  // Runs the Eve builder CLI from the host installation (/opt/eve) inside a
+  // Node container so it gets a clean process environment and restarts on crash.
+  // The host Eve install is mounted read-only; workspace artifacts go to a volume.
   hermes: {
     image: 'node:20-alpine',
     containerName: 'eve-builder-hermes',
-    volumes: ['eve-builder-hermes-data:/data'],
+    volumes: [
+      '/opt/eve:/app:ro',          // Eve CLI from host (read-only)
+      'eve-builder-hermes-data:/data', // Task workspace + artifacts
+    ],
     network: 'eve-network',
     restart: 'unless-stopped',
     environment: {
+      NODE_ENV: 'production',
       EVE_WORKSPACE_DIR: '/data/workspace',
     },
-    dependsOn: ['eve-brain-synap'],
+    // command injected by the compose generator — see addBuilderServices()
   },
   // Eyes Services
   rsshub: {
@@ -297,6 +306,7 @@ export interface DockerComposeService {
   container_name: string;
   ports?: string[];
   environment?: Record<string, string>;
+  env_file?: string[];
   volumes?: string[];
   networks?: string[];
   restart?: string;

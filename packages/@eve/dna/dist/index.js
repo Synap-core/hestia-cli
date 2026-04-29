@@ -93,17 +93,26 @@ var SERVICE_REGISTRY = {
     network: "eve-network",
     restart: "no"
   },
-  // Hermes — headless dev orchestrator daemon (V2 spec)
+  // Hermes — headless task orchestrator daemon
+  // Runs the Eve builder CLI from the host installation (/opt/eve) inside a
+  // Node container so it gets a clean process environment and restarts on crash.
+  // The host Eve install is mounted read-only; workspace artifacts go to a volume.
   hermes: {
     image: "node:20-alpine",
     containerName: "eve-builder-hermes",
-    volumes: ["eve-builder-hermes-data:/data"],
+    volumes: [
+      "/opt/eve:/app:ro",
+      // Eve CLI from host (read-only)
+      "eve-builder-hermes-data:/data"
+      // Task workspace + artifacts
+    ],
     network: "eve-network",
     restart: "unless-stopped",
     environment: {
+      NODE_ENV: "production",
       EVE_WORKSPACE_DIR: "/data/workspace"
-    },
-    dependsOn: ["eve-brain-synap"]
+    }
+    // command injected by the compose generator — see addBuilderServices()
   },
   // Eyes Services
   rsshub: {
@@ -931,10 +940,16 @@ var DockerComposeGenerator = class {
    * Add builder services: hermes (CLI tools like opencode/openclaude/claudecode have no containers)
    */
   addBuilderServices() {
-    const builderServices = ["hermes"];
-    for (const service of builderServices) {
-      this.addService(service);
-    }
+    this.addService("hermes", {
+      command: [
+        "node",
+        "/app/packages/@eve/builder/dist/index.js",
+        "builder",
+        "hermes",
+        "start"
+      ],
+      envFile: [".eve/hermes.env"]
+    });
   }
   /**
    * Add all services across all organs (brain, arms, builder, eyes, legs)
@@ -1045,6 +1060,9 @@ var DockerComposeGenerator = class {
     }
     if (config.environment && Object.keys(config.environment).length > 0) {
       composeService.environment = config.environment;
+    }
+    if (config.envFile && config.envFile.length > 0) {
+      composeService.env_file = config.envFile;
     }
     if (config.volumes && config.volumes.length > 0) {
       composeService.volumes = config.volumes;

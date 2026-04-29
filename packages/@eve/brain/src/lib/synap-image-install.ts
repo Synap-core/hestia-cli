@@ -81,7 +81,7 @@ services:
   # BACKEND API
   # ============================================================================
   backend:
-    image: ghcr.io/\${GITHUB_REPOSITORY:-synap-core/backend}:\${BACKEND_VERSION:-latest}
+    image: ghcr.io/\${GITHUB_REPOSITORY:-synap-core/backend}:\${BACKEND_VERSION:-main}
     build:
       context: ..
       dockerfile: deploy/Dockerfile
@@ -129,7 +129,7 @@ services:
   # Never starts automatically (profile guard + restart: "no").
   # ============================================================================
   backend-canary:
-    image: ghcr.io/\${GITHUB_REPOSITORY:-synap-core/backend}:\${BACKEND_VERSION:-latest}
+    image: ghcr.io/\${GITHUB_REPOSITORY:-synap-core/backend}:\${BACKEND_VERSION:-main}
     container_name: synap-backend-canary
     restart: "no"
     environment:
@@ -149,7 +149,7 @@ services:
   # Same image as backend — different working directory and entry point
   # ============================================================================
   realtime:
-    image: ghcr.io/\${GITHUB_REPOSITORY:-synap-core/backend}:\${BACKEND_VERSION:-latest}
+    image: ghcr.io/\${GITHUB_REPOSITORY:-synap-core/backend}:\${BACKEND_VERSION:-main}
     build:
       context: ..
       dockerfile: deploy/Dockerfile
@@ -197,7 +197,7 @@ services:
   # CODE MIGRATION SERVICE
   # ============================================================================
   backend-migrate:
-    image: ghcr.io/\${GITHUB_REPOSITORY:-synap-core/backend}:\${BACKEND_VERSION:-latest}
+    image: ghcr.io/\${GITHUB_REPOSITORY:-synap-core/backend}:\${BACKEND_VERSION:-main}
     build:
       context: ..
       dockerfile: deploy/Dockerfile
@@ -957,42 +957,53 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
   const email = opts.email ?? '';
   const adminEmail = opts.adminEmail ?? '';
   const adminBootstrapMode = opts.adminBootstrapMode ?? 'token';
-  const bootstrapToken = gen(16);
 
   // 1. Scaffold deploy directory
   mkdirSync(deployDir, { recursive: true });
   const pgInitDir = join(deployDir, 'config', 'postgres');
   mkdirSync(pgInitDir, { recursive: true });
 
-  // 2. Write bundled files
+  // 2. Write bundled files (always refresh compose + init script; never touch .env)
   writeFileSync(join(deployDir, 'docker-compose.yml'), DOCKER_COMPOSE_CONTENT, 'utf-8');
   writeFileSync(join(pgInitDir, 'init-databases.sh'), POSTGRES_INIT_SCRIPT_CONTENT, { encoding: 'utf-8', mode: 0o755 });
   console.log(`  Written deploy files to ${deployDir}`);
 
   // 3. Generate or update .env
   const envPath = join(deployDir, '.env');
+  let bootstrapToken: string;
   if (!existsSync(envPath)) {
+    bootstrapToken = gen(16);
     const envContent = generateEnv({ deployDir, domain, email, adminEmail, adminPassword: opts.adminPassword ?? '', adminBootstrapMode, bootstrapToken });
     writeFileSync(envPath, envContent, { encoding: 'utf-8', mode: 0o600 });
     console.log('  Generated .env with random secrets');
   } else {
     console.log('  Existing .env preserved — reusing secrets');
-    // Always ensure BACKEND_VERSION is current — old installs may have written "latest"
-    // which points to a stale release image instead of the rolling main build.
     let existing = readFileSync(envPath, 'utf-8');
+
+    // Always ensure BACKEND_VERSION is current — old installs may have written "latest"
     if (/^BACKEND_VERSION=(?!main$)/m.test(existing)) {
       existing = existing.replace(/^BACKEND_VERSION=.*/m, 'BACKEND_VERSION=main');
       writeFileSync(envPath, existing, { encoding: 'utf-8', mode: 0o600 });
       console.log('  Updated BACKEND_VERSION → main');
     }
-    // Extract existing bootstrap token if present
+
+    // Reuse the existing bootstrap token so it stays consistent with what's seeded in the DB
     const m = existing.match(/^ADMIN_BOOTSTRAP_TOKEN=(.+)$/m);
-    if (m?.[1]) return { bootstrapToken: m[1], deployDir, containerName: getSynapBackendContainer() };
+    bootstrapToken = m?.[1] ?? gen(16);
+
+    // If the backend is already running, nothing to do
+    const runningContainer = getSynapBackendContainer();
+    if (runningContainer) {
+      return { bootstrapToken, deployDir, containerName: runningContainer };
+    }
+    // Container not running — fall through to pull + start (preserving the existing secrets)
+    console.log('  Backend not running — resuming install...');
   }
 
-  // 4. Pull backend image
+  // 4. Pull backend image (backend + backend-migrate + realtime all use the same image;
+  //    pull explicitly so Docker doesn't reuse a stale cached layer)
   console.log('  Pulling backend image (ghcr.io/synap-core/backend:main)...');
-  spawnSync('docker', ['compose', 'pull', 'backend', '--ignore-pull-failures'], {
+  spawnSync('docker', ['compose', 'pull', 'backend', 'backend-migrate', 'realtime', '--ignore-pull-failures'], {
     cwd: deployDir, stdio: 'inherit',
     env: { ...process.env, COMPOSE_PROJECT_NAME: 'synap-backend', BACKEND_VERSION: 'main' },
   });

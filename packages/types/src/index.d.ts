@@ -17,7 +17,7 @@ export type SourceType = "git" | "workspace" | "upload";
 export type ProxyType = "nginx" | "traefik";
 export type TunnelProvider = "pangolin" | "cloudflare" | "none";
 export type DBViewerProvider = "whodb" | "none";
-export type AIChatProvider = "lobechat" | "openwebui" | "librechat";
+export type AIChatProvider = "lobechat" | "openwebui";
 export interface Package {
     name: string;
     version: string;

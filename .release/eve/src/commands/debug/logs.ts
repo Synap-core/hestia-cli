@@ -1,6 +1,9 @@
 import { Command } from 'commander';
 import { execa } from 'execa';
-import { printError, printInfo } from '../../lib/ui.js';
+import {
+  printError,
+  printInfo,
+} from '../../lib/ui.js';
 
 export function logsCommand(program: Command): void {
   program

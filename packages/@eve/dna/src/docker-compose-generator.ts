@@ -128,11 +128,16 @@ export class DockerComposeGenerator {
    * Add builder services: hermes (CLI tools like opencode/openclaude/claudecode have no containers)
    */
   addBuilderServices(): void {
-    const builderServices: BuilderService[] = ['hermes'];
-
-    for (const service of builderServices) {
-      this.addService(service);
-    }
+    // Hermes gets a real container; other builder tools run on the host.
+    // /opt/eve is the installed Eve CLI (mounted read-only from host).
+    // SYNAP_API_KEY + HUB_BASE_URL come from .eve/hermes.env (written by writeHermesEnvFile).
+    this.addService('hermes', {
+      command: [
+        'node', '/app/packages/@eve/builder/dist/index.js',
+        'builder', 'hermes', 'start',
+      ],
+      envFile: ['.eve/hermes.env'],
+    });
   }
 
   /**
@@ -271,6 +276,10 @@ export class DockerComposeGenerator {
 
     if (config.environment && Object.keys(config.environment).length > 0) {
       composeService.environment = config.environment;
+    }
+
+    if (config.envFile && config.envFile.length > 0) {
+      composeService.env_file = config.envFile;
     }
 
     if (config.volumes && config.volumes.length > 0) {

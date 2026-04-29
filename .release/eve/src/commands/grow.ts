@@ -200,7 +200,7 @@ function getInstallationSteps(organ: string): Array<{ name: string }> {
   const steps: Record<string, Array<{ name: string }>> = {
     brain: [
       { name: 'Docker network eve-network' },
-      { name: 'Synap backend + Postgres + Redis' },
+      { name: 'Synap Data Pod install' },
       { name: 'Optional: Ollama + model pull' },
     ],
     arms: [{ name: 'eve arms install' }],

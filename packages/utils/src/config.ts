@@ -57,7 +57,7 @@ const tunnelConfigSchema = z.object({
 
 // AI Chat UI configuration schema
 const aiChatProviderSchema = z.object({
-  name: z.enum(["lobechat", "openwebui", "librechat"]),
+  name: z.enum(["lobechat", "openwebui"]),
   enabled: z.boolean(),
   port: z.number(),
   url: z.string().optional(),
@@ -66,7 +66,7 @@ const aiChatProviderSchema = z.object({
 
 const aiChatConfigSchema = z.object({
   providers: z.array(aiChatProviderSchema),
-  defaultProvider: z.enum(["lobechat", "openwebui", "librechat"]).optional(),
+  defaultProvider: z.enum(["lobechat", "openwebui"]).optional(),
 });
 
 // Optional services configuration schema
@@ -137,11 +137,6 @@ const defaultOptionalServices = {
     autoStart: true,
   },
   openwebui: {
-    enabled: false,
-    installed: false,
-    autoStart: true,
-  },
-  librechat: {
     enabled: false,
     installed: false,
     autoStart: true,

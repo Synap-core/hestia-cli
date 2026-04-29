@@ -91,6 +91,14 @@ export const COMPONENTS: ComponentInfo[] = [
     description: 'Claude Code as a service. Exposes Claude Code to your agent for advanced coding tasks.',
     category: 'add-on',
   },
+  {
+    id: 'openwebui',
+    label: 'Open WebUI',
+    emoji: '💬',
+    description: 'Self-hosted chat UI wired to Synap IS (AI provider). No external DB — SQLite by default. Pipelines sidecar enables Synap memory and channel sync.',
+    category: 'add-on',
+    requires: ['synap'],
+  },
 ];
 
 /** Resolve a component by ID; throws if not found. */

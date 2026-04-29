@@ -1,16 +1,16 @@
 import { Command } from 'commander';
 import { execa } from 'execa';
 import { entityStateManager, type Organ } from '@eve/dna';
-import { 
-  colors, 
-  emojis, 
-  printHeader, 
-  printSuccess, 
-  printError, 
+import {
+  colors,
+  emojis,
+  printHeader,
+  printSuccess,
+  printError,
   printWarning,
   printInfo,
   formatOrgan,
-  createSpinner 
+  createSpinner,
 } from '../lib/ui.js';
 
 interface CheckResult {
@@ -100,36 +100,89 @@ async function runDiagnostics(attemptFix = false, verbose = false): Promise<void
     checks.push({ name: 'Network', status: 'fail', message: 'Failed to check Docker networks' });
   }
 
-  // Check 4: Entity State
+  // Check 4: Live Docker containers
+  const EXPECTED_CONTAINERS: Record<string, string> = {
+    'eve-brain-synap': 'brain',
+    'eve-brain-ollama': 'brain',
+    'eve-arms-openclaw': 'arms',
+    'eve-eyes-rsshub': 'eyes',
+    'eve-legs-traefik': 'legs',
+  };
+
+  const containerCheck = createSpinner('Checking running containers...');
+  containerCheck.start();
+  try {
+    const { stdout: psOut } = await execa('docker', [
+      'ps', '--format', '{{.Names}}\t{{.Status}}',
+    ]);
+    const running = new Map<string, string>();
+    for (const line of psOut.split('\n').filter(Boolean)) {
+      const [name, ...statusParts] = line.split('\t');
+      if (name) running.set(name.trim(), statusParts.join(' ').trim());
+    }
+
+    const { stdout: allOut } = await execa('docker', [
+      'ps', '-a', '--format', '{{.Names}}\t{{.Status}}',
+    ]);
+    const all = new Map<string, string>();
+    for (const line of allOut.split('\n').filter(Boolean)) {
+      const [name, ...statusParts] = line.split('\t');
+      if (name) all.set(name.trim(), statusParts.join(' ').trim());
+    }
+
+    containerCheck.succeed('Container check complete');
+    for (const [containerName, organ] of Object.entries(EXPECTED_CONTAINERS)) {
+      if (running.has(containerName)) {
+        checks.push({
+          name: containerName,
+          status: 'pass',
+          message: `Running — ${running.get(containerName)}`,
+        });
+      } else if (all.has(containerName)) {
+        checks.push({
+          name: containerName,
+          status: 'fail',
+          message: `Stopped — ${all.get(containerName)}`,
+          fix: `docker start ${containerName}  or  eve install --components=${organ}`,
+        });
+      }
+      // If not in `docker ps -a` at all, the organ just isn't installed — skip silently
+    }
+  } catch {
+    containerCheck.fail('Could not query Docker containers');
+    checks.push({ name: 'Containers', status: 'fail', message: 'docker ps failed — is Docker running?' });
+  }
+
+  // Check 5: Entity State
   const stateCheck = createSpinner('Checking entity state...');
   stateCheck.start();
   try {
     const state = await entityStateManager.getState();
     stateCheck.succeed('Entity state is accessible');
-    
+
     // Check each organ
     const organs: Organ[] = ['brain', 'arms', 'builder', 'eyes', 'legs'];
     for (const organ of organs) {
       const organState = state.organs[organ];
       if (organState.state === 'ready') {
-        checks.push({ 
-          name: `${formatOrgan(organ)}`, 
-          status: 'pass', 
-          message: 'Organ is healthy' 
+        checks.push({
+          name: `${formatOrgan(organ)} (state)`,
+          status: 'pass',
+          message: 'Organ marked ready in state'
         });
       } else if (organState.state === 'error') {
-        checks.push({ 
-          name: `${formatOrgan(organ)}`, 
-          status: 'fail', 
+        checks.push({
+          name: `${formatOrgan(organ)} (state)`,
+          status: 'fail',
           message: organState.errorMessage || 'Organ has errors',
-          fix: `Run: eve ${organ} status`
+          fix: `eve install --components=${organ}`,
         });
       } else if (organState.state === 'missing') {
-        checks.push({ 
-          name: `${formatOrgan(organ)}`, 
-          status: 'warn', 
+        checks.push({
+          name: `${formatOrgan(organ)} (state)`,
+          status: 'warn',
           message: 'Organ not installed',
-          fix: `Run: eve ${organ} install`
+          fix: `eve install --components=${organ}`,
         });
       }
     }

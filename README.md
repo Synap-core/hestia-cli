@@ -75,7 +75,7 @@ Reference repositories:
 
 ## Component registry
 
-Eve's composable installer works with a registry of 9 components across 6 categories:
+Eve's composable installer works with a registry of 10 components across 6 categories:
 
 | Component        | Organ    | Category       | Always? | Prerequisites  |
 | ---------------- | ---------|----------------|---------|----------------|
@@ -85,12 +85,24 @@ Eve's composable installer works with a registry of 9 components across 6 catego
 | OpenClaw         | Arms     | agent          | no      | synap          |
 | Hermes           | Builder  | builder        | no      | synap          |
 | RSSHub           | Eyes     | perception     | no      | synap          |
+| Open WebUI       | —        | add-on         | no      | synap          |
 | Dokploy          | Builder  | add-on         | no      | —              |
 | OpenCode         | Builder  | add-on         | no      | —              |
 | OpenClaude       | Builder  | add-on         | no      | —              |
 
 - **Always** components (Traefik) are installed unconditionally.
-- **Add-on** components are excluded from the default wizard selection and installed manually.
+- **Add-on** components are excluded from the default wizard selection and installed with `eve add <id>` or by selecting them in the wizard.
+
+### Install presets (interactive wizard)
+
+| Preset           | Components                              |
+| ---------------- | --------------------------------------- |
+| 🧠 Personal pod  | Traefik + Synap                         |
+| 🚀 Full stack    | Traefik + Synap + Ollama + OpenClaw     |
+| 💬 AI chat server| Traefik + Synap + Open WebUI            |
+| 🏗️ Builder server| Traefik + Synap + OpenClaw + Hermes     |
+| ⚡ Minimal       | Traefik only                            |
+| 🔧 Custom        | Pick each component individually        |
 
 ---
 
@@ -370,7 +382,7 @@ Then every **`git push`** runs [`.githooks/pre-push`](.githooks/pre-push) (same 
 ```
 eve install [options]
 
-Components:  --components traefik,synap,ollama,openclaw,rsshub
+Components:  --components traefik,synap,ollama,openclaw,rsshub,openwebui
 AI:          --ai-mode local|provider|hybrid --ai-provider ollama|openrouter|anthropic|openai
 Tunnel:      --tunnel pangolin|cloudflare --tunnel-domain <host>
 Synap:       --domain <host> --email <email> --admin-email <email> --admin-password <secret> --admin-bootstrap-mode token|preseed --from-image --from-source
@@ -378,12 +390,46 @@ Builder:     --with-openclaw --with-rsshub
 Other:       --model <model> --dry-run --json --yes --synap-repo <path>
 ```
 
+### Open WebUI (chat UI add-on)
+
+Open WebUI is a self-hosted chat interface pre-wired to the Synap Intelligence Service (IS) and Ollama. It runs as a Docker Compose profile — no separate database required (SQLite by default).
+
+**Install:**
+
+```bash
+eve install --components openwebui   # standalone
+eve install                          # pick "AI chat server" preset in the wizard
+```
+
+**What `eve install openwebui` does:**
+1. Writes `/opt/openwebui/.env` with `SYNAP_API_KEY`, `SYNAP_IS_URL`, and a generated `WEBUI_SECRET_KEY`.
+2. Configures the container to use `${SYNAP_IS_URL}/v1` as its OpenAI-compat endpoint (model aliases: `synap/auto`, `synap/balanced`, `synap/advanced`, `synap/complex`, `synap/free`).
+3. Sets `OLLAMA_BASE_URL=http://eve-brain-ollama:11434` as a local fallback.
+4. Joins `eve-network` so it can reach the IS and Synap backend (for MCP calls to `POST /mcp`).
+
+**Start/stop:**
+
+```bash
+docker compose --profile openwebui up -d    # start
+docker compose --profile openwebui down     # stop
+```
+
+**Update:**
+
+```bash
+eve update --only openwebui
+# equivalent to: docker pull ghcr.io/open-webui/open-webui:main && docker restart hestia-openwebui
+```
+
+**Logs:** `docker logs hestia-openwebui`  
+**Port:** `3011` (mapped to container `8080`)
+
 ### `eve add <component>` options
 
 ```
 eve add <component> [options]
 
-Component IDs: traefik, synap, ollama, openclaw, rsshub, hermes, dokploy, opencode, openclaude
+Component IDs: traefik, synap, ollama, openclaw, rsshub, hermes, openwebui, dokploy, opencode, openclaude
 
 Options:
   --synap-repo <path>   Path to synap-backend checkout (for synap component)
@@ -443,6 +489,7 @@ eve ai sync --workspace <workspace-uuid>
 ## Roadmap (not guaranteed in CLI yet)
 
 - TLS on the inference gateway (today often HTTP + Basic auth on localhost).
+- Open WebUI Pipelines sidecar: Python pipelines for Synap memory injection, channel sync, and Hermes job dispatch.
 - Optional sidecars (e.g. Whisper) on `eve-network`.
 - Richer CI: mocked `synap` for `data_pod` integration tests.
 
