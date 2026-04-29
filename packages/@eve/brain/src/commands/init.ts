@@ -81,7 +81,7 @@ export async function runBrainInit(options: BrainInitOptions): Promise<void> {
     await entityStateManager.updateComponentEntry('synap', {
       organ: 'brain',
       state: 'ready',
-      version: 'latest',
+      version: 'main',
       managedBy: 'eve',
       config: { domain, repoRoot: result.deployDir },
     });

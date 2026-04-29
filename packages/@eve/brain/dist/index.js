@@ -1,6 +1,6 @@
 import {
   installSynapFromImage
-} from "./chunk-LGDQJVFY.js";
+} from "./chunk-BWYOVYPM.js";
 
 // src/commands/init.ts
 import { EntityStateManager, entityStateManager, readEveSecrets, getServerIp } from "@eve/dna";
@@ -246,7 +246,7 @@ async function runBrainInit(options) {
   const delegate = options.fromImage ? null : resolveSynapDelegate();
   if (!delegate) {
     console.log("Installing Synap Data Pod from Docker image (ghcr.io/synap-core/backend)...\n");
-    const { installSynapFromImage: installSynapFromImage2 } = await import("./synap-image-install-DH42RPL4.js");
+    const { installSynapFromImage: installSynapFromImage2 } = await import("./synap-image-install-VULLXQZZ.js");
     const result = await installSynapFromImage2({
       domain,
       email,
@@ -259,7 +259,7 @@ async function runBrainInit(options) {
     await entityStateManager.updateComponentEntry("synap", {
       organ: "brain",
       state: "ready",
-      version: "latest",
+      version: "main",
       managedBy: "eve",
       config: { domain, repoRoot: result.deployDir }
     });
@@ -469,7 +469,7 @@ var SynapService = class {
     const containers = getSynapContainerIds();
     if (containers.length === 0) {
       console.log("Synap Data Pod not found \u2014 installing from Docker image...\n");
-      const { installSynapFromImage: installSynapFromImage2 } = await import("./synap-image-install-DH42RPL4.js");
+      const { installSynapFromImage: installSynapFromImage2 } = await import("./synap-image-install-VULLXQZZ.js");
       const result = await installSynapFromImage2();
       if (result.bootstrapToken) {
         console.log(`
