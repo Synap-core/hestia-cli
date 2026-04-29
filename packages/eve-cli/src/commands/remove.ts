@@ -8,6 +8,8 @@
 import type { Command } from 'commander';
 import { execa } from 'execa';
 import { join } from 'node:path';
+import { confirm, isCancel } from '@clack/prompts';
+import { getGlobalCliFlags, } from '@eve/cli-kit';
 import {
   entityStateManager,
 } from '@eve/dna';
@@ -19,12 +21,10 @@ import {
   printError,
   printInfo,
   printWarning,
-  printBox,
   createSpinner,
 } from '../lib/ui.js';
 import {
   COMPONENTS,
-  type ComponentInfo,
   resolveComponent,
 } from '../lib/components.js';
 
@@ -61,14 +61,14 @@ async function removeSynap(): Promise<void> {
   spinner.start();
   try {
     const deployDir = process.env.SYNAP_DEPLOY_DIR;
-    if (deployDir && process.platform !== 'win32') {
-      await execa('bash', ['-c', `[ -f "${deployDir}/docker-compose.yml" ] && docker compose -f "${deployDir}/docker-compose.yml" down --volumes`], {
-        shell: '/bin/bash',
+    if (deployDir) {
+      const composePath = join(deployDir, 'docker-compose.yml');
+      // Use array args — no shell string interpolation
+      await execa('docker', ['compose', '-f', composePath, 'down', '--volumes'], {
         env: { ...process.env, SYNAP_ASSUME_YES: '1' },
         stdio: 'inherit',
       });
     } else {
-      // Generic: find and stop synap containers
       const { stdout } = await execa('docker', ['ps', '-q', '-f', 'name=eve-synap']);
       if (stdout.trim()) {
         const containers = stdout.trim().split('\n').filter(Boolean);
@@ -146,6 +146,13 @@ async function removeRsshub(): Promise<void> {
  * Remove a component from the current entity.
  */
 export async function runRemove(componentId: string): Promise<void> {
+  // Traefik is always-installed infrastructure — refuse removal
+  if (componentId === 'traefik') {
+    printError('Traefik is always-installed infrastructure and cannot be removed.');
+    printInfo('  To stop it temporarily: docker stop eve-legs-traefik');
+    process.exit(1);
+  }
+
   const comp = resolveComponent(componentId);
 
   // Check if installed
@@ -185,6 +192,16 @@ export async function runRemove(componentId: string): Promise<void> {
   console.log();
   printInfo('This will stop and remove the Docker containers for this component.');
   console.log();
+
+  // Confirm before destructive action (skip in non-interactive mode)
+  const flags = getGlobalCliFlags();
+  if (!flags.nonInteractive) {
+    const ok = await confirm({ message: `Remove ${comp.label}? This cannot be undone.` });
+    if (isCancel(ok) || !ok) {
+      console.log(colors.muted('Cancelled.'));
+      return;
+    }
+  }
 
   // Run the removal
   let removeFn: () => Promise<void>;

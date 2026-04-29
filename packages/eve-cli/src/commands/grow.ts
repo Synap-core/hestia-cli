@@ -1,16 +1,13 @@
 import { Command } from 'commander';
 import { confirm, select, isCancel } from '@clack/prompts';
 import { entityStateManager, type Organ } from '@eve/dna';
-import { runBrainInit } from '@eve/brain';
+import { runAdd } from './add.js';
 import {
   colors,
   emojis,
   printHeader,
-  printSuccess,
   printError,
   printInfo,
-  createSpinner,
-  sleep,
 } from '../lib/ui.js';
 
 export function growCommand(program: Command): void {
@@ -44,8 +41,6 @@ export function growCommand(program: Command): void {
 }
 
 async function interactiveGrow(): Promise<void> {
-  console.clear();
-
   console.log();
   console.log(colors.primary.bold(`${emojis.sparkles} Eve Entity Growth`));
   console.log();
@@ -100,6 +95,15 @@ async function interactiveGrow(): Promise<void> {
   }
 }
 
+// Map organ names to component IDs for delegation to `eve add`
+const ORGAN_TO_COMPONENT: Record<string, string> = {
+  brain: 'synap',
+  arms: 'openclaw',
+  eyes: 'rsshub',
+  legs: 'traefik',
+  builder: 'hermes',
+};
+
 async function growOrgan(
   organ: string,
   options: { dryRun?: boolean; withAi?: boolean }
@@ -111,64 +115,28 @@ async function growOrgan(
     return;
   }
 
+  const componentId = ORGAN_TO_COMPONENT[organ];
+
   console.log();
   printHeader(`Growing ${organ.charAt(0).toUpperCase() + organ.slice(1)}`, emojis.sparkles);
   console.log();
 
   if (options.dryRun) {
-    printInfo('Dry run — planned steps:');
-    for (const step of getInstallationSteps(organ)) {
-      console.log(`  ${colors.muted('•')} ${step.name}`);
-    }
-    if (organ === 'brain') {
-      printInfo('Run without --dry-run to execute: eve brain init (same as grow organ brain)');
-    } else {
-      printInfo(`Run without --dry-run: use eve ${organ} install (or organ-specific commands).`);
-    }
+    printInfo(`Would run: eve add ${componentId}`);
     return;
   }
 
   const shouldProceed = await confirm({
-    message: `Install the ${organ} organ? This will set up necessary services.`,
+    message: `Install the ${organ} organ (eve add ${componentId})?`,
     initialValue: true,
   });
 
-  if (isCancel(shouldProceed)) {
-    console.log(colors.muted('\nCancelled.'));
-    return;
-  }
-  if (!shouldProceed) {
-    console.log(colors.muted('\nGrowth cancelled'));
+  if (isCancel(shouldProceed) || !shouldProceed) {
+    console.log(colors.muted('Cancelled.'));
     return;
   }
 
-  if (organ === 'brain') {
-    try {
-      await runBrainInit({
-        withAi: options.withAi === true,
-        model: 'llama3.1:8b',
-        synapRepo: process.env.SYNAP_REPO_ROOT,
-      });
-    } catch {
-      process.exit(1);
-    }
-    return;
-  }
-
-  const steps = getInstallationSteps(organ);
-  for (const step of steps) {
-    const spinner = createSpinner(step.name);
-    spinner.start();
-    await sleep(800);
-    spinner.succeed(step.name);
-  }
-
-  printInfo(
-    `Automated install for "${organ}" is not fully wired yet. Run: ${colors.info(`eve ${organ} install`)} (or see eve ${organ} --help).`
-  );
-  await entityStateManager.updateOrgan(organ as Organ, 'ready');
-  printSuccess(`${organ} marked ready in entity state (verify with eve ${organ} status).`);
-  console.log();
+  await runAdd(componentId, {});
 }
 
 async function growCapability(): Promise<void> {
@@ -196,18 +164,3 @@ async function growCapability(): Promise<void> {
   }
 }
 
-function getInstallationSteps(organ: string): Array<{ name: string }> {
-  const steps: Record<string, Array<{ name: string }>> = {
-    brain: [
-      { name: 'Docker network eve-network' },
-      { name: 'Synap Data Pod install' },
-      { name: 'Optional: Ollama + model pull' },
-    ],
-    arms: [{ name: 'eve arms install' }],
-    eyes: [{ name: 'eve eyes install' }],
-    legs: [{ name: 'eve legs setup' }],
-    builder: [{ name: 'eve builder init <project>' }],
-  };
-
-  return steps[organ] || [{ name: 'See eve <organ> --help' }];
-}

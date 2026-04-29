@@ -3,12 +3,8 @@ import { Command } from 'commander';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { execa } from 'execa';
 import { setGlobalCliFlags } from '@eve/cli-kit';
-import {
-  registerBrainCommands,
-  runBrainInit,
-} from '@eve/brain';
+import { registerBrainCommands } from '@eve/brain';
 import { registerArmsCommands } from '@eve/arms';
 import { registerLegsCommands } from '@eve/legs';
 import { registerEyesCommands } from '@eve/eyes';
@@ -19,12 +15,14 @@ import { growCommand } from './commands/grow.js';
 import { birthCommand } from './commands/lifecycle/birth.js';
 import { installCommand } from './commands/lifecycle/install.js';
 import { setupCommand } from './commands/setup.js';
+import { runInstall } from './commands/lifecycle/install.js';
 import { addCommand } from './commands/add.js';
 import { removeCommand } from './commands/remove.js';
 import { logsCommand } from './commands/debug/logs.js';
 import { inspectCommand } from './commands/debug/inspect.js';
 import { configCommands } from './commands/manage/config-cmd.js';
 import { backupUpdateCommands } from './commands/manage/backup-update.js';
+import { purgeCommand } from './commands/manage/purge.js';
 import { aiCommandGroup } from './commands/ai.js';
 import { uiCommand } from './commands/ui.js';
 import { domainCommand } from './commands/domain.js';
@@ -61,7 +59,7 @@ program.addHelpText(
   'before',
   `\n${colors.primary.bold('Eve — sovereign stack installer & operator')}\n\n` +
     `${emojis.brain} Brain   Synap + data stores + optional Ollama\n` +
-    `${emojis.arms} Arms    OpenClaw / MCP\n` +
+    `${emojis.arms} Arms    OpenClaw (agent messaging layer)\n` +
     `${emojis.builder} Builder OpenCode / OpenClaude / Dokploy\n` +
     `${emojis.eyes} Eyes    RSSHub\n` +
     `${emojis.legs} Legs    Traefik / domains\n`
@@ -85,82 +83,47 @@ removeCommand(program);
 
 program
   .command('init')
-  .description(
-    'Alias for setup; forwards to setup flow by default, brain init only when synap repo is explicit.',
-  )
-  .option('--profile <p>', 'inference_only | data_pod | full')
-  .option('--with-ai', 'Include Ollama for local AI')
-  .option('--model <model>', 'AI model', 'llama3.1:8b')
-  .option('--synap-repo <path>', 'synap-backend checkout → official synap install')
-  .option('--domain <host>', 'With --synap-repo: synap install --domain (default: localhost in brain init)')
-  .option('--email <email>', "With --synap-repo: required when domain isn't localhost")
-  .option('--with-openclaw', 'With --synap-repo: synap install --with-openclaw')
-  .option('--with-rsshub', 'With --synap-repo: synap install --with-rsshub')
-  .option('--from-image', 'With --synap-repo: synap install --from-image')
-  .option('--from-source', 'With --synap-repo: synap install --from-source')
-  .option('--admin-email <email>', 'With --synap-repo: synap install --admin-email')
-  .option('--admin-password <secret>', 'With --synap-repo: synap install --admin-password (preseed mode)')
-  .option('--admin-bootstrap-mode <mode>', 'With --synap-repo: token | preseed (default token)')
-  .action(
-    async (opts: {
-      profile?: string;
-      withAi?: boolean;
-      model?: string;
-      synapRepo?: string;
-      domain?: string;
-      email?: string;
-      withOpenclaw?: boolean;
-      withRsshub?: boolean;
-      fromImage?: boolean;
-      fromSource?: boolean;
-      adminEmail?: string;
-      adminPassword?: string;
-      adminBootstrapMode?: 'token' | 'preseed';
-    }) => {
-      try {
-        if (!opts.synapRepo && !process.env.SYNAP_REPO_ROOT) {
-          const rootFlags = program.opts() as { yes?: boolean; json?: boolean };
-          const profile = opts.profile ?? (opts.withAi ? 'full' : 'data_pod');
-          const forwardArgs = ['setup', '--profile', profile];
-          if (rootFlags.yes) forwardArgs.push('--yes');
-          if (rootFlags.json) forwardArgs.push('--json');
-          if (opts.domain) forwardArgs.push('--domain', opts.domain);
-          if (opts.email) forwardArgs.push('--email', opts.email);
-          if (opts.withOpenclaw) forwardArgs.push('--with-openclaw');
-          if (opts.withRsshub) forwardArgs.push('--with-rsshub');
-          if (opts.fromImage) forwardArgs.push('--from-image');
-          if (opts.fromSource) forwardArgs.push('--from-source');
-          if (opts.adminEmail) forwardArgs.push('--admin-email', opts.adminEmail);
-          if (opts.adminPassword) forwardArgs.push('--admin-password', opts.adminPassword);
-          if (opts.adminBootstrapMode) {
-            forwardArgs.push('--admin-bootstrap-mode', opts.adminBootstrapMode);
-          }
-          await execa('node', [__filename, ...forwardArgs], {
-            stdio: 'inherit',
-            env: process.env,
-          });
-          return;
-        }
-
-        await runBrainInit({
-          withAi: opts.withAi,
-          model: opts.model,
-          synapRepo: opts.synapRepo,
-          domain: opts.domain,
-          email: opts.email,
-          withOpenclaw: opts.withOpenclaw,
-          withRsshub: opts.withRsshub,
-          fromImage: opts.fromImage,
-          fromSource: opts.fromSource,
-          adminEmail: opts.adminEmail,
-          adminPassword: opts.adminPassword,
-          adminBootstrapMode: opts.adminBootstrapMode,
-        });
-      } catch {
-        process.exit(1);
-      }
-    },
-  );
+  .description('Alias for `eve install` — composable installer')
+  .option('--components <list>', 'Comma-separated component IDs')
+  .option('--domain <host>', 'Public hostname', 'localhost')
+  .option('--email <email>', "Let's Encrypt email")
+  .option('--model <model>', 'Ollama model', 'llama3.1:8b')
+  .option('--synap-repo <path>', 'Path to synap-backend checkout')
+  .option('--from-image', 'Install Synap from Docker image')
+  .option('--admin-email <email>', 'Admin bootstrap email')
+  .option('--admin-password <secret>', 'Admin password (preseed mode)')
+  .option('--admin-bootstrap-mode <mode>', 'token | preseed')
+  .option('--dry-run', 'Print plan without executing')
+  .action(async (opts: {
+    components?: string;
+    domain?: string;
+    email?: string;
+    model?: string;
+    synapRepo?: string;
+    fromImage?: boolean;
+    adminEmail?: string;
+    adminPassword?: string;
+    adminBootstrapMode?: 'token' | 'preseed';
+    dryRun?: boolean;
+  }) => {
+    try {
+      await runInstall({
+        components: opts.components ? opts.components.split(',').map(s => s.trim()) : undefined,
+        domain: opts.domain,
+        email: opts.email,
+        model: opts.model,
+        synapRepo: opts.synapRepo,
+        fromImage: opts.fromImage,
+        adminEmail: opts.adminEmail,
+        adminPassword: opts.adminPassword,
+        adminBootstrapMode: opts.adminBootstrapMode,
+        dryRun: opts.dryRun,
+      });
+    } catch (err) {
+      console.error(String(err));
+      process.exit(1);
+    }
+  });
 
 birthCommand(program);
 statusCommand(program);
@@ -174,6 +137,7 @@ inspectCommand(program);
 // --- Management ---
 configCommands(program);
 backupUpdateCommands(program);
+purgeCommand(program);
 
 // --- AI ---
 aiCommandGroup(program);
@@ -188,7 +152,7 @@ domainCommand(program);
 const brain = program.command('brain').description('Intelligence & memory (Synap, Ollama)');
 registerBrainCommands(brain);
 
-const arms = program.command('arms').description('Action — OpenClaw & MCP');
+const arms = program.command('arms').description('Action — OpenClaw (agent messaging layer)');
 registerArmsCommands(arms);
 
 const eyes = program.command('eyes').description('Perception — RSSHub');

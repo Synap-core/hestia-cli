@@ -1001,13 +1001,15 @@ export function setupCommand(program: Command): void {
           hubBaseUrl: prevSecrets?.synap?.hubBaseUrl ?? process.env.SYNAP_HUB_BASE_URL ?? undefined,
         };
         merge.arms = {
-          openclawSynapApiKey: podKey,
+          openclaw: { synapApiKey: podKey },
         };
       } else {
         merge.arms = {
-          openclawSynapApiKey: ensureSecretValue(
-            prevSecrets?.arms?.openclawSynapApiKey ?? process.env.OPENCLAW_SYNAP_API_KEY,
-          ),
+          openclaw: {
+            synapApiKey: ensureSecretValue(
+              prevSecrets?.arms?.openclaw?.synapApiKey ?? process.env.OPENCLAW_SYNAP_API_KEY,
+            ),
+          },
         };
       }
       if (profile !== 'data_pod') {

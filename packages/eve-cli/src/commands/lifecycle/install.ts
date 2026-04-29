@@ -187,11 +187,11 @@ export async function runInstall(opts: InstallOptions): Promise<void> {
         printInfo('Docker is installed but the daemon is not responding.');
         printInfo('Make sure it is running:');
         printInfo('  sudo systemctl status docker');
-        printInfo();
+        console.log();
         printInfo('If not running, start it:');
         printInfo('  sudo systemctl start docker');
         printInfo('  # wait ~5 seconds for it to initialize');
-        printInfo();
+        console.log();
         printInfo('If Docker is not installed, run:');
         printInfo('  curl -fsSL https://get.docker.com | sudo bash');
       }
@@ -222,7 +222,7 @@ export async function runInstall(opts: InstallOptions): Promise<void> {
 
     // Secrets
     const prevSecrets = await readEveSecrets(cwd);
-    const merge: EveSecretes = {
+    const merge: EveSecrets = {
       version: '1',
       updatedAt: new Date().toISOString(),
       ai: {
@@ -645,17 +645,21 @@ async function interactiveComponentSelect(): Promise<Record<string, boolean>> {
     ? selectableComponents.filter(c => c.category !== 'add-on').map(c => c.id)
     : (PRESETS.find(p => p.value === preset)?.ids.filter(id => id !== 'traefik') ?? []);
 
-  // Always offer to tweak for non-minimal presets
-  const finalIds = preset !== 'minimal' ? await multiselect({
-    message: preset === 'custom' ? 'Select components:' : 'Adjust selection (space to toggle):',
-    options: selectableComponents.map(c => ({
-      value: c.id,
-      label: `${c.emoji}  ${c.label}`,
-      hint: c.description.split('.')[0],
-    })),
-    initialValues: presetIds,
-    required: false,
-  }) : [];
+  // Minimal preset skips the multiselect — just Traefik, no further selection needed.
+  // All other presets offer a multiselect to confirm or adjust the component set.
+  let finalIds: string[] | symbol = [];
+  if (preset !== 'minimal') {
+    finalIds = await multiselect({
+      message: preset === 'custom' ? 'Select components:' : 'Adjust selection (space to toggle):',
+      options: selectableComponents.map(c => ({
+        value: c.id,
+        label: `${c.emoji}  ${c.label}`,
+        hint: c.description.split('.')[0],
+      })),
+      initialValues: presetIds,
+      required: false,
+    });
+  }
 
   if (isCancel(finalIds)) return {};
 
@@ -841,15 +845,11 @@ function spawnAsync(
   args: string[],
   opts?: { env?: Record<string, string>; cwd?: string },
 ): Promise<void> {
-  return import('execa').then(mod =>
-    mod.spawn(cmd, args, {
+  return import('execa').then(({ execa: execaFn }) =>
+    execaFn(cmd, args, {
       env: { ...process.env, ...(opts?.env || {}) },
       cwd: opts?.cwd,
       stdio: 'inherit',
-    }).on('spawn', () => {}).on('close', ({ exitCode }) => {
-      if (exitCode !== 0) {
-        throw new Error(`${cmd} exited with code ${exitCode}`);
-      }
-    })
+    }).then(() => undefined)
   );
 }

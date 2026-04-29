@@ -25,11 +25,10 @@ export function doctorCommand(program: Command): void {
     .command('doctor')
     .alias('doc')
     .description('Run comprehensive diagnostics on the entity')
-    .option('-f, --fix', 'Attempt to fix issues automatically')
     .option('-v, --verbose', 'Show verbose output')
     .action(async (options) => {
       try {
-        await runDiagnostics(options.fix, options.verbose);
+        await runDiagnostics(options.verbose);
       } catch (error) {
         printError('Diagnostics failed: ' + String(error));
         process.exit(1);
@@ -37,7 +36,7 @@ export function doctorCommand(program: Command): void {
     });
 }
 
-async function runDiagnostics(attemptFix = false, verbose = false): Promise<void> {
+async function runDiagnostics(verbose = false): Promise<void> {
   console.log();
   printHeader('Entity Diagnostics', emojis.info);
   console.log();
@@ -145,8 +144,14 @@ async function runDiagnostics(attemptFix = false, verbose = false): Promise<void
           message: `Stopped — ${all.get(containerName)}`,
           fix: `docker start ${containerName}  or  eve install --components=${organ}`,
         });
+      } else {
+        checks.push({
+          name: containerName,
+          status: 'warn',
+          message: 'Not found — organ not installed',
+          fix: `eve install --components=${organ}`,
+        });
       }
-      // If not in `docker ps -a` at all, the organ just isn't installed — skip silently
     }
   } catch {
     containerCheck.fail('Could not query Docker containers');
@@ -227,10 +232,7 @@ async function runDiagnostics(attemptFix = false, verbose = false): Promise<void
   } else {
     console.log();
     printError(`Entity has ${failed} issue(s) that need attention.`);
-    if (attemptFix) {
-      console.log();
-      printInfo('Automatic fixes are not implemented yet. Follow the Fix hints above or run eve inspect.');
-    }
+    printInfo('  Follow the Fix hints above, or run: eve inspect');
   }
   console.log();
 }
