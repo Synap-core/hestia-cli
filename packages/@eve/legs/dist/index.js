@@ -137,7 +137,7 @@ var TraefikService = class {
   async configureDokployTraefik() {
     console.log("Using Dokploy-managed Traefik");
   }
-  async configureSubdomains(domain, ssl, email) {
+  async configureSubdomains(domain, ssl, email, installedComponents) {
     const dockerGateway = getDockerGateway();
     const synapContainer = getSynapBackendContainer();
     if (synapContainer) {
@@ -147,13 +147,17 @@ var TraefikService = class {
       console.warn("  Warning: Synap backend container not found \u2014 pod.domain routing will 502 until `eve brain init` is run");
     }
     const podUpstream = synapContainer ? `http://${synapContainer}:4000` : `http://${dockerGateway}:4000`;
-    const services = [
-      { id: "eve-dashboard", subdomain: "eve", upstream: `http://${dockerGateway}:7979` },
-      { id: "pod", subdomain: "pod", upstream: podUpstream },
-      { id: "openclaw", subdomain: "openclaw", upstream: "http://eve-arms-openclaw:3000" },
-      { id: "feeds", subdomain: "feeds", upstream: "http://eve-eyes-rsshub:1200" },
-      { id: "ollama", subdomain: "ai", upstream: "http://eve-brain-ollama:11434" }
+    const allServices = [
+      { id: "eve-dashboard", subdomain: "eve", upstream: `http://${dockerGateway}:7979`, requires: null },
+      { id: "pod", subdomain: "pod", upstream: podUpstream, requires: "synap" },
+      { id: "openclaw", subdomain: "openclaw", upstream: "http://eve-arms-openclaw:3000", requires: "openclaw" },
+      { id: "feeds", subdomain: "feeds", upstream: "http://eve-eyes-rsshub:1200", requires: "rsshub" },
+      { id: "ollama", subdomain: "ai", upstream: "http://eve-brain-ollama:11434", requires: "ollama" },
+      { id: "openwebui", subdomain: "chat", upstream: "http://hestia-openwebui:8080", requires: "openwebui" }
     ];
+    const services = allServices.filter(
+      (s) => s.requires === null || !installedComponents || installedComponents.includes(s.requires)
+    );
     const routersYaml = services.map((s) => {
       const host = `${s.subdomain}.${domain}`;
       if (ssl) {

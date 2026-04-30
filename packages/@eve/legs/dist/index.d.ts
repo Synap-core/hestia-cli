@@ -14,7 +14,7 @@ declare class TraefikService {
     install(): Promise<void>;
     private installStandalone;
     private configureDokployTraefik;
-    configureSubdomains(domain: string, ssl: boolean, email?: string): Promise<void>;
+    configureSubdomains(domain: string, ssl: boolean, email?: string, installedComponents?: string[]): Promise<void>;
     addRoute(route: Route): Promise<void>;
     removeRoute(path: string): Promise<void>;
     configureDomain(domain: string): Promise<void>;

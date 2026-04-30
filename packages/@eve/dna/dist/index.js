@@ -1546,22 +1546,24 @@ function getServerIp() {
 
 // src/access-urls.ts
 var SERVICE_DEFS = [
-  { id: "eve", label: "Eve Dashboard", emoji: "\u{1F33F}", port: 7979, subdomain: "eve" },
-  { id: "pod", label: "Synap Pod", emoji: "\u{1F9E0}", port: 4e3, subdomain: "pod" },
-  { id: "openclaw", label: "OpenClaw", emoji: "\u{1F9BE}", port: 3e3, subdomain: "openclaw" },
-  { id: "feeds", label: "RSSHub Feeds", emoji: "\u{1F441}\uFE0F", port: 1200, subdomain: "feeds" },
-  { id: "ollama", label: "Ollama AI", emoji: "\u{1F916}", port: 11434, subdomain: "ai" }
+  { id: "eve", label: "Eve Dashboard", emoji: "\u{1F33F}", port: 7979, subdomain: "eve", requires: null },
+  { id: "pod", label: "Synap Pod", emoji: "\u{1F9E0}", port: 4e3, subdomain: "pod", requires: "synap" },
+  { id: "openclaw", label: "OpenClaw", emoji: "\u{1F9BE}", port: 3e3, subdomain: "openclaw", requires: "openclaw" },
+  { id: "feeds", label: "RSSHub Feeds", emoji: "\u{1F441}\uFE0F", port: 1200, subdomain: "feeds", requires: "rsshub" },
+  { id: "ollama", label: "Ollama AI", emoji: "\u{1F916}", port: 11434, subdomain: "ai", requires: "ollama" },
+  { id: "openwebui", label: "Open WebUI", emoji: "\u{1F4AC}", port: 3011, subdomain: "chat", requires: "openwebui" }
 ];
-function getAccessUrls(secrets) {
+function getAccessUrls(secrets, installedComponents) {
   const serverIp = getServerIp();
   const domain = secrets?.domain?.primary;
   const ssl = secrets?.domain?.ssl ?? false;
   const protocol = ssl ? "https" : "http";
-  return SERVICE_DEFS.map((def) => ({
+  return SERVICE_DEFS.filter((def) => !installedComponents || def.requires === null || installedComponents.includes(def.requires)).map((def) => ({
     id: def.id,
     label: def.label,
     emoji: def.emoji,
     port: def.port,
+    requires: def.requires,
     localUrl: `http://localhost:${def.port}`,
     serverUrl: serverIp ? `http://${serverIp}:${def.port}` : null,
     domainUrl: domain ? `${protocol}://${def.subdomain}.${domain}` : null

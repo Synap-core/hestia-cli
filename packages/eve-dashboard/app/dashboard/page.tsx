@@ -111,9 +111,11 @@ export default function DashboardPage() {
   const [secrets, setSecrets] = useState<SecretsSummary | null>(null);
   const [access, setAccess] = useState<AccessData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [restarting, setRestarting] = useState<string | null>(null);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (silent = false) => {
+    if (!silent) setRefreshing(true);
     try {
       const [stateRes, secretsRes, accessRes] = await Promise.all([
         fetch("/api/state", { credentials: "include" }),
@@ -130,14 +132,18 @@ export default function DashboardPage() {
       if (secretsRes.ok) setSecrets(await secretsRes.json() as SecretsSummary);
       if (accessRes.ok) setAccess(await accessRes.json() as AccessData);
     } catch {
-      addToast({ title: "Failed to load state", color: "danger" });
+      if (!silent) addToast({ title: "Failed to load state", color: "danger" });
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, [router]);
 
   useEffect(() => {
     void fetchData();
+    // Auto-refresh every 15 seconds so organ states stay current (silent = no spinner)
+    const interval = setInterval(() => void fetchData(true), 15_000);
+    return () => clearInterval(interval);
   }, [fetchData]);
 
   async function restartOrgan(organ: string) {
@@ -150,7 +156,7 @@ export default function DashboardPage() {
       if (res.status === 401) { router.push("/login"); return; }
       if (res.ok) {
         addToast({ title: `${organ} restart triggered`, color: "success" });
-        setTimeout(() => void fetchData(), 2000);
+        setTimeout(() => void fetchData(true), 2000);
       } else {
         const d = await res.json() as { error?: string };
         addToast({ title: d.error ?? "Restart failed", color: "danger" });
@@ -191,8 +197,9 @@ export default function DashboardPage() {
           <Button
             variant="bordered"
             size="sm"
-            startContent={<RefreshCw className="w-3.5 h-3.5" />}
-            onPress={() => { setLoading(true); void fetchData(); }}
+            isLoading={refreshing}
+            startContent={!refreshing ? <RefreshCw className="w-3.5 h-3.5" /> : undefined}
+            onPress={() => void fetchData()}
           >
             Refresh
           </Button>

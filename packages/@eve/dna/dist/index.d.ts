@@ -1161,8 +1161,17 @@ interface ServiceAccess {
     serverUrl: string | null;
     domainUrl: string | null;
     port: number;
+    /** Component ID that must be installed for this service to be available. null = always shown. */
+    requires: string | null;
 }
-declare function getAccessUrls(secrets: EveSecrets | null): ServiceAccess[];
+/**
+ * Returns access URLs for installed services.
+ *
+ * @param secrets          Eve secrets (domain config)
+ * @param installedComponents  List of installed component IDs from entity state.
+ *                             When omitted, all services are returned (backward compat / pre-init).
+ */
+declare function getAccessUrls(secrets: EveSecrets | null, installedComponents?: string[]): ServiceAccess[];
 
 /** Default Hub Protocol path on the Synap API host (Better Auth / Hub REST). */
 declare const DEFAULT_HUB_PATH = "/api/hub";

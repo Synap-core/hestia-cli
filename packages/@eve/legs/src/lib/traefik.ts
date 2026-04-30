@@ -155,7 +155,7 @@ export class TraefikService {
     console.log('Using Dokploy-managed Traefik');
   }
 
-  async configureSubdomains(domain: string, ssl: boolean, email?: string): Promise<void> {
+  async configureSubdomains(domain: string, ssl: boolean, email?: string, installedComponents?: string[]): Promise<void> {
     const dockerGateway = getDockerGateway();
 
     // Synap backend runs in its own docker-compose project ("synap-backend").
@@ -171,13 +171,20 @@ export class TraefikService {
       ? `http://${synapContainer}:4000`
       : `http://${dockerGateway}:4000`;
 
-    const services: Array<{ id: string; subdomain: string; upstream: string }> = [
-      { id: 'eve-dashboard', subdomain: 'eve',      upstream: `http://${dockerGateway}:7979` },
-      { id: 'pod',           subdomain: 'pod',      upstream: podUpstream },
-      { id: 'openclaw',      subdomain: 'openclaw', upstream: 'http://eve-arms-openclaw:3000' },
-      { id: 'feeds',         subdomain: 'feeds',    upstream: 'http://eve-eyes-rsshub:1200' },
-      { id: 'ollama',        subdomain: 'ai',       upstream: 'http://eve-brain-ollama:11434' },
+    // All possible service routes. Each entry declares which component must be installed.
+    const allServices: Array<{ id: string; subdomain: string; upstream: string; requires: string | null }> = [
+      { id: 'eve-dashboard', subdomain: 'eve',      upstream: `http://${dockerGateway}:7979`,      requires: null },
+      { id: 'pod',           subdomain: 'pod',      upstream: podUpstream,                          requires: 'synap' },
+      { id: 'openclaw',      subdomain: 'openclaw', upstream: 'http://eve-arms-openclaw:3000',      requires: 'openclaw' },
+      { id: 'feeds',         subdomain: 'feeds',    upstream: 'http://eve-eyes-rsshub:1200',        requires: 'rsshub' },
+      { id: 'ollama',        subdomain: 'ai',       upstream: 'http://eve-brain-ollama:11434',      requires: 'ollama' },
+      { id: 'openwebui',     subdomain: 'chat',     upstream: 'http://hestia-openwebui:8080',       requires: 'openwebui' },
     ];
+
+    // Filter to installed services (always include eve-dashboard regardless)
+    const services = allServices.filter(
+      s => s.requires === null || !installedComponents || installedComponents.includes(s.requires),
+    );
 
     // Build routers — always include HTTP.
     // With SSL: HTTP redirects to HTTPS; HTTPS carries the actual route + TLS.
