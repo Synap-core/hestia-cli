@@ -1,6 +1,7 @@
 import type { Command } from 'commander';
 import { execSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, unlinkSync } from 'node:fs';
+import { join } from 'node:path';
 import { writeEveSecrets, readEveSecrets, getAccessUrls, getServerIp, entityStateManager } from '@eve/dna';
 import { TraefikService } from '@eve/legs';
 import { colors, printSuccess, printInfo, printWarning, printError } from '../lib/ui.js';
@@ -267,35 +268,171 @@ export function domainCommand(program: Command): void {
         console.log(`    ${host.padEnd(32)} ${dnsBadge}`);
       }
 
-      // ─── 6. Recent Traefik logs (errors only) ──────────────────────────
+      // ─── 6. Traefik admin API — what routers are ACTUALLY loaded? ──────
       console.log();
-      console.log(colors.muted('  Recent Traefik errors/warnings (filtered, last 50 lines):'));
+      console.log(colors.primary.bold('  Routers loaded inside Traefik (via admin API :8080):'));
+      console.log(colors.muted('  ' + '─'.repeat(58)));
+      let loadedRouters: Array<{ name: string; rule: string; status: string }> = [];
       try {
-        const logs = execSync('docker logs eve-legs-traefik --tail 50 2>&1 | grep -iE "error|warn|level=error|level=warn" || echo ""', {
+        const apiOut = execSync('curl -s --max-time 3 http://localhost:8080/api/http/routers', {
           encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'],
         }).trim();
+        if (apiOut) {
+          const parsed = JSON.parse(apiOut) as Array<{ name: string; rule: string; status?: string }>;
+          loadedRouters = parsed.map(r => ({ name: r.name, rule: r.rule, status: r.status ?? 'unknown' }));
+        }
+      } catch { /* admin API unreachable */ }
+
+      if (loadedRouters.length === 0) {
+        console.log(`    ${cross} ${colors.error('NO ROUTERS LOADED!')} Traefik can't see your config file.`);
+        console.log();
+        console.log(colors.warning('  Likely causes:'));
+        console.log(colors.warning('    1. Volume mount broken — re-create container'));
+        console.log(colors.warning('    2. YAML syntax error — Traefik silently dropped the config'));
+        console.log(colors.warning('    3. Static config missing providers.file directive'));
+      } else {
+        for (const r of loadedRouters) {
+          const enabled = r.status === 'enabled' ? colors.success('enabled') : colors.error(r.status);
+          console.log(`    ${r.name.padEnd(28)} ${enabled}  ${colors.muted(r.rule)}`);
+        }
+      }
+
+      // ─── 7. What the container actually sees ───────────────────────────
+      console.log();
+      console.log(colors.primary.bold('  What Traefik container sees (docker exec):'));
+      console.log(colors.muted('  ' + '─'.repeat(58)));
+      try {
+        const containerStaticHead = execSync(
+          'docker exec eve-legs-traefik cat /etc/traefik/traefik.yml 2>&1 | head -8',
+          { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
+        ).trim();
+        console.log(colors.muted('    /etc/traefik/traefik.yml (first 8 lines):'));
+        for (const line of containerStaticHead.split('\n')) {
+          console.log(`      ${colors.muted(line)}`);
+        }
+      } catch {
+        console.log(`    ${cross} Could not read static config inside container`);
+      }
+      try {
+        const containerLs = execSync(
+          'docker exec eve-legs-traefik ls -la /etc/traefik/dynamic/ 2>&1',
+          { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
+        ).trim();
+        console.log();
+        console.log(colors.muted('    /etc/traefik/dynamic/ (container view):'));
+        for (const line of containerLs.split('\n')) {
+          console.log(`      ${colors.muted(line)}`);
+        }
+      } catch {
+        console.log(`    ${cross} Could not list dynamic dir inside container`);
+      }
+
+      // ─── 8. Recent Traefik logs (errors + provider events) ─────────────
+      console.log();
+      console.log(colors.muted('  Traefik errors / config events (last 30 relevant lines):'));
+      try {
+        const logs = execSync(
+          'docker logs eve-legs-traefik 2>&1 | grep -iE "error|warn|provider|configuration|cannot|failed|unable|loaded|started" | grep -v "Peeking first byte" | tail -30 || echo ""',
+          { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
+        ).trim();
         if (!logs) {
-          console.log(`    ${colors.success('(no errors or warnings)')}`);
+          console.log(`    ${colors.muted('(no relevant log entries)')}`);
         } else {
-          for (const line of logs.split('\n').slice(-10)) {
-            const isError = /error|ERR|level=error/i.test(line);
-            console.log(`    ${isError ? colors.error(line) : colors.warning(line)}`);
+          for (const line of logs.split('\n')) {
+            const isError = /error|ERR|level=error|fail|unable|cannot/i.test(line);
+            console.log(`    ${isError ? colors.error(line) : colors.muted(line)}`);
           }
         }
       } catch {
         console.log(colors.muted('    (could not read logs)'));
       }
 
-      // ─── 7. Targeted advice ────────────────────────────────────────────
+      // ─── 9. Targeted advice ────────────────────────────────────────────
       console.log();
       console.log(colors.primary.bold('  Hints:'));
       console.log(colors.muted('  ' + '─'.repeat(58)));
-      printInfo('  • 404 on a route = Traefik received the request but no rule matched');
-      printInfo('    → check the request reaches Traefik with the right Host header');
-      printInfo('    → if DNS shows NO DNS RECORD, your A records aren\'t set / propagated');
-      printInfo('  • 502 = route matched, upstream down. Check the upstream container is running.');
-      printInfo('  • Eve dashboard runs on the HOST (port 7979), not in Docker.');
-      printInfo('    Start it with: cd /opt/eve && npx eve ui (or run as a systemd service)');
+      if (loadedRouters.length === 0) {
+        printError('  Traefik has NO routers loaded — your routes file is being ignored.');
+        printInfo('  Try re-running: eve domain set <yourdomain>');
+        printInfo('  If that doesn\'t fix it, recreate the Traefik container:');
+        printInfo('    docker rm -f eve-legs-traefik');
+        printInfo('    eve install --components=traefik');
+        printInfo('    eve domain set <yourdomain>');
+      } else {
+        printInfo('  • 404 with routers loaded = Host header mismatch. Test with:');
+        printInfo('      curl -v -H "Host: eve.<domain>" http://localhost/');
+        printInfo('  • 502 = route matched, upstream down. Check upstream containers.');
+        printInfo('  • Eve dashboard runs on the HOST (port 7979), not in Docker.');
+        printInfo('      Start it with: cd /opt/eve && npx eve ui');
+      }
+      console.log();
+    });
+
+  domain
+    .command('repair')
+    .description('Recreate Traefik with clean state — fixes stale routes & broken volume mounts')
+    .action(async () => {
+      const secrets = await readEveSecrets(process.cwd());
+      const domainName = secrets?.domain?.primary;
+      if (!domainName) {
+        printError('No domain configured. Run: eve domain set <yourdomain> first.');
+        process.exit(1);
+      }
+
+      console.log();
+      console.log(colors.primary.bold('Eve — Traefik repair'));
+      console.log(colors.muted('─'.repeat(60)));
+      console.log();
+
+      // 1. Remove the running Traefik container (releases stale bind mounts)
+      printInfo('Removing existing Traefik container...');
+      try {
+        execSync('docker rm -f eve-legs-traefik', { stdio: 'inherit' });
+      } catch { /* container may not exist */ }
+
+      // 2. Wipe stale dynamic config files (legacy from pre-Eve installs)
+      const HOST_DYNAMIC_DIR = '/opt/traefik/dynamic';
+      const HOST_STATIC_CONFIG = '/opt/traefik/traefik.yml';
+      if (existsSync(HOST_DYNAMIC_DIR)) {
+        printInfo('Cleaning stale dynamic config files...');
+        try {
+          for (const file of readdirSync(HOST_DYNAMIC_DIR)) {
+            if (file.endsWith('.yml') || file.endsWith('.yaml')) {
+              const path = join(HOST_DYNAMIC_DIR, file);
+              try {
+                unlinkSync(path);
+                console.log(`  ${colors.muted('•')} removed ${file}`);
+              } catch (err) {
+                printWarning(`  could not remove ${file}: ${err instanceof Error ? err.message : String(err)}`);
+              }
+            }
+          }
+        } catch (err) {
+          printWarning(`  could not read ${HOST_DYNAMIC_DIR}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+
+      // 3. Also remove the static config so a fresh one is generated
+      if (existsSync(HOST_STATIC_CONFIG)) {
+        try {
+          unlinkSync(HOST_STATIC_CONFIG);
+          console.log(`  ${colors.muted('•')} removed traefik.yml`);
+        } catch { /* non-fatal */ }
+      }
+
+      // 4. Reinstall Traefik (recreates container with proper bind mounts)
+      printInfo('Reinstalling Traefik (fresh container)...');
+      const traefik = new TraefikService();
+      await traefik.install();
+
+      // 5. Reapply domain routes
+      printInfo('Applying domain routes...');
+      let installedComponents: string[] | undefined;
+      try { installedComponents = await entityStateManager.getInstalledComponents(); } catch { /* ignore */ }
+      await traefik.configureSubdomains(domainName, !!secrets?.domain?.ssl, secrets?.domain?.email, installedComponents);
+
+      console.log();
+      printSuccess('Repair complete. Run `eve domain check` to verify.');
       console.log();
     });
 
