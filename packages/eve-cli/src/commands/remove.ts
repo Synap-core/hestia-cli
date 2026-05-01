@@ -139,6 +139,34 @@ async function removeRsshub(): Promise<void> {
   spinner.succeed('RSSHub removed');
 }
 
+async function removeOpenwebui(): Promise<void> {
+  const spinner = createSpinner('Stopping Open WebUI...');
+  spinner.start();
+  try {
+    const { existsSync } = await import('node:fs');
+    const deployDir = '/opt/openwebui';
+    const composePath = join(deployDir, 'docker-compose.yml');
+
+    if (existsSync(composePath)) {
+      // Tear down via the same compose project we used to bring it up
+      await execa('docker', ['compose', '--profile', 'openwebui', 'down', '--volumes'], {
+        cwd: deployDir,
+        stdio: 'inherit',
+      });
+    } else {
+      // Fallback: remove by container name
+      const { stdout } = await execa('docker', ['ps', '-aq', '-f', 'name=hestia-openwebui']);
+      if (stdout.trim()) {
+        const containers = stdout.trim().split('\n').filter(Boolean);
+        await execa('docker', ['rm', '-f', ...containers], { stdio: 'inherit' });
+      }
+    }
+  } catch {
+    printWarning('Open WebUI removal failed — check manually.');
+  }
+  spinner.succeed('Open WebUI removed');
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -249,6 +277,8 @@ function buildRemoveStep(componentId: string): () => Promise<void> {
       return removeOpenclaw;
     case 'rsshub':
       return removeRsshub;
+    case 'openwebui':
+      return removeOpenwebui;
     case 'hermes':
     case 'dokploy':
     case 'opencode':
@@ -277,6 +307,7 @@ async function updateStateAfterRemove(componentId: string): Promise<void> {
     hermes: 'builder',
     rsshub: 'eyes',
     traefik: 'legs',
+    openwebui: 'eyes',
     dokploy: 'builder',
     opencode: 'builder',
     openclaude: 'builder',
@@ -313,7 +344,7 @@ export function removeCommand(program: Command): void {
     .command('remove')
     .alias('rm')
     .description('Remove a component from an existing entity')
-    .argument('[component]', 'Component ID to remove (synap, ollama, openclaw, rsshub, traefik)')
+    .argument('[component]', 'Component ID to remove (synap, ollama, openclaw, rsshub, traefik, openwebui)')
     .action(async (component: string | undefined) => {
       if (!component) {
         console.log();

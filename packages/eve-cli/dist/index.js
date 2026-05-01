@@ -2899,6 +2899,30 @@ async function removeRsshub() {
   }
   spinner.succeed("RSSHub removed");
 }
+async function removeOpenwebui() {
+  const spinner = createSpinner("Stopping Open WebUI...");
+  spinner.start();
+  try {
+    const { existsSync: existsSync8 } = await import("fs");
+    const deployDir = "/opt/openwebui";
+    const composePath = join3(deployDir, "docker-compose.yml");
+    if (existsSync8(composePath)) {
+      await execa5("docker", ["compose", "--profile", "openwebui", "down", "--volumes"], {
+        cwd: deployDir,
+        stdio: "inherit"
+      });
+    } else {
+      const { stdout } = await execa5("docker", ["ps", "-aq", "-f", "name=hestia-openwebui"]);
+      if (stdout.trim()) {
+        const containers = stdout.trim().split("\n").filter(Boolean);
+        await execa5("docker", ["rm", "-f", ...containers], { stdio: "inherit" });
+      }
+    }
+  } catch {
+    printWarning("Open WebUI removal failed \u2014 check manually.");
+  }
+  spinner.succeed("Open WebUI removed");
+}
 async function runRemove(componentId) {
   if (componentId === "traefik") {
     printError("Traefik is always-installed infrastructure and cannot be removed.");
@@ -2979,6 +3003,8 @@ function buildRemoveStep(componentId) {
       return removeOpenclaw;
     case "rsshub":
       return removeRsshub;
+    case "openwebui":
+      return removeOpenwebui;
     case "hermes":
     case "dokploy":
     case "opencode":
@@ -3002,6 +3028,7 @@ async function updateStateAfterRemove(componentId) {
     hermes: "builder",
     rsshub: "eyes",
     traefik: "legs",
+    openwebui: "eyes",
     dokploy: "builder",
     opencode: "builder",
     openclaude: "builder"
@@ -3024,7 +3051,7 @@ async function updateStateAfterRemove(componentId) {
   }
 }
 function removeCommand(program2) {
-  program2.command("remove").alias("rm").description("Remove a component from an existing entity").argument("[component]", "Component ID to remove (synap, ollama, openclaw, rsshub, traefik)").action(async (component) => {
+  program2.command("remove").alias("rm").description("Remove a component from an existing entity").argument("[component]", "Component ID to remove (synap, ollama, openclaw, rsshub, traefik, openwebui)").action(async (component) => {
     if (!component) {
       console.log();
       printHeader("Eve \u2014 Remove Component", emojis.entity);
