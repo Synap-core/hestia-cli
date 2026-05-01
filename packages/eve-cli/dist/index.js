@@ -50,29 +50,30 @@ var emojis = {
   cross: "\u2717",
   bullet: "\u2022"
 };
+var CLEAR_LINE = "\r\x1B[2K";
 function createSpinner(text3) {
   let interval;
   const frames = ["\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F"];
   let i = 0;
   return {
     start() {
-      process.stdout.write(colors.info(`${frames[0]} ${text3}`));
+      process.stdout.write(`${CLEAR_LINE}${colors.info(`${frames[0]} ${text3}`)}`);
       interval = setInterval(() => {
-        process.stdout.write(`\r${colors.info(`${frames[i]} ${text3}`)}`);
+        process.stdout.write(`${CLEAR_LINE}${colors.info(`${frames[i]} ${text3}`)}`);
         i = (i + 1) % frames.length;
       }, 80);
     },
     succeed(msg) {
       clearInterval(interval);
-      console.log(`\r${colors.success(`${emojis.check} ${msg || text3}`)}`);
+      console.log(`${CLEAR_LINE}${colors.success(`${emojis.check} ${msg || text3}`)}`);
     },
     fail(msg) {
       clearInterval(interval);
-      console.log(`\r${colors.error(`${emojis.cross} ${msg || text3}`)}`);
+      console.log(`${CLEAR_LINE}${colors.error(`${emojis.cross} ${msg || text3}`)}`);
     },
     warn(msg) {
       clearInterval(interval);
-      console.log(`\r${colors.warning(`${emojis.warning} ${msg || text3}`)}`);
+      console.log(`${CLEAR_LINE}${colors.warning(`${emojis.warning} ${msg || text3}`)}`);
     }
   };
 }
@@ -246,43 +247,6 @@ async function showStatus(json = false) {
   }
   console.log(table.toString());
   console.log();
-  const components = state.installed;
-  if (components && Object.keys(components).length > 0) {
-    const compTable = new Table({
-      head: [
-        colors.primary.bold("Component"),
-        colors.primary.bold("Status"),
-        colors.primary.bold("Version"),
-        colors.primary.bold("Managed By")
-      ],
-      colWidths: [18, 12, 12, 14],
-      style: {
-        head: [],
-        border: ["grey"]
-      }
-    });
-    const COMPONENT_LABELS = {
-      synap: "Synap",
-      openclaw: "OpenClaw",
-      hermes: "Hermes",
-      rsshub: "RSSHub",
-      traefik: "Traefik",
-      ollama: "Ollama",
-      openwebui: "Open WebUI"
-    };
-    for (const [id, comp] of Object.entries(components)) {
-      const statusColor = getStatusColor(comp.state);
-      const managedByColor = comp.managedBy === "eve" ? colors.success : comp.managedBy === "synap" ? colors.warning : colors.muted;
-      compTable.push([
-        COMPONENT_LABELS[id] || id,
-        statusColor(comp.state),
-        comp.version || "-",
-        managedByColor(comp.managedBy || "\u2014")
-      ]);
-    }
-    console.log(compTable.toString());
-    console.log();
-  }
   const readyCount = organs.filter((o) => state.organs[o].state === "ready").length;
   const percent = Math.round(readyCount / organs.length * 100);
   printBox("Completeness", [
@@ -334,6 +298,18 @@ async function showStatus(json = false) {
 }
 async function showComponentOverview() {
   const installed = await entityStateManager.getInstalledComponents();
+  const liveContainers = getLiveContainerState();
+  const componentLiveState = /* @__PURE__ */ new Map();
+  for (const comp of COMPONENTS) {
+    if (!comp.service) {
+      componentLiveState.set(comp.id, "no-service");
+      continue;
+    }
+    componentLiveState.set(
+      comp.id,
+      liveContainers.running.has(comp.service.containerName) ? "running" : "missing"
+    );
+  }
   const installedComps = COMPONENTS.filter((c) => installed.includes(c.id));
   const availableComps = COMPONENTS.filter((c) => !installed.includes(c.id));
   const recommendations = [];
@@ -357,7 +333,27 @@ async function showComponentOverview() {
     console.log();
     console.log(colors.success.bold("  Installed"));
     for (const comp of installedComps) {
-      console.log(`    ${colors.success("\u25CF")} ${comp.emoji} ${comp.label.padEnd(20)} ${colors.muted(comp.description.split(".")[0])}`);
+      const live = componentLiveState.get(comp.id);
+      let dot;
+      let suffix;
+      if (live === "running") {
+        dot = colors.success("\u25CF");
+        suffix = "";
+      } else if (live === "missing") {
+        dot = colors.error("\u25CF");
+        suffix = colors.error(" (container not running)");
+      } else {
+        dot = colors.muted("\u25CF");
+        suffix = "";
+      }
+      console.log(`    ${dot} ${comp.emoji} ${comp.label.padEnd(20)} ${colors.muted(comp.description.split(".")[0])}${suffix}`);
+    }
+    const stale = installedComps.filter((c) => componentLiveState.get(c.id) === "missing");
+    if (stale.length > 0) {
+      console.log();
+      console.log(colors.warning(`    \u26A0 ${stale.length} component(s) are marked installed but their containers are missing.`));
+      console.log(colors.muted(`      Re-install: ${colors.info(`eve add ${stale.map((c) => c.id).join(" ")}`)}`));
+      console.log(colors.muted(`      Or run:     ${colors.info("eve doctor")} ${colors.muted("to investigate")}`));
     }
   }
   if (recommendations.length > 0) {
@@ -951,14 +947,27 @@ function buildAddStep(componentId, opts) {
       };
     case "openwebui": {
       return {
-        label: "Setting up Open WebUI...",
+        label: "Installing Open WebUI...",
         async fn() {
-          const { mkdirSync, writeFileSync: writeFileSync2, existsSync: existsSync8 } = await import("fs");
+          const { mkdirSync, writeFileSync: writeFileSync2, existsSync: existsSync8, copyFileSync } = await import("fs");
           const { join: pathJoin } = await import("path");
+          const { fileURLToPath: fileURLToPath3 } = await import("url");
           const { readEveSecrets: readEveSecrets8 } = await import("@eve/dna");
           const { randomBytes: randomBytes2 } = await import("crypto");
+          const { execa: execa12 } = await import("execa");
           const deployDir = "/opt/openwebui";
           mkdirSync(deployDir, { recursive: true });
+          const __filename3 = fileURLToPath3(import.meta.url);
+          const candidates = [
+            pathJoin(__filename3, "..", "..", "..", "install", "src", "templates", "ai-chat-docker-compose.yml"),
+            pathJoin(__filename3, "..", "..", "..", "..", "install", "src", "templates", "ai-chat-docker-compose.yml"),
+            pathJoin(__filename3, "..", "templates", "ai-chat-docker-compose.yml")
+          ];
+          const templatePath = candidates.find((p) => existsSync8(p));
+          if (!templatePath) {
+            throw new Error(`Could not locate ai-chat-docker-compose.yml (looked in: ${candidates.join(", ")})`);
+          }
+          copyFileSync(templatePath, pathJoin(deployDir, "docker-compose.yml"));
           const secrets = await readEveSecrets8(process.cwd());
           const synapApiKey = secrets?.synap?.apiKey ?? process.env.SYNAP_API_KEY ?? "";
           const isUrl = process.env.SYNAP_IS_URL ?? "http://intelligence-hub:3001";
@@ -970,11 +979,20 @@ function buildAddStep(componentId, opts) {
               `SYNAP_IS_URL=${isUrl}`,
               `WEBUI_SECRET_KEY=${randomBytes2(32).toString("hex")}`,
               `ENABLE_SIGNUP=true`,
-              `DEFAULT_USER_ROLE=user`
+              `DEFAULT_USER_ROLE=user`,
+              `OLLAMA_BASE_URL=http://eve-brain-ollama:11434`
             ].join("\n"), { mode: 384 });
           }
-          console.log(`  Config written to ${deployDir}`);
-          console.log("  Start with: docker compose --profile openwebui up -d");
+          try {
+            await execa12("docker", ["network", "inspect", "eve-network"], { stdio: "ignore" });
+          } catch {
+            await execa12("docker", ["network", "create", "eve-network"], { stdio: "inherit" });
+          }
+          console.log(`  Config: ${deployDir}/docker-compose.yml`);
+          await execa12("docker", ["compose", "--profile", "openwebui", "up", "-d"], {
+            cwd: deployDir,
+            stdio: "inherit"
+          });
         }
       };
     }

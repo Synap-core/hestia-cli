@@ -277,14 +277,35 @@ function buildAddStep(
       };
     case 'openwebui': {
       return {
-        label: 'Setting up Open WebUI...',
+        label: 'Installing Open WebUI...',
         async fn() {
-          const { mkdirSync, writeFileSync, existsSync } = await import('node:fs');
+          const { mkdirSync, writeFileSync, existsSync, copyFileSync } = await import('node:fs');
           const { join: pathJoin } = await import('node:path');
+          const { fileURLToPath } = await import('node:url');
           const { readEveSecrets } = await import('@eve/dna');
           const { randomBytes } = await import('node:crypto');
+          const { execa } = await import('execa');
+
           const deployDir = '/opt/openwebui';
           mkdirSync(deployDir, { recursive: true });
+
+          // Locate the compose template — bundled into eve-cli's dist when published,
+          // or living at packages/install/src/templates/ in dev.
+          const __filename = fileURLToPath(import.meta.url);
+          const candidates = [
+            pathJoin(__filename, '..', '..', '..', 'install', 'src', 'templates', 'ai-chat-docker-compose.yml'),
+            pathJoin(__filename, '..', '..', '..', '..', 'install', 'src', 'templates', 'ai-chat-docker-compose.yml'),
+            pathJoin(__filename, '..', 'templates', 'ai-chat-docker-compose.yml'),
+          ];
+          const templatePath = candidates.find(p => existsSync(p));
+          if (!templatePath) {
+            throw new Error(`Could not locate ai-chat-docker-compose.yml (looked in: ${candidates.join(', ')})`);
+          }
+
+          // Copy template into deploy dir as docker-compose.yml
+          copyFileSync(templatePath, pathJoin(deployDir, 'docker-compose.yml'));
+
+          // Write .env (required for compose substitution)
           const secrets = await readEveSecrets(process.cwd());
           const synapApiKey = secrets?.synap?.apiKey ?? process.env.SYNAP_API_KEY ?? '';
           const isUrl = process.env.SYNAP_IS_URL ?? 'http://intelligence-hub:3001';
@@ -297,10 +318,23 @@ function buildAddStep(
               `WEBUI_SECRET_KEY=${randomBytes(32).toString('hex')}`,
               `ENABLE_SIGNUP=true`,
               `DEFAULT_USER_ROLE=user`,
+              `OLLAMA_BASE_URL=http://eve-brain-ollama:11434`,
             ].join('\n'), { mode: 0o600 });
           }
-          console.log(`  Config written to ${deployDir}`);
-          console.log('  Start with: docker compose --profile openwebui up -d');
+
+          // Ensure eve-network exists (needed for cross-compose networking)
+          try {
+            await execa('docker', ['network', 'inspect', 'eve-network'], { stdio: 'ignore' });
+          } catch {
+            await execa('docker', ['network', 'create', 'eve-network'], { stdio: 'inherit' });
+          }
+
+          // Pull image + start the container
+          console.log(`  Config: ${deployDir}/docker-compose.yml`);
+          await execa('docker', ['compose', '--profile', 'openwebui', 'up', '-d'], {
+            cwd: deployDir,
+            stdio: 'inherit',
+          });
         },
       };
     }

@@ -34,31 +34,35 @@ export const emojis = {
   bullet: '•',
 };
 
-// Simple spinner using stdout
+// Simple spinner using stdout. \x1b[2K clears the entire line BEFORE writing
+// new content so shorter "succeed" text doesn't leave a tail of the longer
+// spinner text behind.
+const CLEAR_LINE = '\r\x1b[2K';
+
 export function createSpinner(text: string) {
   let interval: NodeJS.Timeout;
   const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
   let i = 0;
-  
+
   return {
     start() {
-      process.stdout.write(colors.info(`${frames[0]} ${text}`));
+      process.stdout.write(`${CLEAR_LINE}${colors.info(`${frames[0]} ${text}`)}`);
       interval = setInterval(() => {
-        process.stdout.write(`\r${colors.info(`${frames[i]} ${text}`)}`);
+        process.stdout.write(`${CLEAR_LINE}${colors.info(`${frames[i]} ${text}`)}`);
         i = (i + 1) % frames.length;
       }, 80);
     },
     succeed(msg?: string) {
       clearInterval(interval);
-      console.log(`\r${colors.success(`${emojis.check} ${msg || text}`)}`);
+      console.log(`${CLEAR_LINE}${colors.success(`${emojis.check} ${msg || text}`)}`);
     },
     fail(msg?: string) {
       clearInterval(interval);
-      console.log(`\r${colors.error(`${emojis.cross} ${msg || text}`)}`);
+      console.log(`${CLEAR_LINE}${colors.error(`${emojis.cross} ${msg || text}`)}`);
     },
     warn(msg?: string) {
       clearInterval(interval);
-      console.log(`\r${colors.warning(`${emojis.warning} ${msg || text}`)}`);
+      console.log(`${CLEAR_LINE}${colors.warning(`${emojis.warning} ${msg || text}`)}`);
     },
   };
 }

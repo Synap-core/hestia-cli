@@ -164,52 +164,7 @@ async function showStatus(json = false): Promise<void> {
   console.log(table.toString());
   console.log();
 
-  // Component-Level View (v2 installed map)
-  const components = state.installed;
-  if (components && Object.keys(components).length > 0) {
-    const compTable = new Table({
-      head: [
-        colors.primary.bold('Component'),
-        colors.primary.bold('Status'),
-        colors.primary.bold('Version'),
-        colors.primary.bold('Managed By'),
-      ],
-      colWidths: [18, 12, 12, 14],
-      style: {
-        head: [],
-        border: ['grey'],
-      },
-    });
-
-    const COMPONENT_LABELS: Record<string, string> = {
-      synap: 'Synap',
-      openclaw: 'OpenClaw',
-      hermes: 'Hermes',
-      rsshub: 'RSSHub',
-      traefik: 'Traefik',
-      ollama: 'Ollama',
-      openwebui: 'Open WebUI',
-    };
-
-    for (const [id, comp] of Object.entries(components)) {
-      const statusColor = getStatusColor(comp.state);
-      const managedByColor = comp.managedBy === 'eve'
-        ? colors.success
-        : comp.managedBy === 'synap'
-          ? colors.warning
-          : colors.muted;
-
-      compTable.push([
-        COMPONENT_LABELS[id] || id,
-        statusColor(comp.state),
-        comp.version || '-',
-        managedByColor(comp.managedBy || '—'),
-      ]);
-    }
-
-    console.log(compTable.toString());
-    console.log();
-  }
+  // (Component-level details shown in the live "Components" section below — see showComponentOverview)
 
   // Summary
   const readyCount = organs.filter(o => state.organs[o].state === 'ready').length;
@@ -276,6 +231,21 @@ async function showStatus(json = false): Promise<void> {
  */
 async function showComponentOverview(): Promise<void> {
   const installed = await entityStateManager.getInstalledComponents();
+  const liveContainers = getLiveContainerState();
+
+  // Reconcile stored state with reality. For each registry component with a
+  // service, classify by what's actually running (not just state.json).
+  const componentLiveState = new Map<string, 'running' | 'missing' | 'no-service'>();
+  for (const comp of COMPONENTS) {
+    if (!comp.service) {
+      componentLiveState.set(comp.id, 'no-service');
+      continue;
+    }
+    componentLiveState.set(
+      comp.id,
+      liveContainers.running.has(comp.service.containerName) ? 'running' : 'missing',
+    );
+  }
 
   // Bucket components
   const installedComps = COMPONENTS.filter(c => installed.includes(c.id));
@@ -301,12 +271,36 @@ async function showComponentOverview(): Promise<void> {
   console.log(colors.primary.bold(`${emojis.entity} Components`));
   console.log(colors.muted('─'.repeat(60)));
 
-  // Installed
+  // Installed — show with live status. Stale entries (state.json says ready
+  // but container is missing) are flagged so the user knows reality differs
+  // from the stored state.
   if (installedComps.length > 0) {
     console.log();
     console.log(colors.success.bold('  Installed'));
     for (const comp of installedComps) {
-      console.log(`    ${colors.success('●')} ${comp.emoji} ${comp.label.padEnd(20)} ${colors.muted(comp.description.split('.')[0])}`);
+      const live = componentLiveState.get(comp.id);
+      let dot: string;
+      let suffix: string;
+      if (live === 'running') {
+        dot = colors.success('●');
+        suffix = '';
+      } else if (live === 'missing') {
+        dot = colors.error('●');
+        suffix = colors.error(' (container not running)');
+      } else {
+        // no-service component (hermes, dokploy, opencode, openclaude)
+        dot = colors.muted('●');
+        suffix = '';
+      }
+      console.log(`    ${dot} ${comp.emoji} ${comp.label.padEnd(20)} ${colors.muted(comp.description.split('.')[0])}${suffix}`);
+    }
+    // Stale-state hint
+    const stale = installedComps.filter(c => componentLiveState.get(c.id) === 'missing');
+    if (stale.length > 0) {
+      console.log();
+      console.log(colors.warning(`    ⚠ ${stale.length} component(s) are marked installed but their containers are missing.`));
+      console.log(colors.muted(`      Re-install: ${colors.info(`eve add ${stale.map(c => c.id).join(' ')}`)}`));
+      console.log(colors.muted(`      Or run:     ${colors.info('eve doctor')} ${colors.muted('to investigate')}`));
     }
   }
 
