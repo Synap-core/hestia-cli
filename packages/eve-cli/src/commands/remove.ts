@@ -149,7 +149,7 @@ async function removeOpenwebui(): Promise<void> {
 
     if (existsSync(composePath)) {
       // Tear down via the same compose project we used to bring it up
-      await execa('docker', ['compose', '--profile', 'openwebui', 'down', '--volumes'], {
+      await execa('docker', ['compose', 'down', '--volumes'], {
         cwd: deployDir,
         stdio: 'inherit',
       });
