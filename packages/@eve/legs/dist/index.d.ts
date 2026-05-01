@@ -88,6 +88,48 @@ type LegsProxySetupOptions = {
  */
 declare function runLegsProxySetup(options: LegsProxySetupOptions): Promise<void>;
 
+/**
+ * Refresh Traefik routes to match the current installed-components list.
+ *
+ * Called from `eve add` / `eve remove` so installing a new component
+ * automatically wires up its subdomain (and removing one tears it down).
+ *
+ * No-op if no domain has been configured yet — the user hasn't asked for
+ * external routing, so we leave Traefik alone.
+ */
+interface RefreshResult {
+    refreshed: boolean;
+    domain: string | null;
+    reason?: string;
+}
+declare function refreshTraefikRoutes(cwd?: string): Promise<RefreshResult>;
+
+/**
+ * Post-install verification for components.
+ *
+ * Confirms a freshly installed component is actually serving — container
+ * running, port reachable. Surfaces silent install failures (the `docker run`
+ * returned 0 but the container crash-looped) so we don't mark state as `ready`
+ * when the service is in fact broken.
+ */
+interface VerifyResult {
+    ok: boolean;
+    /** What was checked. */
+    checks: Array<{
+        name: string;
+        ok: boolean;
+        detail?: string;
+    }>;
+    /** One-line summary suitable for spinner.succeed/fail. */
+    summary: string;
+}
+/**
+ * Run all checks for a component. For services that aren't HTTP-ish (no
+ * service field), only state is checked. Retries reachability for ~10 seconds
+ * to account for slow container start.
+ */
+declare function verifyComponent(componentId: string): Promise<VerifyResult>;
+
 declare function setupCommand(program: Command): void;
 
 /** Register `eve legs domain <subcommand>` (set | status | unset) */
@@ -108,4 +150,4 @@ declare const _default: {
     registerCommands: typeof registerCommands;
 };
 
-export { InferenceGateway, type InferenceGatewayResult, type LegsProxySetupOptions, type Route, TraefikService, type TunnelConfig, TunnelService, _default as default, domainCommand, newtCommand, registerCommands, registerLegsCommands, restartCommand, runLegsProxySetup, setupCommand, statusCommand };
+export { InferenceGateway, type InferenceGatewayResult, type LegsProxySetupOptions, type RefreshResult, type Route, TraefikService, type TunnelConfig, TunnelService, type VerifyResult, _default as default, domainCommand, newtCommand, refreshTraefikRoutes, registerCommands, registerLegsCommands, restartCommand, runLegsProxySetup, setupCommand, statusCommand, verifyComponent };

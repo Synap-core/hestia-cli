@@ -38,15 +38,18 @@ type ServiceAccess = {
   id: string;
   label: string;
   emoji: string;
-  localUrl: string;
+  localUrl: string | null;
   serverUrl: string | null;
   domainUrl: string | null;
   port: number;
+  requires: string | null;
+  dnsReady: boolean | null;
 };
 
 type AccessData = {
   urls: ServiceAccess[];
   domain: { primary?: string; ssl?: boolean } | null;
+  serverIp?: string | null;
 };
 
 const ORGANS = [
@@ -87,20 +90,30 @@ function CopyButton({ value }: { value: string }) {
   );
 }
 
-function UrlCell({ url }: { url: string | null }) {
+function UrlCell({ url, pending }: { url: string | null; pending?: boolean }) {
   if (!url) return <span className="text-default-300 text-xs">—</span>;
+  const colorClass = pending ? "text-default-400 line-through" : "text-primary hover:underline";
   return (
     <span className="flex items-center gap-1">
       <a
         href={url}
         target="_blank"
         rel="noreferrer"
-        className="text-xs text-primary hover:underline font-mono truncate max-w-[180px]"
+        className={`text-xs font-mono truncate max-w-[180px] ${colorClass}`}
+        title={pending ? "DNS not yet pointing to this server" : undefined}
       >
         {url}
       </a>
       <ExternalLink className="w-3 h-3 text-default-400 shrink-0" />
       <CopyButton value={url} />
+      {pending && (
+        <span
+          className="text-[10px] uppercase tracking-wider text-warning bg-warning-50 dark:bg-warning-900/20 px-1.5 py-0.5 rounded"
+          title="DNS A record is missing or pointing elsewhere"
+        >
+          DNS
+        </span>
+      )}
     </span>
   );
 }
@@ -304,7 +317,12 @@ export default function DashboardPage() {
                     </td>
                     <td className="px-4 py-2.5"><UrlCell url={svc.localUrl} /></td>
                     <td className="px-4 py-2.5"><UrlCell url={svc.serverUrl} /></td>
-                    <td className="px-4 py-2.5"><UrlCell url={svc.domainUrl} /></td>
+                    <td className="px-4 py-2.5">
+                      <UrlCell
+                        url={svc.domainUrl}
+                        pending={svc.domainUrl !== null && svc.dnsReady === false}
+                      />
+                    </td>
                   </tr>
                 ))}
               </tbody>

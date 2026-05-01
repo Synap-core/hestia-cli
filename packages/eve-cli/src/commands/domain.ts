@@ -5,6 +5,54 @@ import { join } from 'node:path';
 import { writeEveSecrets, readEveSecrets, getAccessUrls, getServerIp, entityStateManager } from '@eve/dna';
 import { TraefikService } from '@eve/legs';
 import { colors, printSuccess, printInfo, printWarning, printError } from '../lib/ui.js';
+import { probeRoutes, probeSummary, probeVerdict, type RouteProbe } from '../lib/probe-routes.js';
+
+/** Render a per-route probe summary as a small table (used by `set` + `check`). */
+function renderProbeTable(probes: RouteProbe[]): void {
+  console.log(colors.muted('  ' + '─'.repeat(60)));
+  for (const p of probes) {
+    const dot = p.outcome === 'ok'
+      ? colors.success('●')
+      : p.outcome === 'upstream-down'
+        ? colors.warning('●')
+        : colors.error('●');
+    const status = p.outcome === 'ok'
+      ? colors.success(`${p.httpStatus} reachable`)
+      : p.outcome === 'upstream-down'
+        ? colors.warning(`${p.httpStatus} upstream down`)
+        : p.outcome === 'not-routing'
+          ? colors.error(`${p.httpStatus} no route match`)
+          : p.outcome === 'dns-missing'
+            ? colors.error('DNS missing')
+            : p.outcome === 'dns-wrong'
+              ? colors.warning(`DNS → ${p.dnsResolved}`)
+              : colors.error('timeout');
+    console.log(`  ${dot} ${p.host.padEnd(34)} ${status}`);
+  }
+}
+
+/** Render an actionable hint for a single failing probe. */
+function renderProbeHint(p: RouteProbe): void {
+  switch (p.outcome) {
+    case 'dns-missing':
+      printInfo(`  • ${p.host}: create A record pointing to your server IP`);
+      break;
+    case 'dns-wrong':
+      printInfo(`  • ${p.host}: DNS resolves to ${p.dnsResolved}; update A record to your server IP`);
+      break;
+    case 'upstream-down':
+      printInfo(`  • ${p.host}: route exists but upstream is down — check the container is running`);
+      break;
+    case 'not-routing':
+      printInfo(`  • ${p.host}: Traefik has no rule matching — try \`eve domain repair\``);
+      break;
+    case 'timeout':
+      printInfo(`  • ${p.host}: request timed out — check Traefik is running on port 80`);
+      break;
+    case 'ok':
+      break;
+  }
+}
 
 export function domainCommand(program: Command): void {
   const domain = program
@@ -33,54 +81,65 @@ export function domainCommand(program: Command): void {
         // First-time run or state not yet initialized — route everything
       }
 
+      let writeOk = false;
       try {
         const traefik = new TraefikService();
         await traefik.configureSubdomains(domainName, !!opts.ssl, opts.email, installedComponents);
-        printSuccess(`Traefik routes configured for ${domainName}`);
-      } catch {
-        printInfo('Traefik config could not be written — run this command on your server to apply routes.');
+        writeOk = true;
+      } catch (err) {
+        printError(`Could not write Traefik config: ${err instanceof Error ? err.message : String(err)}`);
+        printInfo('Run this command on your server (where Docker is available).');
+        return;
       }
 
       const secrets = await readEveSecrets(process.cwd());
       const urls = getAccessUrls(secrets, installedComponents);
 
+      // ─── DNS records the user needs to create ───────────────────────────
+      const serverIp = getServerIp();
+      const subdomainsNeeded = urls
+        .filter(u => u.domainUrl)
+        .map(u => u.domainUrl!.replace(/^https?:\/\//, '').split('/')[0].replace(`.${domainName}`, ''));
+
       console.log();
-      console.log(colors.primary.bold('Access URLs:'));
+      console.log(colors.primary.bold('DNS records you must create:'));
       console.log(colors.muted('─'.repeat(60)));
-      for (const svc of urls) {
-        if (svc.domainUrl) {
-          console.log(`  ${svc.emoji}  ${svc.label.padEnd(20)} ${colors.primary(svc.domainUrl)}`);
+      console.log(colors.muted('  Type   Name                          Value'));
+      for (const sub of subdomainsNeeded) {
+        const name = `${sub}.${domainName}`.padEnd(32);
+        const value = serverIp ?? colors.warning('<your-server-ip>');
+        console.log(`  ${colors.primary('A')}      ${name}${value}`);
+      }
+      console.log(colors.muted('─'.repeat(60)));
+      if (!serverIp) printInfo('Could not detect server IP — replace <your-server-ip> above.');
+
+      // ─── Live probe — don't print ✅ unless routes actually work ────────
+      if (writeOk) {
+        console.log();
+        console.log(colors.primary.bold('Verifying routes (probing each subdomain)...'));
+        // Give Traefik a beat to reload after restart
+        await new Promise(r => setTimeout(r, 1500));
+        const probes = probeRoutes(urls);
+        renderProbeTable(probes);
+
+        const verdict = probeVerdict(probes);
+        console.log();
+        if (verdict === 'ok') {
+          printSuccess(`Domain configured and all ${probes.length} routes are healthy.`);
+        } else if (verdict === 'partial') {
+          const broken = probes.filter(p => p.outcome !== 'ok');
+          printWarning(`Domain configured, but ${broken.length}/${probes.length} routes need attention:`);
+          for (const p of broken) renderProbeHint(p);
+        } else {
+          printError(`Domain configured but no routes are reachable yet.`);
+          for (const p of probes) renderProbeHint(p);
+        }
+        if (opts.ssl) {
+          console.log();
+          printInfo('SSL certificates will provision automatically once DNS propagates (1–5 min).');
         }
       }
-
-      const serverIp = getServerIp();
-      const subdomains = urls.filter(u => u.domainUrl).map(u => {
-        // Extract subdomain from domainUrl
-        const url = u.domainUrl!;
-        const host = url.replace(/^https?:\/\//, '').split('/')[0];
-        return host.replace(`.${domainName}`, '');
-      });
-
       console.log();
-      console.log(colors.primary.bold('DNS records to create:'));
-      console.log(colors.muted('─'.repeat(60)));
-      console.log(colors.muted(`  Type   Name                        Value`));
-      console.log(colors.muted('─'.repeat(60)));
-      for (const sub of subdomains) {
-        const name = `${sub}.${domainName}`.padEnd(30);
-        const value = serverIp ?? colors.warning('<your-server-ip>');
-        console.log(`  ${colors.primary('A')}      ${name}  ${value}`);
-      }
-      console.log(colors.muted('─'.repeat(60)));
-      if (!serverIp) {
-        printInfo('Could not detect server IP automatically — replace <your-server-ip> above.');
-      }
-      if (opts.ssl) {
-        console.log();
-        printInfo('SSL will provision automatically once DNS records propagate (usually 1–5 min).');
-      }
-      console.log();
-      printInfo('Run `eve domain check` to verify Traefik is routing correctly.');
     });
 
   domain
@@ -165,108 +224,15 @@ export function domainCommand(program: Command): void {
         return;
       }
 
-      // ─── 4. Probe each route via curl with proper Host header ──────────
+      // ─── 4. Probe each route end-to-end (HTTP + DNS) ───────────────────
       console.log();
       console.log(colors.primary.bold('  Per-route probe (Host header → Traefik → upstream):'));
-      console.log(colors.muted('  ' + '─'.repeat(58)));
 
-      // Re-derive routes from access-urls list, filtered by what's installed
       let installedComponents: string[] | undefined;
       try { installedComponents = await entityStateManager.getInstalledComponents(); } catch { /* ignore */ }
       const urls = getAccessUrls(secrets, installedComponents);
-
-      // Each upstream check needs the corresponding container/port info
-      const upstreamMap: Record<string, { container?: string; port?: number; isHost?: boolean }> = {
-        eve:       { isHost: true,                port: 7979 },
-        pod:       { container: 'synap-backend-backend-1', port: 4000 },
-        openclaw:  { container: 'eve-arms-openclaw',       port: 3000 },
-        feeds:     { container: 'eve-eyes-rsshub',         port: 1200 },
-        ollama:    { container: 'eve-brain-ollama',        port: 11434 },
-        openwebui: { container: 'hestia-openwebui',        port: 8080 },
-      };
-
-      for (const svc of urls) {
-        if (!svc.domainUrl) continue;
-        const host = svc.domainUrl.replace(/^https?:\/\//, '').split('/')[0];
-
-        // Probe Traefik with the right Host header
-        let httpCode = '???';
-        try {
-          httpCode = execSync(
-            `curl -s -o /dev/null -w "%{http_code}" --max-time 4 -H "Host: ${host}" http://localhost:80/`,
-            { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
-          ).trim();
-        } catch { httpCode = 'timeout'; }
-
-        // Check upstream container exists
-        const upstream = upstreamMap[svc.id];
-        let upstreamState = 'unknown';
-        if (upstream) {
-          if (upstream.isHost) {
-            try {
-              const out = execSync(
-                `ss -tlnp 2>/dev/null | grep ':${upstream.port} ' || netstat -tlnp 2>/dev/null | grep ':${upstream.port} ' || echo ''`,
-                { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
-              ).trim();
-              upstreamState = out.length > 0 ? 'host:listening' : 'host:NOT listening';
-            } catch { upstreamState = 'host:check-failed'; }
-          } else if (upstream.container) {
-            try {
-              const out = execSync(
-                `docker ps --filter "name=^${upstream.container}$" --format "{{.Names}}"`,
-                { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
-              ).trim();
-              upstreamState = out.length > 0 ? `container:${upstream.container}` : `container:MISSING`;
-            } catch { upstreamState = 'docker:check-failed'; }
-          }
-        }
-
-        const statusBadge = httpCode === '200' || httpCode.startsWith('30')
-          ? colors.success(`${httpCode} ✓`)
-          : httpCode === '502' || httpCode === '503'
-            ? colors.warning(`${httpCode} (route OK, upstream down)`)
-            : httpCode === '404'
-              ? colors.error(`${httpCode} (route not matching!)`)
-              : colors.error(httpCode);
-
-        const upstreamBadge = upstreamState.includes('MISSING') || upstreamState.includes('NOT')
-          ? colors.error(upstreamState)
-          : colors.muted(upstreamState);
-
-        console.log(`    ${svc.emoji}  ${host.padEnd(28)} ${statusBadge}`);
-        console.log(`        ${colors.muted('upstream:')} ${upstreamBadge}`);
-      }
-
-      // ─── 5. DNS resolution check ───────────────────────────────────────
-      console.log();
-      console.log(colors.primary.bold('  DNS resolution:'));
-      console.log(colors.muted('  ' + '─'.repeat(58)));
-      const serverIp = getServerIp();
-      for (const svc of urls) {
-        if (!svc.domainUrl) continue;
-        const host = svc.domainUrl.replace(/^https?:\/\//, '').split('/')[0];
-        let resolved = '';
-        try {
-          resolved = execSync(`getent hosts ${host} 2>/dev/null | awk '{print $1}' | head -1`, {
-            encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'],
-          }).trim();
-        } catch { /* ignore */ }
-        if (!resolved) {
-          try {
-            resolved = execSync(`dig +short ${host} | head -1`, {
-              encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'],
-            }).trim();
-          } catch { /* ignore */ }
-        }
-
-        const dnsBadge = !resolved
-          ? colors.error('NO DNS RECORD')
-          : resolved === serverIp
-            ? colors.success(`${resolved} ✓ (this server)`)
-            : colors.warning(`${resolved} (expected ${serverIp})`);
-
-        console.log(`    ${host.padEnd(32)} ${dnsBadge}`);
-      }
+      const probes = probeRoutes(urls);
+      renderProbeTable(probes);
 
       // ─── 6. Traefik admin API — what routers are ACTUALLY loaded? ──────
       console.log();

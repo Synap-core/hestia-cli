@@ -1157,21 +1157,91 @@ interface ServiceAccess {
     id: string;
     label: string;
     emoji: string;
-    localUrl: string;
+    localUrl: string | null;
     serverUrl: string | null;
     domainUrl: string | null;
     port: number;
-    /** Component ID that must be installed for this service to be available. null = always shown. */
+    /** Component ID required for this service. null = always shown (e.g. dashboard). */
     requires: string | null;
+    /** True when DNS for the domain URL resolves to this server. Null = not yet checked. */
+    dnsReady: boolean | null;
 }
 /**
- * Returns access URLs for installed services.
+ * Returns access URLs for installed services, derived from the component registry.
  *
- * @param secrets          Eve secrets (domain config)
- * @param installedComponents  List of installed component IDs from entity state.
- *                             When omitted, all services are returned (backward compat / pre-init).
+ * @param secrets             Eve secrets (domain config)
+ * @param installedComponents List of installed component IDs.
+ *                            When omitted, all routable services are returned.
  */
 declare function getAccessUrls(secrets: EveSecrets | null, installedComponents?: string[]): ServiceAccess[];
+
+/**
+ * Single source of truth for Eve components.
+ *
+ * Every component declares its install metadata (label, organ, prerequisites)
+ * AND its network identity (container name, ports, subdomain). Downstream
+ * features (access URLs, Traefik routes, doctor checks) MUST derive from this
+ * — never hardcode container names or ports elsewhere.
+ */
+/**
+ * Network identity of a component once installed. Present only for components
+ * that expose an HTTP-ish service. Pure-config components (e.g. opencode, dokploy)
+ * leave this undefined.
+ */
+interface ServiceInfo {
+    /** Docker container name once running. */
+    containerName: string;
+    /** Port the container listens on internally (used by Traefik upstream URL). */
+    internalPort: number;
+    /** Host port mapped to the container, if any. null = not exposed on host. */
+    hostPort: number | null;
+    /** Traefik subdomain (e.g. 'pod' for pod.<domain>). null = not routed. */
+    subdomain: string | null;
+    /** Health check path that should return 2xx/3xx when the service is up. */
+    healthPath?: string;
+}
+interface ComponentInfo {
+    id: string;
+    organ?: string;
+    label: string;
+    emoji: string;
+    description: string;
+    category: 'infrastructure' | 'data' | 'agent' | 'builder' | 'perception' | 'add-on';
+    /** Whether this is always installed as infrastructure */
+    alwaysInstall?: boolean;
+    /** Prerequisites (other component IDs that must be installed first) */
+    requires?: string[];
+    /** Network identity — only present for HTTP-exposed services. */
+    service?: ServiceInfo;
+}
+declare const COMPONENTS: ComponentInfo[];
+/**
+ * Special pseudo-component for the Eve Dashboard. Not in COMPONENTS because
+ * it's not installed via `eve add`, but downstream features (access URLs,
+ * Traefik routes) treat it like any other service.
+ */
+declare const EVE_DASHBOARD_SERVICE: {
+    readonly id: "eve-dashboard";
+    readonly label: "Eve Dashboard";
+    readonly emoji: "🌿";
+    readonly service: {
+        readonly containerName: string | null;
+        readonly internalPort: 7979;
+        readonly hostPort: 7979;
+        readonly subdomain: string | null;
+        readonly healthPath: "/api/state";
+    };
+};
+/** Resolve a component by ID; throws if not found. */
+declare function resolveComponent(id: string): ComponentInfo;
+/** All component IDs sorted by install priority (infrastructure first, add-ons last). */
+declare function allComponentIds(): string[];
+/** Add-on component IDs (can be added/removed freely). */
+declare function addonComponentIds(): string[];
+/** Filter component list to only those selected by a boolean map. */
+declare function selectedIds(selected: Record<string, boolean>): string[];
+/** Components that expose an HTTP service (eligible for Traefik routing). */
+declare function serviceComponents(): ComponentInfo[];
 
 /** Default Hub Protocol path on the Synap API host (Better Auth / Hub REST). */
 declare const DEFAULT_HUB_PATH = "/api/hub";
@@ -1235,4 +1305,4 @@ declare function writeHermesEnvFile(cwd?: string): Promise<string>;
 
 declare const VERSION = "0.1.0";
 
-export { type AIModel, AiModeSchema, AiProviderSchema, type BuilderEngine, BuilderEngineSchema, type ComponentEntry, ConfigManager, type Credentials, CredentialsManager, DEFAULT_HERMES_CONFIG, DEFAULT_HUB_PATH, type DNAError, type DockerCompose, DockerComposeGenerator, type DockerComposeService, type EntityState, EntityStateManager, type EveConfig, type EveSecrets, type HardwareFacts, type LegacySetupProfileKind, type ManagedBy, type MessagingConfig, type MessagingPlatform, type Organ, type OrganInfo, type OrganState, type OrganStatus, type Service, type ServiceAccess, type ServiceConfig, type SetupProfile, type SetupProfileKind, SetupProfileKindSchema, SetupProfileSchema, type SetupProfileV2, type Task, type TaskPriority, type TaskStatus, type TaskType, type UsbSetupManifest, UsbSetupManifestSchema, VERSION, type VoiceConfig, type VoiceProvider, configManager, copySynapSkillIntoClaudeProject, createDockerComposeGenerator, credentialsManager, defaultSkillsDir, ensureEveSkillsLayout, ensureSecretValue, entityStateManager, formatHardwareReport, getAccessUrls, getServerIp, getSetupProfilePath, migrateStateDirectory, probeHardware, readEveSecrets, readSetupProfile, readUsbSetupManifest, resolveHubBaseUrl, secretsPath, writeBuilderProjectEnv, writeClaudeCodeSettings, writeEveSecrets, writeHermesEnvFile, writeSandboxEnvFile, writeSetupProfile, writeUsbSetupManifest };
+export { type AIModel, AiModeSchema, AiProviderSchema, type BuilderEngine, BuilderEngineSchema, COMPONENTS, type ComponentEntry, type ComponentInfo, ConfigManager, type Credentials, CredentialsManager, DEFAULT_HERMES_CONFIG, DEFAULT_HUB_PATH, type DNAError, type DockerCompose, DockerComposeGenerator, type DockerComposeService, EVE_DASHBOARD_SERVICE, type EntityState, EntityStateManager, type EveConfig, type EveSecrets, type HardwareFacts, type LegacySetupProfileKind, type ManagedBy, type MessagingConfig, type MessagingPlatform, type Organ, type OrganInfo, type OrganState, type OrganStatus, type Service, type ServiceAccess, type ServiceConfig, type ServiceInfo, type SetupProfile, type SetupProfileKind, SetupProfileKindSchema, SetupProfileSchema, type SetupProfileV2, type Task, type TaskPriority, type TaskStatus, type TaskType, type UsbSetupManifest, UsbSetupManifestSchema, VERSION, type VoiceConfig, type VoiceProvider, addonComponentIds, allComponentIds, configManager, copySynapSkillIntoClaudeProject, createDockerComposeGenerator, credentialsManager, defaultSkillsDir, ensureEveSkillsLayout, ensureSecretValue, entityStateManager, formatHardwareReport, getAccessUrls, getServerIp, getSetupProfilePath, migrateStateDirectory, probeHardware, readEveSecrets, readSetupProfile, readUsbSetupManifest, resolveComponent, resolveHubBaseUrl, secretsPath, selectedIds, serviceComponents, writeBuilderProjectEnv, writeClaudeCodeSettings, writeEveSecrets, writeHermesEnvFile, writeSandboxEnvFile, writeSetupProfile, writeUsbSetupManifest };

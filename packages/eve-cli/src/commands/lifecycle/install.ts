@@ -17,7 +17,8 @@ import {
 } from '@eve/dna';
 import { getGlobalCliFlags, outputJson } from '@eve/cli-kit';
 import { runBrainInit, runInferenceInit, resolveSynapDelegate } from '@eve/brain';
-import { runLegsProxySetup } from '@eve/legs';
+import { runLegsProxySetup, refreshTraefikRoutes, TraefikService } from '@eve/legs';
+import { text } from '@clack/prompts';
 import {
   colors,
   emojis,
@@ -311,6 +312,20 @@ export async function runInstall(opts: InstallOptions): Promise<void> {
   await updateEntityStateFromComponents(installedComponents, opts);
 
   // -----------------------------------------------------------------
+  // 7b. Optional: domain configuration (interactive only)
+  // -----------------------------------------------------------------
+  if (!jsonMode && !opts.skipInteractive) {
+    await maybeOfferDomainSetup(installedComponents);
+  }
+
+  // -----------------------------------------------------------------
+  // 7c. Optional: install dashboard as systemd service (Linux only)
+  // -----------------------------------------------------------------
+  if (!jsonMode && !opts.skipInteractive && process.platform === 'linux') {
+    await maybeOfferDashboardService();
+  }
+
+  // -----------------------------------------------------------------
   // 8. Done
   // -----------------------------------------------------------------
   if (!jsonMode) {
@@ -336,6 +351,106 @@ export async function runInstall(opts: InstallOptions): Promise<void> {
   } else {
     outputJson({ ok: true, components: installList });
   }
+}
+
+// ---------------------------------------------------------------------------
+// Optional post-install steps (interactive prompts)
+// ---------------------------------------------------------------------------
+
+/**
+ * Offer to wire up a public domain right after install. Skips silently if a
+ * domain is already configured. The user can always run `eve domain set`
+ * later — this is purely a convenience prompt.
+ */
+async function maybeOfferDomainSetup(installedComponents: string[]): Promise<void> {
+  const existing = await readEveSecrets(process.cwd());
+  if (existing?.domain?.primary) return; // already configured
+
+  console.log();
+  const wantDomain = await confirm({
+    message: 'Want to expose this Eve installation on a public domain?',
+    initialValue: false,
+  });
+  if (isCancel(wantDomain) || !wantDomain) return;
+
+  const domainName = await text({
+    message: 'Domain (e.g. mydomain.com):',
+    placeholder: 'mydomain.com',
+    validate: (value) => {
+      if (!value) return 'Domain is required';
+      if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(value)) return 'Invalid domain format';
+      return undefined;
+    },
+  });
+  if (isCancel(domainName)) return;
+
+  const wantSsl = await confirm({
+    message: "Enable SSL via Let's Encrypt? (recommended for public domains)",
+    initialValue: true,
+  });
+  if (isCancel(wantSsl)) return;
+
+  let email: string | undefined;
+  if (wantSsl) {
+    const emailResult = await text({
+      message: "Email for Let's Encrypt notifications:",
+      placeholder: 'you@example.com',
+      validate: (value) => value && /^[^@]+@[^@]+\.[^@]+$/.test(value) ? undefined : 'Invalid email',
+    });
+    if (isCancel(emailResult)) return;
+    email = emailResult;
+  }
+
+  console.log();
+  const spinner = createSpinner(`Configuring Traefik routes for ${domainName}...`);
+  spinner.start();
+  try {
+    await writeEveSecrets({ domain: { primary: domainName, ssl: !!wantSsl, email } });
+    const traefik = new TraefikService();
+    await traefik.configureSubdomains(domainName, !!wantSsl, email, installedComponents);
+    spinner.succeed(`Domain ${domainName} configured`);
+  } catch (err) {
+    spinner.fail(`Failed to configure domain: ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
+
+  const serverIp = getServerIp();
+  console.log();
+  printInfo('Now create these DNS A records at your registrar:');
+  console.log();
+  for (const comp of [{ subdomain: 'eve' }, ...installedComponents.flatMap(id => {
+    const c = COMPONENTS.find(c => c.id === id);
+    return c?.service?.subdomain ? [{ subdomain: c.service.subdomain }] : [];
+  })]) {
+    const value = serverIp ?? '<your-server-ip>';
+    console.log(`  ${colors.muted('A')}    ${`${comp.subdomain}.${domainName}`.padEnd(32)}  ${value}`);
+  }
+  console.log();
+  printInfo('Once DNS propagates, verify with: eve domain check');
+  if (wantSsl) printInfo('SSL certificates provision automatically (1–5 min after DNS works)');
+}
+
+/**
+ * On Linux as root, offer to install the dashboard as a systemd service so
+ * it auto-starts on boot. Skips silently otherwise.
+ */
+async function maybeOfferDashboardService(): Promise<void> {
+  if (process.getuid && process.getuid() !== 0) return; // not root, can't install
+  const SERVICE_PATH = '/etc/systemd/system/eve-dashboard.service';
+  if (existsSync(SERVICE_PATH)) return; // already installed
+
+  console.log();
+  const wantService = await confirm({
+    message: 'Install the Eve Dashboard as a systemd service so it auto-starts on boot?',
+    initialValue: true,
+  });
+  if (isCancel(wantService) || !wantService) {
+    printInfo('You can run the dashboard manually anytime with: eve ui');
+    return;
+  }
+
+  printInfo('Run: sudo eve ui --install-service');
+  printInfo('  (We don\'t do it inline because it requires building the dashboard first.)');
 }
 
 // ---------------------------------------------------------------------------

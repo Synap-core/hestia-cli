@@ -9,6 +9,7 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
 import { execSync, spawnSync } from "child_process";
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
+import { COMPONENTS, EVE_DASHBOARD_SERVICE } from "@eve/dna";
 var HOST_CONFIG_DIR = "/opt/traefik";
 var CONTAINER_DYNAMIC_DIR = "/etc/traefik/dynamic";
 var CONTAINER_ACME_FILE = "/etc/traefik/acme.json";
@@ -143,21 +144,30 @@ var TraefikService = class {
     if (synapContainer) {
       connectToEveNetwork(synapContainer);
       console.log(`  Connected ${synapContainer} \u2192 eve-network`);
-    } else {
+    } else if (!installedComponents || installedComponents.includes("synap")) {
       console.warn("  Warning: Synap backend container not found \u2014 pod.domain routing will 502 until `eve brain init` is run");
     }
-    const podUpstream = synapContainer ? `http://${synapContainer}:4000` : `http://${dockerGateway}:4000`;
-    const allServices = [
-      { id: "eve-dashboard", subdomain: "eve", upstream: `http://${dockerGateway}:7979`, requires: null },
-      { id: "pod", subdomain: "pod", upstream: podUpstream, requires: "synap" },
-      { id: "openclaw", subdomain: "openclaw", upstream: "http://eve-arms-openclaw:3000", requires: "openclaw" },
-      { id: "feeds", subdomain: "feeds", upstream: "http://eve-eyes-rsshub:1200", requires: "rsshub" },
-      { id: "ollama", subdomain: "ai", upstream: "http://eve-brain-ollama:11434", requires: "ollama" },
-      { id: "openwebui", subdomain: "chat", upstream: "http://hestia-openwebui:8080", requires: "openwebui" }
-    ];
-    const services = allServices.filter(
-      (s) => s.requires === null || !installedComponents || installedComponents.includes(s.requires)
-    );
+    const services = [];
+    if (EVE_DASHBOARD_SERVICE.service.subdomain) {
+      services.push({
+        id: "eve-dashboard",
+        subdomain: EVE_DASHBOARD_SERVICE.service.subdomain,
+        upstream: `http://${dockerGateway}:${EVE_DASHBOARD_SERVICE.service.internalPort}`,
+        requires: null
+      });
+    }
+    for (const comp of COMPONENTS) {
+      if (!comp.service || !comp.service.subdomain) continue;
+      if (installedComponents && !installedComponents.includes(comp.id)) continue;
+      let containerName = comp.service.containerName;
+      if (comp.id === "synap" && synapContainer) containerName = synapContainer;
+      services.push({
+        id: comp.id,
+        subdomain: comp.service.subdomain,
+        upstream: `http://${containerName}:${comp.service.internalPort}`,
+        requires: comp.id
+      });
+    }
     const routersYaml = services.map((s) => {
       const host = `${s.subdomain}.${domain}`;
       if (ssl) {
@@ -927,6 +937,121 @@ Example:
   }
 };
 
+// src/lib/refresh-routes.ts
+import { readEveSecrets as readEveSecrets2, entityStateManager } from "@eve/dna";
+async function refreshTraefikRoutes(cwd) {
+  const secrets = await readEveSecrets2(cwd ?? process.cwd());
+  const domain = secrets?.domain?.primary;
+  if (!domain) {
+    return { refreshed: false, domain: null, reason: "no domain configured" };
+  }
+  let installedComponents = [];
+  try {
+    installedComponents = await entityStateManager.getInstalledComponents();
+  } catch {
+  }
+  try {
+    const traefik = new TraefikService();
+    await traefik.configureSubdomains(domain, !!secrets?.domain?.ssl, secrets?.domain?.email, installedComponents);
+    return { refreshed: true, domain };
+  } catch (err) {
+    return {
+      refreshed: false,
+      domain,
+      reason: err instanceof Error ? err.message : String(err)
+    };
+  }
+}
+
+// src/lib/verify-component.ts
+import { execSync as execSync7 } from "child_process";
+import { resolveComponent } from "@eve/dna";
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+function isContainerRunning(name) {
+  try {
+    const out = execSync7(`docker ps --filter "name=^${name}$" --format "{{.Names}}"`, {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"]
+    }).trim();
+    return out === name;
+  } catch {
+    return false;
+  }
+}
+function canReachFromTraefik(host, port, path) {
+  try {
+    const code = execSync7(
+      `docker exec eve-legs-traefik wget -q -O /dev/null --timeout=3 --server-response http://${host}:${port}${path} 2>&1 | grep "HTTP/" | tail -1 || echo "no-response"`,
+      { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }
+    ).trim();
+    if (code.includes("no-response")) return false;
+    const match = code.match(/HTTP\/\S+\s+(\d{3})/);
+    if (!match) return false;
+    const status = parseInt(match[1], 10);
+    return status < 500;
+  } catch {
+    return false;
+  }
+}
+async function verifyComponent(componentId) {
+  const checks = [];
+  let comp;
+  try {
+    comp = resolveComponent(componentId);
+  } catch {
+    return {
+      ok: false,
+      checks: [{ name: "registry", ok: false, detail: `unknown component: ${componentId}` }],
+      summary: `unknown component: ${componentId}`
+    };
+  }
+  if (!comp.service) {
+    return {
+      ok: true,
+      checks: [{ name: "service", ok: true, detail: "no network service to verify" }],
+      summary: `${comp.label} install complete (no network service)`
+    };
+  }
+  const containerName = comp.service.containerName;
+  let running = false;
+  for (let i = 0; i < 5; i++) {
+    if (isContainerRunning(containerName)) {
+      running = true;
+      break;
+    }
+    await sleep(1500);
+  }
+  checks.push({
+    name: "container",
+    ok: running,
+    detail: running ? `${containerName} is running` : `${containerName} not in docker ps after 7.5s`
+  });
+  if (!running) {
+    return { ok: false, checks, summary: `${comp.label}: container not running` };
+  }
+  if (comp.service.healthPath) {
+    let reachable = false;
+    for (let i = 0; i < 4; i++) {
+      if (canReachFromTraefik(containerName, comp.service.internalPort, comp.service.healthPath)) {
+        reachable = true;
+        break;
+      }
+      await sleep(2e3);
+    }
+    checks.push({
+      name: "reachable",
+      ok: reachable,
+      detail: reachable ? `responded on :${comp.service.internalPort}${comp.service.healthPath}` : `not responding on :${comp.service.internalPort}${comp.service.healthPath} after 10s`
+    });
+    if (!reachable) {
+      return { ok: false, checks, summary: `${comp.label}: container running but not responding on its port` };
+    }
+  }
+  return { ok: true, checks, summary: `${comp.label}: container running and reachable` };
+}
+
 // src/index.ts
 function registerLegsCommands(legs) {
   setupCommand(legs);
@@ -950,10 +1075,12 @@ export {
   index_default as default,
   domainCommand,
   newtCommand,
+  refreshTraefikRoutes,
   registerCommands,
   registerLegsCommands,
   restartCommand,
   runLegsProxySetup,
   setupCommand,
-  statusCommand
+  statusCommand,
+  verifyComponent
 };

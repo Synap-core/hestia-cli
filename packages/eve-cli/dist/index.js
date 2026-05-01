@@ -4,13 +4,9 @@
 import { Command } from "commander";
 import { readFileSync } from "fs";
 import { fileURLToPath as fileURLToPath2 } from "url";
-import { dirname as dirname2, join as join6 } from "path";
-import { execa as execa11 } from "execa";
+import { dirname as dirname2, join as join8 } from "path";
 import { setGlobalCliFlags } from "@eve/cli-kit";
-import {
-  registerBrainCommands,
-  runBrainInit as runBrainInit5
-} from "@eve/brain";
+import { registerBrainCommands } from "@eve/brain";
 import { registerArmsCommands } from "@eve/arms";
 import { registerLegsCommands } from "@eve/legs";
 import { registerEyesCommands } from "@eve/eyes";
@@ -19,7 +15,7 @@ import { registerBuilderCommands } from "@eve/builder";
 // src/commands/status.ts
 import Table from "cli-table3";
 import { execSync } from "child_process";
-import { entityStateManager } from "@eve/dna";
+import { entityStateManager, COMPONENTS } from "@eve/dna";
 import { getGlobalCliFlags } from "@eve/cli-kit";
 
 // src/lib/ui.ts
@@ -54,29 +50,29 @@ var emojis = {
   cross: "\u2717",
   bullet: "\u2022"
 };
-function createSpinner(text2) {
+function createSpinner(text3) {
   let interval;
   const frames = ["\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F"];
   let i = 0;
   return {
     start() {
-      process.stdout.write(colors.info(`${frames[0]} ${text2}`));
+      process.stdout.write(colors.info(`${frames[0]} ${text3}`));
       interval = setInterval(() => {
-        process.stdout.write(`\r${colors.info(`${frames[i]} ${text2}`)}`);
+        process.stdout.write(`\r${colors.info(`${frames[i]} ${text3}`)}`);
         i = (i + 1) % frames.length;
       }, 80);
     },
     succeed(msg) {
       clearInterval(interval);
-      console.log(`\r${colors.success(`${emojis.check} ${msg || text2}`)}`);
+      console.log(`\r${colors.success(`${emojis.check} ${msg || text3}`)}`);
     },
     fail(msg) {
       clearInterval(interval);
-      console.log(`\r${colors.error(`${emojis.cross} ${msg || text2}`)}`);
+      console.log(`\r${colors.error(`${emojis.cross} ${msg || text3}`)}`);
     },
     warn(msg) {
       clearInterval(interval);
-      console.log(`\r${colors.warning(`${emojis.warning} ${msg || text2}`)}`);
+      console.log(`\r${colors.warning(`${emojis.warning} ${msg || text3}`)}`);
     }
   };
 }
@@ -112,9 +108,6 @@ function formatOrgan(organ) {
   const color = organColors[organ] || colors.info;
   const emoji = emojis[organ] || emojis.bullet;
   return color(`${emoji} ${organ.charAt(0).toUpperCase() + organ.slice(1)}`);
-}
-function sleep(ms) {
-  return new Promise((resolve2) => setTimeout(resolve2, ms));
 }
 function printBox(title, lines) {
   const body = lines.join("\n");
@@ -274,7 +267,8 @@ async function showStatus(json = false) {
       hermes: "Hermes",
       rsshub: "RSSHub",
       traefik: "Traefik",
-      ollama: "Ollama"
+      ollama: "Ollama",
+      openwebui: "Open WebUI"
     };
     for (const [id, comp] of Object.entries(components)) {
       const statusColor = getStatusColor(comp.state);
@@ -335,7 +329,57 @@ async function showStatus(json = false) {
       console.log(`  ${colors.muted("\u2192")} Install ${formatOrgan(organ)}: ${colors.info(FIX_COMMANDS[organ])}`);
     }
   }
+  await showComponentOverview();
   console.log();
+}
+async function showComponentOverview() {
+  const installed = await entityStateManager.getInstalledComponents();
+  const installedComps = COMPONENTS.filter((c) => installed.includes(c.id));
+  const availableComps = COMPONENTS.filter((c) => !installed.includes(c.id));
+  const recommendations = [];
+  if (installed.includes("synap") && !installed.includes("openclaw")) {
+    recommendations.push({ id: "openclaw", reason: "gives your data pod an AI agent layer" });
+  }
+  if (installed.includes("synap") && !installed.includes("rsshub")) {
+    recommendations.push({ id: "rsshub", reason: "turns websites into feeds your AI can read" });
+  }
+  if (installed.includes("synap") && !installed.includes("openwebui")) {
+    recommendations.push({ id: "openwebui", reason: "self-hosted chat UI wired to your AI" });
+  }
+  if (!installed.includes("synap") && installed.includes("traefik")) {
+    recommendations.push({ id: "synap", reason: "the data pod \u2014 your sovereign second brain" });
+  }
+  const recommendedIds = new Set(recommendations.map((r) => r.id));
+  console.log();
+  console.log(colors.primary.bold(`${emojis.entity} Components`));
+  console.log(colors.muted("\u2500".repeat(60)));
+  if (installedComps.length > 0) {
+    console.log();
+    console.log(colors.success.bold("  Installed"));
+    for (const comp of installedComps) {
+      console.log(`    ${colors.success("\u25CF")} ${comp.emoji} ${comp.label.padEnd(20)} ${colors.muted(comp.description.split(".")[0])}`);
+    }
+  }
+  if (recommendations.length > 0) {
+    console.log();
+    console.log(colors.warning.bold("  Recommended next"));
+    for (const rec of recommendations) {
+      const comp = COMPONENTS.find((c) => c.id === rec.id);
+      console.log(`    ${colors.warning("\u25CB")} ${comp.emoji} ${comp.label.padEnd(20)} ${colors.muted(rec.reason)}`);
+      console.log(`      ${colors.muted("\u2192")} ${colors.info(`eve add ${comp.id}`)}`);
+    }
+  }
+  const otherAvailable = availableComps.filter((c) => !recommendedIds.has(c.id));
+  if (otherAvailable.length > 0) {
+    console.log();
+    console.log(colors.muted.bold("  Also available"));
+    for (const comp of otherAvailable) {
+      const reqs = comp.requires?.length ? colors.muted(` (requires: ${comp.requires.join(", ")})`) : "";
+      console.log(`    ${colors.muted("\u25CB")} ${comp.emoji} ${comp.label.padEnd(20)} ${colors.muted(comp.description.split(".")[0])}${reqs}`);
+    }
+    console.log();
+    console.log(colors.muted(`    Install any with: ${colors.info("eve add <component-id>")}`));
+  }
 }
 async function watchStatus() {
   console.log(colors.info("Watching entity status (press Ctrl+C to exit)...\n"));
@@ -379,18 +423,85 @@ function getCompletenessBar(percent) {
 
 // src/commands/doctor.ts
 import { execa } from "execa";
-import { entityStateManager as entityStateManager2 } from "@eve/dna";
-function doctorCommand(program2) {
-  program2.command("doctor").alias("doc").description("Run comprehensive diagnostics on the entity").option("-f, --fix", "Attempt to fix issues automatically").option("-v, --verbose", "Show verbose output").action(async (options) => {
+import { entityStateManager as entityStateManager2, COMPONENTS as COMPONENTS2, readEveSecrets, getAccessUrls } from "@eve/dna";
+import { verifyComponent } from "@eve/legs";
+
+// src/lib/probe-routes.ts
+import { execSync as execSync2 } from "child_process";
+import { getServerIp } from "@eve/dna";
+function probeRoutes(urls) {
+  const serverIp = getServerIp();
+  const out = [];
+  for (const svc of urls) {
+    if (!svc.domainUrl) continue;
+    const host = svc.domainUrl.replace(/^https?:\/\//, "").split("/")[0];
+    let httpStatus = "???";
     try {
-      await runDiagnostics(options.fix, options.verbose);
+      httpStatus = execSync2(
+        `curl -s -o /dev/null -w "%{http_code}" --max-time 4 -H "Host: ${host}" http://localhost:80/`,
+        { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }
+      ).trim();
+    } catch {
+      httpStatus = "timeout";
+    }
+    let dnsResolved = null;
+    try {
+      const out2 = execSync2(`getent hosts ${host} 2>/dev/null | awk '{print $1}' | head -1`, {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "ignore"]
+      }).trim();
+      if (out2) dnsResolved = out2;
+    } catch {
+    }
+    if (!dnsResolved) {
+      try {
+        const out2 = execSync2(`dig +short ${host} | head -1`, {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "ignore"]
+        }).trim();
+        if (out2) dnsResolved = out2;
+      } catch {
+      }
+    }
+    const dnsCorrect = !!serverIp && dnsResolved === serverIp;
+    let outcome;
+    if (!dnsResolved) {
+      outcome = "dns-missing";
+    } else if (!dnsCorrect) {
+      outcome = "dns-wrong";
+    } else if (httpStatus === "timeout") {
+      outcome = "timeout";
+    } else if (httpStatus === "404") {
+      outcome = "not-routing";
+    } else if (httpStatus === "502" || httpStatus === "503" || httpStatus === "504") {
+      outcome = "upstream-down";
+    } else {
+      outcome = "ok";
+    }
+    out.push({ id: svc.id, host, httpStatus, dnsResolved, dnsCorrect, outcome });
+  }
+  return out;
+}
+function probeVerdict(probes) {
+  if (probes.length === 0) return "ok";
+  const okCount = probes.filter((p) => p.outcome === "ok").length;
+  if (okCount === probes.length) return "ok";
+  if (okCount === 0) return "broken";
+  return "partial";
+}
+
+// src/commands/doctor.ts
+function doctorCommand(program2) {
+  program2.command("doctor").alias("doc").description("Run comprehensive diagnostics on the entity").option("-v, --verbose", "Show verbose output").action(async (options) => {
+    try {
+      await runDiagnostics(options.verbose);
     } catch (error) {
       printError("Diagnostics failed: " + String(error));
       process.exit(1);
     }
   });
 }
-async function runDiagnostics(attemptFix = false, verbose = false) {
+async function runDiagnostics(verbose = false) {
   console.log();
   printHeader("Entity Diagnostics", emojis.info);
   console.log();
@@ -445,14 +556,9 @@ async function runDiagnostics(attemptFix = false, verbose = false) {
     networkCheck.fail("Cannot check networks");
     checks.push({ name: "Network", status: "fail", message: "Failed to check Docker networks" });
   }
-  const EXPECTED_CONTAINERS = {
-    "eve-brain-synap": "brain",
-    "eve-brain-ollama": "brain",
-    "eve-arms-openclaw": "arms",
-    "eve-eyes-rsshub": "eyes",
-    "eve-legs-traefik": "legs"
-  };
-  const containerCheck = createSpinner("Checking running containers...");
+  const installed = await entityStateManager2.getInstalledComponents().catch(() => []);
+  const expectedContainers = COMPONENTS2.filter((c) => installed.includes(c.id) && c.service).map((c) => ({ name: c.service.containerName, organ: c.organ ?? c.id, label: c.label }));
+  const containerCheck = createSpinner("Checking installed containers...");
   containerCheck.start();
   try {
     const { stdout: psOut } = await execa("docker", [
@@ -477,25 +583,107 @@ async function runDiagnostics(attemptFix = false, verbose = false) {
       if (name) all.set(name.trim(), statusParts.join(" ").trim());
     }
     containerCheck.succeed("Container check complete");
-    for (const [containerName, organ] of Object.entries(EXPECTED_CONTAINERS)) {
-      if (running.has(containerName)) {
+    for (const c of expectedContainers) {
+      if (running.has(c.name)) {
         checks.push({
-          name: containerName,
+          name: c.name,
           status: "pass",
-          message: `Running \u2014 ${running.get(containerName)}`
+          message: `Running \u2014 ${running.get(c.name)}`
         });
-      } else if (all.has(containerName)) {
+      } else if (all.has(c.name)) {
         checks.push({
-          name: containerName,
+          name: c.name,
           status: "fail",
-          message: `Stopped \u2014 ${all.get(containerName)}`,
-          fix: `docker start ${containerName}  or  eve install --components=${organ}`
+          message: `Stopped \u2014 ${all.get(c.name)}`,
+          fix: `docker start ${c.name}`
+        });
+      } else {
+        checks.push({
+          name: c.name,
+          status: "warn",
+          message: "Not found \u2014 container missing",
+          fix: `eve add ${c.organ}`
         });
       }
     }
   } catch {
     containerCheck.fail("Could not query Docker containers");
     checks.push({ name: "Containers", status: "fail", message: "docker ps failed \u2014 is Docker running?" });
+  }
+  const reachabilityCheck = createSpinner("Probing service reachability from Traefik...");
+  reachabilityCheck.start();
+  try {
+    for (const c of COMPONENTS2) {
+      if (!c.service || !installed.includes(c.id)) continue;
+      const result = await verifyComponent(c.id);
+      if (result.ok) {
+        checks.push({ name: `${c.label} reachability`, status: "pass", message: result.summary });
+      } else {
+        const failed2 = result.checks.find((ch) => !ch.ok);
+        checks.push({
+          name: `${c.label} reachability`,
+          status: "fail",
+          message: failed2?.detail ?? result.summary,
+          fix: `docker logs ${c.service.containerName} --tail 30`
+        });
+      }
+    }
+    reachabilityCheck.succeed("Reachability check complete");
+  } catch (err) {
+    reachabilityCheck.warn("Could not probe reachability");
+  }
+  const secrets = await readEveSecrets(process.cwd());
+  if (secrets?.domain?.primary) {
+    const routeCheck = createSpinner(`Probing domain routes (${secrets.domain.primary})...`);
+    routeCheck.start();
+    try {
+      const urls = getAccessUrls(secrets, installed);
+      const probes = probeRoutes(urls);
+      routeCheck.succeed(`Probed ${probes.length} route(s)`);
+      for (const p of probes) {
+        if (p.outcome === "ok") {
+          checks.push({ name: `route: ${p.host}`, status: "pass", message: `${p.httpStatus} reachable` });
+        } else if (p.outcome === "upstream-down") {
+          checks.push({
+            name: `route: ${p.host}`,
+            status: "fail",
+            message: `${p.httpStatus} \u2014 route OK, upstream not responding`,
+            fix: `Check the upstream container is running and listening on its port.`
+          });
+        } else if (p.outcome === "not-routing") {
+          checks.push({
+            name: `route: ${p.host}`,
+            status: "fail",
+            message: `Traefik returned 404 \u2014 no router matched`,
+            fix: `eve domain repair`
+          });
+        } else if (p.outcome === "dns-missing") {
+          checks.push({
+            name: `route: ${p.host}`,
+            status: "warn",
+            message: `No DNS A record for ${p.host}`,
+            fix: `Create A record at your registrar pointing to your server IP`
+          });
+        } else if (p.outcome === "dns-wrong") {
+          checks.push({
+            name: `route: ${p.host}`,
+            status: "warn",
+            message: `DNS resolves to ${p.dnsResolved} (not this server)`,
+            fix: `Update A record at your registrar`
+          });
+        }
+      }
+      const verdict = probeVerdict(probes);
+      if (verdict !== "ok") {
+        checks.push({
+          name: "Domain routes",
+          status: verdict === "broken" ? "fail" : "warn",
+          message: verdict === "broken" ? "No routes reachable" : "Some routes failing"
+        });
+      }
+    } catch {
+      routeCheck.fail("Could not probe domain routes");
+    }
   }
   const stateCheck = createSpinner("Checking entity state...");
   stateCheck.start();
@@ -560,18 +748,306 @@ async function runDiagnostics(attemptFix = false, verbose = false) {
   } else {
     console.log();
     printError(`Entity has ${failed} issue(s) that need attention.`);
-    if (attemptFix) {
-      console.log();
-      printInfo("Automatic fixes are not implemented yet. Follow the Fix hints above or run eve inspect.");
-    }
+    printInfo("  Follow the Fix hints above, or run: eve inspect");
   }
   console.log();
 }
 
 // src/commands/grow.ts
 import { confirm, select, isCancel } from "@clack/prompts";
-import { entityStateManager as entityStateManager3 } from "@eve/dna";
-import { runBrainInit } from "@eve/brain";
+import { entityStateManager as entityStateManager4 } from "@eve/dna";
+
+// src/commands/add.ts
+import { execa as execa2 } from "execa";
+import { existsSync } from "fs";
+import {
+  entityStateManager as entityStateManager3
+} from "@eve/dna";
+import { runBrainInit, runInferenceInit } from "@eve/brain";
+import { runLegsProxySetup, refreshTraefikRoutes, verifyComponent as verifyComponent2 } from "@eve/legs";
+
+// src/lib/components.ts
+import {
+  COMPONENTS as COMPONENTS3,
+  resolveComponent,
+  allComponentIds,
+  addonComponentIds,
+  selectedIds
+} from "@eve/dna";
+
+// src/commands/add.ts
+async function addTraefik() {
+  await runLegsProxySetup({ standalone: true });
+}
+async function addSynap() {
+  const envRepo = process.env.SYNAP_REPO_ROOT;
+  if (!envRepo || !existsSync(envRepo)) {
+    printWarning(
+      `Synap installation requires a synap-backend checkout.
+  Pass --synap-repo <path> or set SYNAP_REPO_ROOT.
+  See: https://github.com/synap/synap-backend`
+    );
+    process.exit(1);
+  }
+  const flags = process.argv.slice(2);
+  const opts = {
+    domain: (flags.includes("--domain") ? flags[flags.indexOf("--domain") + 1] : void 0) || "localhost",
+    email: process.env.LETSENCRYPT_EMAIL
+  };
+  await runBrainInit({
+    synapRepo: envRepo,
+    domain: opts.domain,
+    email: opts.email,
+    adminBootstrapMode: "token",
+    withAi: false,
+    withOpenclaw: false,
+    withRsshub: false
+  });
+}
+async function addOllama(model) {
+  await runInferenceInit({ model, withGateway: true, internalOllamaOnly: true });
+}
+async function addOpenclaw() {
+  const state = await entityStateManager3.getState();
+  const brainStatus = state.organs.brain;
+  if (brainStatus.state !== "ready") {
+    printError("Brain is not ready. Please install Synap first: `eve add synap`");
+    process.exit(1);
+  }
+  const synapScript = process.env.SYNAP_SETUP_SCRIPT;
+  if (synapScript && existsSync(synapScript)) {
+    await execa2("bash", [synapScript, "profiles", "enable", "openclaw"], {
+      env: { ...process.env, SYNAP_DEPLOY_DIR: process.env.SYNAP_DEPLOY_DIR || "", SYNAP_ASSUME_YES: "1" },
+      stdio: "inherit"
+    });
+    await execa2("bash", [synapScript, "services", "add", "openclaw"], {
+      env: { ...process.env, SYNAP_DEPLOY_DIR: process.env.SYNAP_DEPLOY_DIR || "", SYNAP_ASSUME_YES: "1" },
+      stdio: "inherit"
+    });
+  } else {
+    printWarning("OpenClaw add via Synap delegate not available.");
+    printInfo("  Set SYNAP_SETUP_SCRIPT to point to synap-backend/setup.sh for auto-provisioning.");
+    printInfo("  Otherwise install OpenClaw manually: https://github.com/danielmiessler/openclaw");
+  }
+}
+async function addRsshub() {
+  const state = await entityStateManager3.getState();
+  const brainStatus = state.organs.brain;
+  if (brainStatus.state !== "ready") {
+    printError("Brain is not ready. Please install Synap first: `eve add synap`");
+    process.exit(1);
+  }
+  const { RSSHubService: RSSHubService2 } = await import("@eve/eyes");
+  const rsshub = new RSSHubService2();
+  if (await rsshub.isInstalled()) {
+    printInfo("RSSHub is already installed. Use `eve eyes:start` to start it.");
+    return;
+  }
+  await rsshub.install({ port: 1200 });
+  await entityStateManager3.updateOrgan("eyes", "ready");
+  printSuccess("RSSHub installed successfully!");
+  printInfo("  URL: http://localhost:1200");
+}
+async function runAdd(componentId, opts = {}) {
+  const comp = resolveComponent(componentId);
+  const existing = await entityStateManager3.isComponentInstalled(componentId);
+  if (existing) {
+    printWarning(`${comp.label} is already installed.`);
+    printInfo(`  Run "eve ${comp.organ} status" to check its state.`);
+    return;
+  }
+  const currentComponents = await entityStateManager3.getInstalledComponents();
+  const missingDeps = (comp.requires ?? []).filter((dep) => !currentComponents.includes(dep));
+  if (missingDeps.length > 0) {
+    const depNames = missingDeps.map((dep) => {
+      const info = COMPONENTS3.find((c) => c.id === dep);
+      return info ? info.label : dep;
+    });
+    printError(`Missing prerequisites: ${depNames.join(", ")}`);
+    printInfo(`  Install them first: ${missingDeps.map((d) => `eve add ${d}`).join(" / ")}`);
+    process.exit(1);
+  }
+  if (opts.synapRepo) {
+    process.env.SYNAP_REPO_ROOT = opts.synapRepo;
+  }
+  printHeader(`Adding ${comp.label}`, comp.emoji);
+  console.log();
+  printInfo(comp.description.split("\n")[0]);
+  console.log();
+  let step;
+  try {
+    step = buildAddStep(comp.id, opts);
+  } catch (err) {
+    printError(String(err));
+    process.exit(1);
+  }
+  const spinner = createSpinner(step.label);
+  spinner.start();
+  try {
+    await step.fn();
+    spinner.succeed(step.label);
+  } catch (err) {
+    spinner.fail(step.label);
+    printError(`Failed to add ${comp.label}: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+  const verifySpinner = createSpinner(`Verifying ${comp.label} is reachable...`);
+  verifySpinner.start();
+  const verification = await verifyComponent2(comp.id);
+  if (verification.ok) {
+    verifySpinner.succeed(verification.summary);
+  } else {
+    verifySpinner.warn(verification.summary);
+    for (const c of verification.checks) {
+      if (!c.ok && c.detail) {
+        printWarning(`  \u2022 ${c.name}: ${c.detail}`);
+      }
+    }
+    printInfo(`  Component installed but not yet responding. Check logs: docker logs ${comp.id}`);
+  }
+  await updateStateAfterAdd(comp.id, verification.ok ? "ready" : "error");
+  const refresh = await refreshTraefikRoutes();
+  if (refresh.refreshed) {
+    printInfo(`Traefik routes refreshed for ${refresh.domain}`);
+  } else if (refresh.domain) {
+    printWarning(`Could not refresh Traefik routes: ${refresh.reason ?? "unknown"}`);
+  }
+  console.log();
+  printSuccess(`${comp.label} added successfully!`);
+  console.log();
+  printInfo("Next steps:");
+  printInfo(`  - Run "eve status" to check entity state`);
+  if (comp.organ) printInfo(`  - Run "eve ${comp.organ} status" for ${comp.label} status`);
+  if (refresh.refreshed) printInfo(`  - Run "eve domain check" to verify routing`);
+  console.log();
+}
+function buildAddStep(componentId, opts) {
+  const model = opts.model || "llama3.1:8b";
+  switch (componentId) {
+    case "traefik":
+      return {
+        label: "Setting up Traefik routing...",
+        fn: addTraefik
+      };
+    case "synap":
+      return {
+        label: "Installing Synap Data Pod...",
+        fn: addSynap
+      };
+    case "ollama":
+      return {
+        label: "Setting up Ollama + AI gateway...",
+        fn: () => addOllama(model)
+      };
+    case "openclaw":
+      return {
+        label: "Installing OpenClaw...",
+        fn: addOpenclaw
+      };
+    case "rsshub":
+      return {
+        label: "Installing RSSHub...",
+        fn: addRsshub
+      };
+    case "openwebui": {
+      return {
+        label: "Setting up Open WebUI...",
+        async fn() {
+          const { mkdirSync, writeFileSync: writeFileSync2, existsSync: existsSync8 } = await import("fs");
+          const { join: pathJoin } = await import("path");
+          const { readEveSecrets: readEveSecrets8 } = await import("@eve/dna");
+          const { randomBytes: randomBytes2 } = await import("crypto");
+          const deployDir = "/opt/openwebui";
+          mkdirSync(deployDir, { recursive: true });
+          const secrets = await readEveSecrets8(process.cwd());
+          const synapApiKey = secrets?.synap?.apiKey ?? process.env.SYNAP_API_KEY ?? "";
+          const isUrl = process.env.SYNAP_IS_URL ?? "http://intelligence-hub:3001";
+          const envPath = pathJoin(deployDir, ".env");
+          if (!existsSync8(envPath)) {
+            writeFileSync2(envPath, [
+              "# Open WebUI \u2014 generated by Eve CLI",
+              `SYNAP_API_KEY=${synapApiKey}`,
+              `SYNAP_IS_URL=${isUrl}`,
+              `WEBUI_SECRET_KEY=${randomBytes2(32).toString("hex")}`,
+              `ENABLE_SIGNUP=true`,
+              `DEFAULT_USER_ROLE=user`
+            ].join("\n"), { mode: 384 });
+          }
+          console.log(`  Config written to ${deployDir}`);
+          console.log("  Start with: docker compose --profile openwebui up -d");
+        }
+      };
+    }
+    case "hermes":
+    case "dokploy":
+    case "opencode":
+    case "openclaude": {
+      const info = COMPONENTS3.find((c) => c.id === componentId);
+      printError(`${info?.label ?? componentId} requires builder organ setup.`);
+      printInfo('  Run "eve builder init" to configure the builder stack.');
+      process.exit(1);
+      return { label: "", fn: async () => {
+      } };
+    }
+    default:
+      throw new Error(`No add handler for component: ${componentId}`);
+  }
+}
+async function updateStateAfterAdd(componentId, finalState = "ready") {
+  const organMap = {
+    synap: "brain",
+    ollama: "brain",
+    openclaw: "arms",
+    hermes: "builder",
+    rsshub: "eyes",
+    traefik: "legs",
+    openwebui: "eyes",
+    dokploy: "builder",
+    opencode: "builder",
+    openclaude: "builder"
+  };
+  const organ = organMap[componentId];
+  if (organ) {
+    await entityStateManager3.updateOrgan(organ, finalState, { version: "0.1.0" });
+  }
+  await entityStateManager3.updateComponentEntry(componentId, {
+    state: finalState,
+    version: "0.1.0",
+    managedBy: "eve"
+  });
+  const current = await entityStateManager3.getInstalledComponents();
+  if (!current.includes(componentId)) {
+    await entityStateManager3.updateSetupProfile({ components: [...current, componentId] });
+  }
+}
+function addCommand(program2) {
+  program2.command("add").description("Add a component to an existing entity").argument("[component]", "Component ID to add (traefik, synap, ollama, openclaw, rsshub, openwebui, hermes, dokploy, opencode, openclaude)").option("--synap-repo <path>", "Path to synap-backend checkout (for synap component)").option("--model <model>", "Ollama model (for ollama component)", "llama3.1:8b").action(async (component, opts) => {
+    if (!component) {
+      console.log();
+      printHeader("Eve \u2014 Add Component", emojis.entity);
+      console.log();
+      printInfo("Usage: eve add <component>");
+      console.log();
+      printInfo("Available components:");
+      for (const comp of COMPONENTS3) {
+        const installed = await entityStateManager3.isComponentInstalled(comp.id);
+        const tag = installed ? colors.success(" [installed]") : colors.muted(`[requires: ${(comp.requires ?? []).join(", ") || "none"}]`);
+        console.log(`  ${comp.emoji} ${colors.primary.bold(comp.label)}${tag}`);
+        console.log(`    ${comp.description.split("\n")[0]}`);
+      }
+      console.log();
+      printInfo("Examples:");
+      printInfo("  eve add ollama              # Add local AI inference");
+      printInfo("  eve add openclaw            # Add AI agent layer");
+      printInfo("  eve add rsshub              # Add data perception");
+      console.log();
+      return;
+    }
+    await runAdd(component, opts);
+  });
+}
+
+// src/commands/grow.ts
 function growCommand(program2) {
   const grow = program2.command("grow").description("Grow the entity by developing new capabilities").action(async () => {
     await interactiveGrow();
@@ -588,11 +1064,10 @@ function growCommand(program2) {
   });
 }
 async function interactiveGrow() {
-  console.clear();
   console.log();
   console.log(colors.primary.bold(`${emojis.sparkles} Eve Entity Growth`));
   console.log();
-  const state = await entityStateManager3.getState();
+  const state = await entityStateManager4.getState();
   printHeader("Current Entity State", emojis.entity);
   console.log();
   const organs = ["brain", "arms", "builder", "eyes", "legs"];
@@ -636,6 +1111,13 @@ async function interactiveGrow() {
     });
   }
 }
+var ORGAN_TO_COMPONENT = {
+  brain: "synap",
+  arms: "openclaw",
+  eyes: "rsshub",
+  legs: "traefik",
+  builder: "hermes"
+};
 async function growOrgan(organ, options) {
   const valid = ["brain", "arms", "builder", "eyes", "legs"];
   if (!valid.includes(organ)) {
@@ -643,61 +1125,26 @@ async function growOrgan(organ, options) {
     process.exitCode = 1;
     return;
   }
+  const componentId = ORGAN_TO_COMPONENT[organ];
   console.log();
   printHeader(`Growing ${organ.charAt(0).toUpperCase() + organ.slice(1)}`, emojis.sparkles);
   console.log();
   if (options.dryRun) {
-    printInfo("Dry run \u2014 planned steps:");
-    for (const step of getInstallationSteps(organ)) {
-      console.log(`  ${colors.muted("\u2022")} ${step.name}`);
-    }
-    if (organ === "brain") {
-      printInfo("Run without --dry-run to execute: eve brain init (same as grow organ brain)");
-    } else {
-      printInfo(`Run without --dry-run: use eve ${organ} install (or organ-specific commands).`);
-    }
+    printInfo(`Would run: eve add ${componentId}`);
     return;
   }
   const shouldProceed = await confirm({
-    message: `Install the ${organ} organ? This will set up necessary services.`,
+    message: `Install the ${organ} organ (eve add ${componentId})?`,
     initialValue: true
   });
-  if (isCancel(shouldProceed)) {
-    console.log(colors.muted("\nCancelled."));
+  if (isCancel(shouldProceed) || !shouldProceed) {
+    console.log(colors.muted("Cancelled."));
     return;
   }
-  if (!shouldProceed) {
-    console.log(colors.muted("\nGrowth cancelled"));
-    return;
-  }
-  if (organ === "brain") {
-    try {
-      await runBrainInit({
-        withAi: options.withAi === true,
-        model: "llama3.1:8b",
-        synapRepo: process.env.SYNAP_REPO_ROOT
-      });
-    } catch {
-      process.exit(1);
-    }
-    return;
-  }
-  const steps = getInstallationSteps(organ);
-  for (const step of steps) {
-    const spinner = createSpinner(step.name);
-    spinner.start();
-    await sleep(800);
-    spinner.succeed(step.name);
-  }
-  printInfo(
-    `Automated install for "${organ}" is not fully wired yet. Run: ${colors.info(`eve ${organ} install`)} (or see eve ${organ} --help).`
-  );
-  await entityStateManager3.updateOrgan(organ, "ready");
-  printSuccess(`${organ} marked ready in entity state (verify with eve ${organ} status).`);
-  console.log();
+  await runAdd(componentId, {});
 }
 async function growCapability() {
-  const state = await entityStateManager3.getState();
+  const state = await entityStateManager4.getState();
   const organ = await select({
     message: "Which organ would you like to enhance?",
     options: [
@@ -717,20 +1164,6 @@ async function growCapability() {
     printInfo(`Enhancing ${organ} capabilities... (coming soon)`);
   }
 }
-function getInstallationSteps(organ) {
-  const steps = {
-    brain: [
-      { name: "Docker network eve-network" },
-      { name: "Synap Data Pod install" },
-      { name: "Optional: Ollama + model pull" }
-    ],
-    arms: [{ name: "eve arms install" }],
-    eyes: [{ name: "eve eyes install" }],
-    legs: [{ name: "eve legs setup" }],
-    builder: [{ name: "eve builder init <project>" }]
-  };
-  return steps[organ] || [{ name: "See eve <organ> --help" }];
-}
 
 // src/commands/lifecycle/birth.ts
 function birthCommand(program2) {
@@ -744,121 +1177,23 @@ function birthCommand(program2) {
 }
 
 // src/commands/lifecycle/install.ts
-import { select as select2, multiselect, isCancel as isCancel2, intro, note } from "@clack/prompts";
-import { existsSync } from "fs";
+import { confirm as confirm2, select as select2, multiselect, isCancel as isCancel2, intro, note } from "@clack/prompts";
+import { existsSync as existsSync2 } from "fs";
 import { join } from "path";
 import {
-  entityStateManager as entityStateManager4,
+  entityStateManager as entityStateManager5,
   writeSetupProfile,
-  readEveSecrets,
-  writeEveSecrets,
-  ensureEveSkillsLayout,
-  defaultSkillsDir,
+  readEveSecrets as readEveSecrets3,
+  writeEveSecrets as writeEveSecrets2,
+  ensureEveSkillsLayout as ensureEveSkillsLayout2,
+  defaultSkillsDir as defaultSkillsDir2,
   ensureSecretValue,
-  getServerIp
+  getServerIp as getServerIp2
 } from "@eve/dna";
 import { getGlobalCliFlags as getGlobalCliFlags2, outputJson } from "@eve/cli-kit";
-import { runBrainInit as runBrainInit2, runInferenceInit, resolveSynapDelegate } from "@eve/brain";
-import { runLegsProxySetup } from "@eve/legs";
-
-// src/lib/components.ts
-var COMPONENTS = [
-  {
-    id: "traefik",
-    organ: "legs",
-    label: "Traefik",
-    emoji: "\u{1F9BF}",
-    description: "Reverse proxy & routing. Handles domain exposure, SSL termination, and service discovery for all Eve services. Always installed.",
-    category: "infrastructure",
-    alwaysInstall: true
-  },
-  {
-    id: "ollama",
-    organ: "brain",
-    label: "Ollama",
-    emoji: "\u{1F9E0}",
-    description: "Local AI inference engine. Runs open-source models (Llama, Mistral, etc.) on your server. Keeps your data private.",
-    category: "data",
-    requires: ["traefik"]
-  },
-  {
-    id: "synap",
-    organ: "brain",
-    label: "Synap Data Pod",
-    emoji: "\u{1F9E0}",
-    description: "Your sovereign second brain. Stores and organises all your data \u2014 notes, tasks, contacts, bookmarks. The foundation of your personal AI infrastructure.",
-    category: "data",
-    requires: ["traefik"]
-  },
-  {
-    id: "openclaw",
-    organ: "arms",
-    label: "OpenClaw",
-    emoji: "\u{1F9BE}",
-    description: "AI action layer. Gives your AI agent the ability to execute commands, access your files, and interact with the world.",
-    category: "agent",
-    requires: ["synap"]
-  },
-  {
-    id: "hermes",
-    organ: "builder",
-    label: "Hermes",
-    emoji: "\u{1F3D7}\uFE0F",
-    description: "AI builder system. Enables the agent to create, deploy, and manage new applications and services automatically.",
-    category: "builder",
-    requires: ["synap"]
-  },
-  {
-    id: "rsshub",
-    organ: "eyes",
-    label: "RSSHub",
-    emoji: "\u{1F441}\uFE0F",
-    description: "Data perception layer. Turns any website into RSS feeds so your AI can stay informed about what matters.",
-    category: "perception",
-    requires: ["synap"]
-  },
-  {
-    id: "dokploy",
-    label: "Dokploy",
-    emoji: "\u{1F527}",
-    description: "Low-code PaaS for deploying applications. Optional \u2014 install later if you need a visual deployment dashboard.",
-    category: "add-on"
-  },
-  {
-    id: "opencode",
-    label: "OpenCode",
-    emoji: "\u{1F4BB}",
-    description: "AI-powered code editor. Lets your agent write and edit code directly on your server.",
-    category: "add-on"
-  },
-  {
-    id: "openclaude",
-    label: "OpenClaude",
-    emoji: "\u{1F916}",
-    description: "Claude Code as a service. Exposes Claude Code to your agent for advanced coding tasks.",
-    category: "add-on"
-  },
-  {
-    id: "librechat",
-    label: "LibreChat",
-    emoji: "\u{1F4AC}",
-    description: "Chat UI pre-wired to Synap IS (AI provider) and Synap MCP server (memory, entities, skills). Includes conversation history via MongoDB.",
-    category: "add-on",
-    requires: ["synap"]
-  }
-];
-function resolveComponent(id) {
-  const comp = COMPONENTS.find((c) => c.id === id);
-  if (!comp) {
-    throw new Error(`Unknown component: ${id}. Available: ${COMPONENTS.map((c) => c.id).join(", ")}`);
-  }
-  return comp;
-}
-function selectedIds(selected) {
-  return COMPONENTS.filter((c) => selected[c.id]).map((c) => c.id);
-}
-
-// src/commands/lifecycle/install.ts
+import { runBrainInit as runBrainInit2, runInferenceInit as runInferenceInit2, resolveSynapDelegate } from "@eve/brain";
+import { runLegsProxySetup as runLegsProxySetup2, TraefikService } from "@eve/legs";
+import { text } from "@clack/prompts";
 import { RSSHubService } from "@eve/eyes";
 async function runInstall(opts) {
   const flags = getGlobalCliFlags2();
@@ -868,9 +1203,9 @@ async function runInstall(opts) {
   if (opts.components && opts.components.length > 0) {
     componentSet = {};
     for (const id of opts.components) {
-      const comp = COMPONENTS.find((c) => c.id === id);
+      const comp = COMPONENTS3.find((c) => c.id === id);
       if (!comp) {
-        throw new Error(`Unknown component: ${id}. Available: ${COMPONENTS.map((c) => c.id).join(", ")}`);
+        throw new Error(`Unknown component: ${id}. Available: ${COMPONENTS3.map((c) => c.id).join(", ")}`);
       }
       componentSet[id] = true;
     }
@@ -883,7 +1218,7 @@ async function runInstall(opts) {
       return;
     }
   }
-  for (const comp of COMPONENTS) {
+  for (const comp of COMPONENTS3) {
     if (comp.alwaysInstall) {
       componentSet[comp.id] = true;
     }
@@ -899,7 +1234,7 @@ async function runInstall(opts) {
     spinner.start();
     let dockerPath = "docker";
     try {
-      const { stdout } = await execa2("which", ["docker"]);
+      const { stdout } = await execa3("which", ["docker"]);
       if (stdout) dockerPath = stdout;
     } catch {
       const candidates = [
@@ -908,7 +1243,7 @@ async function runInstall(opts) {
         "/usr/bin/containerd"
       ];
       for (const c of candidates) {
-        if (existsSync(c)) {
+        if (existsSync2(c)) {
           dockerPath = c;
           break;
         }
@@ -917,7 +1252,7 @@ async function runInstall(opts) {
     let dockerOk = false;
     for (let attempt = 0; attempt < 8; attempt++) {
       try {
-        await execa2(dockerPath, ["version"]);
+        await execa3(dockerPath, ["version"]);
         dockerOk = true;
         break;
       } catch {
@@ -943,11 +1278,11 @@ async function runInstall(opts) {
         printInfo("Docker is installed but the daemon is not responding.");
         printInfo("Make sure it is running:");
         printInfo("  sudo systemctl status docker");
-        printInfo();
+        console.log();
         printInfo("If not running, start it:");
         printInfo("  sudo systemctl start docker");
         printInfo("  # wait ~5 seconds for it to initialize");
-        printInfo();
+        console.log();
         printInfo("If Docker is not installed, run:");
         printInfo("  curl -fsSL https://get.docker.com | sudo bash");
       }
@@ -957,7 +1292,7 @@ async function runInstall(opts) {
   }
   if (!opts.dryRun) {
     const cwd = process.cwd();
-    const skillsDir = defaultSkillsDir();
+    const skillsDir = defaultSkillsDir2();
     const setupProfile = {
       profile: legacyProfile,
       source: nonInteractive ? "cli" : "wizard",
@@ -970,7 +1305,7 @@ async function runInstall(opts) {
       setupProfile.tunnelDomain = opts.tunnelDomain;
     }
     await writeSetupProfile(setupProfile, cwd);
-    const prevSecrets = await readEveSecrets(cwd);
+    const prevSecrets = await readEveSecrets3(cwd);
     const merge = {
       version: "1",
       updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
@@ -995,14 +1330,14 @@ async function runInstall(opts) {
         gatewayUrl: "http://127.0.0.1:11435"
       };
     }
-    await writeEveSecrets(merge, cwd);
-    ensureEveSkillsLayout(skillsDir);
+    await writeEveSecrets2(merge, cwd);
+    ensureEveSkillsLayout2(skillsDir);
   }
   if (!jsonMode) {
     console.log();
     printHeader("Eve Install Plan", emojis.entity);
     console.log();
-    for (const comp of COMPONENTS) {
+    for (const comp of COMPONENTS3) {
       if (!componentSet[comp.id]) continue;
       const tag = comp.alwaysInstall ? colors.muted(" [infrastructure]") : "";
       console.log(`  ${colors.success(emojis.check)} ${colors.primary.bold(comp.label)} ${colors.muted(comp.description.split("\n")[0])}${tag}`);
@@ -1041,6 +1376,12 @@ async function runInstall(opts) {
   }
   const installedComponents = installList.filter((c) => !skippedComponents.has(c));
   await updateEntityStateFromComponents(installedComponents, opts);
+  if (!jsonMode && !opts.skipInteractive) {
+    await maybeOfferDomainSetup(installedComponents);
+  }
+  if (!jsonMode && !opts.skipInteractive && process.platform === "linux") {
+    await maybeOfferDashboardService();
+  }
   if (!jsonMode) {
     console.log();
     printSuccess("Entity installation complete.");
@@ -1054,7 +1395,7 @@ async function runInstall(opts) {
     printInfo(`  - Run "eve domain set <domain>"  to configure remote domain access`);
     printInfo(`  - Run "eve grow organ"           to add more capabilities later`);
     printInfo(`  - Run "eve add <component>"      to add add-ons (dokploy, opencode, openclaude)`);
-    const serverIp = getServerIp();
+    const serverIp = getServerIp2();
     if (serverIp) {
       console.log();
       console.log(colors.muted(`  Your server IP: ${serverIp}`));
@@ -1064,6 +1405,83 @@ async function runInstall(opts) {
   } else {
     outputJson({ ok: true, components: installList });
   }
+}
+async function maybeOfferDomainSetup(installedComponents) {
+  const existing = await readEveSecrets3(process.cwd());
+  if (existing?.domain?.primary) return;
+  console.log();
+  const wantDomain = await confirm2({
+    message: "Want to expose this Eve installation on a public domain?",
+    initialValue: false
+  });
+  if (isCancel2(wantDomain) || !wantDomain) return;
+  const domainName = await text({
+    message: "Domain (e.g. mydomain.com):",
+    placeholder: "mydomain.com",
+    validate: (value) => {
+      if (!value) return "Domain is required";
+      if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(value)) return "Invalid domain format";
+      return void 0;
+    }
+  });
+  if (isCancel2(domainName)) return;
+  const wantSsl = await confirm2({
+    message: "Enable SSL via Let's Encrypt? (recommended for public domains)",
+    initialValue: true
+  });
+  if (isCancel2(wantSsl)) return;
+  let email;
+  if (wantSsl) {
+    const emailResult = await text({
+      message: "Email for Let's Encrypt notifications:",
+      placeholder: "you@example.com",
+      validate: (value) => value && /^[^@]+@[^@]+\.[^@]+$/.test(value) ? void 0 : "Invalid email"
+    });
+    if (isCancel2(emailResult)) return;
+    email = emailResult;
+  }
+  console.log();
+  const spinner = createSpinner(`Configuring Traefik routes for ${domainName}...`);
+  spinner.start();
+  try {
+    await writeEveSecrets2({ domain: { primary: domainName, ssl: !!wantSsl, email } });
+    const traefik = new TraefikService();
+    await traefik.configureSubdomains(domainName, !!wantSsl, email, installedComponents);
+    spinner.succeed(`Domain ${domainName} configured`);
+  } catch (err) {
+    spinner.fail(`Failed to configure domain: ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
+  const serverIp = getServerIp2();
+  console.log();
+  printInfo("Now create these DNS A records at your registrar:");
+  console.log();
+  for (const comp of [{ subdomain: "eve" }, ...installedComponents.flatMap((id) => {
+    const c = COMPONENTS3.find((c2) => c2.id === id);
+    return c?.service?.subdomain ? [{ subdomain: c.service.subdomain }] : [];
+  })]) {
+    const value = serverIp ?? "<your-server-ip>";
+    console.log(`  ${colors.muted("A")}    ${`${comp.subdomain}.${domainName}`.padEnd(32)}  ${value}`);
+  }
+  console.log();
+  printInfo("Once DNS propagates, verify with: eve domain check");
+  if (wantSsl) printInfo("SSL certificates provision automatically (1\u20135 min after DNS works)");
+}
+async function maybeOfferDashboardService() {
+  if (process.getuid && process.getuid() !== 0) return;
+  const SERVICE_PATH2 = "/etc/systemd/system/eve-dashboard.service";
+  if (existsSync2(SERVICE_PATH2)) return;
+  console.log();
+  const wantService = await confirm2({
+    message: "Install the Eve Dashboard as a systemd service so it auto-starts on boot?",
+    initialValue: true
+  });
+  if (isCancel2(wantService) || !wantService) {
+    printInfo("You can run the dashboard manually anytime with: eve ui");
+    return;
+  }
+  printInfo("Run: sudo eve ui --install-service");
+  printInfo("  (We don't do it inline because it requires building the dashboard first.)");
 }
 function buildInstallSteps(components, opts) {
   const steps = [];
@@ -1083,7 +1501,7 @@ function buildInstallSteps(components, opts) {
       label: "Setting up Traefik routing...",
       async fn() {
         const domain = opts.domain || "localhost";
-        await runLegsProxySetup({
+        await runLegsProxySetup2({
           domain: hasSynap ? domain : void 0,
           tunnel: opts.tunnel,
           tunnelDomain: opts.tunnelDomain,
@@ -1135,7 +1553,7 @@ function buildInstallSteps(components, opts) {
     steps.push({
       label: "Setting up Ollama + AI gateway...",
       async fn() {
-        await runInferenceInit({
+        await runInferenceInit2({
           model: opts.model || "llama3.1:8b",
           withGateway: true,
           internalOllamaOnly: hasSynap
@@ -1157,10 +1575,10 @@ function buildInstallSteps(components, opts) {
         if (synapPod && hasSynap) {
           console.log("  Delegating Synap\u2194OpenClaw wiring to synap-cli...");
           try {
-            const { homedir: homedir2 } = await import("os");
-            const { existsSync: existsSync6 } = await import("fs");
-            const podConfigPath = join(homedir2(), ".synap", "pod-config.json");
-            if (existsSync6(podConfigPath)) {
+            const { homedir: homedir3 } = await import("os");
+            const { existsSync: existsSync8 } = await import("fs");
+            const podConfigPath = join(homedir3(), ".synap", "pod-config.json");
+            if (existsSync8(podConfigPath)) {
               await spawnAsync("npx", ["-p", "@synap-core/cli", "synap", "finish", "--skip-ai-key", "--skip-domain"], {
                 env: { ...process.env, SYNAP_DEPLOY_DIR: synapPod.deployDir },
                 cwd: synapPod.repoRoot
@@ -1197,48 +1615,33 @@ function buildInstallSteps(components, opts) {
       }
     });
   }
-  const hasLibreChat = components.includes("librechat");
-  if (hasLibreChat) {
+  const hasOpenWebUI = components.includes("openwebui");
+  if (hasOpenWebUI) {
     steps.push({
-      label: "Setting up LibreChat...",
+      label: "Setting up Open WebUI...",
       async fn() {
-        const { mkdirSync, writeFileSync, existsSync: existsSync6, readFileSync: readFileSync2 } = await import("fs");
+        const { mkdirSync, writeFileSync: writeFileSync2, existsSync: existsSync8 } = await import("fs");
         const { join: pathJoin } = await import("path");
-        const { readEveSecrets: readEveSecrets7 } = await import("@eve/dna");
-        const { createRequire } = await import("module");
-        const { fileURLToPath: fileURLToPath3 } = await import("url");
-        const deployDir = "/opt/librechat";
-        mkdirSync(deployDir, { recursive: true });
-        const __filename3 = fileURLToPath3(import.meta.url);
-        const templateBase = pathJoin(__filename3, "../../../../../packages/install/src/templates");
-        const yamlSrc = pathJoin(templateBase, "librechat.yaml");
-        if (existsSync6(yamlSrc)) {
-          writeFileSync(pathJoin(deployDir, "librechat.yaml"), readFileSync2(yamlSrc));
-        }
-        const secrets = await readEveSecrets7(process.cwd());
-        const synapApiKey = secrets?.synap?.apiKey ?? process.env.SYNAP_API_KEY ?? "";
-        const synapApiUrl = secrets?.synap?.apiUrl ?? "http://synap-backend-backend-1:4000";
-        const isUrl = process.env.SYNAP_IS_URL ?? "http://intelligence-hub:3001";
+        const { readEveSecrets: readEveSecrets8 } = await import("@eve/dna");
         const { randomBytes: randomBytes2 } = await import("crypto");
-        const gen = (n = 32) => randomBytes2(n).toString("hex");
+        const deployDir = "/opt/openwebui";
+        mkdirSync(deployDir, { recursive: true });
+        const secrets = await readEveSecrets8(process.cwd());
+        const synapApiKey = secrets?.synap?.apiKey ?? process.env.SYNAP_API_KEY ?? "";
+        const isUrl = process.env.SYNAP_IS_URL ?? "http://intelligence-hub:3001";
         const envPath = pathJoin(deployDir, ".env");
-        if (!existsSync6(envPath)) {
-          writeFileSync(envPath, [
-            "# LibreChat \u2014 generated by Eve CLI",
+        if (!existsSync8(envPath)) {
+          writeFileSync2(envPath, [
+            "# Open WebUI \u2014 generated by Eve CLI",
             `SYNAP_API_KEY=${synapApiKey}`,
             `SYNAP_IS_URL=${isUrl}`,
-            `SYNAP_HUB_URL=${synapApiUrl}`,
-            `OLLAMA_BASE_URL=http://eve-brain-ollama:11434`,
-            `LIBRECHAT_JWT_SECRET=${gen()}`,
-            `LIBRECHAT_JWT_REFRESH_SECRET=${gen()}`,
-            `LIBRECHAT_CREDS_KEY=${gen(16)}`,
-            `LIBRECHAT_CREDS_IV=${gen(8)}`,
-            `LIBRECHAT_APP_TITLE=Synap Chat`,
-            `LIBRECHAT_ALLOW_REGISTRATION=true`
+            `WEBUI_SECRET_KEY=${randomBytes2(32).toString("hex")}`,
+            `ENABLE_SIGNUP=true`,
+            `DEFAULT_USER_ROLE=user`
           ].join("\n"), { mode: 384 });
         }
-        console.log(`  LibreChat config written to ${deployDir}`);
-        console.log("  Start with: docker compose --profile librechat up -d");
+        console.log(`  Open WebUI config written to ${deployDir}`);
+        console.log("  Start with: docker compose --profile openwebui up -d");
       }
     });
   }
@@ -1259,15 +1662,15 @@ async function updateEntityStateFromComponents(components, opts) {
   for (const compId of components) {
     const organ = organMap[compId];
     if (organ) {
-      await entityStateManager4.updateOrgan(organ, "ready", { version: "0.1.0" });
+      await entityStateManager5.updateOrgan(organ, "ready", { version: "0.1.0" });
     }
-    await entityStateManager4.updateComponentEntry(compId, {
+    await entityStateManager5.updateComponentEntry(compId, {
       state: "ready",
       version: "0.1.0",
       managedBy: "eve"
     });
   }
-  await entityStateManager4.updateSetupProfile({ components });
+  await entityStateManager5.updateSetupProfile({ components });
 }
 var PRESETS = [
   {
@@ -1285,8 +1688,8 @@ var PRESETS = [
   {
     value: "chat",
     label: "\u{1F4AC}  AI chat server",
-    hint: "Synap + LibreChat + Traefik",
-    ids: ["traefik", "synap", "librechat"]
+    hint: "Synap + Open WebUI + Traefik",
+    ids: ["traefik", "synap", "openwebui"]
   },
   {
     value: "builder",
@@ -1315,18 +1718,21 @@ async function interactiveComponentSelect() {
     initialValue: "full"
   });
   if (isCancel2(preset)) return {};
-  const selectableComponents = COMPONENTS.filter((c) => !c.alwaysInstall);
+  const selectableComponents = COMPONENTS3.filter((c) => !c.alwaysInstall);
   let presetIds = preset === "custom" ? selectableComponents.filter((c) => c.category !== "add-on").map((c) => c.id) : PRESETS.find((p) => p.value === preset)?.ids.filter((id) => id !== "traefik") ?? [];
-  const finalIds = preset !== "minimal" ? await multiselect({
-    message: preset === "custom" ? "Select components:" : "Adjust selection (space to toggle):",
-    options: selectableComponents.map((c) => ({
-      value: c.id,
-      label: `${c.emoji}  ${c.label}`,
-      hint: c.description.split(".")[0]
-    })),
-    initialValues: presetIds,
-    required: false
-  }) : [];
+  let finalIds = [];
+  if (preset !== "minimal") {
+    finalIds = await multiselect({
+      message: preset === "custom" ? "Select components:" : "Adjust selection (space to toggle):",
+      options: selectableComponents.map((c) => ({
+        value: c.id,
+        label: `${c.emoji}  ${c.label}`,
+        hint: c.description.split(".")[0]
+      })),
+      initialValues: presetIds,
+      required: false
+    });
+  }
   if (isCancel2(finalIds)) return {};
   const result = { traefik: true };
   for (const id of finalIds) {
@@ -1334,7 +1740,7 @@ async function interactiveComponentSelect() {
   }
   const missing = [];
   for (const id of Object.keys(result)) {
-    const comp = COMPONENTS.find((c) => c.id === id);
+    const comp = COMPONENTS3.find((c) => c.id === id);
     for (const req of comp?.requires ?? []) {
       if (!result[req]) missing.push(`${comp.label} requires ${req}`);
     }
@@ -1342,7 +1748,7 @@ async function interactiveComponentSelect() {
   if (missing.length) {
     note(missing.join("\n"), "Dependency note \u2014 adding missing requirements");
     for (const id of Object.keys(result)) {
-      const comp = COMPONENTS.find((c) => c.id === id);
+      const comp = COMPONENTS3.find((c) => c.id === id);
       for (const req of comp?.requires ?? []) result[req] = true;
     }
   }
@@ -1361,7 +1767,7 @@ function inferLegacyProfile(components) {
 function installCommand(program2) {
   program2.command("install").alias("i").description("Composable component installer \u2014 pick what you need").option(
     "--components <list>",
-    "Comma-separated component IDs (traefik,synap,ollama,openclaw,hermes,rsshub,dokploy,opencode,openclaude)"
+    "Comma-separated component IDs (traefik,synap,ollama,openclaw,hermes,rsshub,openwebui,dokploy,opencode,openclaude)"
   ).option("--domain <host>", "Public hostname (default: localhost)", "localhost").option("--email <email>", "Let's Encrypt email for TLS").option("--model <model>", "Ollama model", "llama3.1:8b").option("--admin-email <email>", "Admin bootstrap email for Synap").option("--admin-password <secret>", "Admin password for preseed bootstrap").option("--admin-bootstrap-mode <mode>", "Token | preseed (default: token)").option("--tunnel <provider>", "Tunnel provider: pangolin | cloudflare").option("--tunnel-domain <host>", "Tunnel hostname").option("--ai-mode <m>", "AI inference mode: local | provider | hybrid").option("--ai-provider <p>", "Default AI provider: openrouter | anthropic | openai | ollama").option("--fallback-provider <p>", "Fallback AI provider").option("--synap-repo <path>", "Path to synap-backend checkout").option("--with-openclaw", "Enable OpenClaw (legacy flag)").option("--with-rsshub", "Enable RSSHub (legacy flag)").option("--from-image", "Install Synap from prebuilt image").option("--from-source", "Install Synap from source").option("--dry-run", "Print planned steps without executing").option("--skip-hardware", "Skip hardware summary").addHelpText(
     "after",
     `
@@ -1429,31 +1835,26 @@ Run "eve status" to see current state.
     });
   });
 }
-function execa2(cmd, args, opts) {
+function execa3(cmd, args, opts) {
   return import("execa").then((mod) => mod.execa(cmd, args, { ...opts || {}, shell: true }));
 }
 function spawnAsync(cmd, args, opts) {
   return import("execa").then(
-    (mod) => mod.spawn(cmd, args, {
+    ({ execa: execaFn }) => execaFn(cmd, args, {
       env: { ...process.env, ...opts?.env || {} },
       cwd: opts?.cwd,
       stdio: "inherit"
-    }).on("spawn", () => {
-    }).on("close", ({ exitCode }) => {
-      if (exitCode !== 0) {
-        throw new Error(`${cmd} exited with code ${exitCode}`);
-      }
-    })
+    }).then(() => void 0)
   );
 }
 
 // src/commands/setup.ts
-import { select as select3, confirm as confirm3, isCancel as isCancel3, text } from "@clack/prompts";
+import { select as select3, confirm as confirm3, isCancel as isCancel3, text as text2 } from "@clack/prompts";
 import { homedir, tmpdir } from "os";
-import { existsSync as existsSync2 } from "fs";
+import { existsSync as existsSync3 } from "fs";
 import { mkdir, readdir, rm } from "fs/promises";
 import { dirname, join as join2, resolve } from "path";
-import { execa as execa3 } from "execa";
+import { execa as execa4 } from "execa";
 import {
   readSetupProfile,
   writeSetupProfile as writeSetupProfile2,
@@ -1461,14 +1862,14 @@ import {
   readUsbSetupManifest,
   probeHardware,
   formatHardwareReport,
-  readEveSecrets as readEveSecrets2,
-  writeEveSecrets as writeEveSecrets2,
+  readEveSecrets as readEveSecrets4,
+  writeEveSecrets as writeEveSecrets3,
   ensureSecretValue as ensureSecretValue2,
-  defaultSkillsDir as defaultSkillsDir2,
-  ensureEveSkillsLayout as ensureEveSkillsLayout2
+  defaultSkillsDir as defaultSkillsDir3,
+  ensureEveSkillsLayout as ensureEveSkillsLayout3
 } from "@eve/dna";
-import { runBrainInit as runBrainInit3, runInferenceInit as runInferenceInit2 } from "@eve/brain";
-import { runLegsProxySetup as runLegsProxySetup2 } from "@eve/legs";
+import { runBrainInit as runBrainInit3, runInferenceInit as runInferenceInit3 } from "@eve/brain";
+import { runLegsProxySetup as runLegsProxySetup3 } from "@eve/legs";
 import { getGlobalCliFlags as getGlobalCliFlags3, outputJson as outputJson2 } from "@eve/cli-kit";
 function parseProfile(s) {
   if (!s) return null;
@@ -1513,7 +1914,7 @@ function prevAiModeFromUsb(usb) {
 var SYNAP_BACKEND_REPO_URL = "https://github.com/synap-core/backend.git";
 var SYNAP_BACKEND_TARBALL_URL = "https://codeload.github.com/synap-core/backend/tar.gz/refs/heads/main";
 function looksLikeSynapRepo(repoRoot) {
-  return existsSync2(join2(repoRoot, "synap")) && existsSync2(join2(repoRoot, "deploy", "docker-compose.yml"));
+  return existsSync3(join2(repoRoot, "synap")) && existsSync3(join2(repoRoot, "deploy", "docker-compose.yml"));
 }
 function findLocalSynapRepo(startDir) {
   const candidates = /* @__PURE__ */ new Set();
@@ -1573,7 +1974,7 @@ async function ensureSynapRepoForProfile(requestedPath, cwd, nonInteractive, jso
         "data_pod/full requires a synap-backend checkout. Pass --synap-repo or set SYNAP_REPO_ROOT."
       );
     }
-    const maybePath = await text({
+    const maybePath = await text2({
       message: "Where should synap-backend be cloned?",
       placeholder: defaultCloneDir,
       defaultValue: defaultCloneDir
@@ -1584,7 +1985,7 @@ async function ensureSynapRepoForProfile(requestedPath, cwd, nonInteractive, jso
     const trimmed = maybePath.trim();
     targetDir = resolve(trimmed.length ? trimmed : defaultCloneDir);
   }
-  if (existsSync2(targetDir) && !looksLikeSynapRepo(targetDir)) {
+  if (existsSync3(targetDir) && !looksLikeSynapRepo(targetDir)) {
     const empty = await isDirectoryEmpty(targetDir);
     if (empty) {
       await rm(targetDir, { recursive: true, force: true });
@@ -1605,12 +2006,12 @@ async function ensureSynapRepoForProfile(requestedPath, cwd, nonInteractive, jso
       );
     }
   }
-  if (!existsSync2(targetDir)) {
+  if (!existsSync3(targetDir)) {
     if (!jsonMode) {
       console.log(`${emojis.info} Cloning synap-backend to ${colors.info(targetDir)} \u2026`);
     }
     try {
-      await execa3(
+      await execa4(
         "git",
         [
           "-c",
@@ -1638,10 +2039,10 @@ async function ensureSynapRepoForProfile(requestedPath, cwd, nonInteractive, jso
           );
         }
         await mkdir(targetDir, { recursive: true });
-        await execa3("curl", ["-fsSL", SYNAP_BACKEND_TARBALL_URL, "-o", archivePath], {
+        await execa4("curl", ["-fsSL", SYNAP_BACKEND_TARBALL_URL, "-o", archivePath], {
           stdio: "inherit"
         });
-        await execa3("tar", ["-xzf", archivePath, "--strip-components", "1", "-C", targetDir], {
+        await execa4("tar", ["-xzf", archivePath, "--strip-components", "1", "-C", targetDir], {
           stdio: "inherit"
         });
       } catch {
@@ -1672,7 +2073,7 @@ function setupCommand(program2) {
     const cwd = process.cwd();
     const existing = await readSetupProfile(cwd);
     let loadedExistingPrefs = false;
-    if (!existing && existsSync2(getSetupProfilePath(cwd)) && !flags.nonInteractive && !flags.json && !opts.dryRun) {
+    if (!existing && existsSync3(getSetupProfilePath(cwd)) && !flags.nonInteractive && !flags.json && !opts.dryRun) {
       console.log(
         colors.warning(
           `${emojis.warning} ${getSetupProfilePath(cwd)} is present but invalid or unreadable. Fix or remove it to enable "load saved preferences".`
@@ -1873,7 +2274,7 @@ function setupCommand(program2) {
       if (accessMode === "local") {
         installDomain = "localhost";
       } else {
-        const d = await text({
+        const d = await text2({
           message: "Public hostname for Synap (Caddy URL for API/auth, e.g. pod.example.com)",
           initialValue: installDomain !== "localhost" ? installDomain : "",
           placeholder: "pod.example.com"
@@ -1890,7 +2291,7 @@ function setupCommand(program2) {
         installDomain = candidate;
       }
       if (installDomain !== "localhost" && !installEmail) {
-        const em = await text({
+        const em = await text2({
           message: "Let's Encrypt email for TLS certificates",
           placeholder: "you@example.com",
           initialValue: ""
@@ -1944,7 +2345,7 @@ function setupCommand(program2) {
       }
       adminBootstrapMode = bootstrapMode;
       if (adminBootstrapMode === "preseed") {
-        const ae = await text({
+        const ae = await text2({
           message: "Admin email for initial Synap admin account",
           initialValue: adminEmail ?? "",
           placeholder: "admin@example.com"
@@ -1959,7 +2360,7 @@ function setupCommand(program2) {
           process.exit(1);
         }
         if (!adminPassword) {
-          const ap = await text({
+          const ap = await text2({
             message: "Admin password for initial account",
             initialValue: "",
             placeholder: "Choose a strong password"
@@ -2047,7 +2448,7 @@ function setupCommand(program2) {
           legsHostStrategy = "custom";
         }
         if (!tunnelDomain) {
-          const d = await text({
+          const d = await text2({
             message: "Public hostname for Eve Legs ingress",
             placeholder: "eve.example.com",
             initialValue: ""
@@ -2207,8 +2608,8 @@ ${formatHardwareReport(facts)}
       },
       cwd
     );
-    const prevSecrets = await readEveSecrets2(cwd);
-    const skillsDir = prevSecrets?.builder?.skillsDir?.trim() || process.env.EVE_SKILLS_DIR?.trim() || defaultSkillsDir2();
+    const prevSecrets = await readEveSecrets4(cwd);
+    const skillsDir = prevSecrets?.builder?.skillsDir?.trim() || process.env.EVE_SKILLS_DIR?.trim() || defaultSkillsDir3();
     const merge = {
       ai: {
         mode: aiMode,
@@ -2258,13 +2659,15 @@ ${formatHardwareReport(facts)}
         hubBaseUrl: prevSecrets?.synap?.hubBaseUrl ?? process.env.SYNAP_HUB_BASE_URL ?? void 0
       };
       merge.arms = {
-        openclawSynapApiKey: podKey
+        openclaw: { synapApiKey: podKey }
       };
     } else {
       merge.arms = {
-        openclawSynapApiKey: ensureSecretValue2(
-          prevSecrets?.arms?.openclawSynapApiKey ?? process.env.OPENCLAW_SYNAP_API_KEY
-        )
+        openclaw: {
+          synapApiKey: ensureSecretValue2(
+            prevSecrets?.arms?.openclaw?.synapApiKey ?? process.env.OPENCLAW_SYNAP_API_KEY
+          )
+        }
       };
     }
     if (profile !== "data_pod") {
@@ -2275,14 +2678,14 @@ ${formatHardwareReport(facts)}
         gatewayPass: prevSecrets?.inference?.gatewayPass
       };
     }
-    await writeEveSecrets2(merge, cwd);
-    ensureEveSkillsLayout2(skillsDir);
+    await writeEveSecrets3(merge, cwd);
+    ensureEveSkillsLayout3(skillsDir);
     if (flags.json) {
       outputJson2({ ok: true, profile, persisted: true });
     }
     try {
       if (profile === "inference_only") {
-        await runInferenceInit2({
+        await runInferenceInit3({
           model: opts.model ?? "llama3.1:8b",
           withGateway: true,
           internalOllamaOnly: false
@@ -2309,7 +2712,7 @@ ${formatHardwareReport(facts)}
         });
         if (tunnelProvider) {
           const legsDomain = installDomain !== "localhost" ? installDomain : tunnelDomain ?? void 0;
-          await runLegsProxySetup2({
+          await runLegsProxySetup3({
             domain: legsDomain,
             tunnel: tunnelProvider,
             tunnelDomain,
@@ -2340,14 +2743,14 @@ ${formatHardwareReport(facts)}
           adminPassword,
           withAi: false
         });
-        await runInferenceInit2({
+        await runInferenceInit3({
           model: opts.model ?? "llama3.1:8b",
           withGateway: true,
           internalOllamaOnly: true
         });
         if (tunnelProvider) {
           const legsDomain = installDomain !== "localhost" ? installDomain : tunnelDomain ?? void 0;
-          await runLegsProxySetup2({
+          await runLegsProxySetup3({
             domain: legsDomain,
             tunnel: tunnelProvider,
             tunnelDomain,
@@ -2374,243 +2777,15 @@ ${emojis.check} Setup complete. Profile: ${colors.success(profile)}  (.eve/setup
   });
 }
 
-// src/commands/add.ts
-import { execa as execa4 } from "execa";
-import { existsSync as existsSync3 } from "fs";
-import {
-  entityStateManager as entityStateManager5
-} from "@eve/dna";
-import { runBrainInit as runBrainInit4, runInferenceInit as runInferenceInit3 } from "@eve/brain";
-import { runLegsProxySetup as runLegsProxySetup3 } from "@eve/legs";
-async function addTraefik() {
-  await runLegsProxySetup3({ standalone: true });
-}
-async function addSynap() {
-  const envRepo = process.env.SYNAP_REPO_ROOT;
-  if (!envRepo || !existsSync3(envRepo)) {
-    printWarning(
-      `Synap installation requires a synap-backend checkout.
-  Pass --synap-repo <path> or set SYNAP_REPO_ROOT.
-  See: https://github.com/synap/synap-backend`
-    );
-    process.exit(1);
-  }
-  const flags = process.argv.slice(2);
-  const opts = {
-    domain: (flags.includes("--domain") ? flags[flags.indexOf("--domain") + 1] : void 0) || "localhost",
-    email: process.env.LETSENCRYPT_EMAIL
-  };
-  await runBrainInit4({
-    synapRepo: envRepo,
-    domain: opts.domain,
-    email: opts.email,
-    adminBootstrapMode: "token",
-    withAi: false,
-    withOpenclaw: false,
-    withRsshub: false
-  });
-}
-async function addOllama(model) {
-  await runInferenceInit3({ model, withGateway: true, internalOllamaOnly: true });
-}
-async function addOpenclaw() {
-  const state = await entityStateManager5.getState();
-  const brainStatus = state.organs.brain;
-  if (brainStatus.state !== "ready") {
-    printError("Brain is not ready. Please install Synap first: `eve add synap`");
-    process.exit(1);
-  }
-  const synapScript = process.env.SYNAP_SETUP_SCRIPT;
-  if (synapScript && existsSync3(synapScript)) {
-    await execa4("bash", [synapScript, "profiles", "enable", "openclaw"], {
-      env: { ...process.env, SYNAP_DEPLOY_DIR: process.env.SYNAP_DEPLOY_DIR || "", SYNAP_ASSUME_YES: "1" },
-      stdio: "inherit"
-    });
-    await execa4("bash", [synapScript, "services", "add", "openclaw"], {
-      env: { ...process.env, SYNAP_DEPLOY_DIR: process.env.SYNAP_DEPLOY_DIR || "", SYNAP_ASSUME_YES: "1" },
-      stdio: "inherit"
-    });
-  } else {
-    printWarning("OpenClaw add via Synap delegate not available.");
-    printInfo("  Set SYNAP_SETUP_SCRIPT to point to synap-backend/setup.sh for auto-provisioning.");
-    printInfo("  Otherwise install OpenClaw manually: https://github.com/danielmiessler/openclaw");
-  }
-}
-async function addRsshub() {
-  const state = await entityStateManager5.getState();
-  const brainStatus = state.organs.brain;
-  if (brainStatus.state !== "ready") {
-    printError("Brain is not ready. Please install Synap first: `eve add synap`");
-    process.exit(1);
-  }
-  const { RSSHubService: RSSHubService2 } = await import("@eve/eyes");
-  const rsshub = new RSSHubService2();
-  if (await rsshub.isInstalled()) {
-    printInfo("RSSHub is already installed. Use `eve eyes:start` to start it.");
-    return;
-  }
-  await rsshub.install({ port: 1200 });
-  await entityStateManager5.updateOrgan("eyes", "ready");
-  printSuccess("RSSHub installed successfully!");
-  printInfo("  URL: http://localhost:1200");
-}
-async function runAdd(componentId, opts = {}) {
-  const comp = resolveComponent(componentId);
-  const existing = await entityStateManager5.isComponentInstalled(componentId);
-  if (existing) {
-    printWarning(`${comp.label} is already installed.`);
-    printInfo(`  Run "eve ${comp.organ} status" to check its state.`);
-    return;
-  }
-  const currentComponents = await entityStateManager5.getInstalledComponents();
-  const missingDeps = (comp.requires ?? []).filter((dep) => !currentComponents.includes(dep));
-  if (missingDeps.length > 0) {
-    const depNames = missingDeps.map((dep) => {
-      const info = COMPONENTS.find((c) => c.id === dep);
-      return info ? info.label : dep;
-    });
-    printError(`Missing prerequisites: ${depNames.join(", ")}`);
-    printInfo(`  Install them first: ${missingDeps.map((d) => `eve add ${d}`).join(" / ")}`);
-    process.exit(1);
-  }
-  if (opts.synapRepo) {
-    process.env.SYNAP_REPO_ROOT = opts.synapRepo;
-  }
-  printHeader(`Adding ${comp.label}`, comp.emoji);
-  console.log();
-  printInfo(comp.description.split("\n")[0]);
-  console.log();
-  let step;
-  try {
-    step = buildAddStep(comp.id, opts);
-  } catch (err) {
-    printError(String(err));
-    process.exit(1);
-  }
-  const spinner = createSpinner(step.label);
-  spinner.start();
-  try {
-    await step.fn();
-    spinner.succeed(step.label);
-  } catch (err) {
-    spinner.fail(step.label);
-    printError(`Failed to add ${comp.label}: ${err instanceof Error ? err.message : String(err)}`);
-    process.exit(1);
-  }
-  await updateStateAfterAdd(comp.id);
-  console.log();
-  printSuccess(`${comp.label} added successfully!`);
-  console.log();
-  printInfo("Next steps:");
-  printInfo(`  - Run "eve status" to check entity state`);
-  printInfo(`  - Run "eve ${comp.organ} status" for ${comp.label} status`);
-  console.log();
-}
-function buildAddStep(componentId, opts) {
-  const model = opts.model || "llama3.1:8b";
-  switch (componentId) {
-    case "traefik":
-      return {
-        label: "Setting up Traefik routing...",
-        fn: addTraefik
-      };
-    case "synap":
-      return {
-        label: "Installing Synap Data Pod...",
-        fn: addSynap
-      };
-    case "ollama":
-      return {
-        label: "Setting up Ollama + AI gateway...",
-        fn: () => addOllama(model)
-      };
-    case "openclaw":
-      return {
-        label: "Installing OpenClaw...",
-        fn: addOpenclaw
-      };
-    case "rsshub":
-      return {
-        label: "Installing RSSHub...",
-        fn: addRsshub
-      };
-    case "hermes":
-    case "dokploy":
-    case "opencode":
-    case "openclaude":
-      return {
-        label: "Builder organ (manual setup)",
-        async fn() {
-          const info = COMPONENTS.find((c) => c.id === componentId);
-          if (info) {
-            printWarning(`${info.label} requires manual configuration.`);
-            printInfo(`  Run "eve builder init" to set up the builder organ with all add-ons.`);
-          }
-        }
-      };
-    default:
-      throw new Error(`No add handler for component: ${componentId}`);
-  }
-}
-async function updateStateAfterAdd(componentId) {
-  const organMap = {
-    synap: "brain",
-    ollama: "brain",
-    openclaw: "arms",
-    hermes: "builder",
-    rsshub: "eyes",
-    traefik: "legs",
-    dokploy: "builder",
-    opencode: "builder",
-    openclaude: "builder"
-  };
-  const organ = organMap[componentId];
-  if (organ) {
-    await entityStateManager5.updateOrgan(organ, "ready", { version: "0.1.0" });
-  }
-  await entityStateManager5.updateComponentEntry(componentId, {
-    state: "ready",
-    version: "0.1.0",
-    managedBy: "eve"
-  });
-  const current = await entityStateManager5.getInstalledComponents();
-  if (!current.includes(componentId)) {
-    await entityStateManager5.updateSetupProfile({ components: [...current, componentId] });
-  }
-}
-function addCommand(program2) {
-  program2.command("add").description("Add a component to an existing entity").argument("[component]", "Component ID to add (traefik, synap, ollama, openclaw, rsshub, hermes, dokploy, opencode, openclaude)").option("--synap-repo <path>", "Path to synap-backend checkout (for synap component)").option("--model <model>", "Ollama model (for ollama component)", "llama3.1:8b").action(async (component, opts) => {
-    if (!component) {
-      console.log();
-      printHeader("Eve \u2014 Add Component", emojis.entity);
-      console.log();
-      printInfo("Usage: eve add <component>");
-      console.log();
-      printInfo("Available components:");
-      for (const comp of COMPONENTS) {
-        const installed = await entityStateManager5.isComponentInstalled(comp.id);
-        const tag = installed ? colors.success(" [installed]") : colors.muted(`[requires: ${(comp.requires ?? []).join(", ") || "none"}]`);
-        console.log(`  ${comp.emoji} ${colors.primary.bold(comp.label)}${tag}`);
-        console.log(`    ${comp.description.split("\n")[0]}`);
-      }
-      console.log();
-      printInfo("Examples:");
-      printInfo("  eve add ollama              # Add local AI inference");
-      printInfo("  eve add openclaw            # Add AI agent layer");
-      printInfo("  eve add rsshub              # Add data perception");
-      console.log();
-      return;
-    }
-    await runAdd(component, opts);
-  });
-}
-
 // src/commands/remove.ts
 import { execa as execa5 } from "execa";
 import { join as join3 } from "path";
+import { confirm as confirm4, isCancel as isCancel4 } from "@clack/prompts";
+import { getGlobalCliFlags as getGlobalCliFlags4 } from "@eve/cli-kit";
 import {
   entityStateManager as entityStateManager6
 } from "@eve/dna";
+import { refreshTraefikRoutes as refreshTraefikRoutes3 } from "@eve/legs";
 async function removeTraefik() {
   const spinner = createSpinner("Stopping Traefik...");
   spinner.start();
@@ -2636,9 +2811,9 @@ async function removeSynap() {
   spinner.start();
   try {
     const deployDir = process.env.SYNAP_DEPLOY_DIR;
-    if (deployDir && process.platform !== "win32") {
-      await execa5("bash", ["-c", `[ -f "${deployDir}/docker-compose.yml" ] && docker compose -f "${deployDir}/docker-compose.yml" down --volumes`], {
-        shell: "/bin/bash",
+    if (deployDir) {
+      const composePath = join3(deployDir, "docker-compose.yml");
+      await execa5("docker", ["compose", "-f", composePath, "down", "--volumes"], {
         env: { ...process.env, SYNAP_ASSUME_YES: "1" },
         stdio: "inherit"
       });
@@ -2707,6 +2882,11 @@ async function removeRsshub() {
   spinner.succeed("RSSHub removed");
 }
 async function runRemove(componentId) {
+  if (componentId === "traefik") {
+    printError("Traefik is always-installed infrastructure and cannot be removed.");
+    printInfo("  To stop it temporarily: docker stop eve-legs-traefik");
+    process.exit(1);
+  }
   const comp = resolveComponent(componentId);
   const installed = await entityStateManager6.isComponentInstalled(componentId);
   if (!installed) {
@@ -2724,12 +2904,12 @@ async function runRemove(componentId) {
   }
   const currentComponents = await entityStateManager6.getInstalledComponents();
   const dependents = currentComponents.filter((dep) => {
-    const depInfo = COMPONENTS.find((c) => c.id === dep);
+    const depInfo = COMPONENTS3.find((c) => c.id === dep);
     return depInfo?.requires?.includes(componentId) ?? false;
   });
   if (dependents.length > 0) {
     const depNames = dependents.map((d) => {
-      const info = COMPONENTS.find((c) => c.id === d);
+      const info = COMPONENTS3.find((c) => c.id === d);
       return info ? info.label : d;
     });
     printWarning(`${comp.label} is a prerequisite for: ${depNames.join(", ")}`);
@@ -2740,6 +2920,14 @@ async function runRemove(componentId) {
   console.log();
   printInfo("This will stop and remove the Docker containers for this component.");
   console.log();
+  const flags = getGlobalCliFlags4();
+  if (!flags.nonInteractive) {
+    const ok = await confirm4({ message: `Remove ${comp.label}? This cannot be undone.` });
+    if (isCancel4(ok) || !ok) {
+      console.log(colors.muted("Cancelled."));
+      return;
+    }
+  }
   let removeFn;
   try {
     removeFn = buildRemoveStep(comp.id);
@@ -2749,6 +2937,10 @@ async function runRemove(componentId) {
   }
   await removeFn();
   await updateStateAfterRemove(comp.id);
+  const refresh = await refreshTraefikRoutes3();
+  if (refresh.refreshed) {
+    printInfo(`Traefik routes refreshed for ${refresh.domain}`);
+  }
   console.log();
   printSuccess(`${comp.label} removed successfully!`);
   console.log();
@@ -2774,7 +2966,7 @@ function buildRemoveStep(componentId) {
     case "opencode":
     case "openclaude":
       return async () => {
-        const info = COMPONENTS.find((c) => c.id === componentId);
+        const info = COMPONENTS3.find((c) => c.id === componentId);
         if (info) {
           printWarning(`${info.label} removal requires manual cleanup.`);
           printInfo('  Run "eve builder stack" to manage builder resources.');
@@ -2822,7 +3014,7 @@ function removeCommand(program2) {
       printInfo("Usage: eve remove <component>");
       console.log();
       printInfo("Available components:");
-      for (const comp of COMPONENTS) {
+      for (const comp of COMPONENTS3) {
         const installed = await entityStateManager6.isComponentInstalled(comp.id);
         const tag = installed ? colors.success(" [installed]") : (await entityStateManager6.getOrganState(comp.organ)).state === "ready" ? colors.success(" [installed]") : colors.muted("[not installed]");
         console.log(`  ${comp.emoji} ${colors.primary.bold(comp.label)}${tag}`);
@@ -2868,7 +3060,7 @@ function logsCommand(program2) {
 // src/commands/debug/inspect.ts
 import { execa as execa7 } from "execa";
 import { entityStateManager as entityStateManager7, configManager } from "@eve/dna";
-import { getGlobalCliFlags as getGlobalCliFlags4, outputJson as outputJson3 } from "@eve/cli-kit";
+import { getGlobalCliFlags as getGlobalCliFlags5, outputJson as outputJson3 } from "@eve/cli-kit";
 function inspectCommand(program2) {
   program2.command("inspect").description("Dump entity state, config path, and Eve-related containers (JSON)").option("--containers-only", "Only run docker ps filter").action(async (opts) => {
     try {
@@ -2891,7 +3083,7 @@ function inspectCommand(program2) {
       }
       if (opts.containersOnly) {
         const payload2 = { containers };
-        if (getGlobalCliFlags4().json) {
+        if (getGlobalCliFlags5().json) {
           outputJson3(payload2);
         } else {
           console.log(JSON.stringify(payload2, null, 2));
@@ -2905,7 +3097,7 @@ function inspectCommand(program2) {
         configPath: cfgPath,
         containers
       };
-      if (getGlobalCliFlags4().json) {
+      if (getGlobalCliFlags5().json) {
         outputJson3(payload);
       } else {
         console.log(JSON.stringify(payload, null, 2));
@@ -2921,7 +3113,7 @@ function inspectCommand(program2) {
 // src/commands/manage/config-cmd.ts
 import { readFile } from "fs/promises";
 import { configManager as configManager2 } from "@eve/dna";
-import { getGlobalCliFlags as getGlobalCliFlags5, outputJson as outputJson4 } from "@eve/cli-kit";
+import { getGlobalCliFlags as getGlobalCliFlags6, outputJson as outputJson4 } from "@eve/cli-kit";
 function configCommands(program2) {
   const cfg = program2.command("config").description("Eve YAML config (~/.config/eve/config.yaml)");
   cfg.command("path").description("Print path to config file").action(() => {
@@ -2935,7 +3127,7 @@ function configCommands(program2) {
         createdAt: c.createdAt instanceof Date ? c.createdAt.toISOString() : c.createdAt,
         updatedAt: c.updatedAt instanceof Date ? c.updatedAt.toISOString() : c.updatedAt
       };
-      if (getGlobalCliFlags5().json) {
+      if (getGlobalCliFlags6().json) {
         outputJson4(plain);
       } else {
         console.log(JSON.stringify(plain, null, 2));
@@ -2968,15 +3160,15 @@ function configCommands(program2) {
 
 // src/commands/manage/backup-update.ts
 import { execa as execa8 } from "execa";
-import { execSync as execSync2, spawnSync } from "child_process";
+import { execSync as execSync3, spawnSync } from "child_process";
 import { createInterface } from "readline/promises";
 import { stdin as input, stdout as output } from "process";
 import { existsSync as existsSync4 } from "fs";
 import { join as join4 } from "path";
-import { getGlobalCliFlags as getGlobalCliFlags6 } from "@eve/cli-kit";
+import { getGlobalCliFlags as getGlobalCliFlags7 } from "@eve/cli-kit";
 function getSynapBackendContainer() {
   try {
-    const out = execSync2(
+    const out = execSync3(
       'docker ps --filter "label=com.docker.compose.project=synap-backend" --filter "label=com.docker.compose.service=backend" --format "{{.Names}}"',
       { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }
     ).trim();
@@ -2987,7 +3179,7 @@ function getSynapBackendContainer() {
 }
 function connectToEveNetwork(name) {
   try {
-    execSync2(`docker network connect eve-network ${name}`, { stdio: ["pipe", "pipe", "ignore"] });
+    execSync3(`docker network connect eve-network ${name}`, { stdio: ["pipe", "pipe", "ignore"] });
   } catch {
   }
 }
@@ -3042,17 +3234,17 @@ function buildUpdateTargets(deployDir) {
     }
   });
   targets.push({
-    id: "librechat",
-    label: "\u{1F4AC} LibreChat",
+    id: "openwebui",
+    label: "\u{1F4AC} Open WebUI",
     update: async () => {
-      spawnSync("docker", ["pull", "ghcr.io/danny-avila/librechat:latest"], { stdio: "inherit" });
-      spawnSync("docker", ["restart", "hestia-librechat"], { stdio: "inherit" });
+      spawnSync("docker", ["pull", "ghcr.io/open-webui/open-webui:main"], { stdio: "inherit" });
+      spawnSync("docker", ["restart", "hestia-openwebui"], { stdio: "inherit" });
     }
   });
   return targets;
 }
 async function confirmDestructiveReset() {
-  const flags = getGlobalCliFlags6();
+  const flags = getGlobalCliFlags7();
   if (flags.nonInteractive) return true;
   const rl = createInterface({ input, output });
   try {
@@ -3066,7 +3258,7 @@ function backupUpdateCommands(program2) {
   program2.command("backup").description("List Eve-related Docker volumes (full backup: stop stack + docker run volume export \u2014 see docs)").action(async () => {
     try {
       const { stdout } = await execa8("docker", ["volume", "ls", "--format", "{{.Name}}"]);
-      const vols = stdout.split("\n").filter((n) => n.includes("eve") || n.includes("ollama") || n.includes("synap") || n.includes("librechat"));
+      const vols = stdout.split("\n").filter((n) => n.includes("eve") || n.includes("ollama") || n.includes("synap") || n.includes("openwebui"));
       if (vols.length === 0) {
         printInfo("No matching volumes found. Create the stack with eve brain init first.");
         return;
@@ -3081,7 +3273,7 @@ function backupUpdateCommands(program2) {
       process.exit(1);
     }
   });
-  program2.command("update").description("Pull latest images and restart all Eve organs (Synap, Ollama, OpenClaw, RSSHub, Traefik)").option("--only <organs>", "Comma-separated organs to update, e.g. synap,ollama").option("--skip <organs>", "Comma-separated organs to skip, e.g. traefik").action(async (opts) => {
+  program2.command("update").description("Pull latest images and restart all Eve organs (Synap, Ollama, OpenClaw, RSSHub, Traefik, Open WebUI)").option("--only <organs>", "Comma-separated organs to update, e.g. synap,ollama").option("--skip <organs>", "Comma-separated organs to skip, e.g. traefik").action(async (opts) => {
     const deployDirs = ["/opt/synap-backend", process.env.SYNAP_DEPLOY_DIR].filter(Boolean);
     const deployDir = deployDirs.find((d) => existsSync4(join4(d, "docker-compose.yml")));
     const targets = buildUpdateTargets(deployDir);
@@ -3150,11 +3342,288 @@ function backupUpdateCommands(program2) {
   });
 }
 
-// src/commands/ai.ts
+// src/commands/manage/purge.ts
+import { execSync as execSync4 } from "child_process";
+import { existsSync as existsSync5, rmSync } from "fs";
+import { homedir as homedir2 } from "os";
+import { join as join5 } from "path";
+import { createInterface as createInterface2 } from "readline/promises";
+import { stdin as input2, stdout as output2 } from "process";
 import { execa as execa9 } from "execa";
+import { getGlobalCliFlags as getGlobalCliFlags8 } from "@eve/cli-kit";
+var CONTAINER_PREFIXES = [
+  "eve-brain-",
+  "eve-arms-",
+  "eve-eyes-",
+  "eve-legs-",
+  "eve-builder-",
+  "hestia-",
+  "synap-backend-"
+];
+var VOLUME_PATTERNS = ["eve", "synap", "ollama", "openwebui", "librechat"];
+var NETWORKS = ["eve-network", "hestia-network"];
+var DEPLOY_DIRS = [
+  "/opt/synap-backend",
+  "/opt/openwebui",
+  "/opt/librechat"
+];
+function listEveContainers() {
+  try {
+    const out = execSync4('docker ps -a --format "{{.Names}}"', {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"]
+    }).trim();
+    return out.split("\n").map((n) => n.trim()).filter((n) => n && CONTAINER_PREFIXES.some((prefix) => n.startsWith(prefix)));
+  } catch {
+    return [];
+  }
+}
+function listEveVolumes() {
+  try {
+    const out = execSync4('docker volume ls --format "{{.Name}}"', {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"]
+    }).trim();
+    return out.split("\n").map((n) => n.trim()).filter((n) => n && VOLUME_PATTERNS.some((p) => n.includes(p)));
+  } catch {
+    return [];
+  }
+}
+function listEveNetworks() {
+  try {
+    const out = execSync4('docker network ls --format "{{.Name}}"', {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"]
+    }).trim();
+    return out.split("\n").map((n) => n.trim()).filter((n) => NETWORKS.includes(n));
+  } catch {
+    return [];
+  }
+}
+async function confirmPhrase(phrase) {
+  const flags = getGlobalCliFlags8();
+  if (flags.nonInteractive) return true;
+  const rl = createInterface2({ input: input2, output: output2 });
+  try {
+    const answer = await rl.question(`  Type "${phrase}" to confirm: `);
+    return answer.trim() === phrase;
+  } finally {
+    rl.close();
+  }
+}
+async function runPurge(opts = {}) {
+  const flags = getGlobalCliFlags8();
+  const nonInteractive = Boolean(flags.nonInteractive) || Boolean(opts.yes);
+  const containers = listEveContainers();
+  const volumes = listEveVolumes();
+  const networks = listEveNetworks();
+  const stateDir = join5(homedir2(), ".local", "share", "eve");
+  const skillsDir = join5(homedir2(), ".eve");
+  const deployDirs = DEPLOY_DIRS.filter((d) => existsSync5(d));
+  const eveDir = opts.eveDir ?? "/opt/eve";
+  console.log();
+  console.log(colors.error.bold("\u26A0\uFE0F  Eve Purge \u2014 complete wipe"));
+  console.log(colors.muted("\u2500".repeat(50)));
+  console.log();
+  if (containers.length > 0) {
+    console.log(colors.primary.bold(`Containers (${containers.length}):`));
+    for (const c of containers) console.log(`  ${colors.muted("\u2022")} ${c}`);
+    console.log();
+  }
+  if (volumes.length > 0) {
+    console.log(colors.primary.bold(`Volumes (${volumes.length}):`));
+    for (const v of volumes) console.log(`  ${colors.muted("\u2022")} ${v}`);
+    console.log();
+  }
+  if (networks.length > 0) {
+    console.log(colors.primary.bold(`Networks (${networks.length}):`));
+    for (const n of networks) console.log(`  ${colors.muted("\u2022")} ${n}`);
+    console.log();
+  }
+  const statePaths = [];
+  if (existsSync5(stateDir)) statePaths.push(stateDir);
+  if (existsSync5(skillsDir)) statePaths.push(skillsDir);
+  if (statePaths.length > 0) {
+    console.log(colors.primary.bold("State & config files:"));
+    for (const p of statePaths) console.log(`  ${colors.muted("\u2022")} ${p}`);
+    console.log();
+  }
+  if (deployDirs.length > 0) {
+    console.log(colors.primary.bold("Deploy directories:"));
+    for (const d of deployDirs) console.log(`  ${colors.muted("\u2022")} ${d}`);
+    console.log();
+  }
+  if (opts.images) {
+    console.log(colors.primary.bold("Docker images:"));
+    console.log(`  ${colors.muted("\u2022")} All unused images (docker system prune -a)`);
+    console.log();
+  }
+  if (opts.self && existsSync5(eveDir)) {
+    console.log(colors.primary.bold("Eve CLI installation:"));
+    console.log(`  ${colors.muted("\u2022")} ${eveDir}`);
+    console.log();
+  }
+  const nothingToDo = containers.length === 0 && volumes.length === 0 && networks.length === 0 && statePaths.length === 0 && deployDirs.length === 0 && !opts.images && !(opts.self && existsSync5(eveDir));
+  if (nothingToDo) {
+    printInfo("Nothing to purge \u2014 environment looks clean.");
+    return;
+  }
+  if (!nonInteractive) {
+    console.log(colors.warning("This operation is irreversible. All data in the listed volumes will be lost."));
+    console.log();
+    const confirmed = await confirmPhrase("purge");
+    if (!confirmed) {
+      printInfo("Cancelled.");
+      return;
+    }
+    console.log();
+  }
+  if (containers.length > 0) {
+    const s = createSpinner(`Removing ${containers.length} container(s)...`);
+    s.start();
+    try {
+      await execa9("docker", ["rm", "-f", ...containers], { stdio: "pipe" });
+      s.succeed(`Removed ${containers.length} container(s)`);
+    } catch (err) {
+      s.warn(`Some containers could not be removed: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`);
+    }
+  }
+  const synapDeployDir = ["/opt/synap-backend/deploy", process.env.SYNAP_DEPLOY_DIR].filter(Boolean).find((d) => d && existsSync5(join5(d, "docker-compose.yml")));
+  if (synapDeployDir) {
+    const s = createSpinner("Tearing down Synap backend compose stack...");
+    s.start();
+    try {
+      await execa9("docker", ["compose", "down", "--volumes", "--remove-orphans"], {
+        cwd: synapDeployDir,
+        stdio: "pipe"
+      });
+      s.succeed("Synap compose stack removed");
+    } catch {
+      s.warn("Synap compose down failed (stack may already be down)");
+    }
+  }
+  const freshVolumes = listEveVolumes();
+  if (freshVolumes.length > 0) {
+    const s = createSpinner(`Removing ${freshVolumes.length} volume(s)...`);
+    s.start();
+    const failed = [];
+    for (const vol of freshVolumes) {
+      try {
+        await execa9("docker", ["volume", "rm", vol], { stdio: "pipe" });
+      } catch {
+        failed.push(vol);
+      }
+    }
+    if (failed.length === 0) {
+      s.succeed(`Removed ${freshVolumes.length} volume(s)`);
+    } else {
+      s.warn(`Removed ${freshVolumes.length - failed.length}/${freshVolumes.length} volumes. In use: ${failed.join(", ")}`);
+    }
+  }
+  const freshNetworks = listEveNetworks();
+  if (freshNetworks.length > 0) {
+    const s = createSpinner("Removing Docker networks...");
+    s.start();
+    const failed = [];
+    for (const net of freshNetworks) {
+      try {
+        await execa9("docker", ["network", "rm", net], { stdio: "pipe" });
+      } catch {
+        failed.push(net);
+      }
+    }
+    if (failed.length === 0) {
+      s.succeed(`Removed networks: ${freshNetworks.join(", ")}`);
+    } else {
+      s.warn(`Could not remove: ${failed.join(", ")} (containers still attached?)`);
+    }
+  }
+  if (existsSync5(stateDir)) {
+    const s = createSpinner("Removing Eve state files...");
+    s.start();
+    try {
+      rmSync(stateDir, { recursive: true, force: true });
+      s.succeed(`Removed ${stateDir}`);
+    } catch (err) {
+      s.warn(`Could not remove ${stateDir}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  if (existsSync5(skillsDir)) {
+    const s = createSpinner("Removing Eve skills & config (~/.eve)...");
+    s.start();
+    try {
+      rmSync(skillsDir, { recursive: true, force: true });
+      s.succeed(`Removed ${skillsDir}`);
+    } catch (err) {
+      s.warn(`Could not remove ${skillsDir}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  for (const dir of deployDirs) {
+    const s = createSpinner(`Removing ${dir}...`);
+    s.start();
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      s.succeed(`Removed ${dir}`);
+    } catch (err) {
+      s.warn(`Could not remove ${dir}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  if (opts.images) {
+    const s = createSpinner("Pruning all unused Docker images...");
+    s.start();
+    try {
+      await execa9("docker", ["system", "prune", "-a", "-f", "--volumes"], { stdio: "pipe" });
+      s.succeed("Docker system pruned (all unused images removed)");
+    } catch (err) {
+      s.warn(`docker system prune failed: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`);
+    }
+  }
+  if (opts.self && existsSync5(eveDir)) {
+    const s = createSpinner(`Removing Eve CLI installation (${eveDir})...`);
+    s.start();
+    try {
+      rmSync(eveDir, { recursive: true, force: true });
+      s.succeed(`Removed ${eveDir}`);
+    } catch (err) {
+      s.warn(`Could not remove ${eveDir}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  console.log();
+  printSuccess("Purge complete. Your server is clean.");
+  console.log();
+  if (!opts.self) {
+    printInfo("Eve CLI is still installed. To reinstall from scratch:");
+    printInfo("  eve install");
+    console.log();
+  }
+}
+function purgeCommand(program2) {
+  program2.command("purge").description("Remove all Eve containers, volumes, networks, and state \u2014 clean slate for reinstall").option("--images", "Also remove all unused Docker images (docker system prune -a)").option("--self", "Also remove the Eve CLI installation directory (/opt/eve)").option("--eve-dir <path>", "Eve install directory (default: /opt/eve, only with --self)").addHelpText("after", `
+Examples:
+  eve purge                  # Remove containers, volumes, networks, state files
+  eve purge --images         # Also wipe all Docker image cache
+  eve purge --self           # Also remove /opt/eve (use when decommissioning the server)
+  eve --yes purge            # Non-interactive (skip confirmation prompt)
+
+What is NOT removed by default:
+  /opt/eve                   # Eve CLI itself (use --self to include)
+  Docker images              # Pulled images stay cached (use --images to wipe)
+  Other Docker resources     # Only resources matching Eve naming patterns are removed
+`).action(async (opts) => {
+    try {
+      await runPurge(opts);
+    } catch (err) {
+      printError(`Purge failed: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  });
+}
+
+// src/commands/ai.ts
+import { execa as execa10 } from "execa";
 import { OllamaService } from "@eve/brain";
-import { getGlobalCliFlags as getGlobalCliFlags7, outputJson as outputJson5 } from "@eve/cli-kit";
-import { readEveSecrets as readEveSecrets4, writeEveSecrets as writeEveSecrets4 } from "@eve/dna";
+import { getGlobalCliFlags as getGlobalCliFlags9, outputJson as outputJson5 } from "@eve/cli-kit";
+import { readEveSecrets as readEveSecrets5, writeEveSecrets as writeEveSecrets4 } from "@eve/dna";
 function resolveHubBaseUrlFromSecrets(secrets) {
   const explicit = secrets?.synap?.hubBaseUrl?.trim();
   if (explicit) return explicit.replace(/\/$/, "");
@@ -3196,12 +3665,12 @@ function aiCommandGroup(program2) {
     const ollama = new OllamaService();
     try {
       const s = await ollama.getStatus();
-      const secrets = await readEveSecrets4(process.cwd());
+      const secrets = await readEveSecrets5(process.cwd());
       const out = {
         ai: secrets?.ai ?? null,
         ollama: s
       };
-      if (getGlobalCliFlags7().json) {
+      if (getGlobalCliFlags9().json) {
         outputJson5(out);
         return;
       }
@@ -3227,9 +3696,9 @@ function aiCommandGroup(program2) {
   });
   const providers = ai.command("providers").description("Manage cloud/local provider entries in .eve/secrets/secrets.json");
   providers.command("list").description("List configured providers").action(async () => {
-    const secrets = await readEveSecrets4(process.cwd());
+    const secrets = await readEveSecrets5(process.cwd());
     const list = secrets?.ai?.providers ?? [];
-    if (getGlobalCliFlags7().json) {
+    if (getGlobalCliFlags9().json) {
       outputJson5({ mode: secrets?.ai?.mode, defaultProvider: secrets?.ai?.defaultProvider, fallbackProvider: secrets?.ai?.fallbackProvider, providers: list });
       return;
     }
@@ -3244,7 +3713,7 @@ function aiCommandGroup(program2) {
   providers.command("add <id>").description("Add or update provider credentials/model").option("--api-key <key>", "Provider API key").option("--base-url <url>", "Custom provider base URL").option("--model <name>", "Default model name").option("--disable", "Set enabled=false").action(async (id, opts) => {
     try {
       const pid = parseProviderId(id);
-      const secrets = await readEveSecrets4(process.cwd());
+      const secrets = await readEveSecrets5(process.cwd());
       const list = [...secrets?.ai?.providers ?? []];
       const idx = list.findIndex((p) => p.id === pid);
       const next = {
@@ -3285,7 +3754,7 @@ function aiCommandGroup(program2) {
   });
   ai.command("sync").description("Explicitly sync Eve provider routing policy to Synap workspace settings").requiredOption("--workspace <id>", "Workspace UUID to update").option("--check", "Only compare local policy vs workspace policy; do not write").action(async (opts) => {
     try {
-      const secrets = await readEveSecrets4(process.cwd());
+      const secrets = await readEveSecrets5(process.cwd());
       const hubBaseUrl = resolveHubBaseUrlFromSecrets(secrets);
       const apiKey = secrets?.synap?.apiKey?.trim();
       if (!hubBaseUrl) {
@@ -3311,7 +3780,7 @@ function aiCommandGroup(program2) {
         }
         const remote = getData.eveProviderRouting ?? null;
         const same = stableJson(remote) === stableJson(payload);
-        if (getGlobalCliFlags7().json) {
+        if (getGlobalCliFlags9().json) {
           outputJson5({ ok: true, workspaceId: opts.workspace, same, local: payload, remote });
           return;
         }
@@ -3337,7 +3806,7 @@ function aiCommandGroup(program2) {
       if (!res.ok) {
         throw new Error(String(data.error ?? `Sync failed with HTTP ${res.status}`));
       }
-      if (getGlobalCliFlags7().json) {
+      if (getGlobalCliFlags9().json) {
         outputJson5({ ok: true, workspaceId: opts.workspace, synced: payload });
         return;
       }
@@ -3350,7 +3819,7 @@ function aiCommandGroup(program2) {
   ai.command("models").description("List models (docker exec ollama list)").action(async () => {
     const ollama = new OllamaService();
     const models = await ollama.listModels();
-    if (getGlobalCliFlags7().json) {
+    if (getGlobalCliFlags9().json) {
       outputJson5({ models });
       return;
     }
@@ -3372,7 +3841,7 @@ function aiCommandGroup(program2) {
   });
   ai.command("chat").description("Send a one-shot prompt to ollama run (requires container eve-brain-ollama)").argument("<prompt>", "Prompt text").option("--model <m>", "Model name", "llama3.1:8b").action(async (prompt, opts) => {
     try {
-      await execa9(
+      await execa10(
         "docker",
         ["exec", "-i", "eve-brain-ollama", "ollama", "run", opts.model ?? "llama3.1:8b", prompt],
         { stdio: "inherit" }
@@ -3388,25 +3857,165 @@ function aiCommandGroup(program2) {
 
 // src/commands/ui.ts
 import { randomBytes } from "crypto";
-import { existsSync as existsSync5 } from "fs";
-import { join as join5 } from "path";
+import { existsSync as existsSync6, writeFileSync } from "fs";
+import { join as join6 } from "path";
 import { fileURLToPath } from "url";
-import { execa as execa10 } from "execa";
-import { readEveSecrets as readEveSecrets5, writeEveSecrets as writeEveSecrets5 } from "@eve/dna";
+import { execa as execa11, execaSync } from "execa";
+import { readEveSecrets as readEveSecrets6, writeEveSecrets as writeEveSecrets5 } from "@eve/dna";
 var __filename = fileURLToPath(import.meta.url);
-var packagesDir = join5(__filename, "..", "..", "..");
+var packagesDir = join6(__filename, "..", "..", "..");
+var SERVICE_NAME = "eve-dashboard.service";
+var SERVICE_PATH = `/etc/systemd/system/${SERVICE_NAME}`;
 function dashboardDir() {
-  return join5(packagesDir, "eve-dashboard");
+  return join6(packagesDir, "eve-dashboard");
+}
+function hasSystemd() {
+  try {
+    execaSync("systemctl", ["--version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+function buildSystemdUnit(port, secret, dir) {
+  return `[Unit]
+Description=Eve Dashboard
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=${dir}
+Environment=PORT=${port}
+Environment=EVE_DASHBOARD_SECRET=${secret}
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:/root/.local/share/pnpm
+ExecStart=/usr/bin/env pnpm start --port ${port}
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+`;
+}
+async function installSystemdService(port) {
+  if (process.platform !== "linux") {
+    printError("--install-service is Linux-only (requires systemd).");
+    process.exit(1);
+  }
+  if (!hasSystemd()) {
+    printError("systemctl not found. Is systemd available on this host?");
+    process.exit(1);
+  }
+  if (process.getuid && process.getuid() !== 0) {
+    printError("--install-service must be run as root (writes /etc/systemd/system/).");
+    printInfo("Try: sudo eve ui --install-service");
+    process.exit(1);
+  }
+  const dir = dashboardDir();
+  if (!existsSync6(join6(dir, ".next"))) {
+    const spinner = createSpinner("Building dashboard before installing service...");
+    spinner.start();
+    try {
+      await execa11("pnpm", ["build"], { cwd: dir, env: { ...process.env } });
+      spinner.succeed("Dashboard built");
+    } catch (err) {
+      spinner.fail("Dashboard build failed");
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  }
+  let secrets = await readEveSecrets6(process.cwd());
+  if (!secrets?.dashboard?.secret) {
+    const secret = randomBytes(32).toString("hex");
+    await writeEveSecrets5({ dashboard: { secret, port } });
+    secrets = await readEveSecrets6(process.cwd());
+    console.log();
+    console.log(colors.primary.bold("Dashboard key generated \u2014 save this somewhere safe:"));
+    console.log(colors.muted("\u2500".repeat(66)));
+    console.log(colors.primary.bold(secret));
+    console.log(colors.muted("\u2500".repeat(66)));
+  }
+  const dashboardSecret = secrets?.dashboard?.secret ?? "";
+  const unit = buildSystemdUnit(port, dashboardSecret, dir);
+  console.log();
+  printInfo(`Writing ${SERVICE_PATH}...`);
+  writeFileSync(SERVICE_PATH, unit, { mode: 420 });
+  printInfo("Reloading systemd...");
+  await execa11("systemctl", ["daemon-reload"], { stdio: "inherit" });
+  printInfo("Enabling and starting eve-dashboard service...");
+  await execa11("systemctl", ["enable", "--now", SERVICE_NAME], { stdio: "inherit" });
+  await new Promise((r) => setTimeout(r, 2e3));
+  const statusResult = execaSync("systemctl", ["is-active", SERVICE_NAME], { reject: false });
+  const isActive = statusResult.stdout?.trim() === "active";
+  console.log();
+  if (isActive) {
+    printSuccess(`Eve Dashboard is now running as a systemd service.`);
+    printInfo(`  Status:  systemctl status ${SERVICE_NAME}`);
+    printInfo(`  Logs:    journalctl -u ${SERVICE_NAME} -f`);
+    printInfo(`  Stop:    systemctl stop ${SERVICE_NAME}`);
+    printInfo(`  Remove:  eve ui --uninstall-service`);
+  } else {
+    printError(`Service installed but not active. Check: systemctl status ${SERVICE_NAME}`);
+  }
+  console.log();
+}
+async function uninstallSystemdService() {
+  if (process.platform !== "linux") {
+    printError("--uninstall-service is Linux-only.");
+    process.exit(1);
+  }
+  if (process.getuid && process.getuid() !== 0) {
+    printError("--uninstall-service must be run as root.");
+    printInfo("Try: sudo eve ui --uninstall-service");
+    process.exit(1);
+  }
+  console.log();
+  printInfo("Stopping and disabling eve-dashboard service...");
+  try {
+    await execa11("systemctl", ["stop", SERVICE_NAME], { stdio: "inherit" });
+  } catch {
+  }
+  try {
+    await execa11("systemctl", ["disable", SERVICE_NAME], { stdio: "inherit" });
+  } catch {
+  }
+  if (existsSync6(SERVICE_PATH)) {
+    const { unlinkSync: unlinkSync2 } = await import("fs");
+    unlinkSync2(SERVICE_PATH);
+    printInfo(`Removed ${SERVICE_PATH}`);
+  }
+  await execa11("systemctl", ["daemon-reload"], { stdio: "inherit" });
+  console.log();
+  printSuccess("Eve Dashboard service uninstalled.");
+  console.log();
+}
+async function showServiceStatus() {
+  if (process.platform !== "linux") {
+    printWarning("Service mode is Linux-only \u2014 `eve ui` runs in foreground on this OS.");
+    return;
+  }
+  console.log();
+  if (!existsSync6(SERVICE_PATH)) {
+    printInfo("Eve Dashboard service is NOT installed.");
+    printInfo("  Install with: sudo eve ui --install-service");
+    return;
+  }
+  await execa11("systemctl", ["status", SERVICE_NAME, "--no-pager", "-l"], { stdio: "inherit", reject: false });
 }
 function uiCommand(program2) {
-  program2.command("ui").description("Open the Eve web dashboard").option("--port <port>", "Dashboard port", "7979").option("--no-open", "Do not open browser automatically").option("--rebuild", "Force rebuild of the dashboard before starting").action(async (opts) => {
+  program2.command("ui").description("Open the Eve web dashboard (or install it as a systemd service)").option("--port <port>", "Dashboard port", "7979").option("--no-open", "Do not open browser automatically").option("--rebuild", "Force rebuild of the dashboard before starting").option("--install-service", "Install + enable a systemd service so the dashboard auto-starts on boot (Linux, root)").option("--uninstall-service", "Stop, disable, and remove the systemd service").option("--service-status", "Show systemd service status").action(async (opts) => {
     const port = parseInt(opts.port, 10);
+    if (opts.installService) return installSystemdService(port);
+    if (opts.uninstallService) return uninstallSystemdService();
+    if (opts.serviceStatus) return showServiceStatus();
     const dir = dashboardDir();
-    let secrets = await readEveSecrets5(process.cwd());
+    let secrets = await readEveSecrets6(process.cwd());
     if (!secrets?.dashboard?.secret) {
       const secret = randomBytes(32).toString("hex");
       await writeEveSecrets5({ dashboard: { secret, port } });
-      secrets = await readEveSecrets5(process.cwd());
+      secrets = await readEveSecrets6(process.cwd());
       console.log();
       console.log(colors.primary.bold("Dashboard key generated \u2014 save this somewhere safe:"));
       console.log(colors.muted("\u2500".repeat(66)));
@@ -3418,13 +4027,28 @@ function uiCommand(program2) {
       console.log(colors.muted("Your dashboard key:"));
       console.log(colors.primary.bold(secrets.dashboard.secret));
     }
-    const nextDir = join5(dir, ".next");
-    if (opts.rebuild || !existsSync5(nextDir)) {
+    if (process.platform === "linux" && existsSync6(SERVICE_PATH)) {
+      try {
+        const r = execaSync("systemctl", ["is-active", SERVICE_NAME], { reject: false });
+        if (r.stdout?.trim() === "active") {
+          console.log();
+          printWarning(`A systemd Eve Dashboard service is already running on port ${port}.`);
+          printInfo(`  \u2022 View it:   open http://localhost:${port}`);
+          printInfo(`  \u2022 Status:    eve ui --service-status`);
+          printInfo(`  \u2022 Stop it:   sudo systemctl stop ${SERVICE_NAME}`);
+          console.log();
+          return;
+        }
+      } catch {
+      }
+    }
+    const nextDir = join6(dir, ".next");
+    if (opts.rebuild || !existsSync6(nextDir)) {
       console.log();
       const spinner = createSpinner("Building dashboard (first run \u2014 takes ~30s)...");
       spinner.start();
       try {
-        await execa10("pnpm", ["build"], { cwd: dir, env: { ...process.env } });
+        await execa11("pnpm", ["build"], { cwd: dir, env: { ...process.env } });
         spinner.succeed("Dashboard built");
       } catch (err) {
         spinner.fail("Dashboard build failed");
@@ -3436,15 +4060,20 @@ function uiCommand(program2) {
     console.log();
     console.log(`${emojis.entity}  Starting Eve Dashboard \u2192 ${colors.primary(url)}`);
     console.log();
+    if (process.platform === "linux") {
+      printInfo("Tip: install as a systemd service so it auto-starts on boot:");
+      printInfo("  sudo eve ui --install-service");
+      console.log();
+    }
     if (opts.open) {
       setTimeout(() => {
         const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
-        execa10(opener, [url]).catch(() => {
+        execa11(opener, [url]).catch(() => {
         });
       }, 2500);
     }
-    const finalSecrets = await readEveSecrets5(process.cwd());
-    await execa10("pnpm", ["start", "--port", String(port)], {
+    const finalSecrets = await readEveSecrets6(process.cwd());
+    await execa11("pnpm", ["start", "--port", String(port)], {
       cwd: dir,
       stdio: "inherit",
       env: {
@@ -3457,8 +4086,40 @@ function uiCommand(program2) {
 }
 
 // src/commands/domain.ts
-import { writeEveSecrets as writeEveSecrets6, readEveSecrets as readEveSecrets6, getAccessUrls, getServerIp as getServerIp2 } from "@eve/dna";
-import { TraefikService } from "@eve/legs";
+import { execSync as execSync5 } from "child_process";
+import { existsSync as existsSync7, readdirSync, unlinkSync } from "fs";
+import { join as join7 } from "path";
+import { writeEveSecrets as writeEveSecrets6, readEveSecrets as readEveSecrets7, getAccessUrls as getAccessUrls2, getServerIp as getServerIp3, entityStateManager as entityStateManager8 } from "@eve/dna";
+import { TraefikService as TraefikService2 } from "@eve/legs";
+function renderProbeTable(probes) {
+  console.log(colors.muted("  " + "\u2500".repeat(60)));
+  for (const p of probes) {
+    const dot = p.outcome === "ok" ? colors.success("\u25CF") : p.outcome === "upstream-down" ? colors.warning("\u25CF") : colors.error("\u25CF");
+    const status = p.outcome === "ok" ? colors.success(`${p.httpStatus} reachable`) : p.outcome === "upstream-down" ? colors.warning(`${p.httpStatus} upstream down`) : p.outcome === "not-routing" ? colors.error(`${p.httpStatus} no route match`) : p.outcome === "dns-missing" ? colors.error("DNS missing") : p.outcome === "dns-wrong" ? colors.warning(`DNS \u2192 ${p.dnsResolved}`) : colors.error("timeout");
+    console.log(`  ${dot} ${p.host.padEnd(34)} ${status}`);
+  }
+}
+function renderProbeHint(p) {
+  switch (p.outcome) {
+    case "dns-missing":
+      printInfo(`  \u2022 ${p.host}: create A record pointing to your server IP`);
+      break;
+    case "dns-wrong":
+      printInfo(`  \u2022 ${p.host}: DNS resolves to ${p.dnsResolved}; update A record to your server IP`);
+      break;
+    case "upstream-down":
+      printInfo(`  \u2022 ${p.host}: route exists but upstream is down \u2014 check the container is running`);
+      break;
+    case "not-routing":
+      printInfo(`  \u2022 ${p.host}: Traefik has no rule matching \u2014 try \`eve domain repair\``);
+      break;
+    case "timeout":
+      printInfo(`  \u2022 ${p.host}: request timed out \u2014 check Traefik is running on port 80`);
+      break;
+    case "ok":
+      break;
+  }
+}
 function domainCommand(program2) {
   const domain = program2.command("domain").description("Configure domain access and Traefik routing");
   domain.command("set <domain>").description("Set primary domain and configure Traefik subdomains").option("--ssl", "Enable SSL with Let's Encrypt").option("--email <email>", "Email for Let's Encrypt notifications").action(async (domainName, opts) => {
@@ -3468,47 +4129,69 @@ function domainCommand(program2) {
       process.exit(1);
     }
     await writeEveSecrets6({ domain: { primary: domainName, ssl: !!opts.ssl, email: opts.email } });
+    let installedComponents;
     try {
-      const traefik = new TraefikService();
-      await traefik.configureSubdomains(domainName, !!opts.ssl, opts.email);
-      printSuccess(`Traefik routes configured for ${domainName}`);
+      installedComponents = await entityStateManager8.getInstalledComponents();
     } catch {
-      printInfo("Traefik config could not be written \u2014 run this command on your server to apply routes.");
     }
-    const secrets = await readEveSecrets6(process.cwd());
-    const urls = getAccessUrls(secrets);
+    let writeOk = false;
+    try {
+      const traefik = new TraefikService2();
+      await traefik.configureSubdomains(domainName, !!opts.ssl, opts.email, installedComponents);
+      writeOk = true;
+    } catch (err) {
+      printError(`Could not write Traefik config: ${err instanceof Error ? err.message : String(err)}`);
+      printInfo("Run this command on your server (where Docker is available).");
+      return;
+    }
+    const secrets = await readEveSecrets7(process.cwd());
+    const urls = getAccessUrls2(secrets, installedComponents);
+    const serverIp = getServerIp3();
+    const subdomainsNeeded = urls.filter((u) => u.domainUrl).map((u) => u.domainUrl.replace(/^https?:\/\//, "").split("/")[0].replace(`.${domainName}`, ""));
     console.log();
-    console.log(colors.primary.bold("Access URLs:"));
+    console.log(colors.primary.bold("DNS records you must create:"));
     console.log(colors.muted("\u2500".repeat(60)));
-    for (const svc of urls) {
-      if (svc.domainUrl) {
-        console.log(`  ${svc.emoji}  ${svc.label.padEnd(20)} ${colors.primary(svc.domainUrl)}`);
+    console.log(colors.muted("  Type   Name                          Value"));
+    for (const sub of subdomainsNeeded) {
+      const name = `${sub}.${domainName}`.padEnd(32);
+      const value = serverIp ?? colors.warning("<your-server-ip>");
+      console.log(`  ${colors.primary("A")}      ${name}${value}`);
+    }
+    console.log(colors.muted("\u2500".repeat(60)));
+    if (!serverIp) printInfo("Could not detect server IP \u2014 replace <your-server-ip> above.");
+    if (writeOk) {
+      console.log();
+      console.log(colors.primary.bold("Verifying routes (probing each subdomain)..."));
+      await new Promise((r) => setTimeout(r, 1500));
+      const probes = probeRoutes(urls);
+      renderProbeTable(probes);
+      const verdict = probeVerdict(probes);
+      console.log();
+      if (verdict === "ok") {
+        printSuccess(`Domain configured and all ${probes.length} routes are healthy.`);
+      } else if (verdict === "partial") {
+        const broken = probes.filter((p) => p.outcome !== "ok");
+        printWarning(`Domain configured, but ${broken.length}/${probes.length} routes need attention:`);
+        for (const p of broken) renderProbeHint(p);
+      } else {
+        printError(`Domain configured but no routes are reachable yet.`);
+        for (const p of probes) renderProbeHint(p);
+      }
+      if (opts.ssl) {
+        console.log();
+        printInfo("SSL certificates will provision automatically once DNS propagates (1\u20135 min).");
       }
     }
-    const serverIp = getServerIp2();
-    const subdomains = ["eve", "pod", "openclaw", "feeds", "ai"];
     console.log();
-    console.log(colors.primary.bold("DNS records to create:"));
-    console.log(colors.muted("\u2500".repeat(60)));
-    console.log(colors.muted(`  Type   Name                        Value`));
-    console.log(colors.muted("\u2500".repeat(60)));
-    for (const sub of subdomains) {
-      const name = `${sub}.${domainName}`.padEnd(30);
-      const value = serverIp ?? colors.warning("<your-server-ip>");
-      console.log(`  ${colors.primary("A")}      ${name}  ${value}`);
-    }
-    console.log(colors.muted("\u2500".repeat(60)));
-    if (!serverIp) {
-      printInfo("Could not detect server IP automatically \u2014 replace <your-server-ip> above.");
-    }
-    if (opts.ssl) {
-      console.log();
-      printInfo("SSL will provision automatically once DNS records propagate (usually 1\u20135 min).");
-    }
   });
   domain.command("show").description("Show all access URLs (local, server IP, domain)").action(async () => {
-    const secrets = await readEveSecrets6(process.cwd());
-    const urls = getAccessUrls(secrets);
+    const secrets = await readEveSecrets7(process.cwd());
+    let installedComponents;
+    try {
+      installedComponents = await entityStateManager8.getInstalledComponents();
+    } catch {
+    }
+    const urls = getAccessUrls2(secrets, installedComponents);
     const domainSet = !!secrets?.domain?.primary;
     console.log();
     console.log(colors.primary.bold("Eve \u2014 Access URLs"));
@@ -3525,8 +4208,205 @@ function domainCommand(program2) {
       console.log(colors.muted("  Tip: run `eve domain set yourdomain.com --ssl` to configure domain access"));
     }
   });
+  domain.command("check").description("Verify Traefik is running and routes are reachable").action(async () => {
+    const TRAEFIK_CONFIG = "/opt/traefik/traefik.yml";
+    const TRAEFIK_DYNAMIC = "/opt/traefik/dynamic/eve-routes.yml";
+    console.log();
+    console.log(colors.primary.bold("Eve \u2014 Domain / Traefik diagnostic"));
+    console.log(colors.muted("\u2500".repeat(60)));
+    console.log();
+    const tick = colors.success("\u2713");
+    const cross = colors.error("\u2717");
+    const warn = colors.warning("!");
+    let traefikRunning = false;
+    try {
+      const out = execSync5('docker ps --filter "name=eve-legs-traefik" --format "{{.Names}}"', {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "ignore"]
+      }).trim();
+      traefikRunning = out.length > 0;
+    } catch {
+    }
+    console.log(traefikRunning ? `  ${tick}  Traefik container:   running (eve-legs-traefik)` : `  ${cross}  Traefik container:   NOT running \u2014 run: eve install --components=traefik`);
+    const staticOk = existsSync7(TRAEFIK_CONFIG);
+    const dynamicOk = existsSync7(TRAEFIK_DYNAMIC);
+    console.log(staticOk ? `  ${tick}  Static config:       ${TRAEFIK_CONFIG}` : `  ${cross}  Static config:       MISSING`);
+    console.log(dynamicOk ? `  ${tick}  Dynamic routes:      ${TRAEFIK_DYNAMIC}` : `  ${cross}  Dynamic routes:      MISSING \u2014 run: eve domain set <yourdomain>`);
+    if (!traefikRunning || !dynamicOk) {
+      console.log();
+      printError("Cannot continue diagnostic \u2014 Traefik or routes missing.");
+      return;
+    }
+    const secrets = await readEveSecrets7(process.cwd());
+    const configuredDomain = secrets?.domain?.primary;
+    console.log(configuredDomain ? `  ${tick}  Configured domain:   ${configuredDomain}` : `  ${warn}  Configured domain:   none \u2014 run: eve domain set <yourdomain>`);
+    if (!configuredDomain) {
+      console.log();
+      printWarning("No domain set \u2014 nothing to verify.");
+      return;
+    }
+    console.log();
+    console.log(colors.primary.bold("  Per-route probe (Host header \u2192 Traefik \u2192 upstream):"));
+    let installedComponents;
+    try {
+      installedComponents = await entityStateManager8.getInstalledComponents();
+    } catch {
+    }
+    const urls = getAccessUrls2(secrets, installedComponents);
+    const probes = probeRoutes(urls);
+    renderProbeTable(probes);
+    console.log();
+    console.log(colors.primary.bold("  Routers loaded inside Traefik (via admin API :8080):"));
+    console.log(colors.muted("  " + "\u2500".repeat(58)));
+    let loadedRouters = [];
+    try {
+      const apiOut = execSync5("curl -s --max-time 3 http://localhost:8080/api/http/routers", {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "ignore"]
+      }).trim();
+      if (apiOut) {
+        const parsed = JSON.parse(apiOut);
+        loadedRouters = parsed.map((r) => ({ name: r.name, rule: r.rule, status: r.status ?? "unknown" }));
+      }
+    } catch {
+    }
+    if (loadedRouters.length === 0) {
+      console.log(`    ${cross} ${colors.error("NO ROUTERS LOADED!")} Traefik can't see your config file.`);
+      console.log();
+      console.log(colors.warning("  Likely causes:"));
+      console.log(colors.warning("    1. Volume mount broken \u2014 re-create container"));
+      console.log(colors.warning("    2. YAML syntax error \u2014 Traefik silently dropped the config"));
+      console.log(colors.warning("    3. Static config missing providers.file directive"));
+    } else {
+      for (const r of loadedRouters) {
+        const enabled = r.status === "enabled" ? colors.success("enabled") : colors.error(r.status);
+        console.log(`    ${r.name.padEnd(28)} ${enabled}  ${colors.muted(r.rule)}`);
+      }
+    }
+    console.log();
+    console.log(colors.primary.bold("  What Traefik container sees (docker exec):"));
+    console.log(colors.muted("  " + "\u2500".repeat(58)));
+    try {
+      const containerStaticHead = execSync5(
+        "docker exec eve-legs-traefik cat /etc/traefik/traefik.yml 2>&1 | head -8",
+        { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }
+      ).trim();
+      console.log(colors.muted("    /etc/traefik/traefik.yml (first 8 lines):"));
+      for (const line of containerStaticHead.split("\n")) {
+        console.log(`      ${colors.muted(line)}`);
+      }
+    } catch {
+      console.log(`    ${cross} Could not read static config inside container`);
+    }
+    try {
+      const containerLs = execSync5(
+        "docker exec eve-legs-traefik ls -la /etc/traefik/dynamic/ 2>&1",
+        { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }
+      ).trim();
+      console.log();
+      console.log(colors.muted("    /etc/traefik/dynamic/ (container view):"));
+      for (const line of containerLs.split("\n")) {
+        console.log(`      ${colors.muted(line)}`);
+      }
+    } catch {
+      console.log(`    ${cross} Could not list dynamic dir inside container`);
+    }
+    console.log();
+    console.log(colors.muted("  Traefik errors / config events (last 30 relevant lines):"));
+    try {
+      const logs = execSync5(
+        'docker logs eve-legs-traefik 2>&1 | grep -iE "error|warn|provider|configuration|cannot|failed|unable|loaded|started" | grep -v "Peeking first byte" | tail -30 || echo ""',
+        { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }
+      ).trim();
+      if (!logs) {
+        console.log(`    ${colors.muted("(no relevant log entries)")}`);
+      } else {
+        for (const line of logs.split("\n")) {
+          const isError = /error|ERR|level=error|fail|unable|cannot/i.test(line);
+          console.log(`    ${isError ? colors.error(line) : colors.muted(line)}`);
+        }
+      }
+    } catch {
+      console.log(colors.muted("    (could not read logs)"));
+    }
+    console.log();
+    console.log(colors.primary.bold("  Hints:"));
+    console.log(colors.muted("  " + "\u2500".repeat(58)));
+    if (loadedRouters.length === 0) {
+      printError("  Traefik has NO routers loaded \u2014 your routes file is being ignored.");
+      printInfo("  Try re-running: eve domain set <yourdomain>");
+      printInfo("  If that doesn't fix it, recreate the Traefik container:");
+      printInfo("    docker rm -f eve-legs-traefik");
+      printInfo("    eve install --components=traefik");
+      printInfo("    eve domain set <yourdomain>");
+    } else {
+      printInfo("  \u2022 404 with routers loaded = Host header mismatch. Test with:");
+      printInfo('      curl -v -H "Host: eve.<domain>" http://localhost/');
+      printInfo("  \u2022 502 = route matched, upstream down. Check upstream containers.");
+      printInfo("  \u2022 Eve dashboard runs on the HOST (port 7979), not in Docker.");
+      printInfo("      Start it with: cd /opt/eve && npx eve ui");
+    }
+    console.log();
+  });
+  domain.command("repair").description("Recreate Traefik with clean state \u2014 fixes stale routes & broken volume mounts").action(async () => {
+    const secrets = await readEveSecrets7(process.cwd());
+    const domainName = secrets?.domain?.primary;
+    if (!domainName) {
+      printError("No domain configured. Run: eve domain set <yourdomain> first.");
+      process.exit(1);
+    }
+    console.log();
+    console.log(colors.primary.bold("Eve \u2014 Traefik repair"));
+    console.log(colors.muted("\u2500".repeat(60)));
+    console.log();
+    printInfo("Removing existing Traefik container...");
+    try {
+      execSync5("docker rm -f eve-legs-traefik", { stdio: "inherit" });
+    } catch {
+    }
+    const HOST_DYNAMIC_DIR = "/opt/traefik/dynamic";
+    const HOST_STATIC_CONFIG = "/opt/traefik/traefik.yml";
+    if (existsSync7(HOST_DYNAMIC_DIR)) {
+      printInfo("Cleaning stale dynamic config files...");
+      try {
+        for (const file of readdirSync(HOST_DYNAMIC_DIR)) {
+          if (file.endsWith(".yml") || file.endsWith(".yaml")) {
+            const path = join7(HOST_DYNAMIC_DIR, file);
+            try {
+              unlinkSync(path);
+              console.log(`  ${colors.muted("\u2022")} removed ${file}`);
+            } catch (err) {
+              printWarning(`  could not remove ${file}: ${err instanceof Error ? err.message : String(err)}`);
+            }
+          }
+        }
+      } catch (err) {
+        printWarning(`  could not read ${HOST_DYNAMIC_DIR}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    if (existsSync7(HOST_STATIC_CONFIG)) {
+      try {
+        unlinkSync(HOST_STATIC_CONFIG);
+        console.log(`  ${colors.muted("\u2022")} removed traefik.yml`);
+      } catch {
+      }
+    }
+    printInfo("Reinstalling Traefik (fresh container)...");
+    const traefik = new TraefikService2();
+    await traefik.install();
+    printInfo("Applying domain routes...");
+    let installedComponents;
+    try {
+      installedComponents = await entityStateManager8.getInstalledComponents();
+    } catch {
+    }
+    await traefik.configureSubdomains(domainName, !!secrets?.domain?.ssl, secrets?.domain?.email, installedComponents);
+    console.log();
+    printSuccess("Repair complete. Run `eve domain check` to verify.");
+    console.log();
+  });
   domain.command("unset").description("Remove domain configuration").action(async () => {
-    const secrets = await readEveSecrets6(process.cwd());
+    const secrets = await readEveSecrets7(process.cwd());
     if (secrets?.domain?.primary) {
       await writeEveSecrets6({ domain: { primary: void 0, ssl: void 0, email: void 0 } });
       printSuccess("Domain configuration removed");
@@ -3539,7 +4419,7 @@ function domainCommand(program2) {
 // src/index.ts
 var __filename2 = fileURLToPath2(import.meta.url);
 var __dirname = dirname2(__filename2);
-var pkg = JSON.parse(readFileSync(join6(__dirname, "../package.json"), "utf-8"));
+var pkg = JSON.parse(readFileSync(join8(__dirname, "../package.json"), "utf-8"));
 var program = new Command();
 program.configureHelp({
   sortSubcommands: true,
@@ -3559,7 +4439,7 @@ program.addHelpText(
 ${colors.primary.bold("Eve \u2014 sovereign stack installer & operator")}
 
 ${emojis.brain} Brain   Synap + data stores + optional Ollama
-${emojis.arms} Arms    OpenClaw / MCP
+${emojis.arms} Arms    OpenClaw (agent messaging layer)
 ${emojis.builder} Builder OpenCode / OpenClaude / Dokploy
 ${emojis.eyes} Eyes    RSSHub
 ${emojis.legs} Legs    Traefik / domains
@@ -3580,53 +4460,25 @@ setupCommand(program);
 installCommand(program);
 addCommand(program);
 removeCommand(program);
-program.command("init").description(
-  "Alias for setup; forwards to setup flow by default, brain init only when synap repo is explicit."
-).option("--profile <p>", "inference_only | data_pod | full").option("--with-ai", "Include Ollama for local AI").option("--model <model>", "AI model", "llama3.1:8b").option("--synap-repo <path>", "synap-backend checkout \u2192 official synap install").option("--domain <host>", "With --synap-repo: synap install --domain (default: localhost in brain init)").option("--email <email>", "With --synap-repo: required when domain isn't localhost").option("--with-openclaw", "With --synap-repo: synap install --with-openclaw").option("--with-rsshub", "With --synap-repo: synap install --with-rsshub").option("--from-image", "With --synap-repo: synap install --from-image").option("--from-source", "With --synap-repo: synap install --from-source").option("--admin-email <email>", "With --synap-repo: synap install --admin-email").option("--admin-password <secret>", "With --synap-repo: synap install --admin-password (preseed mode)").option("--admin-bootstrap-mode <mode>", "With --synap-repo: token | preseed (default token)").action(
-  async (opts) => {
-    try {
-      if (!opts.synapRepo && !process.env.SYNAP_REPO_ROOT) {
-        const rootFlags = program.opts();
-        const profile = opts.profile ?? (opts.withAi ? "full" : "data_pod");
-        const forwardArgs = ["setup", "--profile", profile];
-        if (rootFlags.yes) forwardArgs.push("--yes");
-        if (rootFlags.json) forwardArgs.push("--json");
-        if (opts.domain) forwardArgs.push("--domain", opts.domain);
-        if (opts.email) forwardArgs.push("--email", opts.email);
-        if (opts.withOpenclaw) forwardArgs.push("--with-openclaw");
-        if (opts.withRsshub) forwardArgs.push("--with-rsshub");
-        if (opts.fromImage) forwardArgs.push("--from-image");
-        if (opts.fromSource) forwardArgs.push("--from-source");
-        if (opts.adminEmail) forwardArgs.push("--admin-email", opts.adminEmail);
-        if (opts.adminPassword) forwardArgs.push("--admin-password", opts.adminPassword);
-        if (opts.adminBootstrapMode) {
-          forwardArgs.push("--admin-bootstrap-mode", opts.adminBootstrapMode);
-        }
-        await execa11("node", [__filename2, ...forwardArgs], {
-          stdio: "inherit",
-          env: process.env
-        });
-        return;
-      }
-      await runBrainInit5({
-        withAi: opts.withAi,
-        model: opts.model,
-        synapRepo: opts.synapRepo,
-        domain: opts.domain,
-        email: opts.email,
-        withOpenclaw: opts.withOpenclaw,
-        withRsshub: opts.withRsshub,
-        fromImage: opts.fromImage,
-        fromSource: opts.fromSource,
-        adminEmail: opts.adminEmail,
-        adminPassword: opts.adminPassword,
-        adminBootstrapMode: opts.adminBootstrapMode
-      });
-    } catch {
-      process.exit(1);
-    }
+program.command("init").description("Alias for `eve install` \u2014 composable installer").option("--components <list>", "Comma-separated component IDs").option("--domain <host>", "Public hostname", "localhost").option("--email <email>", "Let's Encrypt email").option("--model <model>", "Ollama model", "llama3.1:8b").option("--synap-repo <path>", "Path to synap-backend checkout").option("--from-image", "Install Synap from Docker image").option("--admin-email <email>", "Admin bootstrap email").option("--admin-password <secret>", "Admin password (preseed mode)").option("--admin-bootstrap-mode <mode>", "token | preseed").option("--dry-run", "Print plan without executing").action(async (opts) => {
+  try {
+    await runInstall({
+      components: opts.components ? opts.components.split(",").map((s) => s.trim()) : void 0,
+      domain: opts.domain,
+      email: opts.email,
+      model: opts.model,
+      synapRepo: opts.synapRepo,
+      fromImage: opts.fromImage,
+      adminEmail: opts.adminEmail,
+      adminPassword: opts.adminPassword,
+      adminBootstrapMode: opts.adminBootstrapMode,
+      dryRun: opts.dryRun
+    });
+  } catch (err) {
+    console.error(String(err));
+    process.exit(1);
   }
-);
+});
 birthCommand(program);
 statusCommand(program);
 growCommand(program);
@@ -3635,12 +4487,13 @@ logsCommand(program);
 inspectCommand(program);
 configCommands(program);
 backupUpdateCommands(program);
+purgeCommand(program);
 aiCommandGroup(program);
 uiCommand(program);
 domainCommand(program);
 var brain = program.command("brain").description("Intelligence & memory (Synap, Ollama)");
 registerBrainCommands(brain);
-var arms = program.command("arms").description("Action \u2014 OpenClaw & MCP");
+var arms = program.command("arms").description("Action \u2014 OpenClaw (agent messaging layer)");
 registerArmsCommands(arms);
 var eyes = program.command("eyes").description("Perception \u2014 RSSHub");
 registerEyesCommands(eyes);

@@ -1,44 +1,27 @@
 import { getServerIp } from './server-ip.js';
 import type { EveSecrets } from './secrets-contract.js';
+import { COMPONENTS, EVE_DASHBOARD_SERVICE } from './components.js';
 
 export interface ServiceAccess {
   id: string;
   label: string;
   emoji: string;
-  localUrl: string;
+  localUrl: string | null;
   serverUrl: string | null;
   domainUrl: string | null;
   port: number;
-  /** Component ID that must be installed for this service to be available. null = always shown. */
+  /** Component ID required for this service. null = always shown (e.g. dashboard). */
   requires: string | null;
+  /** True when DNS for the domain URL resolves to this server. Null = not yet checked. */
+  dnsReady: boolean | null;
 }
 
 /**
- * Map of service → component ID required. null = always present (eve dashboard itself).
- * Port is the HOST port used for direct access (bypassing Traefik).
- */
-const SERVICE_DEFS: Array<{
-  id: string;
-  label: string;
-  emoji: string;
-  port: number;
-  subdomain: string;
-  requires: string | null;
-}> = [
-  { id: 'eve',       label: 'Eve Dashboard', emoji: '🌿', port: 7979,  subdomain: 'eve',      requires: null },
-  { id: 'pod',       label: 'Synap Pod',     emoji: '🧠', port: 4000,  subdomain: 'pod',      requires: 'synap' },
-  { id: 'openclaw',  label: 'OpenClaw',      emoji: '🦾', port: 3000,  subdomain: 'openclaw', requires: 'openclaw' },
-  { id: 'feeds',     label: 'RSSHub Feeds',  emoji: '👁️', port: 1200,  subdomain: 'feeds',    requires: 'rsshub' },
-  { id: 'ollama',    label: 'Ollama AI',     emoji: '🤖', port: 11434, subdomain: 'ai',       requires: 'ollama' },
-  { id: 'openwebui', label: 'Open WebUI',    emoji: '💬', port: 3011,  subdomain: 'chat',     requires: 'openwebui' },
-];
-
-/**
- * Returns access URLs for installed services.
+ * Returns access URLs for installed services, derived from the component registry.
  *
- * @param secrets          Eve secrets (domain config)
- * @param installedComponents  List of installed component IDs from entity state.
- *                             When omitted, all services are returned (backward compat / pre-init).
+ * @param secrets             Eve secrets (domain config)
+ * @param installedComponents List of installed component IDs.
+ *                            When omitted, all routable services are returned.
  */
 export function getAccessUrls(secrets: EveSecrets | null, installedComponents?: string[]): ServiceAccess[] {
   const serverIp = getServerIp();
@@ -46,16 +29,41 @@ export function getAccessUrls(secrets: EveSecrets | null, installedComponents?: 
   const ssl = secrets?.domain?.ssl ?? false;
   const protocol = ssl ? 'https' : 'http';
 
-  return SERVICE_DEFS
-    .filter(def => !installedComponents || def.requires === null || installedComponents.includes(def.requires))
-    .map(def => ({
-      id: def.id,
-      label: def.label,
-      emoji: def.emoji,
-      port: def.port,
-      requires: def.requires,
-      localUrl: `http://localhost:${def.port}`,
-      serverUrl: serverIp ? `http://${serverIp}:${def.port}` : null,
-      domainUrl: domain ? `${protocol}://${def.subdomain}.${domain}` : null,
-    }));
+  const out: ServiceAccess[] = [];
+
+  // 1. Eve dashboard (always shown — it's the UI itself)
+  out.push({
+    id: EVE_DASHBOARD_SERVICE.id,
+    label: EVE_DASHBOARD_SERVICE.label,
+    emoji: EVE_DASHBOARD_SERVICE.emoji,
+    requires: null,
+    port: EVE_DASHBOARD_SERVICE.service.hostPort ?? EVE_DASHBOARD_SERVICE.service.internalPort,
+    localUrl: `http://localhost:${EVE_DASHBOARD_SERVICE.service.hostPort ?? EVE_DASHBOARD_SERVICE.service.internalPort}`,
+    serverUrl: serverIp ? `http://${serverIp}:${EVE_DASHBOARD_SERVICE.service.hostPort ?? EVE_DASHBOARD_SERVICE.service.internalPort}` : null,
+    domainUrl: domain && EVE_DASHBOARD_SERVICE.service.subdomain
+      ? `${protocol}://${EVE_DASHBOARD_SERVICE.service.subdomain}.${domain}`
+      : null,
+    dnsReady: null,
+  });
+
+  // 2. Components with services, filtered to what's installed
+  for (const comp of COMPONENTS) {
+    if (!comp.service || comp.service.subdomain === null) continue;
+    if (installedComponents && !installedComponents.includes(comp.id)) continue;
+
+    const port = comp.service.hostPort ?? comp.service.internalPort;
+    out.push({
+      id: comp.id,
+      label: comp.label,
+      emoji: comp.emoji,
+      requires: comp.id,
+      port,
+      localUrl: comp.service.hostPort ? `http://localhost:${port}` : null,
+      serverUrl: comp.service.hostPort && serverIp ? `http://${serverIp}:${port}` : null,
+      domainUrl: domain ? `${protocol}://${comp.service.subdomain}.${domain}` : null,
+      dnsReady: null,
+    });
+  }
+
+  return out;
 }

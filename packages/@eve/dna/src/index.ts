@@ -102,6 +102,19 @@ export {
 export { getServerIp } from './server-ip.js';
 export { type ServiceAccess, getAccessUrls } from './access-urls.js';
 
+// Component registry — single source of truth for service identity
+export {
+  type ComponentInfo,
+  type ServiceInfo,
+  COMPONENTS,
+  EVE_DASHBOARD_SERVICE,
+  resolveComponent,
+  allComponentIds,
+  addonComponentIds,
+  selectedIds,
+  serviceComponents,
+} from './components.js';
+
 export {
   DEFAULT_HUB_PATH,
   resolveHubBaseUrl,

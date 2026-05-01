@@ -1,6 +1,8 @@
 import { Command } from 'commander';
 import { execa } from 'execa';
-import { entityStateManager, type Organ } from '@eve/dna';
+import { entityStateManager, type Organ, COMPONENTS, readEveSecrets, getAccessUrls } from '@eve/dna';
+import { verifyComponent } from '@eve/legs';
+import { probeRoutes, probeVerdict, type RouteProbe } from '../lib/probe-routes.js';
 import {
   colors,
   emojis,
@@ -99,16 +101,13 @@ async function runDiagnostics(verbose = false): Promise<void> {
     checks.push({ name: 'Network', status: 'fail', message: 'Failed to check Docker networks' });
   }
 
-  // Check 4: Live Docker containers
-  const EXPECTED_CONTAINERS: Record<string, string> = {
-    'eve-brain-synap': 'brain',
-    'eve-brain-ollama': 'brain',
-    'eve-arms-openclaw': 'arms',
-    'eve-eyes-rsshub': 'eyes',
-    'eve-legs-traefik': 'legs',
-  };
+  // Check 4: Live Docker containers — driven by registry, only check what's installed
+  const installed = await entityStateManager.getInstalledComponents().catch(() => [] as string[]);
+  const expectedContainers = COMPONENTS
+    .filter(c => installed.includes(c.id) && c.service)
+    .map(c => ({ name: c.service!.containerName, organ: c.organ ?? c.id, label: c.label }));
 
-  const containerCheck = createSpinner('Checking running containers...');
+  const containerCheck = createSpinner('Checking installed containers...');
   containerCheck.start();
   try {
     const { stdout: psOut } = await execa('docker', [
@@ -130,32 +129,116 @@ async function runDiagnostics(verbose = false): Promise<void> {
     }
 
     containerCheck.succeed('Container check complete');
-    for (const [containerName, organ] of Object.entries(EXPECTED_CONTAINERS)) {
-      if (running.has(containerName)) {
+    for (const c of expectedContainers) {
+      if (running.has(c.name)) {
         checks.push({
-          name: containerName,
+          name: c.name,
           status: 'pass',
-          message: `Running — ${running.get(containerName)}`,
+          message: `Running — ${running.get(c.name)}`,
         });
-      } else if (all.has(containerName)) {
+      } else if (all.has(c.name)) {
         checks.push({
-          name: containerName,
+          name: c.name,
           status: 'fail',
-          message: `Stopped — ${all.get(containerName)}`,
-          fix: `docker start ${containerName}  or  eve install --components=${organ}`,
+          message: `Stopped — ${all.get(c.name)}`,
+          fix: `docker start ${c.name}`,
         });
       } else {
         checks.push({
-          name: containerName,
+          name: c.name,
           status: 'warn',
-          message: 'Not found — organ not installed',
-          fix: `eve install --components=${organ}`,
+          message: 'Not found — container missing',
+          fix: `eve add ${c.organ}`,
         });
       }
     }
   } catch {
     containerCheck.fail('Could not query Docker containers');
     checks.push({ name: 'Containers', status: 'fail', message: 'docker ps failed — is Docker running?' });
+  }
+
+  // Check 4b: Network reachability — for each installed component with a service,
+  // verify Traefik can actually reach it. Catches the openclaw-class 502 bug
+  // (container is up, on the network, but bound to wrong interface or not yet ready).
+  const reachabilityCheck = createSpinner('Probing service reachability from Traefik...');
+  reachabilityCheck.start();
+  try {
+    for (const c of COMPONENTS) {
+      if (!c.service || !installed.includes(c.id)) continue;
+      const result = await verifyComponent(c.id);
+      if (result.ok) {
+        checks.push({ name: `${c.label} reachability`, status: 'pass', message: result.summary });
+      } else {
+        const failed = result.checks.find(ch => !ch.ok);
+        checks.push({
+          name: `${c.label} reachability`,
+          status: 'fail',
+          message: failed?.detail ?? result.summary,
+          fix: `docker logs ${c.service.containerName} --tail 30`,
+        });
+      }
+    }
+    reachabilityCheck.succeed('Reachability check complete');
+  } catch (err) {
+    reachabilityCheck.warn('Could not probe reachability');
+  }
+
+  // Check 4c: Domain & route health (only if a domain is configured)
+  const secrets = await readEveSecrets(process.cwd());
+  if (secrets?.domain?.primary) {
+    const routeCheck = createSpinner(`Probing domain routes (${secrets.domain.primary})...`);
+    routeCheck.start();
+    try {
+      const urls = getAccessUrls(secrets, installed);
+      const probes: RouteProbe[] = probeRoutes(urls);
+      routeCheck.succeed(`Probed ${probes.length} route(s)`);
+
+      for (const p of probes) {
+        if (p.outcome === 'ok') {
+          checks.push({ name: `route: ${p.host}`, status: 'pass', message: `${p.httpStatus} reachable` });
+        } else if (p.outcome === 'upstream-down') {
+          checks.push({
+            name: `route: ${p.host}`,
+            status: 'fail',
+            message: `${p.httpStatus} — route OK, upstream not responding`,
+            fix: `Check the upstream container is running and listening on its port.`,
+          });
+        } else if (p.outcome === 'not-routing') {
+          checks.push({
+            name: `route: ${p.host}`,
+            status: 'fail',
+            message: `Traefik returned 404 — no router matched`,
+            fix: `eve domain repair`,
+          });
+        } else if (p.outcome === 'dns-missing') {
+          checks.push({
+            name: `route: ${p.host}`,
+            status: 'warn',
+            message: `No DNS A record for ${p.host}`,
+            fix: `Create A record at your registrar pointing to your server IP`,
+          });
+        } else if (p.outcome === 'dns-wrong') {
+          checks.push({
+            name: `route: ${p.host}`,
+            status: 'warn',
+            message: `DNS resolves to ${p.dnsResolved} (not this server)`,
+            fix: `Update A record at your registrar`,
+          });
+        }
+      }
+
+      const verdict = probeVerdict(probes);
+      if (verdict !== 'ok') {
+        // Pull aside one summary check for visibility
+        checks.push({
+          name: 'Domain routes',
+          status: verdict === 'broken' ? 'fail' : 'warn',
+          message: verdict === 'broken' ? 'No routes reachable' : 'Some routes failing',
+        });
+      }
+    } catch {
+      routeCheck.fail('Could not probe domain routes');
+    }
   }
 
   // Check 5: Entity State

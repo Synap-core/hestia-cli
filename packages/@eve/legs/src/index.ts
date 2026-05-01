@@ -10,6 +10,8 @@ export { TraefikService, Route } from './lib/traefik.js';
 export { InferenceGateway, type InferenceGatewayResult } from './lib/inference-gateway.js';
 export { TunnelService, TunnelConfig } from './lib/tunnel.js';
 export { runLegsProxySetup, type LegsProxySetupOptions } from './lib/run-proxy-setup.js';
+export { refreshTraefikRoutes, type RefreshResult } from './lib/refresh-routes.js';
+export { verifyComponent, type VerifyResult } from './lib/verify-component.js';
 
 // Export commands
 export { setupCommand } from './commands/setup.js';

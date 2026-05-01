@@ -1,6 +1,7 @@
 import { execSync, spawnSync } from 'child_process';
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
+import { COMPONENTS, EVE_DASHBOARD_SERVICE } from '@eve/dna';
 
 export interface Route {
   path: string;
@@ -158,33 +159,45 @@ export class TraefikService {
   async configureSubdomains(domain: string, ssl: boolean, email?: string, installedComponents?: string[]): Promise<void> {
     const dockerGateway = getDockerGateway();
 
-    // Synap backend runs in its own docker-compose project ("synap-backend").
-    // Its container is NOT on eve-network by default — connect it so Traefik can reach it.
+    // Synap backend runs in its own docker-compose project. Connect it to
+    // eve-network so Traefik (also on eve-network) can resolve it by name.
     const synapContainer = getSynapBackendContainer();
     if (synapContainer) {
       connectToEveNetwork(synapContainer);
       console.log(`  Connected ${synapContainer} → eve-network`);
-    } else {
+    } else if (!installedComponents || installedComponents.includes('synap')) {
       console.warn('  Warning: Synap backend container not found — pod.domain routing will 502 until `eve brain init` is run');
     }
-    const podUpstream = synapContainer
-      ? `http://${synapContainer}:4000`
-      : `http://${dockerGateway}:4000`;
 
-    // All possible service routes. Each entry declares which component must be installed.
-    const allServices: Array<{ id: string; subdomain: string; upstream: string; requires: string | null }> = [
-      { id: 'eve-dashboard', subdomain: 'eve',      upstream: `http://${dockerGateway}:7979`,      requires: null },
-      { id: 'pod',           subdomain: 'pod',      upstream: podUpstream,                          requires: 'synap' },
-      { id: 'openclaw',      subdomain: 'openclaw', upstream: 'http://eve-arms-openclaw:3000',      requires: 'openclaw' },
-      { id: 'feeds',         subdomain: 'feeds',    upstream: 'http://eve-eyes-rsshub:1200',        requires: 'rsshub' },
-      { id: 'ollama',        subdomain: 'ai',       upstream: 'http://eve-brain-ollama:11434',      requires: 'ollama' },
-      { id: 'openwebui',     subdomain: 'chat',     upstream: 'http://hestia-openwebui:8080',       requires: 'openwebui' },
-    ];
+    // Build routes from the component registry — single source of truth.
+    const services: Array<{ id: string; subdomain: string; upstream: string; requires: string | null }> = [];
 
-    // Filter to installed services (always include eve-dashboard regardless)
-    const services = allServices.filter(
-      s => s.requires === null || !installedComponents || installedComponents.includes(s.requires),
-    );
+    // 1. Always-on Eve dashboard. Runs on the host gateway, not in a container.
+    if (EVE_DASHBOARD_SERVICE.service.subdomain) {
+      services.push({
+        id: 'eve-dashboard',
+        subdomain: EVE_DASHBOARD_SERVICE.service.subdomain,
+        upstream: `http://${dockerGateway}:${EVE_DASHBOARD_SERVICE.service.internalPort}`,
+        requires: null,
+      });
+    }
+
+    // 2. Components with a service. Synap pod is special: prefer its real
+    //    container name (the synap-backend project's pattern) over the registry default.
+    for (const comp of COMPONENTS) {
+      if (!comp.service || !comp.service.subdomain) continue;
+      if (installedComponents && !installedComponents.includes(comp.id)) continue;
+
+      let containerName = comp.service.containerName;
+      if (comp.id === 'synap' && synapContainer) containerName = synapContainer;
+
+      services.push({
+        id: comp.id,
+        subdomain: comp.service.subdomain,
+        upstream: `http://${containerName}:${comp.service.internalPort}`,
+        requires: comp.id,
+      });
+    }
 
     // Build routers — always include HTTP.
     // With SSL: HTTP redirects to HTTPS; HTTPS carries the actual route + TLS.

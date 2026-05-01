@@ -1544,30 +1544,205 @@ function getServerIp() {
   return null;
 }
 
-// src/access-urls.ts
-var SERVICE_DEFS = [
-  { id: "eve", label: "Eve Dashboard", emoji: "\u{1F33F}", port: 7979, subdomain: "eve", requires: null },
-  { id: "pod", label: "Synap Pod", emoji: "\u{1F9E0}", port: 4e3, subdomain: "pod", requires: "synap" },
-  { id: "openclaw", label: "OpenClaw", emoji: "\u{1F9BE}", port: 3e3, subdomain: "openclaw", requires: "openclaw" },
-  { id: "feeds", label: "RSSHub Feeds", emoji: "\u{1F441}\uFE0F", port: 1200, subdomain: "feeds", requires: "rsshub" },
-  { id: "ollama", label: "Ollama AI", emoji: "\u{1F916}", port: 11434, subdomain: "ai", requires: "ollama" },
-  { id: "openwebui", label: "Open WebUI", emoji: "\u{1F4AC}", port: 3011, subdomain: "chat", requires: "openwebui" }
+// src/components.ts
+var COMPONENTS = [
+  {
+    id: "traefik",
+    organ: "legs",
+    label: "Traefik",
+    emoji: "\u{1F9BF}",
+    description: "Reverse proxy & routing. Handles domain exposure, SSL termination, and service discovery for all Eve services. Always installed.",
+    category: "infrastructure",
+    alwaysInstall: true,
+    service: {
+      containerName: "eve-legs-traefik",
+      internalPort: 80,
+      hostPort: 80,
+      subdomain: null,
+      // Traefik itself isn't routed by Traefik
+      healthPath: "/"
+    }
+  },
+  {
+    id: "ollama",
+    organ: "brain",
+    label: "Ollama",
+    emoji: "\u{1F916}",
+    description: "Local AI inference engine. Runs open-source models (Llama, Mistral, etc.) on your server. Keeps your data private.",
+    category: "data",
+    requires: ["traefik"],
+    service: {
+      containerName: "eve-brain-ollama",
+      internalPort: 11434,
+      hostPort: 11434,
+      subdomain: "ai",
+      healthPath: "/"
+    }
+  },
+  {
+    id: "synap",
+    organ: "brain",
+    label: "Synap Data Pod",
+    emoji: "\u{1F9E0}",
+    description: "Your sovereign second brain. Stores and organises all your data \u2014 notes, tasks, contacts, bookmarks. The foundation of your personal AI infrastructure.",
+    category: "data",
+    requires: ["traefik"],
+    service: {
+      containerName: "synap-backend-backend-1",
+      internalPort: 4e3,
+      hostPort: null,
+      // bound only inside docker network
+      subdomain: "pod",
+      healthPath: "/health"
+    }
+  },
+  {
+    id: "openclaw",
+    organ: "arms",
+    label: "OpenClaw",
+    emoji: "\u{1F9BE}",
+    description: "AI action layer. Gives your AI agent the ability to execute commands, access your files, and interact with the world.",
+    category: "agent",
+    requires: ["synap"],
+    service: {
+      containerName: "eve-arms-openclaw",
+      internalPort: 3e3,
+      hostPort: 3e3,
+      subdomain: "openclaw",
+      healthPath: "/"
+    }
+  },
+  {
+    id: "hermes",
+    organ: "builder",
+    label: "Hermes",
+    emoji: "\u{1F3D7}\uFE0F",
+    description: "AI builder system. Enables the agent to create, deploy, and manage new applications and services automatically.",
+    category: "builder",
+    requires: ["synap"]
+    // No service — Hermes is a CLI helper, not a network service
+  },
+  {
+    id: "rsshub",
+    organ: "eyes",
+    label: "RSSHub Feeds",
+    emoji: "\u{1F441}\uFE0F",
+    description: "Data perception layer. Turns any website into RSS feeds so your AI can stay informed about what matters.",
+    category: "perception",
+    requires: ["synap"],
+    service: {
+      containerName: "eve-eyes-rsshub",
+      internalPort: 1200,
+      hostPort: 1200,
+      subdomain: "feeds",
+      healthPath: "/"
+    }
+  },
+  {
+    id: "dokploy",
+    label: "Dokploy",
+    emoji: "\u{1F527}",
+    description: "Low-code PaaS for deploying applications. Optional \u2014 install later if you need a visual deployment dashboard.",
+    category: "add-on"
+  },
+  {
+    id: "opencode",
+    label: "OpenCode",
+    emoji: "\u{1F4BB}",
+    description: "AI-powered code editor. Lets your agent write and edit code directly on your server.",
+    category: "add-on"
+  },
+  {
+    id: "openclaude",
+    label: "OpenClaude",
+    emoji: "\u{1F916}",
+    description: "Claude Code as a service. Exposes Claude Code to your agent for advanced coding tasks.",
+    category: "add-on"
+  },
+  {
+    id: "openwebui",
+    label: "Open WebUI",
+    emoji: "\u{1F4AC}",
+    description: "Self-hosted chat UI wired to Synap IS (AI provider). No external DB \u2014 SQLite by default. Pipelines sidecar enables Synap memory and channel sync.",
+    category: "add-on",
+    requires: ["synap"],
+    service: {
+      containerName: "hestia-openwebui",
+      internalPort: 8080,
+      hostPort: 3011,
+      subdomain: "chat",
+      healthPath: "/health"
+    }
+  }
 ];
+var EVE_DASHBOARD_SERVICE = {
+  id: "eve-dashboard",
+  label: "Eve Dashboard",
+  emoji: "\u{1F33F}",
+  service: {
+    containerName: null,
+    // null = host process (started by `eve ui`)
+    internalPort: 7979,
+    hostPort: 7979,
+    subdomain: "eve",
+    healthPath: "/api/state"
+  }
+};
+function resolveComponent(id) {
+  const comp = COMPONENTS.find((c) => c.id === id);
+  if (!comp) {
+    throw new Error(`Unknown component: ${id}. Available: ${COMPONENTS.map((c) => c.id).join(", ")}`);
+  }
+  return comp;
+}
+function allComponentIds() {
+  return COMPONENTS.filter((c) => !c.category.includes("add-on")).map((c) => c.id);
+}
+function addonComponentIds() {
+  return COMPONENTS.filter((c) => c.category === "add-on").map((c) => c.id);
+}
+function selectedIds(selected) {
+  return COMPONENTS.filter((c) => selected[c.id]).map((c) => c.id);
+}
+function serviceComponents() {
+  return COMPONENTS.filter((c) => c.service !== void 0 && c.service.subdomain !== null);
+}
+
+// src/access-urls.ts
 function getAccessUrls(secrets, installedComponents) {
   const serverIp = getServerIp();
   const domain = secrets?.domain?.primary;
   const ssl = secrets?.domain?.ssl ?? false;
   const protocol = ssl ? "https" : "http";
-  return SERVICE_DEFS.filter((def) => !installedComponents || def.requires === null || installedComponents.includes(def.requires)).map((def) => ({
-    id: def.id,
-    label: def.label,
-    emoji: def.emoji,
-    port: def.port,
-    requires: def.requires,
-    localUrl: `http://localhost:${def.port}`,
-    serverUrl: serverIp ? `http://${serverIp}:${def.port}` : null,
-    domainUrl: domain ? `${protocol}://${def.subdomain}.${domain}` : null
-  }));
+  const out = [];
+  out.push({
+    id: EVE_DASHBOARD_SERVICE.id,
+    label: EVE_DASHBOARD_SERVICE.label,
+    emoji: EVE_DASHBOARD_SERVICE.emoji,
+    requires: null,
+    port: EVE_DASHBOARD_SERVICE.service.hostPort ?? EVE_DASHBOARD_SERVICE.service.internalPort,
+    localUrl: `http://localhost:${EVE_DASHBOARD_SERVICE.service.hostPort ?? EVE_DASHBOARD_SERVICE.service.internalPort}`,
+    serverUrl: serverIp ? `http://${serverIp}:${EVE_DASHBOARD_SERVICE.service.hostPort ?? EVE_DASHBOARD_SERVICE.service.internalPort}` : null,
+    domainUrl: domain && EVE_DASHBOARD_SERVICE.service.subdomain ? `${protocol}://${EVE_DASHBOARD_SERVICE.service.subdomain}.${domain}` : null,
+    dnsReady: null
+  });
+  for (const comp of COMPONENTS) {
+    if (!comp.service || comp.service.subdomain === null) continue;
+    if (installedComponents && !installedComponents.includes(comp.id)) continue;
+    const port = comp.service.hostPort ?? comp.service.internalPort;
+    out.push({
+      id: comp.id,
+      label: comp.label,
+      emoji: comp.emoji,
+      requires: comp.id,
+      port,
+      localUrl: comp.service.hostPort ? `http://localhost:${port}` : null,
+      serverUrl: comp.service.hostPort && serverIp ? `http://${serverIp}:${port}` : null,
+      domainUrl: domain ? `${protocol}://${comp.service.subdomain}.${domain}` : null,
+      dnsReady: null
+    });
+  }
+  return out;
 }
 
 // src/builder-hub-wiring.ts
@@ -1695,16 +1870,20 @@ export {
   AiModeSchema,
   AiProviderSchema,
   BuilderEngineSchema,
+  COMPONENTS,
   ConfigManager,
   CredentialsManager,
   DEFAULT_HERMES_CONFIG,
   DEFAULT_HUB_PATH,
   DockerComposeGenerator,
+  EVE_DASHBOARD_SERVICE,
   EntityStateManager,
   SetupProfileKindSchema,
   SetupProfileSchema,
   UsbSetupManifestSchema,
   VERSION,
+  addonComponentIds,
+  allComponentIds,
   configManager,
   copySynapSkillIntoClaudeProject,
   createDockerComposeGenerator,
@@ -1722,8 +1901,11 @@ export {
   readEveSecrets,
   readSetupProfile,
   readUsbSetupManifest,
+  resolveComponent,
   resolveHubBaseUrl,
   secretsPath,
+  selectedIds,
+  serviceComponents,
   writeBuilderProjectEnv,
   writeClaudeCodeSettings,
   writeEveSecrets,

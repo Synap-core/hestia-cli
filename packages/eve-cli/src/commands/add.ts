@@ -18,7 +18,7 @@ import {
   defaultSkillsDir,
 } from '@eve/dna';
 import { runBrainInit, runInferenceInit } from '@eve/brain';
-import { runLegsProxySetup } from '@eve/legs';
+import { runLegsProxySetup, refreshTraefikRoutes, verifyComponent } from '@eve/legs';
 import {
   colors,
   emojis,
@@ -202,15 +202,40 @@ export async function runAdd(
     process.exit(1);
   }
 
-  // Update state
-  await updateStateAfterAdd(comp.id);
+  // Verify the component is actually serving (not just "docker run returned 0")
+  const verifySpinner = createSpinner(`Verifying ${comp.label} is reachable...`);
+  verifySpinner.start();
+  const verification = await verifyComponent(comp.id);
+  if (verification.ok) {
+    verifySpinner.succeed(verification.summary);
+  } else {
+    verifySpinner.warn(verification.summary);
+    for (const c of verification.checks) {
+      if (!c.ok && c.detail) {
+        printWarning(`  • ${c.name}: ${c.detail}`);
+      }
+    }
+    printInfo(`  Component installed but not yet responding. Check logs: docker logs ${comp.id}`);
+  }
+
+  // Update state — mark as 'error' if verification failed so eve status / dashboard reflect reality
+  await updateStateAfterAdd(comp.id, verification.ok ? 'ready' : 'error');
+
+  // Auto-refresh Traefik routes so the new component is reachable via domain
+  const refresh = await refreshTraefikRoutes();
+  if (refresh.refreshed) {
+    printInfo(`Traefik routes refreshed for ${refresh.domain}`);
+  } else if (refresh.domain) {
+    printWarning(`Could not refresh Traefik routes: ${refresh.reason ?? 'unknown'}`);
+  }
 
   console.log();
   printSuccess(`${comp.label} added successfully!`);
   console.log();
   printInfo('Next steps:');
   printInfo(`  - Run "eve status" to check entity state`);
-  printInfo(`  - Run "eve ${comp.organ} status" for ${comp.label} status`);
+  if (comp.organ) printInfo(`  - Run "eve ${comp.organ} status" for ${comp.label} status`);
+  if (refresh.refreshed) printInfo(`  - Run "eve domain check" to verify routing`);
   console.log();
 }
 
@@ -299,7 +324,7 @@ function buildAddStep(
 // State update
 // ---------------------------------------------------------------------------
 
-async function updateStateAfterAdd(componentId: string): Promise<void> {
+async function updateStateAfterAdd(componentId: string, finalState: 'ready' | 'error' = 'ready'): Promise<void> {
   const organMap: Record<string, 'brain' | 'arms' | 'builder' | 'eyes' | 'legs'> = {
     synap: 'brain',
     ollama: 'brain',
@@ -315,16 +340,17 @@ async function updateStateAfterAdd(componentId: string): Promise<void> {
 
   const organ = organMap[componentId];
   if (organ) {
-    await entityStateManager.updateOrgan(organ, 'ready', { version: '0.1.0' });
+    await entityStateManager.updateOrgan(organ, finalState, { version: '0.1.0' });
   }
 
   await entityStateManager.updateComponentEntry(componentId, {
-    state: 'ready',
+    state: finalState,
     version: '0.1.0',
     managedBy: 'eve',
   });
 
-  // Update setup profile v2 components list
+  // Update setup profile v2 components list (always — even errored components are
+  // tracked so future installs see them and the user can `eve doctor` them)
   const current = await entityStateManager.getInstalledComponents();
   if (!current.includes(componentId)) {
     await entityStateManager.updateSetupProfile({ components: [...current, componentId] });

@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import Table from 'cli-table3';
 import { execSync } from 'child_process';
-import { entityStateManager, type Organ } from '@eve/dna';
+import { entityStateManager, type Organ, COMPONENTS } from '@eve/dna';
 import { getGlobalCliFlags } from '@eve/cli-kit';
 import {
   colors,
@@ -263,7 +263,78 @@ async function showStatus(json = false): Promise<void> {
       console.log(`  ${colors.muted('→')} Install ${formatOrgan(organ)}: ${colors.info(FIX_COMMANDS[organ])}`);
     }
   }
+
+  // ─── Component overview: installed | recommended | available ────────────
+  await showComponentOverview();
+
   console.log();
+}
+
+/**
+ * Three-bucket component view: what's installed (with health), what we
+ * recommend installing next, what else is available.
+ */
+async function showComponentOverview(): Promise<void> {
+  const installed = await entityStateManager.getInstalledComponents();
+
+  // Bucket components
+  const installedComps = COMPONENTS.filter(c => installed.includes(c.id));
+  const availableComps = COMPONENTS.filter(c => !installed.includes(c.id));
+
+  // Recommendation logic — opinionated suggestions based on what's already in place
+  const recommendations: Array<{ id: string; reason: string }> = [];
+  if (installed.includes('synap') && !installed.includes('openclaw')) {
+    recommendations.push({ id: 'openclaw', reason: 'gives your data pod an AI agent layer' });
+  }
+  if (installed.includes('synap') && !installed.includes('rsshub')) {
+    recommendations.push({ id: 'rsshub', reason: 'turns websites into feeds your AI can read' });
+  }
+  if (installed.includes('synap') && !installed.includes('openwebui')) {
+    recommendations.push({ id: 'openwebui', reason: 'self-hosted chat UI wired to your AI' });
+  }
+  if (!installed.includes('synap') && installed.includes('traefik')) {
+    recommendations.push({ id: 'synap', reason: 'the data pod — your sovereign second brain' });
+  }
+  const recommendedIds = new Set(recommendations.map(r => r.id));
+
+  console.log();
+  console.log(colors.primary.bold(`${emojis.entity} Components`));
+  console.log(colors.muted('─'.repeat(60)));
+
+  // Installed
+  if (installedComps.length > 0) {
+    console.log();
+    console.log(colors.success.bold('  Installed'));
+    for (const comp of installedComps) {
+      console.log(`    ${colors.success('●')} ${comp.emoji} ${comp.label.padEnd(20)} ${colors.muted(comp.description.split('.')[0])}`);
+    }
+  }
+
+  // Recommended next
+  if (recommendations.length > 0) {
+    console.log();
+    console.log(colors.warning.bold('  Recommended next'));
+    for (const rec of recommendations) {
+      const comp = COMPONENTS.find(c => c.id === rec.id)!;
+      console.log(`    ${colors.warning('○')} ${comp.emoji} ${comp.label.padEnd(20)} ${colors.muted(rec.reason)}`);
+      console.log(`      ${colors.muted('→')} ${colors.info(`eve add ${comp.id}`)}`);
+    }
+  }
+
+  // Available (excluding already-recommended)
+  const otherAvailable = availableComps.filter(c => !recommendedIds.has(c.id));
+  if (otherAvailable.length > 0) {
+    console.log();
+    console.log(colors.muted.bold('  Also available'));
+    for (const comp of otherAvailable) {
+      const reqs = comp.requires?.length
+        ? colors.muted(` (requires: ${comp.requires.join(', ')})`)
+        : '';
+      console.log(`    ${colors.muted('○')} ${comp.emoji} ${comp.label.padEnd(20)} ${colors.muted(comp.description.split('.')[0])}${reqs}`);
+    }
+    console.log();
+    console.log(colors.muted(`    Install any with: ${colors.info('eve add <component-id>')}`));
+  }
 }
 
 async function watchStatus(): Promise<void> {
