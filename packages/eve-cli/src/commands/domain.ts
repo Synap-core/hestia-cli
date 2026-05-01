@@ -122,7 +122,11 @@ export function domainCommand(program: Command): void {
       console.log(colors.muted('─'.repeat(60)));
       console.log();
 
-      // 1. Traefik container running?
+      const tick = colors.success('✓');
+      const cross = colors.error('✗');
+      const warn = colors.warning('!');
+
+      // ─── 1. Traefik container running? ─────────────────────────────────
       let traefikRunning = false;
       try {
         const out = execSync('docker ps --filter "name=eve-legs-traefik" --format "{{.Names}}"', {
@@ -131,87 +135,167 @@ export function domainCommand(program: Command): void {
         traefikRunning = out.length > 0;
       } catch { /* docker not available */ }
 
-      const tick = colors.success !== undefined ? colors.success('✓') : '✓';
-      const cross = colors.error !== undefined ? colors.error('✗') : '✗';
-      const warn = colors.warning !== undefined ? colors.warning('!') : '!';
-
       console.log(traefikRunning
         ? `  ${tick}  Traefik container:   running (eve-legs-traefik)`
         : `  ${cross}  Traefik container:   NOT running — run: eve install --components=traefik`);
 
-      // 2. Config files present?
+      // ─── 2. Config files present? ──────────────────────────────────────
       const staticOk = existsSync(TRAEFIK_CONFIG);
       const dynamicOk = existsSync(TRAEFIK_DYNAMIC);
-      console.log(staticOk
-        ? `  ${tick}  Static config:       ${TRAEFIK_CONFIG}`
-        : `  ${cross}  Static config:       MISSING — run: eve domain set <yourdomain>`);
-      console.log(dynamicOk
-        ? `  ${tick}  Dynamic routes:      ${TRAEFIK_DYNAMIC}`
-        : `  ${cross}  Dynamic routes:      MISSING — run: eve domain set <yourdomain>`);
+      console.log(staticOk ? `  ${tick}  Static config:       ${TRAEFIK_CONFIG}` : `  ${cross}  Static config:       MISSING`);
+      console.log(dynamicOk ? `  ${tick}  Dynamic routes:      ${TRAEFIK_DYNAMIC}` : `  ${cross}  Dynamic routes:      MISSING — run: eve domain set <yourdomain>`);
 
-      // 3. Traefik listening on port 80?
-      let port80ok = false;
+      if (!traefikRunning || !dynamicOk) {
+        console.log();
+        printError('Cannot continue diagnostic — Traefik or routes missing.');
+        return;
+      }
+
+      // ─── 3. Read configured domain ─────────────────────────────────────
+      const secrets = await readEveSecrets(process.cwd());
+      const configuredDomain = secrets?.domain?.primary;
+      console.log(configuredDomain
+        ? `  ${tick}  Configured domain:   ${configuredDomain}`
+        : `  ${warn}  Configured domain:   none — run: eve domain set <yourdomain>`);
+
+      if (!configuredDomain) {
+        console.log();
+        printWarning('No domain set — nothing to verify.');
+        return;
+      }
+
+      // ─── 4. Probe each route via curl with proper Host header ──────────
+      console.log();
+      console.log(colors.primary.bold('  Per-route probe (Host header → Traefik → upstream):'));
+      console.log(colors.muted('  ' + '─'.repeat(58)));
+
+      // Re-derive routes from access-urls list, filtered by what's installed
+      let installedComponents: string[] | undefined;
+      try { installedComponents = await entityStateManager.getInstalledComponents(); } catch { /* ignore */ }
+      const urls = getAccessUrls(secrets, installedComponents);
+
+      // Each upstream check needs the corresponding container/port info
+      const upstreamMap: Record<string, { container?: string; port?: number; isHost?: boolean }> = {
+        eve:       { isHost: true,                port: 7979 },
+        pod:       { container: 'synap-backend-backend-1', port: 4000 },
+        openclaw:  { container: 'eve-arms-openclaw',       port: 3000 },
+        feeds:     { container: 'eve-eyes-rsshub',         port: 1200 },
+        ollama:    { container: 'eve-brain-ollama',        port: 11434 },
+        openwebui: { container: 'hestia-openwebui',        port: 8080 },
+      };
+
+      for (const svc of urls) {
+        if (!svc.domainUrl) continue;
+        const host = svc.domainUrl.replace(/^https?:\/\//, '').split('/')[0];
+
+        // Probe Traefik with the right Host header
+        let httpCode = '???';
+        try {
+          httpCode = execSync(
+            `curl -s -o /dev/null -w "%{http_code}" --max-time 4 -H "Host: ${host}" http://localhost:80/`,
+            { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
+          ).trim();
+        } catch { httpCode = 'timeout'; }
+
+        // Check upstream container exists
+        const upstream = upstreamMap[svc.id];
+        let upstreamState = 'unknown';
+        if (upstream) {
+          if (upstream.isHost) {
+            try {
+              const out = execSync(
+                `ss -tlnp 2>/dev/null | grep ':${upstream.port} ' || netstat -tlnp 2>/dev/null | grep ':${upstream.port} ' || echo ''`,
+                { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
+              ).trim();
+              upstreamState = out.length > 0 ? 'host:listening' : 'host:NOT listening';
+            } catch { upstreamState = 'host:check-failed'; }
+          } else if (upstream.container) {
+            try {
+              const out = execSync(
+                `docker ps --filter "name=^${upstream.container}$" --format "{{.Names}}"`,
+                { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
+              ).trim();
+              upstreamState = out.length > 0 ? `container:${upstream.container}` : `container:MISSING`;
+            } catch { upstreamState = 'docker:check-failed'; }
+          }
+        }
+
+        const statusBadge = httpCode === '200' || httpCode.startsWith('30')
+          ? colors.success(`${httpCode} ✓`)
+          : httpCode === '502' || httpCode === '503'
+            ? colors.warning(`${httpCode} (route OK, upstream down)`)
+            : httpCode === '404'
+              ? colors.error(`${httpCode} (route not matching!)`)
+              : colors.error(httpCode);
+
+        const upstreamBadge = upstreamState.includes('MISSING') || upstreamState.includes('NOT')
+          ? colors.error(upstreamState)
+          : colors.muted(upstreamState);
+
+        console.log(`    ${svc.emoji}  ${host.padEnd(28)} ${statusBadge}`);
+        console.log(`        ${colors.muted('upstream:')} ${upstreamBadge}`);
+      }
+
+      // ─── 5. DNS resolution check ───────────────────────────────────────
+      console.log();
+      console.log(colors.primary.bold('  DNS resolution:'));
+      console.log(colors.muted('  ' + '─'.repeat(58)));
+      const serverIp = getServerIp();
+      for (const svc of urls) {
+        if (!svc.domainUrl) continue;
+        const host = svc.domainUrl.replace(/^https?:\/\//, '').split('/')[0];
+        let resolved = '';
+        try {
+          resolved = execSync(`getent hosts ${host} 2>/dev/null | awk '{print $1}' | head -1`, {
+            encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'],
+          }).trim();
+        } catch { /* ignore */ }
+        if (!resolved) {
+          try {
+            resolved = execSync(`dig +short ${host} | head -1`, {
+              encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'],
+            }).trim();
+          } catch { /* ignore */ }
+        }
+
+        const dnsBadge = !resolved
+          ? colors.error('NO DNS RECORD')
+          : resolved === serverIp
+            ? colors.success(`${resolved} ✓ (this server)`)
+            : colors.warning(`${resolved} (expected ${serverIp})`);
+
+        console.log(`    ${host.padEnd(32)} ${dnsBadge}`);
+      }
+
+      // ─── 6. Recent Traefik logs (errors only) ──────────────────────────
+      console.log();
+      console.log(colors.muted('  Recent Traefik errors/warnings (filtered, last 50 lines):'));
       try {
-        execSync('curl -s --max-time 2 http://localhost:80 > /dev/null 2>&1 || exit 0');
-        port80ok = true;
-      } catch { /* ignore */ }
-      try {
-        const out = execSync("ss -tlnp 2>/dev/null | grep ':80 ' || netstat -tlnp 2>/dev/null | grep ':80 ' || echo ''", {
+        const logs = execSync('docker logs eve-legs-traefik --tail 50 2>&1 | grep -iE "error|warn|level=error|level=warn" || echo ""', {
           encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'],
         }).trim();
-        port80ok = out.length > 0;
-      } catch { /* ignore */ }
-      console.log(port80ok
-        ? `  ${tick}  Port 80:             listening`
-        : `  ${warn}  Port 80:             nothing listening (check docker port binding)`);
-
-      // 4. Dynamic routes content
-      if (dynamicOk) {
-        console.log();
-        console.log(colors.muted('  Active routes (from eve-routes.yml):'));
-        try {
-          const out = execSync(`grep -E "rule:|subdomain:" ${TRAEFIK_DYNAMIC}`, {
-            encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'],
-          }).trim();
-          for (const line of out.split('\n')) {
-            console.log(`    ${colors.muted(line.trim())}`);
-          }
-        } catch {
-          console.log(colors.muted('    (could not read routes)'));
-        }
-      }
-
-      // 5. Recent Traefik logs
-      if (traefikRunning) {
-        console.log();
-        console.log(colors.muted('  Recent Traefik logs (last 15 lines):'));
-        try {
-          const logs = execSync('docker logs eve-legs-traefik --tail 15 2>&1', {
-            encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'],
-          }).trim();
-          for (const line of logs.split('\n')) {
+        if (!logs) {
+          console.log(`    ${colors.success('(no errors or warnings)')}`);
+        } else {
+          for (const line of logs.split('\n').slice(-10)) {
             const isError = /error|ERR|level=error/i.test(line);
-            const isWarn = /warn|WARN|level=warn/i.test(line);
-            const colored = isError ? colors.error(line) : isWarn ? colors.warning(line) : colors.muted(line);
-            console.log(`    ${colored}`);
+            console.log(`    ${isError ? colors.error(line) : colors.warning(line)}`);
           }
-        } catch {
-          console.log(colors.muted('    (could not read logs)'));
         }
+      } catch {
+        console.log(colors.muted('    (could not read logs)'));
       }
 
-      // 6. Advice
+      // ─── 7. Targeted advice ────────────────────────────────────────────
       console.log();
-      if (!traefikRunning) {
-        printError('Traefik is not running. Start it with: eve install --components=traefik');
-      } else if (!dynamicOk) {
-        printWarning('No route config found. Run: eve domain set <yourdomain>');
-      } else {
-        printInfo('If routes show 404, check:');
-        printInfo('  1. DNS A records point to this server IP');
-        printInfo('  2. Upstream containers are running: docker ps');
-        printInfo('  3. Containers share eve-network: docker network inspect eve-network');
-      }
+      console.log(colors.primary.bold('  Hints:'));
+      console.log(colors.muted('  ' + '─'.repeat(58)));
+      printInfo('  • 404 on a route = Traefik received the request but no rule matched');
+      printInfo('    → check the request reaches Traefik with the right Host header');
+      printInfo('    → if DNS shows NO DNS RECORD, your A records aren\'t set / propagated');
+      printInfo('  • 502 = route matched, upstream down. Check the upstream container is running.');
+      printInfo('  • Eve dashboard runs on the HOST (port 7979), not in Docker.');
+      printInfo('    Start it with: cd /opt/eve && npx eve ui (or run as a systemd service)');
       console.log();
     });
 
