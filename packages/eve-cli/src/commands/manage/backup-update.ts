@@ -58,11 +58,14 @@ function lifecycleUpdate(id: string, label: string): UpdateTarget {
     update: async () => {
       const result = await runActionToCompletion(id, 'update');
       if (!result.ok) {
-        // Surface the lifecycle's last few log lines so the user sees
-        // why the update failed (image not found, container drift, etc.)
-        // without scrolling through the full stream.
-        const tail = result.logs.slice(-3).join('\n  ');
-        throw new Error(result.error ?? `update failed${tail ? `\n  ${tail}` : ''}`);
+        // Always include the last few log lines from the lifecycle
+        // stream — without them the user sees only the headline (e.g.
+        // "compose up exited 1") and has no way to tell whether it was
+        // a missing network, port conflict, or pull failure. The outer
+        // catch in `eve update` prints the full multi-line message.
+        const tail = result.logs.slice(-6).join('\n');
+        const headline = result.error ?? 'update failed';
+        throw new Error(tail ? `${headline}\n${tail}` : headline);
       }
     },
   };
@@ -157,21 +160,49 @@ export function backupUpdateCommands(program: Command): void {
 
   program
     .command('update')
-    .description('Update all Eve organs (Synap, Ollama, OpenClaw, RSSHub, Traefik, Open WebUI, Pipelines). Delegates to @eve/lifecycle so behavior matches the dashboard.')
-    .option('--only <organs>', 'Comma-separated organs to update, e.g. synap,ollama')
+    // `[components...]` accepts zero or more positional component IDs.
+    // No args = update all. Args = scope to those components. This is the
+    // most natural CLI shape and what the user expects from
+    // `eve update openwebui`. `--only` is kept for backwards compat.
+    .argument('[components...]', 'Component ids to update (omit to update all)')
+    .description('Update Eve organs. Pass component ids as args (e.g. `eve update openwebui`) or no args for all. Delegates to @eve/lifecycle so behavior matches the dashboard.')
+    .option('--only <organs>', 'Comma-separated organs to update (deprecated — use positional args)')
     .option('--skip <organs>', 'Comma-separated organs to skip, e.g. traefik')
-    .action(async (opts: { only?: string; skip?: string }) => {
+    .action(async (components: string[] | undefined, opts: { only?: string; skip?: string }) => {
       const deployDirs = ['/opt/synap-backend', process.env.SYNAP_DEPLOY_DIR].filter(Boolean) as string[];
       const deployDir = deployDirs.find(d => existsSync(join(d, 'docker-compose.yml')));
 
       const targets = buildUpdateTargets(deployDir);
 
-      const only = opts.only ? new Set(opts.only.split(',').map(s => s.trim())) : null;
+      // Positional args take precedence over `--only`. If the user passes
+      // both, positional wins (more specific intent).
+      const positionalSet = components && components.length > 0
+        ? new Set(components)
+        : null;
+      const only = positionalSet
+        ?? (opts.only ? new Set(opts.only.split(',').map(s => s.trim())) : null);
       const skip = opts.skip ? new Set(opts.skip.split(',').map(s => s.trim())) : new Set<string>();
+
+      // Validate positional ids — fail fast on typos rather than silently
+      // doing nothing when none of the args match a target.
+      if (positionalSet) {
+        const known = new Set(targets.map(t => t.id));
+        const unknown = [...positionalSet].filter(id => !known.has(id));
+        if (unknown.length > 0) {
+          printError(`Unknown component(s): ${unknown.join(', ')}`);
+          printInfo(`  Available: ${[...known].join(', ')}`);
+          process.exit(1);
+        }
+      }
 
       const toUpdate = targets.filter(t =>
         (!only || only.has(t.id)) && !skip.has(t.id),
       );
+
+      if (toUpdate.length === 0) {
+        printWarning('Nothing to update — filter excluded every target.');
+        return;
+      }
 
       console.log();
       console.log(colors.primary.bold('Eve Update'));
@@ -188,7 +219,17 @@ export function backupUpdateCommands(program: Command): void {
           results.push({ label: target.label, ok: true });
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
+          // Warn with the headline; print the full multi-line context
+          // (log tail from the lifecycle generator) directly afterwards
+          // so the user can actually diagnose what went wrong rather
+          // than seeing only "compose up exited 1".
           spinner.warn(`${target.label} — skipped (${msg.split('\n')[0]})`);
+          const remainder = msg.split('\n').slice(1);
+          if (remainder.length > 0) {
+            for (const line of remainder) {
+              console.log(`  ${colors.muted('│')} ${line.trim()}`);
+            }
+          }
           results.push({ label: target.label, ok: false, msg });
         }
       }
