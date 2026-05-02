@@ -1661,13 +1661,46 @@ async function maybeOfferAiProviderSetup(installedComponents) {
     printInfo("Skipped. Configure later with: eve ai providers add " + providerChoice + " --api-key <key>");
     return;
   }
+  const DEFAULT_MODELS = {
+    anthropic: "claude-sonnet-4-7",
+    openai: "gpt-5",
+    openrouter: "anthropic/claude-sonnet-4-7"
+  };
+  let defaultModel = DEFAULT_MODELS[providerChoice];
+  if (providerChoice === "openrouter") {
+    const modelInput = await text({
+      message: "Default model on OpenRouter:",
+      placeholder: "anthropic/claude-sonnet-4-7",
+      initialValue: "anthropic/claude-sonnet-4-7",
+      validate: (v) => v && v.includes("/") ? void 0 : "Use the form provider/model (e.g. anthropic/claude-sonnet-4-7)"
+    });
+    if (isCancel2(modelInput)) {
+      printInfo("Skipped \u2014 no default model set. Configure in the dashboard later.");
+      return;
+    }
+    defaultModel = modelInput.trim();
+  } else {
+    const modelInput = await text({
+      message: `Default model (press enter to use "${defaultModel}"):`,
+      placeholder: defaultModel,
+      initialValue: defaultModel
+    });
+    if (!isCancel2(modelInput) && modelInput.trim()) {
+      defaultModel = modelInput.trim();
+    }
+  }
   await writeEveSecrets2({
     ai: {
       defaultProvider: providerChoice,
-      providers: [{ id: providerChoice, enabled: true, apiKey: apiKey.trim() }]
+      providers: [{
+        id: providerChoice,
+        enabled: true,
+        apiKey: apiKey.trim(),
+        defaultModel
+      }]
     }
   });
-  printSuccess(`${providerChoice} provider saved.`);
+  printSuccess(`${providerChoice} (${defaultModel}) saved.`);
   console.log();
   const spinner = createSpinner("Wiring AI provider into installed components...");
   spinner.start();
@@ -1683,6 +1716,9 @@ async function maybeOfferAiProviderSetup(installedComponents) {
       printWarning(`  \u2022 ${r.id}: ${r.summary}${r.detail ? " \u2014 " + r.detail : ""}`);
     }
   }
+  console.log();
+  printInfo("Configure model, fallback provider, and multiple providers in the dashboard:");
+  printInfo('  eve ui   \u2192   open the dashboard, navigate to "AI Providers"');
 }
 async function maybeOfferDashboardService() {
   if (process.getuid && process.getuid() !== 0) return;
@@ -3985,23 +4021,35 @@ function aiCommandGroup(program2) {
       console.log(`${p.id}	enabled=${p.enabled ?? true}	model=${p.defaultModel ?? "(unset)"}`);
     }
   });
-  providers.command("add <id>").description("Add or update provider credentials/model \u2014 auto-wires every installed component").option("--api-key <key>", "Provider API key").option("--base-url <url>", "Custom provider base URL").option("--model <name>", "Default model name").option("--disable", "Set enabled=false").option("--no-rewire", "Don't auto-rewire installed components after save").action(async (id, opts) => {
+  const DEFAULT_MODELS = {
+    anthropic: "claude-sonnet-4-7",
+    openai: "gpt-5",
+    openrouter: "anthropic/claude-sonnet-4-7",
+    // OpenRouter requires a model — this is just a starter
+    ollama: "llama3.1:8b"
+  };
+  providers.command("add <id>").description("Add or update provider credentials/model \u2014 auto-wires every installed component").option("--api-key <key>", "Provider API key (required for cloud providers)").option("--base-url <url>", "Custom provider base URL").option("--model <name>", "Default model (required for openrouter; defaults to the latest for other providers)").option("--disable", "Set enabled=false").option("--no-rewire", "Don't auto-rewire installed components after save").action(async (id, opts) => {
     try {
       const pid = parseProviderId(id);
       const secrets = await readEveSecrets5(process.cwd());
       const list = [...secrets?.ai?.providers ?? []];
       const idx = list.findIndex((p) => p.id === pid);
+      const resolvedModel = opts.model ?? list[idx]?.defaultModel ?? DEFAULT_MODELS[pid];
+      if (pid === "openrouter" && !opts.model && !list[idx]?.defaultModel) {
+        printWarning(`OpenRouter has no useful default \u2014 using "${resolvedModel}" as a starter.`);
+        printInfo("  Override with: --model <provider>/<model> (e.g. --model openai/gpt-5)");
+      }
       const next = {
         id: pid,
         enabled: opts.disable ? false : true,
         apiKey: opts.apiKey ?? list[idx]?.apiKey,
         baseUrl: opts.baseUrl ?? list[idx]?.baseUrl,
-        defaultModel: opts.model ?? list[idx]?.defaultModel
+        defaultModel: resolvedModel
       };
       if (idx >= 0) list[idx] = next;
       else list.push(next);
       await writeEveSecrets4({ ai: { providers: list } }, process.cwd());
-      printSuccess(`Provider ${pid} saved.`);
+      printSuccess(`Provider ${pid} saved (model: ${resolvedModel}).`);
       if (opts.rewire !== false) {
         await applyAiWiring();
       } else {

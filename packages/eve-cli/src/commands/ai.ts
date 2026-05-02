@@ -155,12 +155,20 @@ export function aiCommandGroup(program: Command): void {
       }
     });
 
+  // Sensible model defaults so flag-only `eve ai providers add anthropic --api-key X` still works.
+  const DEFAULT_MODELS: Record<ProviderId, string> = {
+    anthropic: 'claude-sonnet-4-7',
+    openai: 'gpt-5',
+    openrouter: 'anthropic/claude-sonnet-4-7', // OpenRouter requires a model — this is just a starter
+    ollama: 'llama3.1:8b',
+  };
+
   providers
     .command('add <id>')
     .description('Add or update provider credentials/model — auto-wires every installed component')
-    .option('--api-key <key>', 'Provider API key')
+    .option('--api-key <key>', 'Provider API key (required for cloud providers)')
     .option('--base-url <url>', 'Custom provider base URL')
-    .option('--model <name>', 'Default model name')
+    .option('--model <name>', 'Default model (required for openrouter; defaults to the latest for other providers)')
     .option('--disable', 'Set enabled=false')
     .option('--no-rewire', "Don't auto-rewire installed components after save")
     .action(async (id: string, opts: { apiKey?: string; baseUrl?: string; model?: string; disable?: boolean; rewire?: boolean }) => {
@@ -169,17 +177,27 @@ export function aiCommandGroup(program: Command): void {
         const secrets = await readEveSecrets(process.cwd());
         const list = [...(secrets?.ai?.providers ?? [])];
         const idx = list.findIndex((p) => p.id === pid);
+
+        // Resolve final model: explicit --model wins, then existing, then sensible default
+        const resolvedModel = opts.model ?? list[idx]?.defaultModel ?? DEFAULT_MODELS[pid];
+
+        // OpenRouter without an explicit model is rarely what the user wants — warn
+        if (pid === 'openrouter' && !opts.model && !list[idx]?.defaultModel) {
+          printWarning(`OpenRouter has no useful default — using "${resolvedModel}" as a starter.`);
+          printInfo('  Override with: --model <provider>/<model> (e.g. --model openai/gpt-5)');
+        }
+
         const next = {
           id: pid,
           enabled: opts.disable ? false : true,
           apiKey: opts.apiKey ?? list[idx]?.apiKey,
           baseUrl: opts.baseUrl ?? list[idx]?.baseUrl,
-          defaultModel: opts.model ?? list[idx]?.defaultModel,
+          defaultModel: resolvedModel,
         };
         if (idx >= 0) list[idx] = next;
         else list.push(next);
         await writeEveSecrets({ ai: { providers: list } }, process.cwd());
-        printSuccess(`Provider ${pid} saved.`);
+        printSuccess(`Provider ${pid} saved (model: ${resolvedModel}).`);
 
         // Auto-rewire every installed component (default behavior)
         if (opts.rewire !== false) {

@@ -335,7 +335,15 @@ export default function DashboardPage() {
 
       {/* AI Providers */}
       <div>
-        <h2 className="text-sm font-semibold text-default-500 uppercase tracking-wider mb-3">AI Providers</h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-default-500 uppercase tracking-wider">AI Providers</h2>
+          <a
+            href="/dashboard/ai"
+            className="text-xs text-primary hover:underline flex items-center gap-1"
+          >
+            Configure →
+          </a>
+        </div>
         <Card className="bg-content1 border border-divider">
           <CardBody>
             {!secrets ? (
@@ -367,7 +375,12 @@ export default function DashboardPage() {
                     </div>
                   ))}
                   {secrets.ai.providers.length === 0 && (
-                    <p className="text-default-400 text-sm">No providers configured</p>
+                    <a
+                      href="/dashboard/ai"
+                      className="text-sm text-primary hover:underline"
+                    >
+                      No providers — click here to add one
+                    </a>
                   )}
                 </div>
               </div>

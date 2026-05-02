@@ -502,13 +502,52 @@ async function maybeOfferAiProviderSetup(installedComponents: string[]): Promise
     return;
   }
 
+  // Default model per provider. OpenRouter has no useful default — must ask.
+  // Anthropic/OpenAI have sensible recent defaults the user can refine in the
+  // dashboard later.
+  const DEFAULT_MODELS: Record<string, string> = {
+    anthropic: 'claude-sonnet-4-7',
+    openai: 'gpt-5',
+    openrouter: 'anthropic/claude-sonnet-4-7',
+  };
+
+  let defaultModel: string = DEFAULT_MODELS[providerChoice as string];
+  if (providerChoice === 'openrouter') {
+    const modelInput = await text({
+      message: 'Default model on OpenRouter:',
+      placeholder: 'anthropic/claude-sonnet-4-7',
+      initialValue: 'anthropic/claude-sonnet-4-7',
+      validate: (v) => v && v.includes('/') ? undefined : 'Use the form provider/model (e.g. anthropic/claude-sonnet-4-7)',
+    });
+    if (isCancel(modelInput)) {
+      printInfo('Skipped — no default model set. Configure in the dashboard later.');
+      return;
+    }
+    defaultModel = modelInput.trim();
+  } else {
+    // Show the default and let the user override
+    const modelInput = await text({
+      message: `Default model (press enter to use "${defaultModel}"):`,
+      placeholder: defaultModel,
+      initialValue: defaultModel,
+    });
+    if (!isCancel(modelInput) && modelInput.trim()) {
+      defaultModel = modelInput.trim();
+    }
+  }
+
   await writeEveSecrets({
     ai: {
       defaultProvider: providerChoice as 'anthropic' | 'openai' | 'openrouter',
-      providers: [{ id: providerChoice as 'anthropic' | 'openai' | 'openrouter', enabled: true, apiKey: apiKey.trim() }],
+      providers: [{
+        id: providerChoice as 'anthropic' | 'openai' | 'openrouter',
+        enabled: true,
+        apiKey: apiKey.trim(),
+        defaultModel,
+      }],
     },
   });
-  printSuccess(`${providerChoice} provider saved.`);
+  printSuccess(`${providerChoice} (${defaultModel}) saved.`);
 
   // Auto-wire every installed component so they pick up the new key
   console.log();
@@ -527,6 +566,11 @@ async function maybeOfferAiProviderSetup(installedComponents: string[]): Promise
       printWarning(`  • ${r.id}: ${r.summary}${r.detail ? ' — ' + r.detail : ''}`);
     }
   }
+
+  // Point the user at the dashboard for richer config
+  console.log();
+  printInfo('Configure model, fallback provider, and multiple providers in the dashboard:');
+  printInfo('  eve ui   →   open the dashboard, navigate to "AI Providers"');
 }
 
 /**
