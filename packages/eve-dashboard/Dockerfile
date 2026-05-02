@@ -58,12 +58,10 @@ COPY packages/eve-dashboard ./packages/eve-dashboard
 
 ENV NEXT_TELEMETRY_DISABLED=1
 
-RUN pnpm --filter @eve/dna run build
-RUN pnpm --filter @eve/legs run build
-RUN pnpm --filter @eve/eyes run build
-RUN pnpm --filter @eve/brain run build
-RUN pnpm --filter @eve/lifecycle run build
-RUN pnpm --filter @eve/dashboard run build
+# `...@eve/dashboard` selects dashboard plus every transitive workspace
+# dependency, in topological order — so we don't have to maintain the
+# brain-before-eyes / dna-before-legs ordering by hand.
+RUN pnpm --filter "...@eve/dashboard" run build
 
 # --- runner -----------------------------------------------------------------
 FROM node:${NODE_VERSION} AS runner
