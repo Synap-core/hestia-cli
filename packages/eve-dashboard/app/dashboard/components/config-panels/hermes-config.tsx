@@ -19,6 +19,7 @@ import {
   Input, Button, Spinner, Switch, addToast,
 } from "@heroui/react";
 import { Bot, Terminal } from "lucide-react";
+import { IntegrationChecklist } from "../integration-checklist";
 
 interface HermesConfig {
   enabled: boolean;
@@ -72,6 +73,16 @@ export function HermesConfigPanel() {
           its surface lives inside the agent conversations that produce the tasks.
         </p>
       </div>
+
+      {/* Setup checklist — surfaces what Hermes still needs to be functional
+          end-to-end (provider key, Synap key, pod running). Reuses the same
+          checks the Doctor page runs, filtered by integration scenario. */}
+      <IntegrationChecklist
+        integrationId="hermes-synap"
+        title="Hermes ↔ Synap setup"
+        description="What Hermes needs to actually run tasks against your pod."
+      />
+
 
       {/* Settings — outside-placed labels need extra vertical breathing
           room above each field. space-y-3 (12px) was too tight: the Input's

@@ -19,14 +19,21 @@ import {
 
 type RepairKind = "create-eve-network" | "start-container" | "rewire-openclaw";
 
+type IntegrationId =
+  | "hermes-synap"
+  | "openclaw-synap"
+  | "openwebui-synap"
+  | "openwebui-pipelines";
+
 interface CheckResult {
-  group: "platform" | "containers" | "network" | "ai" | "wiring";
+  group: "platform" | "containers" | "network" | "ai" | "wiring" | "integrations";
   name: string;
   status: "pass" | "fail" | "warn";
   message: string;
   fix?: string;
   componentId?: string;
   repair?: { kind: RepairKind; label: string };
+  integrationId?: IntegrationId;
 }
 
 interface DoctorResponse {
@@ -40,6 +47,7 @@ const GROUPS: Array<{ id: CheckResult["group"]; label: string; description: stri
   { id: "containers", label: "Containers", description: "Are the things you installed actually running?" },
   { id: "ai", label: "AI providers", description: "Provider keys for the AI fabric." },
   { id: "wiring", label: "Component wiring", description: "Cross-component config (auth-profiles, etc.)." },
+  { id: "integrations", label: "Integrations", description: "End-to-end wiring between paired components." },
 ];
 
 export default function DoctorPage() {

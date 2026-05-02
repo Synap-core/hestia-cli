@@ -4,15 +4,17 @@
  * Component detail drawer — slide-in from right.
  *
  * Thin wrapper around <ComponentSurface>. The drawer owns its own header
- * (title chip, refresh, close). The surface renders the body. The same
- * surface is used by `/dashboard/components/[id]` for the full-page view.
+ * (title chip, refresh, full-page link, close). The surface renders the
+ * body. The same surface is used by `/dashboard/components/[id]` for the
+ * full-page view.
  */
 
 import { useState } from "react";
+import Link from "next/link";
 import {
   Drawer, DrawerContent, DrawerHeader, DrawerBody, DrawerFooter,
 } from "@heroui/react";
-import { RefreshCw, X } from "lucide-react";
+import { RefreshCw, X, Maximize2 } from "lucide-react";
 import { ComponentSurface } from "./component-surface";
 
 export function ComponentDetailDrawer({
@@ -61,6 +63,17 @@ export function ComponentDetailDrawer({
                   >
                     <RefreshCw className="h-4 w-4" />
                   </button>
+                  {componentId && (
+                    <Link
+                      href={`/dashboard/components/${componentId}`}
+                      onClick={onClose}
+                      aria-label="Open full page"
+                      title="Open full page"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-default-500 hover:text-foreground hover:bg-content2 transition-colors"
+                    >
+                      <Maximize2 className="h-4 w-4" />
+                    </Link>
+                  )}
                   <button
                     type="button"
                     onClick={onClose}
@@ -80,7 +93,6 @@ export function ComponentDetailDrawer({
                   componentId={componentId}
                   layout="drawer"
                   onChange={onChange}
-                  onCloseDrawer={onClose}
                 />
               )}
             </DrawerBody>

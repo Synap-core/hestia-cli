@@ -79,11 +79,14 @@ RUN pnpm --filter @eve/dashboard run build
 
 # --- runner -----------------------------------------------------------------
 FROM node:${NODE_VERSION} AS runner
-# - tini       — proper PID 1 / signal forwarding
-# - docker-cli — wire-ai.ts shells out to `docker exec` to configure
-#                OpenClaw's auth-profiles.json. The dashboard reaches the
-#                host daemon via the mounted /var/run/docker.sock.
-RUN apk add --no-cache tini docker-cli
+# - tini                — proper PID 1 / signal forwarding
+# - docker-cli          — `docker exec`, `docker pull`, `docker restart` for
+#                          per-component lifecycle actions
+# - docker-cli-compose  — `docker compose up -d`, `docker compose pull` for
+#                          the install/update paths of synap, openwebui,
+#                          openwebui-pipelines (without this, `docker compose`
+#                          fails with "unknown shorthand flag: 'd'")
+RUN apk add --no-cache tini docker-cli docker-cli-compose
 
 WORKDIR /app
 ENV NODE_ENV=production
@@ -95,6 +98,12 @@ ENV HOSTNAME=0.0.0.0
 # In a monorepo it preserves the packages/eve-dashboard subpath.
 COPY --from=build /workspace/packages/eve-dashboard/.next/standalone ./
 COPY --from=build /workspace/packages/eve-dashboard/.next/static ./packages/eve-dashboard/.next/static
+
+# Pipeline reference scripts — Next's standalone tracer only follows JS
+# imports, so the .py assets in @eve/lifecycle don't get bundled. Copy
+# them into the runner at the path the lifecycle code probes for them
+# (`/app/packages/@eve/lifecycle/assets/pipelines`).
+COPY --from=build /workspace/packages/@eve/lifecycle/assets ./packages/@eve/lifecycle/assets
 
 EXPOSE 3000
 

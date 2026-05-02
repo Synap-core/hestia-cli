@@ -1,6 +1,29 @@
 import { HermesDaemon, type HermesConfig } from '../lib/hermes-daemon';
+import { readEveSecrets } from '@eve/dna';
 
 let daemon: HermesDaemon | null = null;
+
+/**
+ * Load Hermes defaults from `~/.eve/secrets.json` so the dashboard's
+ * saved settings (`builder.hermes.*`, `synap.apiUrl`, `synap.apiKey`)
+ * are picked up by `eve builder hermes start` without the user having
+ * to pass every value as a CLI flag.
+ *
+ * CLI args override file-based defaults (most specific wins).
+ */
+async function loadDefaultsFromSecrets(): Promise<Partial<HermesConfig>> {
+  const s = await readEveSecrets();
+  if (!s) return {};
+  const h = s.builder?.hermes ?? {};
+  const out: Partial<HermesConfig> = {};
+  if (h.enabled !== undefined) out.enabled = h.enabled;
+  if (h.pollIntervalMs !== undefined) out.pollIntervalMs = h.pollIntervalMs;
+  if (h.maxConcurrentTasks !== undefined) out.maxConcurrentTasks = h.maxConcurrentTasks;
+  if (s.synap?.apiUrl) out.apiUrl = s.synap.apiUrl;
+  if (s.synap?.apiKey) out.apiKey = s.synap.apiKey;
+  if (s.builder?.workspaceDir) out.workspaceDir = s.builder.workspaceDir;
+  return out;
+}
 
 /**
  * Hermes CLI commands — start, stop, status, poll, logs.
@@ -35,15 +58,29 @@ export function registerHermesCommands(yargs: any) {
           description: 'Workspace directory',
         });
     }, async (argv: any) => {
-      const config: Record<string, unknown> = {};
+      // 1. Defaults from secrets (set via `eve dashboard` settings)
+      const fileConfig = await loadDefaultsFromSecrets();
 
-      if (argv.pollInterval != null) config.pollIntervalMs = argv.pollInterval;
-      if (argv.maxConcurrent != null) config.maxConcurrentTasks = argv.maxConcurrent;
-      if (argv.apiUrl != null) config.apiUrl = argv.apiUrl;
-      if (argv.apiKey != null) config.apiKey = argv.apiKey;
-      if (argv.workspace != null) config.workspaceDir = argv.workspace;
+      // 2. CLI args override the file (most-specific wins)
+      const argConfig: Record<string, unknown> = {};
+      if (argv.pollInterval != null) argConfig.pollIntervalMs = argv.pollInterval;
+      if (argv.maxConcurrent != null) argConfig.maxConcurrentTasks = argv.maxConcurrent;
+      if (argv.apiUrl != null) argConfig.apiUrl = argv.apiUrl;
+      if (argv.apiKey != null) argConfig.apiKey = argv.apiKey;
+      if (argv.workspace != null) argConfig.workspaceDir = argv.workspace;
 
-      daemon = new HermesDaemon(config as Partial<HermesConfig>);
+      const config = { ...fileConfig, ...argConfig } as Partial<HermesConfig>;
+
+      // Honor the dashboard `enabled` switch — the daemon refuses to
+      // start when off so users can pre-configure settings without
+      // accidentally launching it.
+      if (config.enabled === false) {
+        console.log('[Hermes] Daemon is disabled in secrets.json (builder.hermes.enabled = false).');
+        console.log('  Toggle it on from the dashboard or pass --force (not yet wired) to override.');
+        return;
+      }
+
+      daemon = new HermesDaemon(config);
 
       // Handle Ctrl+C
       process.on('SIGINT', () => daemon?.stop());

@@ -24,7 +24,7 @@ import {
 } from "@eve/lifecycle";
 
 const VALID_ACTIONS: ReadonlySet<LifecycleAction> = new Set([
-  "install", "start", "stop", "restart", "update", "remove",
+  "install", "start", "stop", "restart", "recreate", "update", "remove",
 ]);
 
 interface InspectInfo {

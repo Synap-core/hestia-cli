@@ -8,7 +8,12 @@
  */
 
 import { NextResponse } from "next/server";
-import { readEveSecrets, entityStateManager, wireAllInstalledComponents } from "@eve/dna";
+import {
+  readEveSecrets, entityStateManager,
+  wireAllInstalledComponents,
+  AI_CONSUMERS_NEEDING_RECREATE,
+} from "@eve/dna";
+import { runActionToCompletion } from "@eve/lifecycle";
 import { requireAuth } from "@/lib/auth-server";
 
 export async function POST() {
@@ -26,6 +31,26 @@ export async function POST() {
   }
 
   const results = wireAllInstalledComponents(secrets, installed);
+
+  // Wire-only restart isn't enough for components whose env is set at
+  // `docker run` time (openclaw). Replace their wire result with a
+  // recreate via lifecycle so the manual "Apply" button is actually
+  // sufficient — same guarantee as auto-apply.
+  for (const id of AI_CONSUMERS_NEEDING_RECREATE) {
+    if (!installed.includes(id)) continue;
+    const r = await runActionToCompletion(id, "recreate");
+    const recreated = {
+      id,
+      outcome: r.ok ? "ok" as const : "failed" as const,
+      summary: r.ok
+        ? `${id} recreated · new env applied`
+        : `${id} recreate failed: ${r.error ?? "unknown"}`,
+    };
+    const idx = results.findIndex(x => x.id === id);
+    if (idx >= 0) results[idx] = recreated;
+    else results.push(recreated);
+  }
+
   const ok = results.filter(r => r.outcome === "ok").length;
   const failed = results.filter(r => r.outcome === "failed").length;
 

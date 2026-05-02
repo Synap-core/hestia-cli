@@ -7,8 +7,10 @@ import {
   writeEveSecrets,
   entityStateManager,
   wireAllInstalledComponents,
+  AI_CONSUMERS_NEEDING_RECREATE,
   type WireAiResult,
 } from '@eve/dna';
+import { runActionToCompletion } from '@eve/lifecycle';
 import { colors, printError, printInfo, printSuccess, printWarning } from '../lib/ui.js';
 
 type ProviderId = 'ollama' | 'openrouter' | 'anthropic' | 'openai';
@@ -81,6 +83,26 @@ async function applyAiWiring(): Promise<WireAiResult[]> {
   console.log();
   console.log(colors.primary.bold('Wiring AI provider into installed components:'));
   const results = wireAllInstalledComponents(secrets, installed);
+
+  // For components whose env is set at `docker run` time (openclaw),
+  // wire-only restart leaves the env stale. Recreate via lifecycle so
+  // the new DEFAULT_MODEL etc. actually land. Mirrors the dashboard's
+  // /api/ai/apply route — same single source of truth.
+  for (const id of AI_CONSUMERS_NEEDING_RECREATE) {
+    if (!installed.includes(id)) continue;
+    const r = await runActionToCompletion(id, 'recreate');
+    const recreated: WireAiResult = {
+      id,
+      outcome: r.ok ? 'ok' : 'failed',
+      summary: r.ok
+        ? `${id} recreated · new env applied`
+        : `${id} recreate failed: ${r.error ?? 'unknown'}`,
+    };
+    const idx = results.findIndex(x => x.id === id);
+    if (idx >= 0) results[idx] = recreated;
+    else results.push(recreated);
+  }
+
   for (const r of results) {
     if (r.outcome === 'ok') {
       console.log(`  ${colors.success('✓')} ${r.id.padEnd(12)} ${colors.muted(r.summary)}`);
@@ -213,12 +235,16 @@ export function aiCommandGroup(program: Command): void {
 
   providers
     .command('set-default <id>')
-    .description('Set default provider')
-    .action(async (id: string) => {
+    .description('Set default provider (auto-applies to installed components)')
+    .option('--no-rewire', 'Skip auto-applying to installed components')
+    .action(async (id: string, opts: { rewire?: boolean }) => {
       try {
         const pid = parseProviderId(id);
         await writeEveSecrets({ ai: { defaultProvider: pid } }, process.cwd());
         printInfo(`Default provider set to ${pid}`);
+        if (opts.rewire !== false) {
+          await applyAiWiring();
+        }
       } catch (e) {
         printError(e instanceof Error ? e.message : String(e));
         process.exit(1);
@@ -227,12 +253,48 @@ export function aiCommandGroup(program: Command): void {
 
   providers
     .command('set-fallback <id>')
-    .description('Set fallback provider')
-    .action(async (id: string) => {
+    .description('Set fallback provider (auto-applies to installed components)')
+    .option('--no-rewire', 'Skip auto-applying to installed components')
+    .action(async (id: string, opts: { rewire?: boolean }) => {
       try {
         const pid = parseProviderId(id);
         await writeEveSecrets({ ai: { fallbackProvider: pid } }, process.cwd());
         printInfo(`Fallback provider set to ${pid}`);
+        if (opts.rewire !== false) {
+          await applyAiWiring();
+        }
+      } catch (e) {
+        printError(e instanceof Error ? e.message : String(e));
+        process.exit(1);
+      }
+    });
+
+  providers
+    .command('set-service <componentId> <providerId>')
+    .description('Override which provider a specific service uses (e.g. set-service openclaw anthropic). Pass "default" to clear.')
+    .option('--no-rewire', 'Skip auto-applying to installed components')
+    .action(async (componentId: string, providerId: string, opts: { rewire?: boolean }) => {
+      try {
+        const secrets = await readEveSecrets(process.cwd());
+        const current = secrets?.ai?.serviceProviders ?? {};
+        const next = { ...current };
+
+        if (providerId === 'default' || providerId === 'clear') {
+          delete next[componentId];
+          printInfo(`Cleared service override for ${componentId} (now uses global default)`);
+        } else {
+          const pid = parseProviderId(providerId);
+          next[componentId] = pid;
+          printInfo(`${componentId} now routes via ${pid}`);
+        }
+
+        await writeEveSecrets(
+          { ai: { serviceProviders: next } },
+          process.cwd(),
+        );
+        if (opts.rewire !== false) {
+          await applyAiWiring();
+        }
       } catch (e) {
         printError(e instanceof Error ? e.message : String(e));
         process.exit(1);

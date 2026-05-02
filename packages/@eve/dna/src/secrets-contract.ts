@@ -28,6 +28,15 @@ const SecretsSchema = z.object({
         .optional(),
       /** Sync intent flag used by explicit `eve ai sync --workspace <id>` command. */
       syncToSynap: z.boolean().optional(),
+      /**
+       * Per-service provider override. Keys are component ids
+       * (e.g. "openclaw", "openwebui"); value is the provider id that
+       * service should default to. Missing or null = use the global
+       * `defaultProvider`.
+       */
+      serviceProviders: z
+        .record(z.string(), AiProviderSchema)
+        .optional(),
     })
     .optional(),
   synap: z

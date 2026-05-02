@@ -121,6 +121,9 @@ export {
   wireComponentAi,
   wireAllInstalledComponents,
   hasAnyProvider,
+  pickPrimaryProvider,
+  AI_CONSUMERS,
+  AI_CONSUMERS_NEEDING_RECREATE,
 } from './wire-ai.js';
 
 export {

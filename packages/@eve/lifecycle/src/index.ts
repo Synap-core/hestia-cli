@@ -24,6 +24,9 @@ import {
   entityStateManager,
   readEveSecrets,
   writeEveSecrets,
+  pickPrimaryProvider,
+  wireComponentAi,
+  AI_CONSUMERS,
   type ComponentInfo,
 } from "@eve/dna";
 import {
@@ -37,7 +40,7 @@ import {
 // ---------------------------------------------------------------------------
 
 export type LifecycleAction =
-  | "install" | "remove" | "update" | "start" | "stop" | "restart";
+  | "install" | "remove" | "update" | "start" | "stop" | "restart" | "recreate";
 
 export type LifecycleEvent =
   | { type: "step"; label: string }
@@ -356,6 +359,30 @@ async function* installOne(
       line: `warning: state.json wasn't updated (${err instanceof Error ? err.message : String(err)}) — dashboard list may show stale state until next sync`,
     };
   }
+
+  // Auto-seed AI provider config for components that consume AI. Without
+  // this, a freshly installed openclaw / openwebui / synap sits there
+  // until the user clicks "Apply" on the AI page. The wire path writes
+  // the right env / auth file from the centralized `secrets.ai` config.
+  if (AI_CONSUMERS.has(comp.id)) {
+    try {
+      const secrets = await readEveSecrets();
+      const result = wireComponentAi(comp.id, secrets);
+      if (result.outcome === "ok") {
+        yield { type: "log", line: `AI config seeded: ${result.summary}` };
+      } else if (result.outcome === "skipped") {
+        yield { type: "log", line: `AI seed skipped: ${result.summary}` };
+      } else {
+        yield { type: "log", line: `warning: AI seed failed (${result.summary})` };
+      }
+    } catch (err) {
+      yield {
+        type: "log",
+        line: `warning: AI seed step errored (${err instanceof Error ? err.message : String(err)})`,
+      };
+    }
+  }
+
   yield { type: "done", summary: `${comp.label} installed` };
 }
 
@@ -440,7 +467,11 @@ async function* runInstallRecipe(
       return;
     }
 
-    case "openclaw":
+    case "openclaw": {
+      yield* installOpenclaw();
+      return;
+    }
+
     case "hermes":
     case "dokploy":
     case "opencode":
@@ -590,17 +621,36 @@ networks:
   if (code !== 0) throw new Error(`docker compose up exited ${code}`);
 
   // Tell Open WebUI to call us — append to its env if present.
+  //
+  // Open WebUI's plural URL/key vars are SEMICOLON-separated and must align
+  // by index: each base URL needs its own key (no fallback to the singular
+  // OPENAI_API_KEY). Without this, requests to the pipelines URL go out
+  // with the wrong bearer token and 401.
+  //
+  // Read pipelines key back from the .env we just wrote so OpenWebUI sends
+  // the right token to the sidecar.
   const owEnv = "/opt/openwebui/.env";
   if (existsSync(owEnv)) {
+    const pipelinesEnv = readFileSync(envPath, "utf-8");
+    const pipelinesKey = pipelinesEnv
+      .split("\n")
+      .find(l => l.startsWith("PIPELINES_API_KEY="))?.split("=", 2)[1] ?? "";
+
     const cur = readFileSync(owEnv, "utf-8");
     const marker = "# Pipelines wiring — managed by @eve/lifecycle";
     const stripped = cur.includes(marker) ? cur.split(marker)[0].trimEnd() : cur.trimEnd();
     const block = [
       marker,
-      "OPENAI_API_BASE_URLS=http://eve-openwebui-pipelines:9099,http://intelligence-hub:3001/v1",
+      "OPENAI_API_BASE_URLS=http://eve-openwebui-pipelines:9099;http://intelligence-hub:3001/v1",
+      `OPENAI_API_KEYS=${pipelinesKey};\${SYNAP_API_KEY}`,
     ].join("\n");
     writeFileSync(owEnv, (stripped ? stripped + "\n\n" : "") + block + "\n", { mode: 0o600 });
-    yield* dockerExec(["restart", "hestia-openwebui"], "Restarting Open WebUI to pick up pipelines wiring…");
+
+    // `docker restart` doesn't re-read .env — only `compose up -d` does.
+    yield* runCommand(
+      "docker", ["compose", "up", "-d"],
+      { cwd: "/opt/openwebui" },
+    );
   }
 }
 
@@ -644,6 +694,70 @@ async function* copyReferencePipelines(targetDir: string): AsyncGenerator<Lifecy
     count += 1;
   }
   yield { type: "log", line: `Installed ${count} reference pipeline${count === 1 ? "" : "s"} into ${targetDir}` };
+}
+
+// ---------------------------------------------------------------------------
+// OpenClaw — agent runtime, drives off secrets.json so config changes apply
+// on recreate. Mirrors the env shape of @eve/arms's OpenClawService but
+// reads from secrets directly so the dashboard's channels page can
+// re-wire messaging/voice and have it actually take effect.
+// ---------------------------------------------------------------------------
+
+const OPENCLAW_CONTAINER = "eve-arms-openclaw";
+
+async function* installOpenclaw(): AsyncGenerator<LifecycleEvent> {
+  const secrets = await readEveSecrets();
+
+  const ollamaUrl = process.env.OLLAMA_URL ?? "http://eve-brain-ollama:11434";
+  const synapApiUrl = secrets?.synap?.apiUrl ?? "";
+  const synapApiKey = secrets?.synap?.apiKey ?? "";
+  const dokployApiUrl = secrets?.builder?.dokployApiUrl ?? "";
+
+  // Pick the AI provider that drives OpenClaw — honors per-service
+  // override (`secrets.ai.serviceProviders.openclaw`) and falls back
+  // to the global default. Its `defaultModel` becomes OpenClaw's
+  // `DEFAULT_MODEL` env var (replaces the hardcoded "llama3.2").
+  const aiProvider = pickPrimaryProvider(secrets, "openclaw");
+  const defaultModel = aiProvider?.defaultModel ?? "llama3.2";
+
+  // Read messaging + voice config straight from secrets — the channels
+  // page writes here, so this is what the live container must see.
+  const m = secrets?.arms?.messaging ?? {};
+  const v = secrets?.arms?.voice ?? {};
+
+  yield* ensureEveNetwork();
+
+  yield { type: "step", label: "Pulling OpenClaw image…" };
+  const pullCode = yield* runCommand(
+    "docker", ["pull", "ghcr.io/openclaw/openclaw:latest"],
+  );
+  if (pullCode !== 0) throw new Error(`docker pull exited ${pullCode}`);
+
+  yield { type: "step", label: "Starting OpenClaw…" };
+  const args = [
+    "run", "-d",
+    "--name", OPENCLAW_CONTAINER,
+    "--network", "eve-network",
+    "-p", "3000:3000",
+    "-e", `OLLAMA_URL=${ollamaUrl}`,
+    "-e", `DEFAULT_MODEL=${defaultModel}`,
+    "-e", `SYNAP_API_URL=${synapApiUrl}`,
+    "-e", `SYNAP_API_KEY=${synapApiKey}`,
+    "-e", `DOKPLOY_API_URL=${dokployApiUrl}`,
+    "-e", `MESSAGING_ENABLED=${Boolean(m.enabled)}`,
+    "-e", `MESSAGING_PLATFORM=${m.platform ?? ""}`,
+    "-e", `MESSAGING_BOT_TOKEN=${m.botToken ?? ""}`,
+    "-e", `VOICE_ENABLED=${Boolean(v.enabled)}`,
+    "-e", `VOICE_PROVIDER=${v.provider ?? ""}`,
+    "-e", `VOICE_PHONE_NUMBER=${v.phoneNumber ?? ""}`,
+    "-e", `VOICE_SIP_URI=${v.sipUri ?? ""}`,
+    "-v", "eve-arms-openclaw-data:/data",
+    "--restart", "unless-stopped",
+    "ghcr.io/openclaw/openclaw:latest",
+  ];
+  const runCode = yield* runCommand("docker", args);
+  if (runCode !== 0) throw new Error(`docker run exited ${runCode}`);
+  yield { type: "log", line: "OpenClaw container running" };
 }
 
 async function* ensureEveNetwork(): AsyncGenerator<LifecycleEvent> {
@@ -716,13 +830,38 @@ export async function* runAction(
   }
 
   switch (action) {
-    case "install": yield* installOne(comp, opts); return;
-    case "remove":  yield* removeOne(comp); return;
-    case "update":  yield* updateContainer(comp); return;
-    case "start":   yield* startContainer(comp); return;
-    case "stop":    yield* stopContainer(comp); return;
-    case "restart": yield* restartContainer(comp); return;
+    case "install":  yield* installOne(comp, opts); return;
+    case "remove":   yield* removeOne(comp); return;
+    case "update":   yield* updateContainer(comp); return;
+    case "start":    yield* startContainer(comp); return;
+    case "stop":     yield* stopContainer(comp); return;
+    case "restart":  yield* restartContainer(comp); return;
+    case "recreate": yield* recreateContainer(comp, opts); return;
   }
+}
+
+/**
+ * Recreate a container so it picks up new env / secrets.
+ *
+ * `docker restart` doesn't re-read env vars or `.env` files — it just
+ * SIGTERMs and starts the same container with the same args. For
+ * components whose config lives in secrets.json (openclaw messaging /
+ * voice) or in a compose `.env` (openwebui pipelines wiring), restart
+ * silently keeps the stale config. `recreate` does the right thing:
+ * remove the container, then re-run the install recipe so the new
+ * env / secrets land in the new container.
+ */
+async function* recreateContainer(
+  comp: ComponentInfo,
+  opts: InstallOptions,
+): AsyncGenerator<LifecycleEvent> {
+  // Stop + remove (best-effort — fine if the container doesn't exist).
+  const name = comp.service?.containerName;
+  if (name) {
+    yield { type: "step", label: `Removing ${comp.label} container…` };
+    yield* runCommand("docker", ["rm", "-f", name]);
+  }
+  yield* installOne(comp, opts);
 }
 
 /** Drain the generator into a single result — for callers that don't stream. */

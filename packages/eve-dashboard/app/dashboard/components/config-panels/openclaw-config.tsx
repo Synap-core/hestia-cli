@@ -17,6 +17,7 @@ import {
 import {
   Plug, Trash2, MessageSquare, Phone, Plus, RotateCcw,
 } from "lucide-react";
+import { IntegrationChecklist } from "../integration-checklist";
 
 interface McpServer { name: string; command: string; args: string[]; }
 interface McpPreset { id: string; command: string; args: string[]; description: string; }
@@ -37,6 +38,11 @@ interface MessagingConfig {
 export function OpenclawConfigPanel() {
   return (
     <div className="space-y-6">
+      <IntegrationChecklist
+        integrationId="openclaw-synap"
+        title="OpenClaw ↔ Synap setup"
+        description="What OpenClaw needs to talk to your pod and run agents."
+      />
       <McpSection />
       <MessagingSection />
       <VoiceSection />
@@ -104,14 +110,19 @@ function McpSection() {
   }, [fetchData]);
 
   const onRestart = useCallback(async () => {
+    // `recreate` so messaging/voice env changes from secrets actually
+    // land in the new container — `docker restart` keeps the stale env.
+    // MCP-only changes would survive a plain restart (MCP lives on the
+    // mounted /data volume), but we use recreate uniformly so it's safe
+    // when both kinds of change are pending.
     const res = await fetch("/api/components/openclaw", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ action: "restart" }),
+      body: JSON.stringify({ action: "recreate" }),
     });
     if (res.ok) {
-      addToast({ title: "OpenClaw restarted", color: "success" });
+      addToast({ title: "OpenClaw recreated · new config applied", color: "success" });
       setRestartNeeded(false);
     }
   }, []);

@@ -53,12 +53,45 @@ function dockerRestart(name: string): void {
   } catch { /* non-fatal */ }
 }
 
-/** Pick the user's primary AI provider entry. Prefers `defaultProvider`, then first enabled. */
-function pickPrimaryProvider(secrets: EveSecrets | null) {
-  const providers = (secrets?.ai?.providers ?? []).filter(p => p.apiKey && p.apiKey.trim().length > 0);
-  if (providers.length === 0) return null;
+/**
+ * Pick the AI provider entry that drives a given component.
+ *
+ * Resolution: per-service override (`ai.serviceProviders[componentId]`)
+ * → global `defaultProvider` → first enabled → first present.
+ *
+ * Only providers with an apiKey (or `ollama`, which doesn't need one) are
+ * considered. `componentId` is optional: when omitted we fall back to the
+ * global rule so callers that don't care about per-service stay simple.
+ */
+export function pickPrimaryProvider(
+  secrets: EveSecrets | null,
+  componentId?: string,
+) {
+  const all = secrets?.ai?.providers ?? [];
+  const usable = all.filter(p =>
+    p.id === 'ollama' || (p.apiKey && p.apiKey.trim().length > 0),
+  );
+  if (usable.length === 0) return null;
+
+  // 1. Per-service override
+  if (componentId) {
+    const override = secrets?.ai?.serviceProviders?.[componentId];
+    if (override) {
+      const hit = usable.find(p => p.id === override);
+      if (hit) return hit;
+      // Override points at a provider with no key → fall through to default
+      // rather than silently using the wrong one. (Caller can detect by
+      // comparing returned id to the override.)
+    }
+  }
+
+  // 2. Global default
   const def = secrets?.ai?.defaultProvider;
-  return providers.find(p => p.id === def) ?? providers.find(p => p.enabled !== false) ?? providers[0];
+  return (
+    usable.find(p => p.id === def) ??
+    usable.find(p => p.enabled !== false) ??
+    usable[0]
+  );
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -83,7 +116,9 @@ function wireSynapIs(secrets: EveSecrets | null): WireAiResult {
     return { id: 'synap', outcome: 'skipped', summary: `deploy dir not found: ${deployDir}` };
   }
 
-  // Build env additions for each provider that has a key
+  // Build env additions for each provider that has a key. Synap IS still
+  // gets ALL upstream keys so it can route across providers — only the
+  // *default* changes per-service.
   const envLines: string[] = ['# AI provider keys — managed by eve ai apply'];
   for (const p of providers) {
     if (!p.apiKey) continue;
@@ -91,8 +126,16 @@ function wireSynapIs(secrets: EveSecrets | null): WireAiResult {
     if (p.id === 'anthropic') envLines.push(`ANTHROPIC_API_KEY=${p.apiKey}`);
     if (p.id === 'openrouter') envLines.push(`OPENROUTER_API_KEY=${p.apiKey}`);
   }
-  if (secrets?.ai?.defaultProvider) {
-    envLines.push(`DEFAULT_AI_PROVIDER=${secrets.ai.defaultProvider}`);
+  // Honor per-service override for synap itself: when the user has
+  // configured "use Anthropic for Synap IS", DEFAULT_AI_PROVIDER reflects
+  // that choice. Keeps the resolution rule consistent across all
+  // wire* functions (they all call pickPrimaryProvider with their id).
+  const synapProvider = pickPrimaryProvider(secrets, 'synap');
+  if (synapProvider) {
+    envLines.push(`DEFAULT_AI_PROVIDER=${synapProvider.id}`);
+    if (synapProvider.defaultModel) {
+      envLines.push(`DEFAULT_AI_MODEL=${synapProvider.defaultModel}`);
+    }
   }
 
   // Append to existing .env, replacing any prior eve-managed block
@@ -154,13 +197,22 @@ function wireOpenclaw(secrets: EveSecrets | null): WireAiResult {
   }
 
   // OpenClaw's auth store format. Default agent is "main".
+  // Per-service override: when the user has chosen e.g. "use Anthropic
+  // for OpenClaw", we pass that provider's `defaultModel` as the
+  // preferred model. OpenClaw still routes through Synap IS — IS picks
+  // the matching upstream provider based on the model name.
+  const provider = pickPrimaryProvider(secrets, 'openclaw');
+  const preferredModel = provider?.defaultModel;
+
   const authProfile = {
     providers: {
       openai: {
         apiKey: synapApiKey,
         baseUrl: 'http://intelligence-hub:3001/v1',
+        ...(preferredModel ? { defaultModel: preferredModel } : {}),
       },
     },
+    ...(preferredModel ? { defaultModel: preferredModel } : {}),
   };
   const authJson = JSON.stringify(authProfile, null, 2);
   const containerPath = '/home/node/.openclaw/agents/main/agent/auth-profiles.json';
@@ -222,10 +274,18 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
   const marker = '# AI wiring — managed by eve ai apply';
   const before = existing.includes(marker) ? existing.split(marker)[0].trimEnd() : existing.trimEnd();
 
+  // Per-service override: Open WebUI lets users pick models in the UI,
+  // but `DEFAULT_MODELS` populates the default selection — so honoring
+  // the override here means the user's "use OpenAI for Open WebUI"
+  // choice surfaces as the preselected model.
+  const provider = pickPrimaryProvider(secrets, 'openwebui');
+  const preferredModel = provider?.defaultModel;
+
   const block = [
     marker,
     `SYNAP_API_KEY=${synapApiKey}`,
     `SYNAP_IS_URL=http://intelligence-hub:3001`,
+    ...(preferredModel ? [`DEFAULT_MODELS=${preferredModel}`] : []),
   ].join('\n');
 
   try {
@@ -269,6 +329,39 @@ function wireBuilder(_secrets: EveSecrets | null, componentId: string): WireAiRe
 // ───────────────────────────────────────────────────────────────────────────
 // Public API
 // ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * Components whose AI wiring is centrally managed via `secrets.ai`.
+ *
+ * Single source of truth for which components participate in:
+ *   - auto-seed on install (`@eve/lifecycle/installOne`)
+ *   - auto-apply on UI change (`POST /api/ai/providers`, `PATCH /api/ai`)
+ *   - per-service routing (`secrets.ai.serviceProviders[componentId]`)
+ *
+ * Adding a new AI consumer means: extend this set, add a `wire*` function
+ * below, route it from `wireComponentAi`, and (if it has env-affecting
+ * secrets) ensure the apply path triggers `recreate` for it via lifecycle.
+ */
+export const AI_CONSUMERS: ReadonlySet<string> = new Set([
+  'synap',
+  'openclaw',
+  'openwebui',
+]);
+
+/**
+ * Components whose effective AI config is set at `docker run` time (env
+ * vars, not file-mounted). For these, a `wire*` write + `dockerRestart`
+ * is NOT enough — the apply path must call lifecycle's `recreate` so the
+ * new env actually lands in the container.
+ *
+ * `synap` mounts its env via compose, so `compose up -d` (handled by the
+ * synap install path) is sufficient; restart-only is fine post-wire.
+ * `openclaw` runs as a plain `docker run -e`, hence the recreate.
+ * `openwebui` is compose-based too, so its restart re-reads `.env`.
+ */
+export const AI_CONSUMERS_NEEDING_RECREATE: ReadonlySet<string> = new Set([
+  'openclaw',
+]);
 
 /**
  * Wire AI for one component. Caller catches errors; this function returns

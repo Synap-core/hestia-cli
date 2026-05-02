@@ -6,7 +6,11 @@
  */
 
 import { NextResponse } from "next/server";
-import { readEveSecrets, writeEveSecrets } from "@eve/dna";
+import {
+  readEveSecrets, writeEveSecrets, entityStateManager,
+  wireAllInstalledComponents, AI_CONSUMERS, AI_CONSUMERS_NEEDING_RECREATE,
+} from "@eve/dna";
+import { runActionToCompletion } from "@eve/lifecycle";
 import { requireAuth } from "@/lib/auth-server";
 
 type ProviderId = "ollama" | "openrouter" | "anthropic" | "openai";
@@ -38,8 +42,14 @@ export async function GET() {
     mode: ai.mode ?? null,
     defaultProvider: ai.defaultProvider ?? null,
     fallbackProvider: ai.fallbackProvider ?? null,
+    serviceProviders: ai.serviceProviders ?? {},
     providers,
     validProviders: VALID_PROVIDERS,
+    // Single source of truth: the client uses this list to filter
+    // components for the per-service routing panel. Avoids drift
+    // between the hardcoded list on the page and `@eve/dna`.
+    aiConsumers: Array.from(AI_CONSUMERS),
+    aiConsumersNeedingRecreate: Array.from(AI_CONSUMERS_NEEDING_RECREATE),
   });
 }
 
@@ -51,6 +61,12 @@ export async function PATCH(req: Request) {
     defaultProvider?: ProviderId;
     fallbackProvider?: ProviderId | null;
     mode?: "local" | "provider" | "hybrid";
+    /**
+     * Per-service override map. `{ openclaw: "anthropic" }` makes OpenClaw
+     * default to Anthropic regardless of the global `defaultProvider`.
+     * Pass `null` for a key to clear that service's override.
+     */
+    serviceProviders?: Record<string, ProviderId | null>;
   };
 
   if (body.defaultProvider && !VALID_PROVIDERS.includes(body.defaultProvider)) {
@@ -59,13 +75,88 @@ export async function PATCH(req: Request) {
   if (body.fallbackProvider && !VALID_PROVIDERS.includes(body.fallbackProvider)) {
     return NextResponse.json({ error: "Invalid fallbackProvider" }, { status: 400 });
   }
+  if (body.serviceProviders) {
+    for (const [svc, prov] of Object.entries(body.serviceProviders)) {
+      if (prov !== null && !VALID_PROVIDERS.includes(prov)) {
+        return NextResponse.json(
+          { error: `Invalid provider "${prov}" for service "${svc}"` },
+          { status: 400 },
+        );
+      }
+    }
+  }
 
   const next: Record<string, unknown> = {};
   if (body.defaultProvider !== undefined) next.defaultProvider = body.defaultProvider;
   if (body.fallbackProvider !== undefined) next.fallbackProvider = body.fallbackProvider ?? undefined;
   if (body.mode !== undefined) next.mode = body.mode;
 
+  // Merge serviceProviders: keep existing entries, drop the ones explicitly
+  // set to `null`. This way the UI can clear one service without resending
+  // the whole map.
+  if (body.serviceProviders) {
+    const current = (await readEveSecrets())?.ai?.serviceProviders ?? {};
+    const merged: Record<string, ProviderId> = { ...current };
+    for (const [svc, prov] of Object.entries(body.serviceProviders)) {
+      if (prov === null) delete merged[svc];
+      else merged[svc] = prov;
+    }
+    next.serviceProviders = merged;
+  }
+
   await writeEveSecrets({ ai: next as Parameters<typeof writeEveSecrets>[0]["ai"] });
 
-  return NextResponse.json({ ok: true });
+  // Auto-apply: changing `defaultProvider` or any `serviceProviders` entry
+  // should propagate to running components without a second click. The
+  // explicit "Apply" button stays available for manual re-runs.
+  //
+  // For each component listed in AI_CONSUMERS_NEEDING_RECREATE whose
+  // resolved provider/model could have changed, we trigger a lifecycle
+  // `recreate` (rather than the wire-only restart) so docker-run-time env
+  // is refreshed. We over-include rather than try to compute exact
+  // diffs — recreate is idempotent and infrequent.
+  let applyResults: ReturnType<typeof wireAllInstalledComponents> = [];
+  const shouldApply =
+    body.defaultProvider !== undefined ||
+    body.serviceProviders !== undefined ||
+    body.mode !== undefined;
+
+  if (shouldApply) {
+    try {
+      const installed = await entityStateManager.getInstalledComponents();
+      const consumers = installed.filter(id => AI_CONSUMERS.has(id));
+      if (consumers.length > 0) {
+        const fresh = await readEveSecrets();
+        applyResults = wireAllInstalledComponents(fresh, consumers);
+
+        for (const id of AI_CONSUMERS_NEEDING_RECREATE) {
+          if (!consumers.includes(id)) continue;
+          // Skip recreate if this PATCH didn't touch this component's
+          // routing (e.g. PATCH only changed serviceProviders.openwebui
+          // — no need to recreate openclaw).
+          const touchesThis =
+            body.serviceProviders?.[id] !== undefined ||
+            (body.defaultProvider !== undefined && !body.serviceProviders?.[id]);
+          if (!touchesThis) continue;
+
+          const r = await runActionToCompletion(id, "recreate");
+          const recreated = {
+            id,
+            outcome: r.ok ? "ok" as const : "failed" as const,
+            summary: r.ok
+              ? `${id} recreated · new env applied`
+              : `${id} recreate failed: ${r.error ?? "unknown"}`,
+          };
+          const idx = applyResults.findIndex(x => x.id === id);
+          if (idx >= 0) applyResults[idx] = recreated;
+          else applyResults.push(recreated);
+        }
+      }
+    } catch {
+      // state.json missing or wire-ai threw — return ok=true with empty
+      // results, the user can still hit Apply manually.
+    }
+  }
+
+  return NextResponse.json({ ok: true, applied: applyResults });
 }

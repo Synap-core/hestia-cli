@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard, Sparkles, Boxes, Globe, Settings as SettingsIcon, LogOut,
-  Stethoscope,
+  Stethoscope, MessagesSquare,
 } from "lucide-react";
 import { useEffect, useState, type ComponentType } from "react";
 import { Wordmark } from "../components/wordmark";
@@ -19,6 +19,7 @@ interface NavItem {
 const NAV: NavItem[] = [
   { href: "/dashboard",            label: "Home",         icon: LayoutDashboard },
   { href: "/dashboard/components", label: "Components",   icon: Boxes },
+  { href: "/dashboard/channels",   label: "Channels",     icon: MessagesSquare },
   { href: "/dashboard/ai",         label: "AI Providers", icon: Sparkles },
   { href: "/dashboard/networking", label: "Networking",   icon: Globe },
   { href: "/dashboard/doctor",     label: "Doctor",       icon: Stethoscope },

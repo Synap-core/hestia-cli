@@ -22,9 +22,9 @@ import {
   addToast,
 } from "@heroui/react";
 import {
-  RotateCcw, ExternalLink, Copy, Check, X, Globe,
+  RotateCcw, ExternalLink, X, Globe,
   Activity, Plug, FileText, Power, PowerOff, ArrowDownToLine, Trash2,
-  Terminal, Pause, Play, Settings, ChevronLeft, Maximize2,
+  Terminal, Pause, Play, Settings, ChevronLeft,
 } from "lucide-react";
 import { RsshubFeedsPanel } from "./config-panels/rsshub-feeds";
 import { OpenclawConfigPanel } from "./config-panels/openclaw-config";
@@ -87,12 +87,10 @@ export interface ComponentSurfaceProps {
   layout: "drawer" | "page";
   /** Called when state changes that the parent might care about (catalog row update, drawer close). */
   onChange?: () => void;
-  /** Drawer mode only — closes the drawer when "Open full page" is clicked. */
-  onCloseDrawer?: () => void;
 }
 
 export function ComponentSurface({
-  componentId, layout, onChange, onCloseDrawer,
+  componentId, layout, onChange,
 }: ComponentSurfaceProps) {
   const [detail, setDetail] = useState<ComponentDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -217,9 +215,6 @@ export function ComponentSurface({
         progress={progress}
         layout={layout}
         onAction={requestAction}
-        onOpenFullPage={onCloseDrawer && layout === "drawer"
-          ? () => { onCloseDrawer(); /* navigate via Link below — onCloseDrawer is for the drawer's own state */ }
-          : undefined}
       />
 
       <ConfirmModal
@@ -241,14 +236,13 @@ export function ComponentSurface({
 // ---------------------------------------------------------------------------
 
 function DetailBody({
-  detail, running, progress, layout, onAction, onOpenFullPage,
+  detail, running, progress, layout, onAction,
 }: {
   detail: ComponentDetail;
   running: LifecycleAction | null;
   progress: LifecycleEvent[];
   layout: "drawer" | "page";
   onAction: (a: LifecycleAction) => void;
-  onOpenFullPage?: () => void;
 }) {
   const longDesc = detail.longDescription ?? detail.description;
   const paragraphs = longDesc.split(/\n\s*\n/).filter(Boolean);
@@ -365,21 +359,6 @@ function DetailBody({
               onPress={() => onAction("remove")}
               tone="danger"
             />
-          )}
-
-          {/* Drawer-only: jump to the full page for more breathing room. */}
-          {layout === "drawer" && (
-            <Button
-              as={Link as unknown as "a"}
-              {...({ href: `/dashboard/components/${detail.id}` } as { href: string })}
-              size="sm"
-              variant="bordered"
-              radius="md"
-              startContent={<Maximize2 className="h-3.5 w-3.5" />}
-              onPress={onOpenFullPage}
-            >
-              Full page
-            </Button>
           )}
         </div>
 

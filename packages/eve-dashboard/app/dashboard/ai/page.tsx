@@ -28,8 +28,12 @@ interface AiConfig {
   mode: string | null;
   defaultProvider: ProviderId | null;
   fallbackProvider: ProviderId | null;
+  /** Per-service override: componentId → providerId. Missing = use default. */
+  serviceProviders: Partial<Record<string, ProviderId>>;
   providers: ProviderEntry[];
   validProviders: ProviderId[];
+  /** Component ids that consume the central AI config. Server-driven. */
+  aiConsumers: string[];
 }
 
 interface ApplyResult {
@@ -91,8 +95,6 @@ interface ComponentSummary {
   installed: boolean;
 }
 
-const AI_CONSUMERS = ["synap", "openclaw", "openwebui"];
-
 export default function AiProvidersPage() {
   const router = useRouter();
   const [config, setConfig] = useState<AiConfig | null>(null);
@@ -110,12 +112,18 @@ export default function AiProvidersPage() {
         fetch("/api/components", { credentials: "include" }),
       ]);
       if (aiRes.status === 401) { router.push("/login"); return; }
-      if (aiRes.ok) setConfig(await aiRes.json() as AiConfig);
+      let aiConsumers: string[] = [];
+      if (aiRes.ok) {
+        const cfg = await aiRes.json() as AiConfig;
+        setConfig(cfg);
+        aiConsumers = cfg.aiConsumers ?? [];
+      }
       if (compRes.ok) {
         const data = await compRes.json() as { components: Array<{ id: string; label: string; installed: boolean }> };
+        const consumerSet = new Set(aiConsumers);
         setConsumers(
           data.components
-            .filter(c => AI_CONSUMERS.includes(c.id))
+            .filter(c => consumerSet.has(c.id))
             .map(c => ({ id: c.id, label: c.label, installed: c.installed })),
         );
       }
@@ -162,13 +170,43 @@ export default function AiProvidersPage() {
   async function setDefault(id: ProviderId) {
     setSavingId(`default-${id}`);
     try {
-      await fetch("/api/ai", {
+      const res = await fetch("/api/ai", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({ defaultProvider: id }),
       });
-      addToast({ title: `${PROVIDER_LABELS[id]} set as default`, color: "success" });
+      const data = await res.json().catch(() => ({})) as { applied?: Array<{ outcome: string }> };
+      const okCount = (data.applied ?? []).filter(r => r.outcome === "ok").length;
+      addToast({
+        title: okCount > 0
+          ? `${PROVIDER_LABELS[id]} set · ${okCount} service(s) re-wired`
+          : `${PROVIDER_LABELS[id]} set as default`,
+        color: "success",
+      });
+      await fetchConfig();
+    } finally { setSavingId(null); }
+  }
+
+  async function setServiceProvider(componentId: string, providerId: ProviderId | null) {
+    setSavingId(`svc-${componentId}`);
+    try {
+      const res = await fetch("/api/ai", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          serviceProviders: { [componentId]: providerId },
+        }),
+      });
+      const data = await res.json().catch(() => ({})) as { applied?: Array<{ id: string; outcome: string }> };
+      const wired = (data.applied ?? []).find(r => r.id === componentId);
+      addToast({
+        title: providerId === null
+          ? `${componentId} reverted to default${wired?.outcome === "ok" ? " · re-wired" : ""}`
+          : `${componentId} now routes via ${PROVIDER_LABELS[providerId]}${wired?.outcome === "ok" ? " · re-wired" : ""}`,
+        color: "success",
+      });
       await fetchConfig();
     } finally { setSavingId(null); }
   }
@@ -508,35 +546,77 @@ export default function AiProvidersPage() {
       )}
 
       {/* -----------------------------------------------------------------
-       * Wired components — closes the loop on what Apply does
+       * Per-service routing — pick a provider per service or inherit the
+       * global default. Saving auto-applies the wiring (writes config +
+       * restarts the affected container).
        * -------------------------------------------------------------- */}
       {consumers && consumers.length > 0 && (
         <Surface className="p-5">
           <div className="flex items-center gap-2">
             <Plug className="h-4 w-4 text-default-500" />
-            <h3 className="font-medium text-foreground">Wired components</h3>
+            <h3 className="font-medium text-foreground">Per-service routing</h3>
           </div>
           <p className="mt-1 text-xs text-default-500">
-            These installed components consume the providers above. &quot;Apply&quot; pushes
-            keys + model choices to each.
+            By default each service uses your global provider above. Pick a
+            different provider here to override per service — saves and
+            re-wires automatically.
           </p>
-          <ul className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
-            {consumers.map(c => (
-              <li
-                key={c.id}
-                className="flex items-center justify-between rounded-lg border border-divider bg-content1 px-3 py-2"
-              >
-                <span className="text-sm text-foreground">{c.label}</span>
-                <Chip
-                  size="sm"
-                  variant="flat"
-                  color={c.installed ? "success" : "default"}
-                  radius="sm"
+          <ul className="mt-4 space-y-2">
+            {consumers.map(c => {
+              const override = config?.serviceProviders?.[c.id];
+              const effective = override ?? config?.defaultProvider ?? null;
+              const usable = (config?.providers ?? []).filter(
+                p => p.id === "ollama" || p.hasApiKey,
+              );
+              return (
+                <li
+                  key={c.id}
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-divider bg-content1 px-3 py-2.5"
                 >
-                  {c.installed ? "wired" : "not installed"}
-                </Chip>
-              </li>
-            ))}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-foreground">{c.label}</span>
+                      {!c.installed && (
+                        <Chip size="sm" variant="flat" radius="sm">not installed</Chip>
+                      )}
+                      {c.installed && override && (
+                        <Chip size="sm" color="primary" variant="flat" radius="sm">override</Chip>
+                      )}
+                    </div>
+                    <p className="mt-0.5 text-[11px] text-default-500">
+                      {effective
+                        ? `Routes via ${PROVIDER_LABELS[effective]}`
+                        : "No provider — pick one above first"}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Select
+                      size="sm"
+                      variant="bordered"
+                      className="min-w-[180px]"
+                      aria-label={`Provider for ${c.label}`}
+                      isDisabled={!c.installed || savingId === `svc-${c.id}` || usable.length === 0}
+                      selectedKeys={override ? new Set([override]) : new Set(["__default__"])}
+                      onSelectionChange={(keys) => {
+                        const sel = Array.from(keys)[0] as string | undefined;
+                        const next = sel === "__default__" || !sel
+                          ? null
+                          : sel as ProviderId;
+                        if (next === (override ?? null)) return;
+                        void setServiceProvider(c.id, next);
+                      }}
+                    >
+                      {[
+                        <SelectItem key="__default__">Use global default</SelectItem>,
+                        ...usable.map(p => (
+                          <SelectItem key={p.id}>{PROVIDER_LABELS[p.id]}</SelectItem>
+                        )),
+                      ]}
+                    </Select>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         </Surface>
       )}
@@ -553,10 +633,11 @@ export default function AiProvidersPage() {
           <li className="flex gap-2"><span className="text-default-400">→</span> Synap IS receives upstream provider keys (Anthropic / OpenAI / OpenRouter).</li>
           <li className="flex gap-2"><span className="text-default-400">→</span> OpenClaw is wired to use Synap IS as its OpenAI-compat backend.</li>
           <li className="flex gap-2"><span className="text-default-400">→</span> Open WebUI is wired the same way.</li>
+          <li className="flex gap-2"><span className="text-default-400">→</span> Each service can override the global default via the per-service routing panel above.</li>
         </ul>
         <p className="mt-3">
-          After adding or changing a key, click{" "}
-          <span className="font-medium text-foreground">Apply to components</span> — this restarts the affected containers.
+          Most changes auto-apply on save. Use{" "}
+          <span className="font-medium text-foreground">Apply to components</span> when you want to manually re-push the current config (e.g. after restarting a container).
         </p>
       </section>
     </div>
