@@ -1,0 +1,35 @@
+# Build artifacts (each stage rebuilds from source)
+**/node_modules
+**/.next
+**/dist
+**/.turbo
+.release
+
+# Local state + secrets — must NEVER ship into images
+.eve
+**/.env
+**/.env.local
+**/.env.*.local
+
+# Tooling output
+**/*.tsbuildinfo
+coverage
+.nyc_output
+
+# OS / editor noise
+.DS_Store
+**/*.swp
+**/*.swo
+.idea
+.vscode
+
+# Git
+.git
+.gitignore
+.githooks
+
+# Repo docs (not needed at build time)
+README.md
+CLAUDE.md
+.claude
+docs-internal

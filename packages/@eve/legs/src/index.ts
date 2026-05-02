@@ -12,6 +12,14 @@ export { TunnelService, TunnelConfig } from './lib/tunnel.js';
 export { runLegsProxySetup, type LegsProxySetupOptions } from './lib/run-proxy-setup.js';
 export { refreshTraefikRoutes, type RefreshResult } from './lib/refresh-routes.js';
 export { verifyComponent, type VerifyResult } from './lib/verify-component.js';
+export {
+  installDashboardContainer,
+  uninstallDashboardContainer,
+  dashboardContainerName,
+  dashboardImageTag,
+  dashboardIsRunning,
+  type DashboardInstallOptions,
+} from './lib/dashboard-container.js';
 
 // Export commands
 export { setupCommand } from './commands/setup.js';

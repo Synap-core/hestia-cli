@@ -13,7 +13,7 @@ import { getGlobalCliFlags, } from '@eve/cli-kit';
 import {
   entityStateManager,
 } from '@eve/dna';
-import { refreshTraefikRoutes } from '@eve/legs';
+import { refreshTraefikRoutes, uninstallDashboardContainer } from '@eve/legs';
 import {
   colors,
   emojis,
@@ -139,6 +139,17 @@ async function removeRsshub(): Promise<void> {
   spinner.succeed('RSSHub removed');
 }
 
+async function removeDashboard(): Promise<void> {
+  const spinner = createSpinner('Stopping Eve Dashboard...');
+  spinner.start();
+  try {
+    uninstallDashboardContainer();
+  } catch {
+    printWarning('Eve Dashboard removal failed — check `docker ps -a` manually.');
+  }
+  spinner.succeed('Eve Dashboard removed');
+}
+
 async function removeOpenwebui(): Promise<void> {
   const spinner = createSpinner('Stopping Open WebUI...');
   spinner.start();
@@ -179,6 +190,12 @@ export async function runRemove(componentId: string): Promise<void> {
   if (componentId === 'traefik') {
     printError('Traefik is always-installed infrastructure and cannot be removed.');
     printInfo('  To stop it temporarily: docker stop eve-legs-traefik');
+    process.exit(1);
+  }
+  // Eve dashboard is the UI itself — refuse removal
+  if (componentId === 'eve-dashboard') {
+    printError('Eve Dashboard is always-installed infrastructure and cannot be removed.');
+    printInfo('  To stop it temporarily: docker stop eve-dashboard');
     process.exit(1);
   }
 
@@ -279,6 +296,8 @@ function buildRemoveStep(componentId: string): () => Promise<void> {
       return removeRsshub;
     case 'openwebui':
       return removeOpenwebui;
+    case 'eve-dashboard':
+      return removeDashboard;
     case 'hermes':
     case 'dokploy':
     case 'opencode':
@@ -311,6 +330,7 @@ async function updateStateAfterRemove(componentId: string): Promise<void> {
     dokploy: 'builder',
     opencode: 'builder',
     openclaude: 'builder',
+    'eve-dashboard': 'legs',
   };
 
   const organ = organMap[componentId];

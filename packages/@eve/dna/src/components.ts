@@ -169,20 +169,38 @@ export const COMPONENTS: ComponentInfo[] = [
       healthPath: '/health',
     },
   },
+  {
+    id: 'eve-dashboard',
+    label: 'Eve Dashboard',
+    emoji: '🌿',
+    description: 'Web dashboard for Eve — view installed components, manage AI providers, configure your stack from a browser.',
+    category: 'infrastructure',
+    requires: ['traefik'],
+    alwaysInstall: true,
+    service: {
+      containerName: 'eve-dashboard',
+      // Internal port the Next standalone server listens on (PORT env, default 3000).
+      internalPort: 3000,
+      // Host port for direct localhost access (when no domain is configured).
+      hostPort: 7979,
+      subdomain: 'eve',
+      healthPath: '/api/state',
+    },
+  },
 ];
 
 /**
- * Special pseudo-component for the Eve Dashboard. Not in COMPONENTS because
- * it's not installed via `eve add`, but downstream features (access URLs,
- * Traefik routes) treat it like any other service.
+ * @deprecated Use resolveComponent('eve-dashboard') instead. The dashboard is
+ * now a regular Docker service registered in COMPONENTS. Kept as a re-export
+ * for one release so callers don't break mid-migration.
  */
 export const EVE_DASHBOARD_SERVICE = {
   id: 'eve-dashboard',
   label: 'Eve Dashboard',
   emoji: '🌿',
   service: {
-    containerName: null as string | null, // null = host process (started by `eve ui`)
-    internalPort: 7979,
+    containerName: 'eve-dashboard',
+    internalPort: 3000,
     hostPort: 7979,
     subdomain: 'eve' as string | null,
     healthPath: '/api/state',

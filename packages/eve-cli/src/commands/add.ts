@@ -18,7 +18,7 @@ import {
   defaultSkillsDir,
 } from '@eve/dna';
 import { runBrainInit, runInferenceInit } from '@eve/brain';
-import { runLegsProxySetup, refreshTraefikRoutes, verifyComponent } from '@eve/legs';
+import { runLegsProxySetup, refreshTraefikRoutes, verifyComponent, installDashboardContainer } from '@eve/legs';
 import {
   colors,
   emojis,
@@ -368,6 +368,34 @@ volumes:
         },
       };
     }
+    case 'eve-dashboard':
+      return {
+        label: 'Installing Eve Dashboard...',
+        async fn() {
+          const { randomBytes } = await import('node:crypto');
+
+          // Generate a dashboard secret if one doesn't already exist.
+          let secrets = await readEveSecrets(process.cwd());
+          let secret = secrets?.dashboard?.secret;
+          if (!secret) {
+            secret = randomBytes(32).toString('hex');
+            await writeEveSecrets({ dashboard: { secret, port: 7979 } });
+            console.log();
+            console.log(colors.primary.bold('Dashboard key generated — save this somewhere safe:'));
+            console.log(colors.muted('─'.repeat(66)));
+            console.log(colors.primary.bold(secret));
+            console.log(colors.muted('─'.repeat(66)));
+          } else {
+            console.log();
+            console.log(colors.muted('Reusing existing dashboard key.'));
+          }
+
+          installDashboardContainer({
+            workspaceRoot: process.cwd(),
+            secret,
+          });
+        },
+      };
     case 'hermes':
     case 'dokploy':
     case 'opencode':
@@ -400,6 +428,7 @@ async function updateStateAfterAdd(componentId: string, finalState: 'ready' | 'e
     dokploy: 'builder',
     opencode: 'builder',
     openclaude: 'builder',
+    'eve-dashboard': 'legs',
   };
 
   const organ = organMap[componentId];

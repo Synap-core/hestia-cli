@@ -1,7 +1,7 @@
 import { execSync, spawnSync } from 'child_process';
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
-import { COMPONENTS, EVE_DASHBOARD_SERVICE } from '@eve/dna';
+import { COMPONENTS } from '@eve/dna';
 
 export interface Route {
   path: string;
@@ -18,17 +18,6 @@ const HOST_DYNAMIC_DIR = '/opt/traefik/dynamic';
 // Paths as seen INSIDE the Traefik container (mounted from the host above).
 const CONTAINER_DYNAMIC_DIR = '/etc/traefik/dynamic';
 const CONTAINER_ACME_FILE = '/etc/traefik/acme.json';
-
-function getDockerGateway(): string {
-  try {
-    const gw = execSync(
-      "docker network inspect bridge --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}'",
-      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
-    ).trim().replace(/^'|'$/g, '');
-    if (gw && /^\d+\.\d+\.\d+\.\d+$/.test(gw)) return gw;
-  } catch {}
-  return '172.17.0.1';
-}
 
 /**
  * Finds the synap-backend API container (managed by the synap CLI's docker-compose,
@@ -137,11 +126,6 @@ export class TraefikService {
       'run', '-d',
       '--name', 'eve-legs-traefik',
       '--restart', 'unless-stopped',
-      // Map host.docker.internal to the host gateway so Traefik can reach
-      // host-bound services (the eve-dashboard runs on the host at port 7979).
-      // The bridge gateway IP (172.18.0.1) doesn't always route reliably
-      // through host firewalls — host-gateway uses Docker's official mechanism.
-      '--add-host', 'host.docker.internal:host-gateway',
       '-p', '80:80',
       '-p', '443:443',
       '-p', '8080:8080',
@@ -162,8 +146,6 @@ export class TraefikService {
   }
 
   async configureSubdomains(domain: string, ssl: boolean, email?: string, installedComponents?: string[]): Promise<void> {
-    const dockerGateway = getDockerGateway();
-
     // Synap backend runs in its own docker-compose project. Connect it to
     // eve-network so Traefik (also on eve-network) can resolve it by name.
     const synapContainer = getSynapBackendContainer();
@@ -175,24 +157,10 @@ export class TraefikService {
     }
 
     // Build routes from the component registry — single source of truth.
+    // Every routed service (including the Eve dashboard) is a Docker container
+    // on eve-network, addressable by its container name.
     const services: Array<{ id: string; subdomain: string; upstream: string; requires: string | null }> = [];
 
-    // 1. Always-on Eve dashboard. Runs on the host (not in a container) so we
-    //    use host.docker.internal — Traefik's --add-host flag maps it to the
-    //    host gateway. More reliable than 172.18.0.1 across firewalls.
-    if (EVE_DASHBOARD_SERVICE.service.subdomain) {
-      services.push({
-        id: 'eve-dashboard',
-        subdomain: EVE_DASHBOARD_SERVICE.service.subdomain,
-        upstream: `http://host.docker.internal:${EVE_DASHBOARD_SERVICE.service.internalPort}`,
-        requires: null,
-      });
-    }
-    // Suppress unused-warning since dockerGateway may now only be referenced in fallback paths
-    void dockerGateway;
-
-    // 2. Components with a service. Synap pod is special: prefer its real
-    //    container name (the synap-backend project's pattern) over the registry default.
     for (const comp of COMPONENTS) {
       if (!comp.service || !comp.service.subdomain) continue;
       if (installedComponents && !installedComponents.includes(comp.id)) continue;

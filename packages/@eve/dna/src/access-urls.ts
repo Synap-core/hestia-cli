@@ -1,6 +1,6 @@
 import { getServerIp } from './server-ip.js';
 import type { EveSecrets } from './secrets-contract.js';
-import { COMPONENTS, EVE_DASHBOARD_SERVICE } from './components.js';
+import { COMPONENTS } from './components.js';
 
 export interface ServiceAccess {
   id: string;
@@ -31,32 +31,21 @@ export function getAccessUrls(secrets: EveSecrets | null, installedComponents?: 
 
   const out: ServiceAccess[] = [];
 
-  // 1. Eve dashboard (always shown — it's the UI itself)
-  out.push({
-    id: EVE_DASHBOARD_SERVICE.id,
-    label: EVE_DASHBOARD_SERVICE.label,
-    emoji: EVE_DASHBOARD_SERVICE.emoji,
-    requires: null,
-    port: EVE_DASHBOARD_SERVICE.service.hostPort ?? EVE_DASHBOARD_SERVICE.service.internalPort,
-    localUrl: `http://localhost:${EVE_DASHBOARD_SERVICE.service.hostPort ?? EVE_DASHBOARD_SERVICE.service.internalPort}`,
-    serverUrl: serverIp ? `http://${serverIp}:${EVE_DASHBOARD_SERVICE.service.hostPort ?? EVE_DASHBOARD_SERVICE.service.internalPort}` : null,
-    domainUrl: domain && EVE_DASHBOARD_SERVICE.service.subdomain
-      ? `${protocol}://${EVE_DASHBOARD_SERVICE.service.subdomain}.${domain}`
-      : null,
-    dnsReady: null,
-  });
-
-  // 2. Components with services, filtered to what's installed
+  // Routed services come straight from the component registry — including
+  // the Eve dashboard, which is now a regular Docker service.
   for (const comp of COMPONENTS) {
     if (!comp.service || comp.service.subdomain === null) continue;
-    if (installedComponents && !installedComponents.includes(comp.id)) continue;
+    // The dashboard is always shown (it's the UI itself); other components
+    // require explicit install. `requires: null` → always shown.
+    const requires = comp.id === 'eve-dashboard' ? null : comp.id;
+    if (installedComponents && requires && !installedComponents.includes(comp.id)) continue;
 
     const port = comp.service.hostPort ?? comp.service.internalPort;
     out.push({
       id: comp.id,
       label: comp.label,
       emoji: comp.emoji,
-      requires: comp.id,
+      requires,
       port,
       localUrl: comp.service.hostPort ? `http://localhost:${port}` : null,
       serverUrl: comp.service.hostPort && serverIp ? `http://${serverIp}:${port}` : null,

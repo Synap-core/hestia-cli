@@ -329,13 +329,6 @@ export async function runInstall(opts: InstallOptions): Promise<void> {
   }
 
   // -----------------------------------------------------------------
-  // 7d. Optional: install dashboard as systemd service (Linux only)
-  // -----------------------------------------------------------------
-  if (!jsonMode && !opts.skipInteractive && process.platform === 'linux') {
-    await maybeOfferDashboardService();
-  }
-
-  // -----------------------------------------------------------------
   // 8. Final recap — context-aware
   // -----------------------------------------------------------------
   if (!jsonMode) {
@@ -360,8 +353,6 @@ async function printInstallationRecap(installedComponents: string[]): Promise<vo
   const protocol = ssl ? 'https' : 'http';
   const hasAi = hasAnyProvider(secrets);
   const dashboardSecret = secrets?.dashboard?.secret;
-  const hasSystemd = process.platform === 'linux'
-    && existsSync('/etc/systemd/system/eve-dashboard.service');
 
   // Pick the best UI URL based on what's configured. Domain > IP > localhost.
   const uiUrl = domain
@@ -420,13 +411,8 @@ async function printInstallationRecap(installedComponents: string[]): Promise<vo
       });
     }
   }
-  if (!hasSystemd && process.platform === 'linux') {
-    todos.push({
-      label: 'Auto-start the dashboard on boot (instead of running `eve ui` manually)',
-      cmd: 'sudo eve ui --install-service',
-      severity: 'recommended',
-    });
-  }
+  // Dashboard auto-restarts via Docker's `--restart unless-stopped` policy,
+  // so no manual systemd setup is needed anymore.
 
   if (todos.length > 0) {
     console.log();
@@ -662,29 +648,6 @@ async function maybeOfferAiProviderSetup(installedComponents: string[]): Promise
   printInfo('  eve ui   →   open the dashboard, navigate to "AI Providers"');
 }
 
-/**
- * On Linux as root, offer to install the dashboard as a systemd service so
- * it auto-starts on boot. Skips silently otherwise.
- */
-async function maybeOfferDashboardService(): Promise<void> {
-  if (process.getuid && process.getuid() !== 0) return; // not root, can't install
-  const SERVICE_PATH = '/etc/systemd/system/eve-dashboard.service';
-  if (existsSync(SERVICE_PATH)) return; // already installed
-
-  console.log();
-  const wantService = await confirm({
-    message: 'Install the Eve Dashboard as a systemd service so it auto-starts on boot?',
-    initialValue: true,
-  });
-  if (isCancel(wantService) || !wantService) {
-    printInfo('You can run the dashboard manually anytime with: eve ui');
-    return;
-  }
-
-  printInfo('Run: sudo eve ui --install-service');
-  printInfo('  (We don\'t do it inline because it requires building the dashboard first.)');
-}
-
 // ---------------------------------------------------------------------------
 // Step builder
 // ---------------------------------------------------------------------------
@@ -856,7 +819,37 @@ function buildInstallSteps(
     });
   }
 
-  // 7. Open WebUI
+  // 7. Eve Dashboard (always-installed UI). Builds the local Docker image
+  //    from packages/eve-dashboard/Dockerfile and runs it on eve-network so
+  //    Traefik can route eve.<domain> to it by container name.
+  if (components.includes('eve-dashboard')) {
+    steps.push({
+      label: 'Building & starting Eve Dashboard...',
+      async fn() {
+        const { randomBytes } = await import('node:crypto');
+        const { readEveSecrets, writeEveSecrets } = await import('@eve/dna');
+        const { installDashboardContainer } = await import('@eve/legs');
+
+        const secrets = await readEveSecrets(process.cwd());
+        let secret = secrets?.dashboard?.secret;
+        if (!secret) {
+          secret = randomBytes(32).toString('hex');
+          await writeEveSecrets({ dashboard: { secret, port: 7979 } });
+          console.log();
+          console.log(colors.primary.bold('Dashboard key generated — save this somewhere safe:'));
+          console.log(colors.muted('─'.repeat(66)));
+          console.log(colors.primary.bold(secret));
+          console.log(colors.muted('─'.repeat(66)));
+        }
+        installDashboardContainer({
+          workspaceRoot: process.cwd(),
+          secret,
+        });
+      },
+    });
+  }
+
+  // 8. Open WebUI
   const hasOpenWebUI = components.includes('openwebui');
   if (hasOpenWebUI) {
     steps.push({

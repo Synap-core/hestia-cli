@@ -114,11 +114,20 @@ const SecretsSchema = z.object({
 
 export type EveSecrets = z.infer<typeof SecretsSchema>;
 
-export function secretsPath(cwd: string = process.cwd()): string {
+/**
+ * Resolve the directory that contains `.eve/`.
+ * Honors EVE_HOME so the dashboard container can read host-mounted secrets
+ * even though its own cwd is the standalone bundle dir (`/app`).
+ */
+function defaultEveCwd(): string {
+  return process.env.EVE_HOME || process.cwd();
+}
+
+export function secretsPath(cwd: string = defaultEveCwd()): string {
   return join(cwd, '.eve', 'secrets', 'secrets.json');
 }
 
-export async function readEveSecrets(cwd: string = process.cwd()): Promise<EveSecrets | null> {
+export async function readEveSecrets(cwd: string = defaultEveCwd()): Promise<EveSecrets | null> {
   const path = secretsPath(cwd);
   if (!existsSync(path)) return null;
   try {
@@ -144,7 +153,7 @@ function mergeNested<T extends Record<string, unknown>>(
 
 export async function writeEveSecrets(
   partial: Omit<EveSecrets, 'version' | 'updatedAt'>,
-  cwd: string = process.cwd(),
+  cwd: string = defaultEveCwd(),
 ): Promise<EveSecrets> {
   const current = (await readEveSecrets(cwd)) ?? {
     version: '1' as const,
