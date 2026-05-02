@@ -2,10 +2,66 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --font-sans: 'DM Sans', system-ui, sans-serif;
+/* ----------------------------------------------------------------------
+ * Base
+ * ------------------------------------------------------------------- */
+html {
+  font-feature-settings: "ss01", "cv11";
 }
 
 body {
-  font-family: var(--font-sans);
+  /* Subtle radial bloom in the upper third — gives the page warmth without
+     committing to a hero background image. Picks up the emerald accent. */
+  background-image: var(--eve-bloom);
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+}
+
+:root {
+  --eve-bloom: radial-gradient(60% 50% at 50% -10%, rgba(16, 185, 129, 0.05) 0%, transparent 70%);
+}
+
+.dark {
+  --eve-bloom: radial-gradient(70% 55% at 50% -10%, rgba(52, 211, 153, 0.08) 0%, transparent 70%);
+}
+
+/* ----------------------------------------------------------------------
+ * Typography polish
+ * ------------------------------------------------------------------- */
+.font-heading {
+  font-feature-settings: "ss01", "ss02";
+  letter-spacing: -0.015em;
+}
+
+/* Tabular numbers in tables and stat-style copy. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Selection picks up the accent. */
+::selection {
+  background: rgba(52, 211, 153, 0.25);
+}
+
+/* ----------------------------------------------------------------------
+ * Scrollbar — calm, not invisible
+ * ------------------------------------------------------------------- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--heroui-default-300)) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: hsl(var(--heroui-default-300));
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: hsl(var(--heroui-default-400));
+  background-clip: content-box;
+  border: 2px solid transparent;
 }

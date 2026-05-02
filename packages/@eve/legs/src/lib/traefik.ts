@@ -118,9 +118,9 @@ export class TraefikService {
       execSync('docker network create eve-network', { stdio: 'ignore' });
     } catch { /* already exists */ }
 
-    try {
-      spawnSync('docker', ['rm', '-f', 'eve-legs-traefik'], { stdio: 'inherit' });
-    } catch { /* didn't exist */ }
+    // Silent because the container often doesn't exist on first install or
+    // after `domain repair` — surfacing "No such container" to the user is noise.
+    spawnSync('docker', ['rm', '-f', 'eve-legs-traefik'], { stdio: 'ignore' });
 
     const result = spawnSync('docker', [
       'run', '-d',

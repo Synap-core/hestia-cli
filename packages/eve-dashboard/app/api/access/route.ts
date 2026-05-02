@@ -17,7 +17,7 @@ export async function GET() {
   const auth = await requireAuth();
   if ("error" in auth) return auth.error;
 
-  const secrets = await readEveSecrets(process.cwd());
+  const secrets = await readEveSecrets();
 
   let installedComponents: string[] | undefined;
   try {

@@ -15,7 +15,7 @@ export async function POST() {
   const auth = await requireAuth();
   if ("error" in auth) return auth.error;
 
-  const secrets = await readEveSecrets(process.cwd());
+  const secrets = await readEveSecrets();
   let installed: string[] = [];
   try {
     installed = await entityStateManager.getInstalledComponents();

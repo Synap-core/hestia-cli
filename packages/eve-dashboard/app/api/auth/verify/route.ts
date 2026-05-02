@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Secret required" }, { status: 400 });
   }
 
-  const secrets = await readEveSecrets(process.cwd());
+  const secrets = await readEveSecrets();
   const dashboardSecret = secrets?.dashboard?.secret;
 
   if (!dashboardSecret || secret !== dashboardSecret) {

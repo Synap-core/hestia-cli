@@ -10,7 +10,7 @@ export async function requireAuth(): Promise<{ error: NextResponse } | { ok: tru
     return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
   }
 
-  const secrets = await readEveSecrets(process.cwd());
+  const secrets = await readEveSecrets();
   const dashboardSecret = secrets?.dashboard?.secret;
   if (!dashboardSecret) {
     return { error: NextResponse.json({ error: "Dashboard not configured" }, { status: 503 }) };

@@ -3,31 +3,36 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Card, CardBody, CardHeader, Button, Input, Select, SelectItem,
-  Chip, Spinner, addToast, Divider, Switch,
+  Button, Input, Select, SelectItem, Spinner, addToast, Switch,
 } from "@heroui/react";
-import { Plus, Trash2, RefreshCw, Save, Sparkles, Check, AlertCircle } from "lucide-react";
+import {
+  Plus, Trash2, RefreshCw, Save, Check, AlertCircle,
+} from "lucide-react";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 type ProviderId = "anthropic" | "openai" | "openrouter" | "ollama";
 
-type ProviderEntry = {
+interface ProviderEntry {
   id: ProviderId;
   enabled: boolean;
   hasApiKey: boolean;
   apiKeyMasked?: string;
   baseUrl?: string;
   defaultModel?: string;
-};
+}
 
-type AiConfig = {
+interface AiConfig {
   mode: string | null;
   defaultProvider: ProviderId | null;
   fallbackProvider: ProviderId | null;
   providers: ProviderEntry[];
   validProviders: ProviderId[];
-};
+}
 
-type ApplyResult = {
+interface ApplyResult {
   ok: boolean;
   summary: string;
   results: Array<{
@@ -36,28 +41,49 @@ type ApplyResult = {
     summary: string;
     detail?: string;
   }>;
-};
+}
 
 const PROVIDER_LABELS: Record<ProviderId, string> = {
-  anthropic: "Anthropic (Claude)",
-  openai: "OpenAI (GPT)",
-  openrouter: "OpenRouter (multi-provider)",
-  ollama: "Ollama (local)",
+  anthropic:  "Anthropic",
+  openai:     "OpenAI",
+  openrouter: "OpenRouter",
+  ollama:     "Ollama (local)",
+};
+
+const PROVIDER_TAGLINE: Record<ProviderId, string> = {
+  anthropic:  "Claude family of models.",
+  openai:     "GPT family of models.",
+  openrouter: "Hundreds of models behind one key.",
+  ollama:     "Local models, no key required.",
 };
 
 const DEFAULT_MODEL_PLACEHOLDERS: Record<ProviderId, string> = {
-  anthropic: "claude-sonnet-4-7",
-  openai: "gpt-5",
+  anthropic:  "claude-sonnet-4-7",
+  openai:     "gpt-5",
   openrouter: "anthropic/claude-sonnet-4-7",
-  ollama: "llama3.1:8b",
+  ollama:     "llama3.1:8b",
 };
 
 const KEY_PLACEHOLDERS: Record<ProviderId, string> = {
-  anthropic: "sk-ant-...",
-  openai: "sk-...",
+  anthropic:  "sk-ant-...",
+  openai:     "sk-...",
   openrouter: "sk-or-...",
-  ollama: "(no key needed)",
+  ollama:     "(no key needed)",
 };
+
+// ---------------------------------------------------------------------------
+// Layout primitives — same as dashboard home, kept local for now
+// ---------------------------------------------------------------------------
+
+function Surface({ className = "", children }: { className?: string; children: React.ReactNode }) {
+  return (
+    <div className={`rounded-xl border border-divider bg-content1 ${className}`}>{children}</div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Page
+// ---------------------------------------------------------------------------
 
 export default function AiProvidersPage() {
   const router = useRouter();
@@ -66,11 +92,7 @@ export default function AiProvidersPage() {
   const [savingId, setSavingId] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
   const [editing, setEditing] = useState<Record<string, { apiKey?: string; defaultModel?: string }>>({});
-  const [adding, setAdding] = useState<{
-    id?: ProviderId;
-    apiKey?: string;
-    defaultModel?: string;
-  } | null>(null);
+  const [adding, setAdding] = useState<{ id?: ProviderId; apiKey?: string; defaultModel?: string } | null>(null);
 
   const fetchConfig = useCallback(async () => {
     try {
@@ -147,7 +169,11 @@ export default function AiProvidersPage() {
   }
 
   if (loading) {
-    return <div className="flex items-center justify-center h-64"><Spinner size="lg" color="primary" /></div>;
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <Spinner size="lg" color="primary" />
+      </div>
+    );
   }
 
   const hasAnyConfigured = (config?.providers ?? []).some(p => p.hasApiKey || p.id === "ollama");
@@ -156,95 +182,135 @@ export default function AiProvidersPage() {
   );
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between">
+    <div className="space-y-10">
+      {/* -----------------------------------------------------------------
+       * Header
+       * -------------------------------------------------------------- */}
+      <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-primary" />
-            <h1 className="text-2xl font-bold">AI Providers</h1>
-          </div>
-          <p className="text-sm text-default-400 mt-1 max-w-xl">
-            One source of truth for AI configuration. Synap IS routes every component (OpenClaw,
-            Open WebUI, agents) through these providers — set keys here once, then click Apply.
+          <p className="text-sm font-medium text-default-500">Configuration</p>
+          <h1 className="mt-1 font-heading text-3xl font-medium tracking-tightest text-foreground">
+            AI Providers
+          </h1>
+          <p className="mt-1 max-w-2xl text-default-500">
+            One source of truth for the brain behind your stack. Set keys here once;
+            Synap IS, OpenClaw, and Open WebUI all read from this single config.
           </p>
         </div>
         <Button
           color="primary"
-          startContent={!applying ? <RefreshCw className="w-4 h-4" /> : undefined}
+          radius="md"
+          startContent={!applying ? <RefreshCw className="h-4 w-4" /> : undefined}
           isLoading={applying}
           isDisabled={!hasAnyConfigured}
           onPress={applyWiring}
         >
-          {applying ? "Applying..." : "Apply to components"}
+          {applying ? "Applying…" : "Apply to components"}
         </Button>
-      </div>
+      </header>
 
+      {/* -----------------------------------------------------------------
+       * Empty state
+       * -------------------------------------------------------------- */}
       {!hasAnyConfigured && (
-        <Card className="bg-warning-50 dark:bg-warning-900/20 border border-warning-200 dark:border-warning-800">
-          <CardBody className="flex-row items-center gap-3">
-            <AlertCircle className="w-5 h-5 text-warning shrink-0" />
-            <div className="text-sm">
-              <p className="font-medium">No AI provider configured yet.</p>
-              <p className="text-default-500 mt-0.5">Add one below — your installed components are sitting idle without an AI backend.</p>
-            </div>
-          </CardBody>
-        </Card>
+        <div className="flex items-start gap-3 rounded-xl border border-warning/30 bg-warning/5 px-4 py-3 text-sm">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+          <div>
+            <p className="font-medium text-foreground">No AI provider configured yet.</p>
+            <p className="mt-0.5 text-default-500">
+              Your installed components are sitting idle. Add a provider below.
+            </p>
+          </div>
+        </div>
       )}
 
-      {/* Configured providers */}
-      <div className="grid gap-4">
-        {(config?.providers ?? []).map(p => {
-          const isEditing = !!editing[p.id];
-          const editState = editing[p.id] ?? {};
-          const isDefault = config?.defaultProvider === p.id;
-          return (
-            <Card key={p.id} className="bg-content1 border border-divider">
-              <CardHeader className="flex justify-between items-start gap-3 pb-2">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold">{PROVIDER_LABELS[p.id]}</span>
-                    {isDefault && <Chip size="sm" color="primary" variant="flat" startContent={<Check className="w-3 h-3" />}>default</Chip>}
-                    {!p.enabled && <Chip size="sm" color="default" variant="flat">disabled</Chip>}
+      {/* -----------------------------------------------------------------
+       * Configured providers
+       * -------------------------------------------------------------- */}
+      {(config?.providers.length ?? 0) > 0 && (
+        <div className="space-y-3">
+          {(config?.providers ?? []).map(p => {
+            const isEditing = !!editing[p.id];
+            const editState = editing[p.id] ?? {};
+            const isDefault = config?.defaultProvider === p.id;
+            const ok = p.id === "ollama" || p.hasApiKey;
+            return (
+              <Surface key={p.id} className="p-5">
+                {/* Row header */}
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <span
+                      className={
+                        "mt-1 inline-block h-2 w-2 rounded-full " +
+                        (ok ? "bg-primary" : "bg-default-300")
+                      }
+                      aria-hidden
+                    />
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-foreground">{PROVIDER_LABELS[p.id]}</span>
+                        {isDefault && (
+                          <span className="inline-flex items-center gap-1 rounded-md bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-primary">
+                            <Check className="h-3 w-3" /> default
+                          </span>
+                        )}
+                        {!p.enabled && (
+                          <span className="rounded-md bg-content2 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-default-500">
+                            disabled
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-0.5 text-xs text-default-500">{PROVIDER_TAGLINE[p.id]}</p>
+                      {p.id !== "ollama" && (
+                        <p className="mt-1 font-mono text-[11px] text-default-400">
+                          {p.hasApiKey ? p.apiKeyMasked : "no key set"}
+                        </p>
+                      )}
+                    </div>
                   </div>
-                  <p className="text-xs text-default-400 mt-0.5">
-                    {p.id === "ollama" ? "Local — no key required" : (p.hasApiKey ? `Key: ${p.apiKeyMasked}` : "No key set")}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  {!isDefault && (
+                  <div className="flex items-center gap-1.5">
+                    {!isDefault && ok && (
+                      <Button
+                        size="sm"
+                        variant="light"
+                        radius="md"
+                        onPress={() => void setDefault(p.id)}
+                        isLoading={savingId === `default-${p.id}`}
+                        className="text-default-600 hover:text-foreground"
+                      >
+                        Set default
+                      </Button>
+                    )}
                     <Button
                       size="sm"
                       variant="light"
-                      onPress={() => void setDefault(p.id)}
-                      isLoading={savingId === `default-${p.id}`}
+                      radius="md"
+                      isIconOnly
+                      onPress={() => void removeProvider(p.id)}
+                      isDisabled={savingId === p.id}
+                      className="text-default-400 hover:text-danger"
+                      aria-label={`Remove ${PROVIDER_LABELS[p.id]}`}
                     >
-                      Set default
+                      <Trash2 className="h-4 w-4" />
                     </Button>
-                  )}
-                  <Button
-                    size="sm"
-                    variant="light"
-                    color="danger"
-                    isIconOnly
-                    onPress={() => void removeProvider(p.id)}
-                    isDisabled={savingId === p.id}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
+                  </div>
                 </div>
-              </CardHeader>
-              <CardBody className="space-y-3 pt-0">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+
+                {/* Fields */}
+                <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
                   {p.id !== "ollama" && (
                     <Input
                       label="API key"
                       labelPlacement="outside"
                       placeholder={isEditing ? KEY_PLACEHOLDERS[p.id] : (p.apiKeyMasked ?? "Click edit to set")}
                       value={editState.apiKey ?? ""}
-                      onValueChange={v => setEditing(prev => ({ ...prev, [p.id]: { ...prev[p.id], apiKey: v } }))}
+                      onValueChange={v =>
+                        setEditing(prev => ({ ...prev, [p.id]: { ...prev[p.id], apiKey: v } }))
+                      }
                       type="password"
-                      size="sm"
+                      size="md"
                       isDisabled={!isEditing}
+                      classNames={{ input: "font-mono text-sm" }}
                     />
                   )}
                   <Input
@@ -252,13 +318,22 @@ export default function AiProvidersPage() {
                     labelPlacement="outside"
                     placeholder={DEFAULT_MODEL_PLACEHOLDERS[p.id]}
                     value={editState.defaultModel ?? p.defaultModel ?? ""}
-                    onValueChange={v => setEditing(prev => ({ ...prev, [p.id]: { ...prev[p.id], defaultModel: v } }))}
-                    size="sm"
+                    onValueChange={v =>
+                      setEditing(prev => ({ ...prev, [p.id]: { ...prev[p.id], defaultModel: v } }))
+                    }
+                    size="md"
                     isDisabled={!isEditing}
-                    description={p.id === "openrouter" ? "Form: provider/model (e.g. anthropic/claude-sonnet-4-7)" : undefined}
+                    description={
+                      p.id === "openrouter"
+                        ? "Form: provider/model — e.g. anthropic/claude-sonnet-4-7"
+                        : undefined
+                    }
+                    classNames={{ input: "font-mono text-sm" }}
                   />
                 </div>
-                <div className="flex items-center justify-between">
+
+                {/* Footer */}
+                <div className="mt-5 flex items-center justify-between border-t border-divider pt-4">
                   <Switch
                     size="sm"
                     isSelected={p.enabled}
@@ -271,14 +346,18 @@ export default function AiProvidersPage() {
                       <Button
                         size="sm"
                         variant="light"
-                        onPress={() => setEditing(prev => { const n = { ...prev }; delete n[p.id]; return n; })}
+                        radius="md"
+                        onPress={() =>
+                          setEditing(prev => { const n = { ...prev }; delete n[p.id]; return n; })
+                        }
                       >
                         Cancel
                       </Button>
                       <Button
                         size="sm"
                         color="primary"
-                        startContent={<Save className="w-3.5 h-3.5" />}
+                        radius="md"
+                        startContent={<Save className="h-3.5 w-3.5" />}
                         isLoading={savingId === p.id}
                         onPress={() => void saveProvider(p.id, {
                           ...(editState.apiKey ? { apiKey: editState.apiKey } : {}),
@@ -292,41 +371,45 @@ export default function AiProvidersPage() {
                     <Button
                       size="sm"
                       variant="bordered"
+                      radius="md"
                       onPress={() => setEditing(prev => ({ ...prev, [p.id]: {} }))}
                     >
                       Edit
                     </Button>
                   )}
                 </div>
-              </CardBody>
-            </Card>
-          );
-        })}
-      </div>
+              </Surface>
+            );
+          })}
+        </div>
+      )}
 
-      {/* Add new provider */}
+      {/* -----------------------------------------------------------------
+       * Add provider
+       * -------------------------------------------------------------- */}
       {availableToAdd.length > 0 && (
-        <>
-          <Divider />
+        <div>
           {!adding ? (
-            <Button
-              variant="bordered"
-              startContent={<Plus className="w-4 h-4" />}
-              onPress={() => setAdding({})}
+            <button
+              type="button"
+              onClick={() => setAdding({})}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-divider bg-content1/40 px-4 py-4 text-sm text-default-500 transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
             >
-              Add provider
-            </Button>
+              <Plus className="h-4 w-4" />
+              Add a provider
+            </button>
           ) : (
-            <Card className="bg-content1 border border-primary-200 dark:border-primary-800">
-              <CardHeader className="pb-2">
-                <span className="font-semibold">Add provider</span>
-              </CardHeader>
-              <CardBody className="space-y-3">
+            <Surface className="p-5">
+              <h3 className="font-medium text-foreground">Add a provider</h3>
+              <p className="mt-0.5 text-xs text-default-500">
+                Configure the key, set a default model, then save. You can apply it to components afterwards.
+              </p>
+              <div className="mt-4 space-y-4">
                 <Select
                   label="Provider"
                   labelPlacement="outside"
                   placeholder="Pick a provider"
-                  size="sm"
+                  size="md"
                   selectedKeys={adding.id ? [adding.id] : []}
                   onSelectionChange={keys => {
                     const id = Array.from(keys)[0] as ProviderId | undefined;
@@ -345,7 +428,8 @@ export default function AiProvidersPage() {
                     value={adding.apiKey ?? ""}
                     onValueChange={v => setAdding(prev => ({ ...prev, apiKey: v }))}
                     type="password"
-                    size="sm"
+                    size="md"
+                    classNames={{ input: "font-mono text-sm" }}
                   />
                 )}
                 {adding.id && (
@@ -355,45 +439,58 @@ export default function AiProvidersPage() {
                     placeholder={DEFAULT_MODEL_PLACEHOLDERS[adding.id]}
                     value={adding.defaultModel ?? ""}
                     onValueChange={v => setAdding(prev => ({ ...prev, defaultModel: v }))}
-                    size="sm"
-                    description={adding.id === "openrouter" ? "OpenRouter requires the form provider/model" : undefined}
+                    size="md"
+                    description={
+                      adding.id === "openrouter"
+                        ? "OpenRouter requires the form provider/model."
+                        : undefined
+                    }
+                    classNames={{ input: "font-mono text-sm" }}
                   />
                 )}
-                <div className="flex justify-end gap-2 pt-1">
-                  <Button size="sm" variant="light" onPress={() => setAdding(null)}>Cancel</Button>
-                  <Button
-                    size="sm"
-                    color="primary"
-                    isDisabled={!adding.id || (adding.id !== "ollama" && !adding.apiKey)}
-                    isLoading={savingId === adding.id}
-                    startContent={<Save className="w-3.5 h-3.5" />}
-                    onPress={() => void saveProvider(adding.id!, {
-                      apiKey: adding.apiKey,
-                      defaultModel: adding.defaultModel,
-                    })}
-                  >
-                    Add provider
-                  </Button>
-                </div>
-              </CardBody>
-            </Card>
+              </div>
+              <div className="mt-5 flex justify-end gap-2 border-t border-divider pt-4">
+                <Button size="sm" variant="light" radius="md" onPress={() => setAdding(null)}>
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  color="primary"
+                  radius="md"
+                  isDisabled={!adding.id || (adding.id !== "ollama" && !adding.apiKey)}
+                  isLoading={!!savingId}
+                  startContent={<Save className="h-3.5 w-3.5" />}
+                  onPress={() => void saveProvider(adding.id!, {
+                    apiKey: adding.apiKey,
+                    defaultModel: adding.defaultModel,
+                  })}
+                >
+                  Add provider
+                </Button>
+              </div>
+            </Surface>
           )}
-        </>
+        </div>
       )}
 
-      {/* Help text */}
-      <Divider />
-      <Card className="bg-content2 border-0">
-        <CardBody className="text-sm text-default-500 space-y-1">
-          <p><strong className="text-foreground">How this works:</strong> Eve stores provider keys once and propagates them to every installed component:</p>
-          <ul className="list-disc list-inside ml-2 space-y-0.5">
-            <li>Synap IS receives upstream provider keys (OpenAI/Anthropic/OpenRouter)</li>
-            <li>OpenClaw is wired to use Synap IS as its OpenAI-compat backend</li>
-            <li>Open WebUI is wired the same way</li>
-          </ul>
-          <p className="mt-2">After adding or changing a key, click <strong className="text-foreground">Apply to components</strong> — this restarts the affected containers.</p>
-        </CardBody>
-      </Card>
+      {/* -----------------------------------------------------------------
+       * Help — quiet, last
+       * -------------------------------------------------------------- */}
+      <section className="rounded-xl border border-divider bg-content1/60 p-5 text-sm text-default-500">
+        <p className="font-medium text-foreground">How this works</p>
+        <p className="mt-2">
+          Eve stores provider keys once and propagates them to every installed component:
+        </p>
+        <ul className="mt-2 space-y-1">
+          <li className="flex gap-2"><span className="text-default-400">→</span> Synap IS receives upstream provider keys (Anthropic / OpenAI / OpenRouter).</li>
+          <li className="flex gap-2"><span className="text-default-400">→</span> OpenClaw is wired to use Synap IS as its OpenAI-compat backend.</li>
+          <li className="flex gap-2"><span className="text-default-400">→</span> Open WebUI is wired the same way.</li>
+        </ul>
+        <p className="mt-3">
+          After adding or changing a key, click{" "}
+          <span className="font-medium text-foreground">Apply to components</span> — this restarts the affected containers.
+        </p>
+      </section>
     </div>
   );
 }

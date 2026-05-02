@@ -23,7 +23,7 @@ export async function GET() {
   const auth = await requireAuth();
   if ("error" in auth) return auth.error;
 
-  const secrets = await readEveSecrets(process.cwd());
+  const secrets = await readEveSecrets();
   const ai = secrets?.ai ?? {};
   const providers = (ai.providers ?? []).map(p => ({
     id: p.id,
@@ -65,7 +65,7 @@ export async function PATCH(req: Request) {
   if (body.fallbackProvider !== undefined) next.fallbackProvider = body.fallbackProvider ?? undefined;
   if (body.mode !== undefined) next.mode = body.mode;
 
-  await writeEveSecrets({ ai: next as Parameters<typeof writeEveSecrets>[0]["ai"] }, process.cwd());
+  await writeEveSecrets({ ai: next as Parameters<typeof writeEveSecrets>[0]["ai"] });
 
   return NextResponse.json({ ok: true });
 }

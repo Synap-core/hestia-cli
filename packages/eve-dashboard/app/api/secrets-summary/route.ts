@@ -7,7 +7,7 @@ export async function GET() {
   if ("error" in auth) return auth.error;
 
   try {
-    const secrets = await readEveSecrets(process.cwd());
+    const secrets = await readEveSecrets();
 
     const providers = (secrets?.ai?.providers ?? []).map((p) => ({
       id: p.id,

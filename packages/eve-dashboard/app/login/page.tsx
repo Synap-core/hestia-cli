@@ -2,8 +2,10 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Card, CardBody, CardHeader, Input, Button, addToast } from "@heroui/react";
+import { Input, Button, addToast } from "@heroui/react";
 import { Eye, EyeOff, KeyRound } from "lucide-react";
+import { Wordmark } from "../components/wordmark";
+import { ThemeToggle } from "../components/theme-toggle";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -27,7 +29,7 @@ export default function LoginPage() {
       });
 
       if (res.ok) {
-        addToast({ title: "Authenticated", color: "success" });
+        addToast({ title: "Welcome back", color: "success" });
         router.push("/dashboard");
       } else {
         const data = await res.json() as { error?: string };
@@ -41,64 +43,88 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background px-4">
-      <div className="w-full max-w-sm space-y-6">
-        <div className="text-center space-y-2">
-          <div className="text-5xl mb-4">🌿</div>
-          <h1 className="text-2xl font-bold text-foreground">Eve Dashboard</h1>
-          <p className="text-default-500 text-sm">Sovereign stack control panel</p>
+    <div className="min-h-screen flex flex-col">
+      {/* Top bar — wordmark on the left, theme toggle on the right. */}
+      <header className="flex items-center justify-between px-6 py-5">
+        <Wordmark size="md" />
+        <ThemeToggle />
+      </header>
+
+      {/* Content — centered card on a calm background. */}
+      <main className="flex-1 flex items-center justify-center px-4 pb-20">
+        <div className="w-full max-w-md">
+          <div className="text-center mb-8">
+            <h1 className="font-heading text-4xl font-medium tracking-tightest text-foreground">
+              Welcome to your stack
+            </h1>
+            <p className="mt-3 text-default-500">
+              Unlock the dashboard with your local key.
+            </p>
+          </div>
+
+          <form
+            onSubmit={handleSubmit}
+            className="rounded-2xl border border-divider bg-content1 p-6 sm:p-7 space-y-5"
+          >
+            <Input
+              type={visible ? "text" : "password"}
+              label="Dashboard key"
+              labelPlacement="outside"
+              placeholder="Paste your key"
+              value={secret}
+              onValueChange={setSecret}
+              autoComplete="off"
+              autoFocus
+              startContent={
+                <KeyRound className="h-4 w-4 shrink-0 text-default-400" />
+              }
+              endContent={
+                <button
+                  type="button"
+                  onClick={() => setVisible(!visible)}
+                  className="text-default-400 hover:text-foreground transition-colors"
+                  aria-label={visible ? "Hide key" : "Show key"}
+                >
+                  {visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              }
+              isInvalid={!!error}
+              errorMessage={error ?? undefined}
+              variant="bordered"
+              size="lg"
+              classNames={{
+                // Mono ONLY on the typed value, not the label/placeholder.
+                input: "font-mono text-sm tracking-tight",
+                inputWrapper: "h-12",
+                label: "font-sans",
+              }}
+            />
+            <Button
+              type="submit"
+              color="primary"
+              size="lg"
+              radius="md"
+              className="w-full font-medium"
+              isLoading={loading}
+              isDisabled={!secret.trim()}
+            >
+              Unlock
+            </Button>
+
+            <p className="text-center text-xs text-default-400">
+              Don&apos;t have a key? Run{" "}
+              <code className="rounded bg-content2 px-1.5 py-0.5 font-mono text-[11px] text-foreground">
+                eve ui
+              </code>{" "}
+              on the host.
+            </p>
+          </form>
+
+          <p className="mt-8 text-center text-xs text-default-400">
+            Eve — sovereign stack for humans
+          </p>
         </div>
-
-        <Card className="bg-content1 border border-divider">
-          <CardHeader className="pb-0">
-            <div className="flex flex-col gap-1">
-              <h2 className="text-base font-semibold text-foreground">Enter your dashboard key</h2>
-              <p className="text-xs text-default-400">
-                Run <code className="bg-content2 px-1 py-0.5 rounded text-primary font-mono">eve ui</code> in your terminal to see your key.
-              </p>
-            </div>
-          </CardHeader>
-          <CardBody>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <Input
-                type={visible ? "text" : "password"}
-                label="Dashboard key"
-                placeholder="Paste your key here"
-                value={secret}
-                onValueChange={setSecret}
-                startContent={<KeyRound className="text-default-400 w-4 h-4 shrink-0" />}
-                endContent={
-                  <button
-                    type="button"
-                    onClick={() => setVisible(!visible)}
-                    className="text-default-400 hover:text-default-600 transition-colors"
-                    aria-label={visible ? "Hide key" : "Show key"}
-                  >
-                    {visible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                }
-                isInvalid={!!error}
-                errorMessage={error ?? undefined}
-                variant="bordered"
-                classNames={{ inputWrapper: "font-mono" }}
-              />
-              <Button
-                type="submit"
-                color="primary"
-                className="w-full"
-                isLoading={loading}
-                isDisabled={!secret.trim()}
-              >
-                Unlock
-              </Button>
-            </form>
-          </CardBody>
-        </Card>
-
-        <p className="text-center text-xs text-default-300">
-          Eve — sovereign stack for humans
-        </p>
-      </div>
+      </main>
     </div>
   );
 }

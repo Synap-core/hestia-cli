@@ -37,7 +37,7 @@ export async function POST(req: Request) {
   const id = body.id as ProviderId;
 
   // Cloud providers require an API key (either in this body or already saved)
-  const secrets = await readEveSecrets(process.cwd());
+  const secrets = await readEveSecrets();
   const list = [...(secrets?.ai?.providers ?? [])];
   const idx = list.findIndex((p) => p.id === id);
   const existing = idx >= 0 ? list[idx] : undefined;
@@ -59,7 +59,7 @@ export async function POST(req: Request) {
   if (idx >= 0) list[idx] = next;
   else list.push(next);
 
-  await writeEveSecrets({ ai: { providers: list } }, process.cwd());
+  await writeEveSecrets({ ai: { providers: list } });
   return NextResponse.json({ ok: true, provider: { ...next, apiKey: undefined } });
 }
 
@@ -73,7 +73,7 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: "Invalid provider id" }, { status: 400 });
   }
 
-  const secrets = await readEveSecrets(process.cwd());
+  const secrets = await readEveSecrets();
   const list = (secrets?.ai?.providers ?? []).filter(p => p.id !== id);
 
   // If we just removed the default, clear it
@@ -81,6 +81,6 @@ export async function DELETE(req: Request) {
   if (secrets?.ai?.defaultProvider === id) aiUpdate.defaultProvider = undefined;
   if (secrets?.ai?.fallbackProvider === id) aiUpdate.fallbackProvider = undefined;
 
-  await writeEveSecrets({ ai: aiUpdate }, process.cwd());
+  await writeEveSecrets({ ai: aiUpdate });
   return NextResponse.json({ ok: true });
 }

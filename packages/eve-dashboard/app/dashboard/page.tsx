@@ -2,29 +2,37 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { Button, Spinner, addToast } from "@heroui/react";
 import {
-  Card, CardBody, CardHeader, Chip, Button, Divider, Spinner, addToast,
-} from "@heroui/react";
-import { RefreshCw, RotateCcw, Wifi, WifiOff, Copy, ExternalLink } from "lucide-react";
+  RefreshCw, RotateCcw, Wifi, WifiOff, Copy, ExternalLink, Check, ArrowRight,
+  Brain, Wrench, Hammer, Eye, Footprints,
+  type LucideIcon,
+} from "lucide-react";
 
-type OrganStatus = {
-  state: "missing" | "installing" | "starting" | "ready" | "error" | "stopped";
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+type OrganState = "missing" | "installing" | "starting" | "ready" | "error" | "stopped";
+
+interface OrganStatus {
+  state: OrganState;
   installedAt?: string;
   version?: string;
   lastChecked?: string;
   errorMessage?: string;
-};
+}
 
-type EntityState = {
+interface EntityState {
   version: string;
   initializedAt: string;
   aiModel: string;
   organs: Record<string, OrganStatus>;
   installed?: Record<string, { organ?: string; state: string; version?: string }>;
   metadata?: { hostname?: string; platform?: string };
-};
+}
 
-type SecretsSummary = {
+interface SecretsSummary {
   ai: {
     mode?: string;
     defaultProvider?: string;
@@ -32,9 +40,9 @@ type SecretsSummary = {
   };
   synap: { configured: boolean; hasApiKey: boolean; apiUrl?: string };
   arms: { openclaw: { configured: boolean }; messaging: { configured: boolean } };
-};
+}
 
-type ServiceAccess = {
+interface ServiceAccess {
   id: string;
   label: string;
   emoji: string;
@@ -44,71 +52,140 @@ type ServiceAccess = {
   port: number;
   requires: string | null;
   dnsReady: boolean | null;
-};
+}
 
-type AccessData = {
+interface AccessData {
   urls: ServiceAccess[];
   domain: { primary?: string; ssl?: boolean } | null;
   serverIp?: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Visual primitives — local, theme-token-only, no shadows
+// ---------------------------------------------------------------------------
+
+function Section({
+  title,
+  description,
+  action,
+  children,
+}: {
+  title: string;
+  description?: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="space-y-4">
+      <div className="flex items-end justify-between gap-4">
+        <div>
+          <h2 className="font-heading text-xl font-medium tracking-tightest text-foreground">
+            {title}
+          </h2>
+          {description && (
+            <p className="mt-0.5 text-sm text-default-500">{description}</p>
+          )}
+        </div>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function Surface({
+  className = "",
+  children,
+}: {
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={`rounded-xl border border-divider bg-content1 ${className}`}>{children}</div>
+  );
+}
+
+const STATE_DOT: Record<OrganState, string> = {
+  ready:      "bg-primary",
+  installing: "bg-warning animate-pulse",
+  starting:   "bg-warning animate-pulse",
+  error:      "bg-danger",
+  stopped:    "bg-default-400",
+  missing:    "bg-default-300",
 };
 
-const ORGANS = [
-  { id: "brain", emoji: "🧠", label: "Brain", desc: "Synap pod + data stores" },
-  { id: "arms", emoji: "🦾", label: "Arms", desc: "OpenClaw / MCP" },
-  { id: "builder", emoji: "🏗️", label: "Builder", desc: "Code engine" },
-  { id: "eyes", emoji: "👁️", label: "Eyes", desc: "RSSHub / feeds" },
-  { id: "legs", emoji: "🦿", label: "Legs", desc: "Traefik / domains" },
-] as const;
-
-function statusColor(state: string): "success" | "danger" | "default" | "warning" | "primary" {
-  switch (state) {
-    case "ready": return "success";
-    case "error": return "danger";
-    case "stopped": return "default";
-    case "missing": return "warning";
-    case "installing":
-    case "starting": return "primary";
-    default: return "default";
-  }
+function StateDot({ state }: { state: OrganState }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs">
+      <span className={`h-1.5 w-1.5 rounded-full ${STATE_DOT[state]}`} aria-hidden />
+      <span className="capitalize text-default-500">{state}</span>
+    </span>
+  );
 }
+
+// ---------------------------------------------------------------------------
+// Organs config — lucide icons, not emoji, for proper theme integration
+// ---------------------------------------------------------------------------
+
+interface OrganMeta {
+  id: "brain" | "arms" | "builder" | "eyes" | "legs";
+  label: string;
+  desc: string;
+  Icon: LucideIcon;
+}
+
+const ORGANS: OrganMeta[] = [
+  { id: "brain",   label: "Brain",   desc: "Synap pod + data stores", Icon: Brain },
+  { id: "arms",    label: "Arms",    desc: "OpenClaw / MCP actions",  Icon: Wrench },
+  { id: "builder", label: "Builder", desc: "Code engine",             Icon: Hammer },
+  { id: "eyes",    label: "Eyes",    desc: "RSSHub / feeds",          Icon: Eye },
+  { id: "legs",    label: "Legs",    desc: "Traefik / domains",       Icon: Footprints },
+];
+
+// ---------------------------------------------------------------------------
+// Cells
+// ---------------------------------------------------------------------------
 
 function CopyButton({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <button
+      type="button"
       onClick={() => {
         void navigator.clipboard.writeText(value).then(() => {
           setCopied(true);
           setTimeout(() => setCopied(false), 1500);
         });
       }}
-      className="ml-1 text-default-400 hover:text-default-600 transition-colors"
-      title="Copy"
+      className="inline-flex items-center justify-center text-default-400 hover:text-foreground transition-colors"
+      aria-label="Copy"
     >
-      <Copy className={`w-3 h-3 ${copied ? "text-success" : ""}`} />
+      {copied ? <Check className="h-3.5 w-3.5 text-primary" /> : <Copy className="h-3.5 w-3.5" />}
     </button>
   );
 }
 
 function UrlCell({ url, pending }: { url: string | null; pending?: boolean }) {
   if (!url) return <span className="text-default-300 text-xs">—</span>;
-  const colorClass = pending ? "text-default-400 line-through" : "text-primary hover:underline";
+  const linkClass = pending
+    ? "text-default-400 line-through"
+    : "text-foreground hover:text-primary";
   return (
-    <span className="flex items-center gap-1">
+    <span className="inline-flex items-center gap-1.5 max-w-full">
       <a
         href={url}
         target="_blank"
         rel="noreferrer"
-        className={`text-xs font-mono truncate max-w-[180px] ${colorClass}`}
-        title={pending ? "DNS not yet pointing to this server" : undefined}
+        className={`font-mono text-xs truncate transition-colors ${linkClass}`}
+        title={pending ? "DNS not yet pointing to this server" : url}
       >
-        {url}
+        {url.replace(/^https?:\/\//, "")}
       </a>
-      <ExternalLink className="w-3 h-3 text-default-400 shrink-0" />
+      <ExternalLink className="h-3 w-3 shrink-0 text-default-400" />
       <CopyButton value={url} />
       {pending && (
         <span
-          className="text-[10px] uppercase tracking-wider text-warning bg-warning-50 dark:bg-warning-900/20 px-1.5 py-0.5 rounded"
+          className="rounded-full bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-warning"
           title="DNS A record is missing or pointing elsewhere"
         >
           DNS
@@ -117,6 +194,10 @@ function UrlCell({ url, pending }: { url: string | null; pending?: boolean }) {
     </span>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Page
+// ---------------------------------------------------------------------------
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -131,9 +212,9 @@ export default function DashboardPage() {
     if (!silent) setRefreshing(true);
     try {
       const [stateRes, secretsRes, accessRes] = await Promise.all([
-        fetch("/api/state", { credentials: "include" }),
-        fetch("/api/secrets-summary", { credentials: "include" }),
-        fetch("/api/access", { credentials: "include" }),
+        fetch("/api/state",            { credentials: "include" }),
+        fetch("/api/secrets-summary",  { credentials: "include" }),
+        fetch("/api/access",           { credentials: "include" }),
       ]);
 
       if ([stateRes, secretsRes, accessRes].some(r => r.status === 401)) {
@@ -141,9 +222,9 @@ export default function DashboardPage() {
         return;
       }
 
-      if (stateRes.ok) setState(await stateRes.json() as EntityState);
+      if (stateRes.ok)   setState(await stateRes.json() as EntityState);
       if (secretsRes.ok) setSecrets(await secretsRes.json() as SecretsSummary);
-      if (accessRes.ok) setAccess(await accessRes.json() as AccessData);
+      if (accessRes.ok)  setAccess(await accessRes.json() as AccessData);
     } catch {
       if (!silent) addToast({ title: "Failed to load state", color: "danger" });
     } finally {
@@ -154,7 +235,6 @@ export default function DashboardPage() {
 
   useEffect(() => {
     void fetchData();
-    // Auto-refresh every 15 seconds so organ states stay current (silent = no spinner)
     const interval = setInterval(() => void fetchData(true), 15_000);
     return () => clearInterval(interval);
   }, [fetchData]);
@@ -183,275 +263,296 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
+      <div className="flex items-center justify-center min-h-[60vh]">
         <Spinner size="lg" color="primary" />
       </div>
     );
   }
 
   const organs = state?.organs ?? {};
-  const readyCount = Object.values(organs).filter((o) => o.state === "ready").length;
+  const readyCount = Object.values(organs).filter(o => o.state === "ready").length;
   const hasDomain = !!access?.domain?.primary;
 
   return (
-    <div className="space-y-8">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+    <div className="space-y-10">
+      {/* -----------------------------------------------------------------
+       * Page header
+       * -------------------------------------------------------------- */}
+      <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">System Status</h1>
-          {state?.metadata?.hostname && (
-            <p className="text-sm text-default-400 mt-0.5 font-mono">{state.metadata.hostname}</p>
-          )}
+          <p className="text-sm font-medium text-default-500">Overview</p>
+          <h1 className="mt-1 font-heading text-3xl font-medium tracking-tightest text-foreground">
+            Your stack at a glance
+          </h1>
+          <p className="mt-1 text-default-500">
+            <span className="text-foreground font-medium">{readyCount}</span>
+            <span className="text-default-400"> / {ORGANS.length} organs ready</span>
+            {state?.metadata?.hostname && (
+              <>
+                {" · "}
+                <span className="font-mono text-xs text-default-500">{state.metadata.hostname}</span>
+              </>
+            )}
+          </p>
         </div>
-        <div className="flex items-center gap-3">
-          <Chip size="sm" color={readyCount === 5 ? "success" : readyCount > 2 ? "warning" : "danger"} variant="flat">
-            {readyCount}/5 organs ready
-          </Chip>
-          <Button
-            variant="bordered"
-            size="sm"
-            isLoading={refreshing}
-            startContent={!refreshing ? <RefreshCw className="w-3.5 h-3.5" /> : undefined}
-            onPress={() => void fetchData()}
-          >
-            Refresh
-          </Button>
-        </div>
-      </div>
+        <Button
+          variant="bordered"
+          size="sm"
+          radius="md"
+          isLoading={refreshing}
+          startContent={!refreshing ? <RefreshCw className="h-3.5 w-3.5" /> : undefined}
+          onPress={() => void fetchData()}
+        >
+          Refresh
+        </Button>
+      </header>
 
-      {/* Organ cards */}
-      <div>
-        <h2 className="text-sm font-semibold text-default-500 uppercase tracking-wider mb-3">Organs</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-          {ORGANS.map(({ id, emoji, label, desc }) => {
+      {/* -----------------------------------------------------------------
+       * Organs
+       * -------------------------------------------------------------- */}
+      <Section title="Organs" description="The five layers that make up your sovereign entity.">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+          {ORGANS.map(({ id, label, desc, Icon }) => {
             const organ = organs[id];
-            const organState = organ?.state ?? "missing";
+            const organState = (organ?.state ?? "missing") as OrganState;
             return (
-              <Card key={id} className="bg-content1 border border-divider">
-                <CardHeader className="pb-1 flex justify-between items-start">
-                  <div>
-                    <span className="text-xl mr-1">{emoji}</span>
-                    <span className="font-semibold text-foreground">{label}</span>
-                  </div>
-                  <Chip size="sm" color={statusColor(organState)} variant="flat">
-                    {organState}
-                  </Chip>
-                </CardHeader>
-                <CardBody className="pt-1 space-y-3">
-                  <p className="text-xs text-default-400">{desc}</p>
+              <Surface key={id} className="p-4 flex flex-col gap-3 transition-colors hover:bg-content2/40">
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-content2 text-default-700">
+                    <Icon className="h-4 w-4" />
+                  </span>
+                  <span className="font-medium text-foreground">{label}</span>
+                  <span className="ml-auto"><StateDot state={organState} /></span>
+                </div>
+                <p className="text-xs text-default-500">{desc}</p>
+                <div className="mt-auto flex items-center gap-2 pt-1 text-[11px] text-default-400">
                   {organ?.version && (
-                    <p className="text-xs text-default-300 font-mono">v{organ.version}</p>
-                  )}
-                  {organ?.errorMessage && (
-                    <p className="text-xs text-danger truncate" title={organ.errorMessage}>
-                      {organ.errorMessage}
-                    </p>
+                    <span className="font-mono">v{organ.version}</span>
                   )}
                   {organ?.lastChecked && (
-                    <p className="text-xs text-default-300">
-                      Checked {new Date(organ.lastChecked).toLocaleTimeString()}
-                    </p>
+                    <span>· {new Date(organ.lastChecked).toLocaleTimeString()}</span>
                   )}
-                  <Button
-                    size="sm"
-                    variant="light"
-                    color="default"
-                    startContent={
-                      restarting === id
-                        ? <Spinner size="sm" color="default" />
-                        : <RotateCcw className="w-3.5 h-3.5" />
-                    }
-                    isDisabled={restarting !== null || organState === "missing"}
-                    onPress={() => void restartOrgan(id)}
-                    className="w-full"
-                  >
-                    Restart
-                  </Button>
-                </CardBody>
-              </Card>
+                </div>
+                <Button
+                  size="sm"
+                  variant="light"
+                  radius="md"
+                  startContent={
+                    restarting === id
+                      ? <Spinner size="sm" color="default" />
+                      : <RotateCcw className="h-3.5 w-3.5" />
+                  }
+                  isDisabled={restarting !== null || organState === "missing"}
+                  onPress={() => void restartOrgan(id)}
+                  className="justify-start text-default-600 hover:text-foreground"
+                >
+                  Restart
+                </Button>
+                {organ?.errorMessage && (
+                  <p className="truncate text-xs text-danger" title={organ.errorMessage}>
+                    {organ.errorMessage}
+                  </p>
+                )}
+              </Surface>
             );
           })}
         </div>
-      </div>
+      </Section>
 
-      <Divider />
-
-      {/* Access URLs */}
-      <div>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold text-default-500 uppercase tracking-wider">Access</h2>
-          {hasDomain && (
-            <Chip size="sm" color="success" variant="flat">
-              {access?.domain?.ssl ? "https" : "http"}://{access?.domain?.primary}
-            </Chip>
-          )}
-        </div>
-
+      {/* -----------------------------------------------------------------
+       * Access — service URL table
+       * -------------------------------------------------------------- */}
+      <Section
+        title="Access"
+        description="Every place you can reach this stack from."
+        action={
+          hasDomain ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-divider bg-content1 px-2.5 py-1 text-xs">
+              <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />
+              <span className="font-mono text-default-700">
+                {access?.domain?.ssl ? "https" : "http"}://{access?.domain?.primary}
+              </span>
+            </span>
+          ) : null
+        }
+      >
         {!hasDomain && (
-          <div className="mb-4 p-3 bg-warning-50 border border-warning-200 rounded-xl text-warning-700 text-sm dark:bg-warning-900/20 dark:border-warning-800 dark:text-warning-400">
-            No domain configured — run{" "}
-            <code className="bg-warning-100 dark:bg-warning-900/40 px-1.5 py-0.5 rounded font-mono text-xs">
-              eve domain set yourdomain.com --ssl
-            </code>{" "}
-            to enable remote access.
+          <div className="rounded-xl border border-warning/30 bg-warning/5 px-4 py-3 text-sm text-warning-700 dark:text-warning">
+            <p>
+              No domain configured.{" "}
+              <span className="text-foreground/80">For HTTPS access, run </span>
+              <code className="rounded bg-content2 px-1.5 py-0.5 font-mono text-xs text-foreground">
+                eve domain set yourdomain.com --ssl
+              </code>
+              .
+            </p>
           </div>
         )}
 
-        <Card className="bg-content1 border border-divider">
-          <CardBody className="p-0">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-divider">
-                  <th className="text-left text-xs text-default-400 font-medium px-4 py-2.5">Service</th>
-                  <th className="text-left text-xs text-default-400 font-medium px-4 py-2.5">Local</th>
-                  <th className="text-left text-xs text-default-400 font-medium px-4 py-2.5">Server IP</th>
-                  <th className="text-left text-xs text-default-400 font-medium px-4 py-2.5">Domain</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(access?.urls ?? []).map((svc, i) => (
-                  <tr key={svc.id} className={i > 0 ? "border-t border-divider" : ""}>
-                    <td className="px-4 py-2.5 font-medium text-foreground whitespace-nowrap">
-                      <span className="mr-1.5">{svc.emoji}</span>
-                      {svc.label}
-                    </td>
-                    <td className="px-4 py-2.5"><UrlCell url={svc.localUrl} /></td>
-                    <td className="px-4 py-2.5"><UrlCell url={svc.serverUrl} /></td>
-                    <td className="px-4 py-2.5">
-                      <UrlCell
-                        url={svc.domainUrl}
-                        pending={svc.domainUrl !== null && svc.dnsReady === false}
-                      />
-                    </td>
-                  </tr>
+        <Surface className="overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-divider bg-content1">
+                {["Service", "Local", "Server IP", "Domain"].map(h => (
+                  <th
+                    key={h}
+                    className="px-4 py-2.5 text-left text-[11px] font-medium uppercase tracking-wider text-default-400"
+                  >
+                    {h}
+                  </th>
                 ))}
-              </tbody>
-            </table>
-          </CardBody>
-        </Card>
-      </div>
+              </tr>
+            </thead>
+            <tbody>
+              {(access?.urls ?? []).map((svc, i) => (
+                <tr
+                  key={svc.id}
+                  className={
+                    "transition-colors hover:bg-content2/40 " +
+                    (i > 0 ? "border-t border-divider" : "")
+                  }
+                >
+                  <td className="px-4 py-3 align-middle">
+                    <span className="font-medium text-foreground">{svc.label}</span>
+                  </td>
+                  <td className="px-4 py-3 align-middle"><UrlCell url={svc.localUrl} /></td>
+                  <td className="px-4 py-3 align-middle"><UrlCell url={svc.serverUrl} /></td>
+                  <td className="px-4 py-3 align-middle">
+                    <UrlCell
+                      url={svc.domainUrl}
+                      pending={svc.domainUrl !== null && svc.dnsReady === false}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Surface>
+      </Section>
 
-      <Divider />
-
-      {/* AI Providers */}
-      <div>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold text-default-500 uppercase tracking-wider">AI Providers</h2>
+      {/* -----------------------------------------------------------------
+       * AI Providers — at-a-glance, link to full editor
+       * -------------------------------------------------------------- */}
+      <Section
+        title="AI Providers"
+        description="The brain behind your agents — keys live only on this server."
+        action={
           <a
             href="/dashboard/ai"
-            className="text-xs text-primary hover:underline flex items-center gap-1"
+            className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
           >
-            Configure →
+            Configure <ArrowRight className="h-3.5 w-3.5" />
           </a>
-        </div>
-        <Card className="bg-content1 border border-divider">
-          <CardBody>
-            {!secrets ? (
-              <p className="text-default-400 text-sm">No provider config found</p>
-            ) : (
-              <div className="space-y-3">
-                {secrets.ai.defaultProvider && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-default-500 w-32">Default provider</span>
-                    <Chip size="sm" color="primary" variant="flat">{secrets.ai.defaultProvider}</Chip>
-                    {secrets.ai.mode && (
-                      <Chip size="sm" variant="flat" color="default">{secrets.ai.mode}</Chip>
-                    )}
-                  </div>
-                )}
-                <div className="flex flex-wrap gap-2">
-                  {secrets.ai.providers.map((p) => (
-                    <div key={p.id} className="flex items-center gap-1.5 bg-content2 rounded-lg px-3 py-1.5">
-                      <Chip
-                        size="sm"
-                        color={p.configured && p.hasKey ? "success" : "default"}
-                        variant="dot"
-                      >
-                        {p.id}
-                      </Chip>
-                      <span className="text-xs text-default-400">
-                        {p.configured && p.hasKey ? "configured" : "not configured"}
-                      </span>
-                    </div>
-                  ))}
-                  {secrets.ai.providers.length === 0 && (
-                    <a
-                      href="/dashboard/ai"
-                      className="text-sm text-primary hover:underline"
+        }
+      >
+        <Surface className="p-5 space-y-4">
+          {!secrets ? (
+            <p className="text-sm text-default-400">No provider config found.</p>
+          ) : secrets.ai.providers.length === 0 ? (
+            <a
+              href="/dashboard/ai"
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+            >
+              No providers yet — add one
+              <ArrowRight className="h-3.5 w-3.5" />
+            </a>
+          ) : (
+            <>
+              {secrets.ai.defaultProvider && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs uppercase tracking-wider text-default-400">Default</span>
+                  <span className="rounded-md bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">
+                    {secrets.ai.defaultProvider}
+                  </span>
+                  {secrets.ai.mode && (
+                    <span className="rounded-md bg-content2 px-2 py-0.5 text-xs text-default-600">
+                      {secrets.ai.mode}
+                    </span>
+                  )}
+                </div>
+              )}
+              <div className="flex flex-wrap gap-2">
+                {secrets.ai.providers.map(p => {
+                  const ok = p.configured && p.hasKey;
+                  return (
+                    <span
+                      key={p.id}
+                      className="inline-flex items-center gap-2 rounded-lg border border-divider bg-content1 px-3 py-1.5 text-xs"
                     >
-                      No providers — click here to add one
-                    </a>
-                  )}
-                </div>
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full ${ok ? "bg-primary" : "bg-default-400"}`}
+                        aria-hidden
+                      />
+                      <span className="font-medium text-foreground">{p.id}</span>
+                      <span className="text-default-400">{ok ? "configured" : "no key"}</span>
+                    </span>
+                  );
+                })}
               </div>
-            )}
-          </CardBody>
-        </Card>
-      </div>
+            </>
+          )}
+        </Surface>
+      </Section>
 
-      <Divider />
-
-      {/* Wiring status */}
-      <div>
-        <h2 className="text-sm font-semibold text-default-500 uppercase tracking-wider mb-3">Wiring</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Card className="bg-content1 border border-divider">
-            <CardBody>
-              <div className="flex items-center gap-3">
-                {secrets?.synap.configured ? (
-                  <Wifi className="w-5 h-5 text-success" />
-                ) : (
-                  <WifiOff className="w-5 h-5 text-default-400" />
-                )}
-                <div>
-                  <p className="font-medium text-foreground text-sm">Synap Pod</p>
-                  {secrets?.synap.apiUrl ? (
-                    <p className="text-xs text-default-400 font-mono truncate max-w-[200px]">
-                      {secrets.synap.apiUrl}
-                    </p>
-                  ) : (
-                    <p className="text-xs text-default-400">Not configured</p>
-                  )}
-                </div>
-                <div className="ml-auto">
-                  <Chip
-                    size="sm"
-                    color={secrets?.synap.hasApiKey ? "success" : "warning"}
-                    variant="flat"
-                  >
-                    {secrets?.synap.hasApiKey ? "API key set" : "No API key"}
-                  </Chip>
-                </div>
-              </div>
-            </CardBody>
-          </Card>
-
-          <Card className="bg-content1 border border-divider">
-            <CardBody>
-              <div className="flex items-center gap-3">
-                {secrets?.arms.openclaw.configured ? (
-                  <Wifi className="w-5 h-5 text-success" />
-                ) : (
-                  <WifiOff className="w-5 h-5 text-default-400" />
-                )}
-                <div>
-                  <p className="font-medium text-foreground text-sm">OpenClaw</p>
-                  <p className="text-xs text-default-400">Arms organ bridge</p>
-                </div>
-                <div className="ml-auto">
-                  <Chip
-                    size="sm"
-                    color={secrets?.arms.openclaw.configured ? "success" : "warning"}
-                    variant="flat"
-                  >
-                    {secrets?.arms.openclaw.configured ? "wired" : "not wired"}
-                  </Chip>
-                </div>
-              </div>
-            </CardBody>
-          </Card>
+      {/* -----------------------------------------------------------------
+       * Wiring
+       * -------------------------------------------------------------- */}
+      <Section title="Wiring" description="Connections between organs and external services.">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <WiringCard
+            label="Synap Pod"
+            sub={secrets?.synap.apiUrl ?? "Not configured"}
+            online={secrets?.synap.configured ?? false}
+            badgeOk={secrets?.synap.hasApiKey ?? false}
+            okText="API key set"
+            offText="No API key"
+          />
+          <WiringCard
+            label="OpenClaw"
+            sub="Arms organ bridge"
+            online={secrets?.arms.openclaw.configured ?? false}
+            badgeOk={secrets?.arms.openclaw.configured ?? false}
+            okText="wired"
+            offText="not wired"
+          />
         </div>
-      </div>
+      </Section>
     </div>
+  );
+}
+
+function WiringCard({
+  label, sub, online, badgeOk, okText, offText,
+}: {
+  label: string;
+  sub: string;
+  online: boolean;
+  badgeOk: boolean;
+  okText: string;
+  offText: string;
+}) {
+  return (
+    <Surface className="p-4 flex items-center gap-3">
+      <span
+        className={
+          "inline-flex h-9 w-9 items-center justify-center rounded-lg " +
+          (online ? "bg-primary/10 text-primary" : "bg-content2 text-default-400")
+        }
+      >
+        {online ? <Wifi className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-foreground">{label}</p>
+        <p className="truncate font-mono text-xs text-default-400">{sub}</p>
+      </div>
+      <span
+        className={
+          "rounded-full px-2 py-0.5 text-[11px] font-medium " +
+          (badgeOk ? "bg-primary/15 text-primary" : "bg-warning/15 text-warning")
+        }
+      >
+        {badgeOk ? okText : offText}
+      </span>
+    </Surface>
   );
 }
