@@ -58,10 +58,23 @@ COPY packages/eve-dashboard ./packages/eve-dashboard
 
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# `...@eve/dashboard` selects dashboard plus every transitive workspace
-# dependency, in topological order — so we don't have to maintain the
-# brain-before-eyes / dna-before-legs ordering by hand.
-RUN pnpm --filter "...@eve/dashboard" run build
+# Build workspace deps in topological order, by hand. The pnpm `...<pkg>`
+# filter syntax sometimes fails to expand inside Docker shells (depending
+# on quoting + pnpm version), and silently building only the leaf produces
+# very confusing "Module not found: '@eve/dna'" errors at link time.
+# Order matters:
+#   dna       — no workspace deps
+#   legs      — depends on dna
+#   brain     — depends on dna, legs
+#   eyes      — depends on dna, brain
+#   lifecycle — depends on dna, legs, brain, eyes
+#   dashboard — depends on dna, legs, lifecycle
+RUN pnpm --filter @eve/dna run build
+RUN pnpm --filter @eve/legs run build
+RUN pnpm --filter @eve/brain run build
+RUN pnpm --filter @eve/eyes run build
+RUN pnpm --filter @eve/lifecycle run build
+RUN pnpm --filter @eve/dashboard run build
 
 # --- runner -----------------------------------------------------------------
 FROM node:${NODE_VERSION} AS runner
