@@ -1,6 +1,14 @@
 import { Command } from 'commander';
 import { execa } from 'execa';
-import { entityStateManager, type Organ, COMPONENTS, readEveSecrets, getAccessUrls } from '@eve/dna';
+import { execSync } from 'node:child_process';
+import {
+  entityStateManager,
+  type Organ,
+  COMPONENTS,
+  readEveSecrets,
+  getAccessUrls,
+  hasAnyProvider,
+} from '@eve/dna';
 import { verifyComponent } from '@eve/legs';
 import { probeRoutes, probeVerdict, type RouteProbe } from '../lib/probe-routes.js';
 import {
@@ -239,6 +247,104 @@ async function runDiagnostics(verbose = false): Promise<void> {
     } catch {
       routeCheck.fail('Could not probe domain routes');
     }
+  }
+
+  // Check 4d: AI provider wiring
+  const aiCheck = createSpinner('Checking AI provider wiring...');
+  aiCheck.start();
+  try {
+    const aiSecrets = secrets ?? await readEveSecrets(process.cwd());
+    if (!hasAnyProvider(aiSecrets)) {
+      const aiConsumers = ['synap', 'openclaw', 'openwebui'];
+      const willUseAi = installed.some(c => aiConsumers.includes(c));
+      if (willUseAi) {
+        aiCheck.warn('No AI provider configured');
+        checks.push({
+          name: 'AI provider',
+          status: 'warn',
+          message: 'No provider key in secrets.ai.providers',
+          fix: 'eve ai providers add anthropic --api-key <key>',
+        });
+      } else {
+        aiCheck.succeed('No AI provider configured (no AI-consuming components installed yet)');
+      }
+    } else {
+      aiCheck.succeed('AI provider configured');
+
+      // Verify each AI-consuming component is actually wired
+      // OpenClaw — check for auth-profiles.json inside the container
+      if (installed.includes('openclaw')) {
+        try {
+          const out = execSync(
+            `docker exec eve-arms-openclaw test -f /home/node/.openclaw/agents/main/agent/auth-profiles.json && echo OK || echo MISSING`,
+            { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
+          ).trim();
+          if (out === 'OK') {
+            checks.push({ name: 'OpenClaw AI wiring', status: 'pass', message: 'auth-profiles.json present in container' });
+          } else {
+            checks.push({
+              name: 'OpenClaw AI wiring',
+              status: 'fail',
+              message: 'auth-profiles.json missing — agent loop will fail',
+              fix: 'eve ai apply',
+            });
+          }
+        } catch {
+          checks.push({
+            name: 'OpenClaw AI wiring',
+            status: 'warn',
+            message: 'Could not check (container not running?)',
+            fix: 'docker start eve-arms-openclaw',
+          });
+        }
+      }
+
+      // Open WebUI — check that .env mentions SYNAP_IS_URL
+      if (installed.includes('openwebui')) {
+        try {
+          const { existsSync, readFileSync } = await import('node:fs');
+          const envPath = '/opt/openwebui/.env';
+          if (existsSync(envPath)) {
+            const content = readFileSync(envPath, 'utf-8');
+            if (content.includes('SYNAP_IS_URL') && content.includes('SYNAP_API_KEY')) {
+              checks.push({ name: 'Open WebUI AI wiring', status: 'pass', message: '.env points at Synap IS' });
+            } else {
+              checks.push({
+                name: 'Open WebUI AI wiring',
+                status: 'warn',
+                message: '.env missing SYNAP_IS_URL/SYNAP_API_KEY',
+                fix: 'eve ai apply',
+              });
+            }
+          }
+        } catch { /* non-fatal */ }
+      }
+
+      // Synap IS — check that deploy/.env has at least one provider key
+      if (installed.includes('synap')) {
+        try {
+          const { existsSync, readFileSync } = await import('node:fs');
+          const deployDir = process.env.SYNAP_DEPLOY_DIR ?? '/opt/synap-backend/deploy';
+          const envPath = `${deployDir}/.env`;
+          if (existsSync(envPath)) {
+            const content = readFileSync(envPath, 'utf-8');
+            const hasKey = /^(OPENAI|ANTHROPIC|OPENROUTER)_API_KEY=.+/m.test(content);
+            if (hasKey) {
+              checks.push({ name: 'Synap IS AI wiring', status: 'pass', message: 'upstream provider key in deploy/.env' });
+            } else {
+              checks.push({
+                name: 'Synap IS AI wiring',
+                status: 'warn',
+                message: 'No upstream provider key in Synap deploy/.env',
+                fix: 'eve ai apply',
+              });
+            }
+          }
+        } catch { /* non-fatal */ }
+      }
+    }
+  } catch {
+    aiCheck.fail('AI wiring check failed');
   }
 
   // Check 5: Entity State

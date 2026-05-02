@@ -14,6 +14,8 @@ import {
   defaultSkillsDir,
   ensureSecretValue,
   getServerIp,
+  hasAnyProvider,
+  wireAllInstalledComponents,
 } from '@eve/dna';
 import { getGlobalCliFlags, outputJson } from '@eve/cli-kit';
 import { runBrainInit, runInferenceInit, resolveSynapDelegate } from '@eve/brain';
@@ -26,6 +28,7 @@ import {
   printSuccess,
   printError,
   printInfo,
+  printWarning,
   createSpinner,
 } from '../../lib/ui.js';
 import {
@@ -319,7 +322,14 @@ export async function runInstall(opts: InstallOptions): Promise<void> {
   }
 
   // -----------------------------------------------------------------
-  // 7c. Optional: install dashboard as systemd service (Linux only)
+  // 7c. Optional: AI provider setup (interactive only)
+  // -----------------------------------------------------------------
+  if (!jsonMode && !opts.skipInteractive) {
+    await maybeOfferAiProviderSetup(installedComponents);
+  }
+
+  // -----------------------------------------------------------------
+  // 7d. Optional: install dashboard as systemd service (Linux only)
   // -----------------------------------------------------------------
   if (!jsonMode && !opts.skipInteractive && process.platform === 'linux') {
     await maybeOfferDashboardService();
@@ -428,6 +438,95 @@ async function maybeOfferDomainSetup(installedComponents: string[]): Promise<voi
   console.log();
   printInfo('Once DNS propagates, verify with: eve domain check');
   if (wantSsl) printInfo('SSL certificates provision automatically (1–5 min after DNS works)');
+}
+
+/**
+ * Offer to configure an AI provider so OpenClaw / Open WebUI / agents work
+ * out of the box. Skips silently if a provider is already configured.
+ *
+ * The provider key is stored once in `secrets.ai.providers[]` and then
+ * propagated to every installed component via `wireComponentAi()`. This is
+ * the moment that turns Synap IS into the canonical AI hub.
+ */
+async function maybeOfferAiProviderSetup(installedComponents: string[]): Promise<void> {
+  const existing = await readEveSecrets(process.cwd());
+  if (hasAnyProvider(existing)) return; // already configured
+
+  // Only worth prompting if at least one component will consume AI
+  const aiConsumers = ['synap', 'openclaw', 'openwebui', 'hermes', 'opencode', 'openclaude'];
+  const willUseAi = installedComponents.some(c => aiConsumers.includes(c));
+  if (!willUseAi) return;
+
+  console.log();
+  console.log(colors.muted('Eve uses Synap IS as the central AI hub. Other components (OpenClaw,'));
+  console.log(colors.muted('Open WebUI, agents) route through it — so you only set this once.'));
+  console.log();
+
+  const providerChoice = await select({
+    message: 'Which AI provider do you want to use?',
+    options: [
+      { value: 'anthropic', label: 'Anthropic (Claude) — recommended', hint: 'best quality' },
+      { value: 'openai',    label: 'OpenAI (GPT-5/4)' },
+      { value: 'openrouter', label: 'OpenRouter (multi-provider)' },
+      { value: 'ollama',    label: 'Ollama only (local, free)', hint: 'requires ollama component' },
+      { value: 'skip',      label: 'Skip — configure later with `eve ai providers add`' },
+    ],
+    initialValue: 'anthropic',
+  });
+
+  if (isCancel(providerChoice) || providerChoice === 'skip') {
+    printInfo('You can configure your AI provider later with: eve ai providers add <id> --api-key <key>');
+    return;
+  }
+
+  // Ollama-only doesn't need a key
+  if (providerChoice === 'ollama') {
+    await writeEveSecrets({
+      ai: {
+        defaultProvider: 'ollama',
+        providers: [{ id: 'ollama', enabled: true }],
+      },
+    });
+    printSuccess('Ollama set as default provider (no API key needed).');
+    return;
+  }
+
+  // Cloud provider — get API key
+  const apiKey = await text({
+    message: `Paste your ${providerChoice} API key:`,
+    placeholder: providerChoice === 'anthropic' ? 'sk-ant-...' : providerChoice === 'openai' ? 'sk-...' : 'sk-or-...',
+    validate: (v) => v && v.trim().length > 8 ? undefined : 'API key is required',
+  });
+  if (isCancel(apiKey)) {
+    printInfo('Skipped. Configure later with: eve ai providers add ' + providerChoice + ' --api-key <key>');
+    return;
+  }
+
+  await writeEveSecrets({
+    ai: {
+      defaultProvider: providerChoice as 'anthropic' | 'openai' | 'openrouter',
+      providers: [{ id: providerChoice as 'anthropic' | 'openai' | 'openrouter', enabled: true, apiKey: apiKey.trim() }],
+    },
+  });
+  printSuccess(`${providerChoice} provider saved.`);
+
+  // Auto-wire every installed component so they pick up the new key
+  console.log();
+  const spinner = createSpinner('Wiring AI provider into installed components...');
+  spinner.start();
+  const updated = await readEveSecrets(process.cwd());
+  const results = wireAllInstalledComponents(updated, installedComponents);
+  const ok = results.filter(r => r.outcome === 'ok').length;
+  const failed = results.filter(r => r.outcome === 'failed');
+
+  if (failed.length === 0) {
+    spinner.succeed(`AI wiring applied to ${ok} component(s)`);
+  } else {
+    spinner.warn(`AI wiring partially applied (${ok} ok, ${failed.length} failed)`);
+    for (const r of failed) {
+      printWarning(`  • ${r.id}: ${r.summary}${r.detail ? ' — ' + r.detail : ''}`);
+    }
+  }
 }
 
 /**

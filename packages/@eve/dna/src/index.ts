@@ -115,6 +115,14 @@ export {
   serviceComponents,
 } from './components.js';
 
+// Centralized AI provider wiring
+export {
+  type WireAiResult,
+  wireComponentAi,
+  wireAllInstalledComponents,
+  hasAnyProvider,
+} from './wire-ai.js';
+
 export {
   DEFAULT_HUB_PATH,
   resolveHubBaseUrl,

@@ -1,3 +1,10 @@
+var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
+  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
+}) : x)(function(x) {
+  if (typeof require !== "undefined") return require.apply(this, arguments);
+  throw Error('Dynamic require of "' + x + '" is not supported');
+});
+
 // src/types.ts
 var SERVICE_REGISTRY = {
   // Brain Services
@@ -1608,8 +1615,10 @@ var COMPONENTS = [
       containerName: "eve-arms-openclaw",
       internalPort: 3e3,
       hostPort: 3e3,
-      subdomain: "openclaw",
-      healthPath: "/"
+      subdomain: "openclaw"
+      // healthPath omitted: OpenClaw's web UI may not respond to GET / with
+      // 2xx (auth-gated, redirects, etc.). Container-running is enough for
+      // the verify step; browser users hit the UI via Traefik directly.
     }
   },
   {
@@ -1745,10 +1754,218 @@ function getAccessUrls(secrets, installedComponents) {
   return out;
 }
 
+// src/wire-ai.ts
+import { execSync } from "child_process";
+import { writeFileSync, existsSync as existsSync3 } from "fs";
+import { join as join6, dirname as dirname3 } from "path";
+function isContainerRunning(name) {
+  try {
+    const out = execSync(`docker ps --filter "name=^${name}$" --format "{{.Names}}"`, {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"]
+    }).trim();
+    return out === name;
+  } catch {
+    return false;
+  }
+}
+function dockerRestart(name) {
+  try {
+    execSync(`docker restart ${name}`, { stdio: "ignore" });
+  } catch {
+  }
+}
+function pickPrimaryProvider(secrets) {
+  const providers = (secrets?.ai?.providers ?? []).filter((p) => p.apiKey && p.apiKey.trim().length > 0);
+  if (providers.length === 0) return null;
+  const def = secrets?.ai?.defaultProvider;
+  return providers.find((p) => p.id === def) ?? providers.find((p) => p.enabled !== false) ?? providers[0];
+}
+function wireSynapIs(secrets) {
+  const providers = secrets?.ai?.providers ?? [];
+  if (providers.length === 0) {
+    return { id: "synap", outcome: "skipped", summary: "no AI providers configured" };
+  }
+  const deployDir = process.env.SYNAP_DEPLOY_DIR ?? "/opt/synap-backend/deploy";
+  if (!existsSync3(deployDir)) {
+    return { id: "synap", outcome: "skipped", summary: `deploy dir not found: ${deployDir}` };
+  }
+  const envLines = ["# AI provider keys \u2014 managed by eve ai apply"];
+  for (const p of providers) {
+    if (!p.apiKey) continue;
+    if (p.id === "openai") envLines.push(`OPENAI_API_KEY=${p.apiKey}`);
+    if (p.id === "anthropic") envLines.push(`ANTHROPIC_API_KEY=${p.apiKey}`);
+    if (p.id === "openrouter") envLines.push(`OPENROUTER_API_KEY=${p.apiKey}`);
+  }
+  if (secrets?.ai?.defaultProvider) {
+    envLines.push(`DEFAULT_AI_PROVIDER=${secrets.ai.defaultProvider}`);
+  }
+  const envPath = join6(deployDir, ".env");
+  let existing = "";
+  try {
+    existing = __require("fs").readFileSync(envPath, "utf-8");
+  } catch {
+  }
+  const marker = "# AI provider keys \u2014 managed by eve ai apply";
+  const before = existing.includes(marker) ? existing.split(marker)[0].trimEnd() : existing.trimEnd();
+  const merged = (before ? before + "\n\n" : "") + envLines.join("\n") + "\n";
+  try {
+    writeFileSync(envPath, merged, { mode: 384 });
+  } catch (err) {
+    return {
+      id: "synap",
+      outcome: "failed",
+      summary: "could not write Synap IS env",
+      detail: err instanceof Error ? err.message : String(err)
+    };
+  }
+  try {
+    const out = execSync(
+      `docker ps --filter "label=com.docker.compose.project=synap-backend" --filter "label=com.docker.compose.service=intelligence-hub" --format "{{.Names}}"`,
+      { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }
+    ).trim();
+    const isContainer = out.split("\n")[0]?.trim();
+    if (isContainer) dockerRestart(isContainer);
+  } catch {
+  }
+  return {
+    id: "synap",
+    outcome: "ok",
+    summary: `Synap IS env updated (${providers.length} provider(s))`,
+    detail: envPath
+  };
+}
+function wireOpenclaw(secrets) {
+  const synapApiKey = secrets?.synap?.apiKey?.trim();
+  if (!synapApiKey) {
+    return { id: "openclaw", outcome: "skipped", summary: "no Synap pod API key \u2014 install Synap first" };
+  }
+  if (!isContainerRunning("eve-arms-openclaw")) {
+    return { id: "openclaw", outcome: "skipped", summary: "eve-arms-openclaw container not running" };
+  }
+  const authProfile = {
+    providers: {
+      openai: {
+        apiKey: synapApiKey,
+        baseUrl: "http://intelligence-hub:3001/v1"
+      }
+    }
+  };
+  const authJson = JSON.stringify(authProfile, null, 2);
+  const containerPath = "/home/node/.openclaw/agents/main/agent/auth-profiles.json";
+  try {
+    execSync(`docker exec eve-arms-openclaw sh -c 'mkdir -p ${dirname3(containerPath)}'`, {
+      stdio: "ignore"
+    });
+    execSync(
+      `docker exec -i eve-arms-openclaw sh -c 'cat > ${containerPath}'`,
+      { input: authJson, stdio: ["pipe", "pipe", "ignore"] }
+    );
+    execSync(`docker exec eve-arms-openclaw sh -c 'chmod 600 ${containerPath}'`, {
+      stdio: "ignore"
+    });
+  } catch (err) {
+    return {
+      id: "openclaw",
+      outcome: "failed",
+      summary: "could not write OpenClaw auth-profiles.json",
+      detail: err instanceof Error ? err.message : String(err)
+    };
+  }
+  dockerRestart("eve-arms-openclaw");
+  return {
+    id: "openclaw",
+    outcome: "ok",
+    summary: "OpenClaw wired to Synap IS as OpenAI provider",
+    detail: containerPath
+  };
+}
+function wireOpenwebui(secrets) {
+  const synapApiKey = secrets?.synap?.apiKey?.trim();
+  if (!synapApiKey) {
+    return { id: "openwebui", outcome: "skipped", summary: "no Synap pod API key \u2014 install Synap first" };
+  }
+  const deployDir = "/opt/openwebui";
+  const envPath = join6(deployDir, ".env");
+  if (!existsSync3(deployDir)) {
+    return { id: "openwebui", outcome: "skipped", summary: "Open WebUI deploy dir not found \u2014 install it first" };
+  }
+  let existing = "";
+  try {
+    existing = __require("fs").readFileSync(envPath, "utf-8");
+  } catch {
+  }
+  const marker = "# AI wiring \u2014 managed by eve ai apply";
+  const before = existing.includes(marker) ? existing.split(marker)[0].trimEnd() : existing.trimEnd();
+  const block = [
+    marker,
+    `SYNAP_API_KEY=${synapApiKey}`,
+    `SYNAP_IS_URL=http://intelligence-hub:3001`
+  ].join("\n");
+  try {
+    writeFileSync(envPath, (before ? before + "\n\n" : "") + block + "\n", { mode: 384 });
+  } catch (err) {
+    return {
+      id: "openwebui",
+      outcome: "failed",
+      summary: "could not write Open WebUI env",
+      detail: err instanceof Error ? err.message : String(err)
+    };
+  }
+  if (isContainerRunning("hestia-openwebui")) {
+    dockerRestart("hestia-openwebui");
+  }
+  return {
+    id: "openwebui",
+    outcome: "ok",
+    summary: "Open WebUI wired to Synap IS",
+    detail: envPath
+  };
+}
+function wireBuilder(_secrets, componentId) {
+  return {
+    id: componentId,
+    outcome: "skipped",
+    summary: "builder organ uses Synap IS via Hub Protocol \u2014 wired during install"
+  };
+}
+function wireComponentAi(componentId, secrets) {
+  const comp = COMPONENTS.find((c) => c.id === componentId);
+  if (!comp) {
+    return { id: componentId, outcome: "failed", summary: `unknown component: ${componentId}` };
+  }
+  switch (componentId) {
+    case "synap":
+      return wireSynapIs(secrets);
+    case "openclaw":
+      return wireOpenclaw(secrets);
+    case "openwebui":
+      return wireOpenwebui(secrets);
+    case "hermes":
+    case "opencode":
+    case "openclaude":
+      return wireBuilder(secrets, componentId);
+    default:
+      return {
+        id: componentId,
+        outcome: "skipped",
+        summary: "no AI wiring needed"
+      };
+  }
+}
+function wireAllInstalledComponents(secrets, installedComponents) {
+  void pickPrimaryProvider;
+  return installedComponents.map((id) => wireComponentAi(id, secrets));
+}
+function hasAnyProvider(secrets) {
+  const providers = secrets?.ai?.providers ?? [];
+  return providers.some((p) => p.apiKey && p.apiKey.trim().length > 0);
+}
+
 // src/builder-hub-wiring.ts
-import { existsSync as existsSync3, mkdirSync, writeFileSync, copyFileSync } from "fs";
+import { existsSync as existsSync4, mkdirSync as mkdirSync2, writeFileSync as writeFileSync2, copyFileSync } from "fs";
 import { homedir as homedir5 } from "os";
-import { join as join6 } from "path";
+import { join as join7 } from "path";
 var DEFAULT_HUB_PATH = "/api/hub";
 function resolveHubBaseUrl(secrets) {
   if (secrets?.synap?.hubBaseUrl?.trim()) {
@@ -1759,7 +1976,7 @@ function resolveHubBaseUrl(secrets) {
   return `${base}${DEFAULT_HUB_PATH}`;
 }
 function defaultSkillsDir() {
-  return join6(homedir5(), ".eve", "skills");
+  return join7(homedir5(), ".eve", "skills");
 }
 var SYNAP_SKILL_MD = `---
 name: synap-hub
@@ -1775,11 +1992,11 @@ description: Call the Synap Data Pod via Hub Protocol (Bearer SYNAP_API_KEY). Us
 Prefer small, idempotent requests. Do not exfiltrate keys.
 `;
 function ensureEveSkillsLayout(skillsDir = defaultSkillsDir()) {
-  const synapDir = join6(skillsDir, "synap");
-  mkdirSync(synapDir, { recursive: true });
-  const skillPath = join6(synapDir, "SKILL.md");
-  if (!existsSync3(skillPath)) {
-    writeFileSync(skillPath, SYNAP_SKILL_MD, "utf-8");
+  const synapDir = join7(skillsDir, "synap");
+  mkdirSync2(synapDir, { recursive: true });
+  const skillPath = join7(synapDir, "SKILL.md");
+  if (!existsSync4(skillPath)) {
+    writeFileSync2(skillPath, SYNAP_SKILL_MD, "utf-8");
   }
 }
 async function writeBuilderProjectEnv(projectDir, cwd = process.cwd()) {
@@ -1798,17 +2015,17 @@ async function writeBuilderProjectEnv(projectDir, cwd = process.cwd()) {
     `DOKPLOY_API_KEY=${secrets?.builder?.dokployApiKey ?? ""}`,
     ""
   ];
-  writeFileSync(join6(projectDir, ".env"), lines.join("\n"), { mode: 384 });
+  writeFileSync2(join7(projectDir, ".env"), lines.join("\n"), { mode: 384 });
 }
 async function writeSandboxEnvFile(cwd = process.cwd()) {
   const secrets = await readEveSecrets(cwd);
   const hub = resolveHubBaseUrl(secrets);
   const skillsDir = secrets?.builder?.skillsDir ?? defaultSkillsDir();
-  const workspaceDir = secrets?.builder?.workspaceDir ?? join6(cwd, ".eve", "workspace");
+  const workspaceDir = secrets?.builder?.workspaceDir ?? join7(cwd, ".eve", "workspace");
   ensureEveSkillsLayout(skillsDir);
-  const eveDir2 = join6(cwd, ".eve");
-  mkdirSync(eveDir2, { recursive: true });
-  const path2 = join6(eveDir2, "sandbox.env");
+  const eveDir2 = join7(cwd, ".eve");
+  mkdirSync2(eveDir2, { recursive: true });
+  const path2 = join7(eveDir2, "sandbox.env");
   const lines = [
     `SYNAP_API_URL=${secrets?.synap?.apiUrl ?? ""}`,
     `SYNAP_API_KEY=${secrets?.synap?.apiKey ?? ""}`,
@@ -1817,22 +2034,22 @@ async function writeSandboxEnvFile(cwd = process.cwd()) {
     `EVE_WORKSPACE_DIR=${workspaceDir}`,
     `DOKPLOY_WEBHOOK_URL=${secrets?.builder?.dokployWebhookUrl ?? process.env.DOKPLOY_WEBHOOK_URL ?? ""}`
   ];
-  writeFileSync(path2, lines.join("\n") + "\n", { mode: 384 });
+  writeFileSync2(path2, lines.join("\n") + "\n", { mode: 384 });
   return path2;
 }
 function copySynapSkillIntoClaudeProject(projectDir, skillsDir = defaultSkillsDir()) {
   ensureEveSkillsLayout(skillsDir);
-  const src = join6(skillsDir, "synap", "SKILL.md");
-  const destDir = join6(projectDir, ".claude", "skills", "synap");
-  mkdirSync(destDir, { recursive: true });
-  const dest = join6(destDir, "SKILL.md");
+  const src = join7(skillsDir, "synap", "SKILL.md");
+  const destDir = join7(projectDir, ".claude", "skills", "synap");
+  mkdirSync2(destDir, { recursive: true });
+  const dest = join7(destDir, "SKILL.md");
   copyFileSync(src, dest);
 }
 async function writeClaudeCodeSettings(projectDir, cwd = process.cwd()) {
   const secrets = await readEveSecrets(cwd);
   const hub = resolveHubBaseUrl(secrets);
-  const dir = join6(projectDir, ".claude");
-  mkdirSync(dir, { recursive: true });
+  const dir = join7(projectDir, ".claude");
+  mkdirSync2(dir, { recursive: true });
   const settings = {
     env: {
       SYNAP_API_URL: secrets?.synap?.apiUrl ?? "",
@@ -1841,15 +2058,15 @@ async function writeClaudeCodeSettings(projectDir, cwd = process.cwd()) {
       EVE_SKILLS_DIR: secrets?.builder?.skillsDir ?? defaultSkillsDir()
     }
   };
-  writeFileSync(join6(dir, "settings.json"), JSON.stringify(settings, null, 2), "utf-8");
+  writeFileSync2(join7(dir, "settings.json"), JSON.stringify(settings, null, 2), "utf-8");
 }
 async function writeHermesEnvFile(cwd = process.cwd()) {
   const secrets = await readEveSecrets(cwd);
   const hub = resolveHubBaseUrl(secrets);
   const hermesConfig = secrets?.builder?.hermes;
-  const eveDir2 = join6(cwd, ".eve");
-  mkdirSync(eveDir2, { recursive: true });
-  const path2 = join6(eveDir2, "hermes.env");
+  const eveDir2 = join7(cwd, ".eve");
+  mkdirSync2(eveDir2, { recursive: true });
+  const path2 = join7(eveDir2, "hermes.env");
   const lines = [
     `SYNAP_API_URL=${secrets?.synap?.apiUrl ?? ""}`,
     `SYNAP_API_KEY=${secrets?.synap?.apiKey ?? ""}`,
@@ -1857,10 +2074,10 @@ async function writeHermesEnvFile(cwd = process.cwd()) {
     `HERMES_ENABLED=${hermesConfig?.enabled ?? true}`,
     `HERMES_POLL_INTERVAL_MS=${hermesConfig?.pollIntervalMs ?? 3e4}`,
     `HERMES_MAX_CONCURRENT_TASKS=${hermesConfig?.maxConcurrentTasks ?? 1}`,
-    `EVE_WORKSPACE_DIR=${secrets?.builder?.workspaceDir ?? join6(cwd, ".eve", "workspace")}`,
+    `EVE_WORKSPACE_DIR=${secrets?.builder?.workspaceDir ?? join7(cwd, ".eve", "workspace")}`,
     ""
   ];
-  writeFileSync(path2, lines.join("\n"), { mode: 384 });
+  writeFileSync2(path2, lines.join("\n"), { mode: 384 });
   return path2;
 }
 
@@ -1896,6 +2113,7 @@ export {
   getAccessUrls,
   getServerIp,
   getSetupProfilePath,
+  hasAnyProvider,
   migrateStateDirectory,
   probeHardware,
   readEveSecrets,
@@ -1906,6 +2124,8 @@ export {
   secretsPath,
   selectedIds,
   serviceComponents,
+  wireAllInstalledComponents,
+  wireComponentAi,
   writeBuilderProjectEnv,
   writeClaudeCodeSettings,
   writeEveSecrets,

@@ -1243,6 +1243,51 @@ declare function selectedIds(selected: Record<string, boolean>): string[];
 /** Components that expose an HTTP service (eligible for Traefik routing). */
 declare function serviceComponents(): ComponentInfo[];
 
+/**
+ * Centralized AI provider wiring for Eve components.
+ *
+ * Single source of truth: `secrets.ai.providers[]`. Every component that
+ * consumes AI (Synap IS, OpenClaw, Open WebUI, Hermes/OpenCode/OpenClaude)
+ * derives its config from there via `wireComponentAi(id, secrets)`.
+ *
+ * Key architectural choice: **Synap IS is the AI hub**. Other components
+ * are wired to use IS as their OpenAI-compat backend. Only Synap IS holds
+ * upstream provider keys (OpenAI, Anthropic, OpenRouter). That collapses
+ * the multi-component wiring problem to one place.
+ *
+ * Effects of wiring:
+ *   - Writes a config file on the host or inside a container
+ *   - Optionally restarts the affected container so changes take effect
+ *
+ * Caller is responsible for catching errors and reporting per-component.
+ */
+
+interface WireAiResult {
+    /** Component id this result is for. */
+    id: string;
+    /** ok | skipped | failed. */
+    outcome: 'ok' | 'skipped' | 'failed';
+    /** One-line summary suitable for spinner.succeed/skip/fail. */
+    summary: string;
+    /** Optional detail (file path written, error message, etc). */
+    detail?: string;
+}
+/**
+ * Wire AI for one component. Caller catches errors; this function returns
+ * a typed result instead of throwing.
+ */
+declare function wireComponentAi(componentId: string, secrets: EveSecrets | null): WireAiResult;
+/**
+ * Wire AI for every installed component. Useful from `eve install`,
+ * `eve ai apply`, and `eve ai providers add`.
+ */
+declare function wireAllInstalledComponents(secrets: EveSecrets | null, installedComponents: string[]): WireAiResult[];
+/**
+ * Inverse check: is the user's `secrets.ai` ready to wire components, or do
+ * they need to add a provider first?
+ */
+declare function hasAnyProvider(secrets: EveSecrets | null): boolean;
+
 /** Default Hub Protocol path on the Synap API host (Better Auth / Hub REST). */
 declare const DEFAULT_HUB_PATH = "/api/hub";
 declare function resolveHubBaseUrl(secrets: EveSecrets | null): string | undefined;
@@ -1305,4 +1350,4 @@ declare function writeHermesEnvFile(cwd?: string): Promise<string>;
 
 declare const VERSION = "0.1.0";
 
-export { type AIModel, AiModeSchema, AiProviderSchema, type BuilderEngine, BuilderEngineSchema, COMPONENTS, type ComponentEntry, type ComponentInfo, ConfigManager, type Credentials, CredentialsManager, DEFAULT_HERMES_CONFIG, DEFAULT_HUB_PATH, type DNAError, type DockerCompose, DockerComposeGenerator, type DockerComposeService, EVE_DASHBOARD_SERVICE, type EntityState, EntityStateManager, type EveConfig, type EveSecrets, type HardwareFacts, type LegacySetupProfileKind, type ManagedBy, type MessagingConfig, type MessagingPlatform, type Organ, type OrganInfo, type OrganState, type OrganStatus, type Service, type ServiceAccess, type ServiceConfig, type ServiceInfo, type SetupProfile, type SetupProfileKind, SetupProfileKindSchema, SetupProfileSchema, type SetupProfileV2, type Task, type TaskPriority, type TaskStatus, type TaskType, type UsbSetupManifest, UsbSetupManifestSchema, VERSION, type VoiceConfig, type VoiceProvider, addonComponentIds, allComponentIds, configManager, copySynapSkillIntoClaudeProject, createDockerComposeGenerator, credentialsManager, defaultSkillsDir, ensureEveSkillsLayout, ensureSecretValue, entityStateManager, formatHardwareReport, getAccessUrls, getServerIp, getSetupProfilePath, migrateStateDirectory, probeHardware, readEveSecrets, readSetupProfile, readUsbSetupManifest, resolveComponent, resolveHubBaseUrl, secretsPath, selectedIds, serviceComponents, writeBuilderProjectEnv, writeClaudeCodeSettings, writeEveSecrets, writeHermesEnvFile, writeSandboxEnvFile, writeSetupProfile, writeUsbSetupManifest };
+export { type AIModel, AiModeSchema, AiProviderSchema, type BuilderEngine, BuilderEngineSchema, COMPONENTS, type ComponentEntry, type ComponentInfo, ConfigManager, type Credentials, CredentialsManager, DEFAULT_HERMES_CONFIG, DEFAULT_HUB_PATH, type DNAError, type DockerCompose, DockerComposeGenerator, type DockerComposeService, EVE_DASHBOARD_SERVICE, type EntityState, EntityStateManager, type EveConfig, type EveSecrets, type HardwareFacts, type LegacySetupProfileKind, type ManagedBy, type MessagingConfig, type MessagingPlatform, type Organ, type OrganInfo, type OrganState, type OrganStatus, type Service, type ServiceAccess, type ServiceConfig, type ServiceInfo, type SetupProfile, type SetupProfileKind, SetupProfileKindSchema, SetupProfileSchema, type SetupProfileV2, type Task, type TaskPriority, type TaskStatus, type TaskType, type UsbSetupManifest, UsbSetupManifestSchema, VERSION, type VoiceConfig, type VoiceProvider, type WireAiResult, addonComponentIds, allComponentIds, configManager, copySynapSkillIntoClaudeProject, createDockerComposeGenerator, credentialsManager, defaultSkillsDir, ensureEveSkillsLayout, ensureSecretValue, entityStateManager, formatHardwareReport, getAccessUrls, getServerIp, getSetupProfilePath, hasAnyProvider, migrateStateDirectory, probeHardware, readEveSecrets, readSetupProfile, readUsbSetupManifest, resolveComponent, resolveHubBaseUrl, secretsPath, selectedIds, serviceComponents, wireAllInstalledComponents, wireComponentAi, writeBuilderProjectEnv, writeClaudeCodeSettings, writeEveSecrets, writeHermesEnvFile, writeSandboxEnvFile, writeSetupProfile, writeUsbSetupManifest };

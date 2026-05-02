@@ -2,8 +2,14 @@ import { Command } from 'commander';
 import { execa } from 'execa';
 import { OllamaService } from '@eve/brain';
 import { getGlobalCliFlags, outputJson } from '@eve/cli-kit';
-import { readEveSecrets, writeEveSecrets } from '@eve/dna';
-import { colors, printError, printInfo } from '../lib/ui.js';
+import {
+  readEveSecrets,
+  writeEveSecrets,
+  entityStateManager,
+  wireAllInstalledComponents,
+  type WireAiResult,
+} from '@eve/dna';
+import { colors, printError, printInfo, printSuccess, printWarning } from '../lib/ui.js';
 
 type ProviderId = 'ollama' | 'openrouter' | 'anthropic' | 'openai';
 
@@ -54,6 +60,38 @@ function parseProviderId(s: string): ProviderId {
   const v = s.trim().toLowerCase();
   if (v === 'ollama' || v === 'openrouter' || v === 'anthropic' || v === 'openai') return v;
   throw new Error('Provider must be one of: ollama, openrouter, anthropic, openai');
+}
+
+/**
+ * Re-wire every installed AI-consuming component from current secrets.
+ * Used by `eve ai apply` and as a default after `eve ai providers add`.
+ */
+async function applyAiWiring(): Promise<WireAiResult[]> {
+  const secrets = await readEveSecrets(process.cwd());
+  let installed: string[] = [];
+  try {
+    installed = await entityStateManager.getInstalledComponents();
+  } catch { /* state not initialized */ }
+
+  if (installed.length === 0) {
+    printWarning('No installed components — nothing to wire.');
+    return [];
+  }
+
+  console.log();
+  console.log(colors.primary.bold('Wiring AI provider into installed components:'));
+  const results = wireAllInstalledComponents(secrets, installed);
+  for (const r of results) {
+    if (r.outcome === 'ok') {
+      console.log(`  ${colors.success('✓')} ${r.id.padEnd(12)} ${colors.muted(r.summary)}`);
+    } else if (r.outcome === 'skipped') {
+      console.log(`  ${colors.muted('-')} ${r.id.padEnd(12)} ${colors.muted(r.summary)}`);
+    } else {
+      console.log(`  ${colors.error('✗')} ${r.id.padEnd(12)} ${colors.error(r.summary)}`);
+      if (r.detail) console.log(`    ${colors.muted(r.detail)}`);
+    }
+  }
+  return results;
 }
 
 export function aiCommandGroup(program: Command): void {
@@ -119,12 +157,13 @@ export function aiCommandGroup(program: Command): void {
 
   providers
     .command('add <id>')
-    .description('Add or update provider credentials/model')
+    .description('Add or update provider credentials/model — auto-wires every installed component')
     .option('--api-key <key>', 'Provider API key')
     .option('--base-url <url>', 'Custom provider base URL')
     .option('--model <name>', 'Default model name')
     .option('--disable', 'Set enabled=false')
-    .action(async (id: string, opts: { apiKey?: string; baseUrl?: string; model?: string; disable?: boolean }) => {
+    .option('--no-rewire', "Don't auto-rewire installed components after save")
+    .action(async (id: string, opts: { apiKey?: string; baseUrl?: string; model?: string; disable?: boolean; rewire?: boolean }) => {
       try {
         const pid = parseProviderId(id);
         const secrets = await readEveSecrets(process.cwd());
@@ -140,7 +179,14 @@ export function aiCommandGroup(program: Command): void {
         if (idx >= 0) list[idx] = next;
         else list.push(next);
         await writeEveSecrets({ ai: { providers: list } }, process.cwd());
-        printInfo(`Provider ${pid} saved.`);
+        printSuccess(`Provider ${pid} saved.`);
+
+        // Auto-rewire every installed component (default behavior)
+        if (opts.rewire !== false) {
+          await applyAiWiring();
+        } else {
+          printInfo('Run `eve ai apply` to push the new key to installed components.');
+        }
       } catch (e) {
         printError(e instanceof Error ? e.message : String(e));
         process.exit(1);
@@ -169,6 +215,18 @@ export function aiCommandGroup(program: Command): void {
         const pid = parseProviderId(id);
         await writeEveSecrets({ ai: { fallbackProvider: pid } }, process.cwd());
         printInfo(`Fallback provider set to ${pid}`);
+      } catch (e) {
+        printError(e instanceof Error ? e.message : String(e));
+        process.exit(1);
+      }
+    });
+
+  ai
+    .command('apply')
+    .description('Re-wire every installed component to use the current AI provider config')
+    .action(async () => {
+      try {
+        await applyAiWiring();
       } catch (e) {
         printError(e instanceof Error ? e.message : String(e));
         process.exit(1);

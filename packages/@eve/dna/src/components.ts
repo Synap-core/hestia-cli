@@ -102,7 +102,9 @@ export const COMPONENTS: ComponentInfo[] = [
       internalPort: 3000,
       hostPort: 3000,
       subdomain: 'openclaw',
-      healthPath: '/',
+      // healthPath omitted: OpenClaw's web UI may not respond to GET / with
+      // 2xx (auth-gated, redirects, etc.). Container-running is enough for
+      // the verify step; browser users hit the UI via Traefik directly.
     },
   },
   {

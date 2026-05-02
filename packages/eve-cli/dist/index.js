@@ -419,7 +419,14 @@ function getCompletenessBar(percent) {
 
 // src/commands/doctor.ts
 import { execa } from "execa";
-import { entityStateManager as entityStateManager2, COMPONENTS as COMPONENTS2, readEveSecrets, getAccessUrls } from "@eve/dna";
+import { execSync as execSync3 } from "child_process";
+import {
+  entityStateManager as entityStateManager2,
+  COMPONENTS as COMPONENTS2,
+  readEveSecrets,
+  getAccessUrls,
+  hasAnyProvider
+} from "@eve/dna";
 import { verifyComponent } from "@eve/legs";
 
 // src/lib/probe-routes.ts
@@ -680,6 +687,97 @@ async function runDiagnostics(verbose = false) {
     } catch {
       routeCheck.fail("Could not probe domain routes");
     }
+  }
+  const aiCheck = createSpinner("Checking AI provider wiring...");
+  aiCheck.start();
+  try {
+    const aiSecrets = secrets ?? await readEveSecrets(process.cwd());
+    if (!hasAnyProvider(aiSecrets)) {
+      const aiConsumers = ["synap", "openclaw", "openwebui"];
+      const willUseAi = installed.some((c) => aiConsumers.includes(c));
+      if (willUseAi) {
+        aiCheck.warn("No AI provider configured");
+        checks.push({
+          name: "AI provider",
+          status: "warn",
+          message: "No provider key in secrets.ai.providers",
+          fix: "eve ai providers add anthropic --api-key <key>"
+        });
+      } else {
+        aiCheck.succeed("No AI provider configured (no AI-consuming components installed yet)");
+      }
+    } else {
+      aiCheck.succeed("AI provider configured");
+      if (installed.includes("openclaw")) {
+        try {
+          const out = execSync3(
+            `docker exec eve-arms-openclaw test -f /home/node/.openclaw/agents/main/agent/auth-profiles.json && echo OK || echo MISSING`,
+            { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }
+          ).trim();
+          if (out === "OK") {
+            checks.push({ name: "OpenClaw AI wiring", status: "pass", message: "auth-profiles.json present in container" });
+          } else {
+            checks.push({
+              name: "OpenClaw AI wiring",
+              status: "fail",
+              message: "auth-profiles.json missing \u2014 agent loop will fail",
+              fix: "eve ai apply"
+            });
+          }
+        } catch {
+          checks.push({
+            name: "OpenClaw AI wiring",
+            status: "warn",
+            message: "Could not check (container not running?)",
+            fix: "docker start eve-arms-openclaw"
+          });
+        }
+      }
+      if (installed.includes("openwebui")) {
+        try {
+          const { existsSync: existsSync8, readFileSync: readFileSync2 } = await import("fs");
+          const envPath = "/opt/openwebui/.env";
+          if (existsSync8(envPath)) {
+            const content = readFileSync2(envPath, "utf-8");
+            if (content.includes("SYNAP_IS_URL") && content.includes("SYNAP_API_KEY")) {
+              checks.push({ name: "Open WebUI AI wiring", status: "pass", message: ".env points at Synap IS" });
+            } else {
+              checks.push({
+                name: "Open WebUI AI wiring",
+                status: "warn",
+                message: ".env missing SYNAP_IS_URL/SYNAP_API_KEY",
+                fix: "eve ai apply"
+              });
+            }
+          }
+        } catch {
+        }
+      }
+      if (installed.includes("synap")) {
+        try {
+          const { existsSync: existsSync8, readFileSync: readFileSync2 } = await import("fs");
+          const deployDir = process.env.SYNAP_DEPLOY_DIR ?? "/opt/synap-backend/deploy";
+          const envPath = `${deployDir}/.env`;
+          if (existsSync8(envPath)) {
+            const content = readFileSync2(envPath, "utf-8");
+            const hasKey = /^(OPENAI|ANTHROPIC|OPENROUTER)_API_KEY=.+/m.test(content);
+            if (hasKey) {
+              checks.push({ name: "Synap IS AI wiring", status: "pass", message: "upstream provider key in deploy/.env" });
+            } else {
+              checks.push({
+                name: "Synap IS AI wiring",
+                status: "warn",
+                message: "No upstream provider key in Synap deploy/.env",
+                fix: "eve ai apply"
+              });
+            }
+          }
+        } catch {
+        }
+      }
+    }
+  } catch {
+    aiCheck.fail("AI wiring check failed");
   }
   const stateCheck = createSpinner("Checking entity state...");
   stateCheck.start();
@@ -1235,7 +1333,9 @@ import {
   ensureEveSkillsLayout as ensureEveSkillsLayout2,
   defaultSkillsDir as defaultSkillsDir2,
   ensureSecretValue,
-  getServerIp as getServerIp2
+  getServerIp as getServerIp2,
+  hasAnyProvider as hasAnyProvider2,
+  wireAllInstalledComponents
 } from "@eve/dna";
 import { getGlobalCliFlags as getGlobalCliFlags2, outputJson } from "@eve/cli-kit";
 import { runBrainInit as runBrainInit2, runInferenceInit as runInferenceInit2, resolveSynapDelegate } from "@eve/brain";
@@ -1426,6 +1526,9 @@ async function runInstall(opts) {
   if (!jsonMode && !opts.skipInteractive) {
     await maybeOfferDomainSetup(installedComponents);
   }
+  if (!jsonMode && !opts.skipInteractive) {
+    await maybeOfferAiProviderSetup(installedComponents);
+  }
   if (!jsonMode && !opts.skipInteractive && process.platform === "linux") {
     await maybeOfferDashboardService();
   }
@@ -1513,6 +1616,73 @@ async function maybeOfferDomainSetup(installedComponents) {
   console.log();
   printInfo("Once DNS propagates, verify with: eve domain check");
   if (wantSsl) printInfo("SSL certificates provision automatically (1\u20135 min after DNS works)");
+}
+async function maybeOfferAiProviderSetup(installedComponents) {
+  const existing = await readEveSecrets3(process.cwd());
+  if (hasAnyProvider2(existing)) return;
+  const aiConsumers = ["synap", "openclaw", "openwebui", "hermes", "opencode", "openclaude"];
+  const willUseAi = installedComponents.some((c) => aiConsumers.includes(c));
+  if (!willUseAi) return;
+  console.log();
+  console.log(colors.muted("Eve uses Synap IS as the central AI hub. Other components (OpenClaw,"));
+  console.log(colors.muted("Open WebUI, agents) route through it \u2014 so you only set this once."));
+  console.log();
+  const providerChoice = await select2({
+    message: "Which AI provider do you want to use?",
+    options: [
+      { value: "anthropic", label: "Anthropic (Claude) \u2014 recommended", hint: "best quality" },
+      { value: "openai", label: "OpenAI (GPT-5/4)" },
+      { value: "openrouter", label: "OpenRouter (multi-provider)" },
+      { value: "ollama", label: "Ollama only (local, free)", hint: "requires ollama component" },
+      { value: "skip", label: "Skip \u2014 configure later with `eve ai providers add`" }
+    ],
+    initialValue: "anthropic"
+  });
+  if (isCancel2(providerChoice) || providerChoice === "skip") {
+    printInfo("You can configure your AI provider later with: eve ai providers add <id> --api-key <key>");
+    return;
+  }
+  if (providerChoice === "ollama") {
+    await writeEveSecrets2({
+      ai: {
+        defaultProvider: "ollama",
+        providers: [{ id: "ollama", enabled: true }]
+      }
+    });
+    printSuccess("Ollama set as default provider (no API key needed).");
+    return;
+  }
+  const apiKey = await text({
+    message: `Paste your ${providerChoice} API key:`,
+    placeholder: providerChoice === "anthropic" ? "sk-ant-..." : providerChoice === "openai" ? "sk-..." : "sk-or-...",
+    validate: (v) => v && v.trim().length > 8 ? void 0 : "API key is required"
+  });
+  if (isCancel2(apiKey)) {
+    printInfo("Skipped. Configure later with: eve ai providers add " + providerChoice + " --api-key <key>");
+    return;
+  }
+  await writeEveSecrets2({
+    ai: {
+      defaultProvider: providerChoice,
+      providers: [{ id: providerChoice, enabled: true, apiKey: apiKey.trim() }]
+    }
+  });
+  printSuccess(`${providerChoice} provider saved.`);
+  console.log();
+  const spinner = createSpinner("Wiring AI provider into installed components...");
+  spinner.start();
+  const updated = await readEveSecrets3(process.cwd());
+  const results = wireAllInstalledComponents(updated, installedComponents);
+  const ok = results.filter((r) => r.outcome === "ok").length;
+  const failed = results.filter((r) => r.outcome === "failed");
+  if (failed.length === 0) {
+    spinner.succeed(`AI wiring applied to ${ok} component(s)`);
+  } else {
+    spinner.warn(`AI wiring partially applied (${ok} ok, ${failed.length} failed)`);
+    for (const r of failed) {
+      printWarning(`  \u2022 ${r.id}: ${r.summary}${r.detail ? " \u2014 " + r.detail : ""}`);
+    }
+  }
 }
 async function maybeOfferDashboardService() {
   if (process.getuid && process.getuid() !== 0) return;
@@ -3234,7 +3404,7 @@ function configCommands(program2) {
 
 // src/commands/manage/backup-update.ts
 import { execa as execa8 } from "execa";
-import { execSync as execSync3, spawnSync } from "child_process";
+import { execSync as execSync4, spawnSync } from "child_process";
 import { createInterface } from "readline/promises";
 import { stdin as input, stdout as output } from "process";
 import { existsSync as existsSync4 } from "fs";
@@ -3242,7 +3412,7 @@ import { join as join4 } from "path";
 import { getGlobalCliFlags as getGlobalCliFlags7 } from "@eve/cli-kit";
 function getSynapBackendContainer() {
   try {
-    const out = execSync3(
+    const out = execSync4(
       'docker ps --filter "label=com.docker.compose.project=synap-backend" --filter "label=com.docker.compose.service=backend" --format "{{.Names}}"',
       { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }
     ).trim();
@@ -3253,7 +3423,7 @@ function getSynapBackendContainer() {
 }
 function connectToEveNetwork(name) {
   try {
-    execSync3(`docker network connect eve-network ${name}`, { stdio: ["pipe", "pipe", "ignore"] });
+    execSync4(`docker network connect eve-network ${name}`, { stdio: ["pipe", "pipe", "ignore"] });
   } catch {
   }
 }
@@ -3417,7 +3587,7 @@ function backupUpdateCommands(program2) {
 }
 
 // src/commands/manage/purge.ts
-import { execSync as execSync4 } from "child_process";
+import { execSync as execSync5 } from "child_process";
 import { existsSync as existsSync5, rmSync } from "fs";
 import { homedir as homedir2 } from "os";
 import { join as join5 } from "path";
@@ -3443,7 +3613,7 @@ var DEPLOY_DIRS = [
 ];
 function listEveContainers() {
   try {
-    const out = execSync4('docker ps -a --format "{{.Names}}"', {
+    const out = execSync5('docker ps -a --format "{{.Names}}"', {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "ignore"]
     }).trim();
@@ -3454,7 +3624,7 @@ function listEveContainers() {
 }
 function listEveVolumes() {
   try {
-    const out = execSync4('docker volume ls --format "{{.Name}}"', {
+    const out = execSync5('docker volume ls --format "{{.Name}}"', {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "ignore"]
     }).trim();
@@ -3465,7 +3635,7 @@ function listEveVolumes() {
 }
 function listEveNetworks() {
   try {
-    const out = execSync4('docker network ls --format "{{.Name}}"', {
+    const out = execSync5('docker network ls --format "{{.Name}}"', {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "ignore"]
     }).trim();
@@ -3697,7 +3867,12 @@ What is NOT removed by default:
 import { execa as execa10 } from "execa";
 import { OllamaService } from "@eve/brain";
 import { getGlobalCliFlags as getGlobalCliFlags9, outputJson as outputJson5 } from "@eve/cli-kit";
-import { readEveSecrets as readEveSecrets5, writeEveSecrets as writeEveSecrets4 } from "@eve/dna";
+import {
+  readEveSecrets as readEveSecrets5,
+  writeEveSecrets as writeEveSecrets4,
+  entityStateManager as entityStateManager8,
+  wireAllInstalledComponents as wireAllInstalledComponents2
+} from "@eve/dna";
 function resolveHubBaseUrlFromSecrets(secrets) {
   const explicit = secrets?.synap?.hubBaseUrl?.trim();
   if (explicit) return explicit.replace(/\/$/, "");
@@ -3732,6 +3907,32 @@ function parseProviderId(s) {
   const v = s.trim().toLowerCase();
   if (v === "ollama" || v === "openrouter" || v === "anthropic" || v === "openai") return v;
   throw new Error("Provider must be one of: ollama, openrouter, anthropic, openai");
+}
+async function applyAiWiring() {
+  const secrets = await readEveSecrets5(process.cwd());
+  let installed = [];
+  try {
+    installed = await entityStateManager8.getInstalledComponents();
+  } catch {
+  }
+  if (installed.length === 0) {
+    printWarning("No installed components \u2014 nothing to wire.");
+    return [];
+  }
+  console.log();
+  console.log(colors.primary.bold("Wiring AI provider into installed components:"));
+  const results = wireAllInstalledComponents2(secrets, installed);
+  for (const r of results) {
+    if (r.outcome === "ok") {
+      console.log(`  ${colors.success("\u2713")} ${r.id.padEnd(12)} ${colors.muted(r.summary)}`);
+    } else if (r.outcome === "skipped") {
+      console.log(`  ${colors.muted("-")} ${r.id.padEnd(12)} ${colors.muted(r.summary)}`);
+    } else {
+      console.log(`  ${colors.error("\u2717")} ${r.id.padEnd(12)} ${colors.error(r.summary)}`);
+      if (r.detail) console.log(`    ${colors.muted(r.detail)}`);
+    }
+  }
+  return results;
 }
 function aiCommandGroup(program2) {
   const ai = program2.command("ai").description("AI foundation helpers (local Ollama + provider routing)");
@@ -3784,7 +3985,7 @@ function aiCommandGroup(program2) {
       console.log(`${p.id}	enabled=${p.enabled ?? true}	model=${p.defaultModel ?? "(unset)"}`);
     }
   });
-  providers.command("add <id>").description("Add or update provider credentials/model").option("--api-key <key>", "Provider API key").option("--base-url <url>", "Custom provider base URL").option("--model <name>", "Default model name").option("--disable", "Set enabled=false").action(async (id, opts) => {
+  providers.command("add <id>").description("Add or update provider credentials/model \u2014 auto-wires every installed component").option("--api-key <key>", "Provider API key").option("--base-url <url>", "Custom provider base URL").option("--model <name>", "Default model name").option("--disable", "Set enabled=false").option("--no-rewire", "Don't auto-rewire installed components after save").action(async (id, opts) => {
     try {
       const pid = parseProviderId(id);
       const secrets = await readEveSecrets5(process.cwd());
@@ -3800,7 +4001,12 @@ function aiCommandGroup(program2) {
       if (idx >= 0) list[idx] = next;
       else list.push(next);
       await writeEveSecrets4({ ai: { providers: list } }, process.cwd());
-      printInfo(`Provider ${pid} saved.`);
+      printSuccess(`Provider ${pid} saved.`);
+      if (opts.rewire !== false) {
+        await applyAiWiring();
+      } else {
+        printInfo("Run `eve ai apply` to push the new key to installed components.");
+      }
     } catch (e) {
       printError(e instanceof Error ? e.message : String(e));
       process.exit(1);
@@ -3821,6 +4027,14 @@ function aiCommandGroup(program2) {
       const pid = parseProviderId(id);
       await writeEveSecrets4({ ai: { fallbackProvider: pid } }, process.cwd());
       printInfo(`Fallback provider set to ${pid}`);
+    } catch (e) {
+      printError(e instanceof Error ? e.message : String(e));
+      process.exit(1);
+    }
+  });
+  ai.command("apply").description("Re-wire every installed component to use the current AI provider config").action(async () => {
+    try {
+      await applyAiWiring();
     } catch (e) {
       printError(e instanceof Error ? e.message : String(e));
       process.exit(1);
@@ -4160,10 +4374,10 @@ function uiCommand(program2) {
 }
 
 // src/commands/domain.ts
-import { execSync as execSync5 } from "child_process";
+import { execSync as execSync6 } from "child_process";
 import { existsSync as existsSync7, readdirSync, unlinkSync } from "fs";
 import { join as join7 } from "path";
-import { writeEveSecrets as writeEveSecrets6, readEveSecrets as readEveSecrets7, getAccessUrls as getAccessUrls2, getServerIp as getServerIp3, entityStateManager as entityStateManager8 } from "@eve/dna";
+import { writeEveSecrets as writeEveSecrets6, readEveSecrets as readEveSecrets7, getAccessUrls as getAccessUrls2, getServerIp as getServerIp3, entityStateManager as entityStateManager9 } from "@eve/dna";
 import { TraefikService as TraefikService2 } from "@eve/legs";
 function renderProbeTable(probes) {
   console.log(colors.muted("  " + "\u2500".repeat(60)));
@@ -4205,7 +4419,7 @@ function domainCommand(program2) {
     await writeEveSecrets6({ domain: { primary: domainName, ssl: !!opts.ssl, email: opts.email } });
     let installedComponents;
     try {
-      installedComponents = await entityStateManager8.getInstalledComponents();
+      installedComponents = await entityStateManager9.getInstalledComponents();
     } catch {
     }
     let writeOk = false;
@@ -4262,7 +4476,7 @@ function domainCommand(program2) {
     const secrets = await readEveSecrets7(process.cwd());
     let installedComponents;
     try {
-      installedComponents = await entityStateManager8.getInstalledComponents();
+      installedComponents = await entityStateManager9.getInstalledComponents();
     } catch {
     }
     const urls = getAccessUrls2(secrets, installedComponents);
@@ -4294,7 +4508,7 @@ function domainCommand(program2) {
     const warn = colors.warning("!");
     let traefikRunning = false;
     try {
-      const out = execSync5('docker ps --filter "name=eve-legs-traefik" --format "{{.Names}}"', {
+      const out = execSync6('docker ps --filter "name=eve-legs-traefik" --format "{{.Names}}"', {
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "ignore"]
       }).trim();
@@ -4323,7 +4537,7 @@ function domainCommand(program2) {
     console.log(colors.primary.bold("  Per-route probe (Host header \u2192 Traefik \u2192 upstream):"));
     let installedComponents;
     try {
-      installedComponents = await entityStateManager8.getInstalledComponents();
+      installedComponents = await entityStateManager9.getInstalledComponents();
     } catch {
     }
     const urls = getAccessUrls2(secrets, installedComponents);
@@ -4334,7 +4548,7 @@ function domainCommand(program2) {
     console.log(colors.muted("  " + "\u2500".repeat(58)));
     let loadedRouters = [];
     try {
-      const apiOut = execSync5("curl -s --max-time 3 http://localhost:8080/api/http/routers", {
+      const apiOut = execSync6("curl -s --max-time 3 http://localhost:8080/api/http/routers", {
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "ignore"]
       }).trim();
@@ -4361,7 +4575,7 @@ function domainCommand(program2) {
     console.log(colors.primary.bold("  What Traefik container sees (docker exec):"));
     console.log(colors.muted("  " + "\u2500".repeat(58)));
     try {
-      const containerStaticHead = execSync5(
+      const containerStaticHead = execSync6(
         "docker exec eve-legs-traefik cat /etc/traefik/traefik.yml 2>&1 | head -8",
         { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }
       ).trim();
@@ -4373,7 +4587,7 @@ function domainCommand(program2) {
       console.log(`    ${cross} Could not read static config inside container`);
     }
     try {
-      const containerLs = execSync5(
+      const containerLs = execSync6(
         "docker exec eve-legs-traefik ls -la /etc/traefik/dynamic/ 2>&1",
         { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }
       ).trim();
@@ -4388,7 +4602,7 @@ function domainCommand(program2) {
     console.log();
     console.log(colors.muted("  Traefik errors / config events (last 30 relevant lines):"));
     try {
-      const logs = execSync5(
+      const logs = execSync6(
         'docker logs eve-legs-traefik 2>&1 | grep -iE "error|warn|provider|configuration|cannot|failed|unable|loaded|started" | grep -v "Peeking first byte" | tail -30 || echo ""',
         { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }
       ).trim();
@@ -4435,7 +4649,7 @@ function domainCommand(program2) {
     console.log();
     printInfo("Removing existing Traefik container...");
     try {
-      execSync5("docker rm -f eve-legs-traefik", { stdio: "inherit" });
+      execSync6("docker rm -f eve-legs-traefik", { stdio: "inherit" });
     } catch {
     }
     const HOST_DYNAMIC_DIR = "/opt/traefik/dynamic";
@@ -4471,7 +4685,7 @@ function domainCommand(program2) {
     printInfo("Applying domain routes...");
     let installedComponents;
     try {
-      installedComponents = await entityStateManager8.getInstalledComponents();
+      installedComponents = await entityStateManager9.getInstalledComponents();
     } catch {
     }
     await traefik.configureSubdomains(domainName, !!secrets?.domain?.ssl, secrets?.domain?.email, installedComponents);
