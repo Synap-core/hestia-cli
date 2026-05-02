@@ -265,7 +265,7 @@ function MessagingSection() {
   }
 
   return (
-    <div className="rounded-lg border border-divider bg-content2/40 p-4 space-y-3">
+    <div className="rounded-lg border border-divider bg-content2/40 p-4 space-y-6">
       <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-default-500">
         <MessageSquare className="h-3.5 w-3.5" />
         <span>Messaging</span>
@@ -356,7 +356,7 @@ function VoiceSection() {
   }
 
   return (
-    <div className="rounded-lg border border-divider bg-content2/40 p-4 space-y-3">
+    <div className="rounded-lg border border-divider bg-content2/40 p-4 space-y-6">
       <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-default-500">
         <Phone className="h-3.5 w-3.5" />
         <span>Voice</span>

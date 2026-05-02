@@ -73,8 +73,11 @@ export function HermesConfigPanel() {
         </p>
       </div>
 
-      {/* Settings */}
-      <div className="rounded-lg border border-divider bg-content2/40 p-4 space-y-3">
+      {/* Settings — outside-placed labels need extra vertical breathing
+          room above each field. space-y-3 (12px) was too tight: the Input's
+          label sits ~24px above the input and visually collided with the
+          Switch's description on the line above. space-y-6 reserves enough. */}
+      <div className="rounded-lg border border-divider bg-content2/40 p-4 space-y-6">
         <div className="text-xs font-medium uppercase tracking-wider text-default-500">
           Daemon settings
         </div>
@@ -82,7 +85,7 @@ export function HermesConfigPanel() {
           <div className="flex justify-center py-3"><Spinner size="sm" /></div>
         ) : (
           <>
-            <div className="flex items-center gap-3">
+            <div className="flex items-start gap-3">
               <Switch
                 size="sm"
                 isSelected={cfg.enabled}

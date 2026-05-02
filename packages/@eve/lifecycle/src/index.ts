@@ -131,8 +131,12 @@ const UPDATE_PLAN: Record<string, UpdatePlan> = {
   ollama: { imagePull: "ollama/ollama:latest" },
   openclaw: { imagePull: "ghcr.io/openclaw/openclaw:latest" },
   rsshub: { imagePull: "diygod/rsshub:latest" },
-  openwebui: { imagePull: "ghcr.io/open-webui/open-webui:main" },
-  "openwebui-pipelines": { imagePull: "ghcr.io/open-webui/pipelines:main" },
+  // openwebui + pipelines were installed via `docker compose up -d`. After
+  // a remove/down the container is gone, so a plain `docker restart` after
+  // pull would fail with "No such container". `compose pull && compose up
+  // -d` is idempotent — recreates if needed, restarts in place if not.
+  openwebui: { compose: { cwd: "/opt/openwebui" } },
+  "openwebui-pipelines": { compose: { cwd: "/opt/openwebui-pipelines" } },
   synap: { compose: { cwd: "/opt/synap-backend/deploy", services: ["backend", "realtime"] } },
 };
 
