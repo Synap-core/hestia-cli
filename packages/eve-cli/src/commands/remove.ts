@@ -139,6 +139,45 @@ async function removeRsshub(): Promise<void> {
   spinner.succeed('RSSHub removed');
 }
 
+async function removeOpenwebuiPipelines(): Promise<void> {
+  const spinner = createSpinner('Stopping Open WebUI Pipelines sidecar...');
+  spinner.start();
+  try {
+    const { existsSync } = await import('node:fs');
+    const deployDir = '/opt/openwebui-pipelines';
+    const composePath = join(deployDir, 'docker-compose.yml');
+
+    if (existsSync(composePath)) {
+      await execa('docker', ['compose', 'down', '--volumes'], {
+        cwd: deployDir,
+        stdio: 'inherit',
+      });
+    } else {
+      const { stdout } = await execa('docker', ['ps', '-aq', '-f', 'name=eve-openwebui-pipelines']);
+      if (stdout.trim()) {
+        const containers = stdout.trim().split('\n').filter(Boolean);
+        await execa('docker', ['rm', '-f', ...containers], { stdio: 'inherit' });
+      }
+    }
+
+    // Best-effort: strip the pipelines wiring block from openwebui's .env so
+    // it stops trying to call us on next restart.
+    const owEnv = '/opt/openwebui/.env';
+    if (existsSync(owEnv)) {
+      const { readFileSync, writeFileSync } = await import('node:fs');
+      const cur = readFileSync(owEnv, 'utf-8');
+      const marker = '# Pipelines wiring — managed by eve add openwebui-pipelines';
+      if (cur.includes(marker)) {
+        const stripped = cur.split(marker)[0].trimEnd();
+        writeFileSync(owEnv, stripped + '\n', { mode: 0o600 });
+      }
+    }
+  } catch {
+    printWarning('Pipelines removal failed — check manually.');
+  }
+  spinner.succeed('Open WebUI Pipelines removed');
+}
+
 async function removeDashboard(): Promise<void> {
   const spinner = createSpinner('Stopping Eve Dashboard...');
   spinner.start();
@@ -296,6 +335,8 @@ function buildRemoveStep(componentId: string): () => Promise<void> {
       return removeRsshub;
     case 'openwebui':
       return removeOpenwebui;
+    case 'openwebui-pipelines':
+      return removeOpenwebuiPipelines;
     case 'eve-dashboard':
       return removeDashboard;
     case 'hermes':
@@ -327,6 +368,7 @@ async function updateStateAfterRemove(componentId: string): Promise<void> {
     rsshub: 'eyes',
     traefik: 'legs',
     openwebui: 'eyes',
+    'openwebui-pipelines': 'eyes',
     dokploy: 'builder',
     opencode: 'builder',
     openclaude: 'builder',

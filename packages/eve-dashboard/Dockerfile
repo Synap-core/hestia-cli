@@ -44,13 +44,25 @@ COPY --from=deps /workspace/node_modules ./node_modules
 COPY --from=deps /workspace/packages ./packages
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 
-# Source for the only two packages we need to ship.
+# Source for the packages we need to ship. Dashboard imports:
+#   - @eve/dna       : registry, secrets contract, entity state
+#   - @eve/legs      : TraefikService, dashboard container helpers
+#   - @eve/lifecycle : install/remove/update/start/stop primitives
+#   - @eve/brain, @eve/eyes : dynamically imported by lifecycle install recipes
 COPY packages/@eve/dna ./packages/@eve/dna
+COPY packages/@eve/legs ./packages/@eve/legs
+COPY packages/@eve/lifecycle ./packages/@eve/lifecycle
+COPY packages/@eve/brain ./packages/@eve/brain
+COPY packages/@eve/eyes ./packages/@eve/eyes
 COPY packages/eve-dashboard ./packages/eve-dashboard
 
 ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN pnpm --filter @eve/dna run build
+RUN pnpm --filter @eve/legs run build
+RUN pnpm --filter @eve/eyes run build
+RUN pnpm --filter @eve/brain run build
+RUN pnpm --filter @eve/lifecycle run build
 RUN pnpm --filter @eve/dashboard run build
 
 # --- runner -----------------------------------------------------------------

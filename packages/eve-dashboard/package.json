@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@eve/dna": "workspace:*",
+    "@eve/legs": "workspace:*",
+    "@eve/lifecycle": "workspace:*",
     "@heroui/react": "^2.4.0",
     "@heroui/theme": "^2.4.0",
     "framer-motion": "^11.0.0",

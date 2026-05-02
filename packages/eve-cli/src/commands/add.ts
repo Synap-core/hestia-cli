@@ -368,6 +368,22 @@ volumes:
         },
       };
     }
+    case 'openwebui-pipelines':
+      return {
+        label: 'Installing Open WebUI Pipelines sidecar...',
+        async fn() {
+          // Delegate to @eve/lifecycle — single source of truth for both
+          // the CLI and the dashboard install path.
+          const { runActionToCompletion } = await import('@eve/lifecycle');
+          const result = await runActionToCompletion('openwebui-pipelines', 'install');
+          if (!result.ok) {
+            throw new Error(result.error ?? 'Pipelines install failed');
+          }
+          // Lifecycle yields logs as it goes — we already printed via spinner;
+          // dump the structured logs now for the user.
+          for (const line of result.logs) console.log('  ' + line);
+        },
+      };
     case 'eve-dashboard':
       return {
         label: 'Installing Eve Dashboard...',
@@ -425,6 +441,7 @@ async function updateStateAfterAdd(componentId: string, finalState: 'ready' | 'e
     rsshub: 'eyes',
     traefik: 'legs',
     openwebui: 'eyes',
+    'openwebui-pipelines': 'eyes',
     dokploy: 'builder',
     opencode: 'builder',
     openclaude: 'builder',

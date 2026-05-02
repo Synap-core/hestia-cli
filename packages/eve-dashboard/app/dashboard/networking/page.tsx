@@ -3,11 +3,12 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Spinner, Chip, Button, addToast,
+  Spinner, Chip, Button, Input, Switch, addToast,
+  Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
 } from "@heroui/react";
 import {
-  RefreshCw, Globe, Lock, ExternalLink, Copy, Check,
-  ChevronDown, ChevronRight,
+  RefreshCw, Globe, Lock, ExternalLink,
+  ChevronDown, ChevronRight, Pencil, Trash2,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -149,19 +150,10 @@ export default function NetworkingPage() {
           </div>
 
           <div className="mt-5 border-t border-divider pt-4">
-            {!domain?.primary ? (
-              <CliCallout
-                title="Set up a domain"
-                description="Run on the host to point a domain at this server and provision a Let's Encrypt cert:"
-                command="eve domain set yourdomain.com --ssl --email you@example.com"
-              />
-            ) : (
-              <CliCallout
-                title="Reconfigure"
-                description="To change the domain or SSL email, run on the host:"
-                command={`eve domain set ${domain.primary}${domain.ssl ? " --ssl" : ""}${domain.email ? ` --email ${domain.email}` : ""}`}
-              />
-            )}
+            <DomainEditor
+              current={domain}
+              onChanged={() => void fetchData()}
+            />
           </div>
         </Surface>
       </Section>
@@ -342,39 +334,215 @@ function UrlCell({ url, pending }: { url: string | null; pending?: boolean }) {
   );
 }
 
-function CliCallout({
-  title, description, command,
-}: { title: string; description: string; command: string }) {
-  const [copied, setCopied] = useState(false);
+/**
+ * Inline editor for the domain block. Opens a modal with a small form
+ * (primary / ssl / email) and POSTs to /api/networking/domain — the same
+ * code path `eve domain set` runs on the host.
+ */
+function DomainEditor({
+  current, onChanged,
+}: {
+  current: { primary?: string; ssl?: boolean; email?: string } | null;
+  onChanged: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [confirmUnset, setConfirmUnset] = useState(false);
+  const [primary, setPrimary] = useState(current?.primary ?? "");
+  const [ssl, setSsl] = useState(Boolean(current?.ssl));
+  const [email, setEmail] = useState(current?.email ?? "");
+  const [saving, setSaving] = useState(false);
+  const [unsetting, setUnsetting] = useState(false);
+
+  // Reset form fields when the modal opens or current changes.
+  useEffect(() => {
+    if (open) {
+      setPrimary(current?.primary ?? "");
+      setSsl(Boolean(current?.ssl));
+      setEmail(current?.email ?? "");
+    }
+  }, [open, current]);
+
+  const onSave = useCallback(async () => {
+    if (!primary.trim()) return;
+    setSaving(true);
+    try {
+      const res = await fetch("/api/networking/domain", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          primary: primary.trim(),
+          ssl,
+          email: email.trim() || undefined,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json() as { warning?: string };
+        addToast({
+          title: data.warning ? "Domain saved with caveats" : "Domain configured",
+          description: data.warning,
+          color: data.warning ? "warning" : "success",
+        });
+        setOpen(false);
+        onChanged();
+      } else {
+        const err = await res.json().catch(() => ({})) as { error?: string };
+        addToast({ title: err.error ?? "Couldn't save domain", color: "danger" });
+      }
+    } finally { setSaving(false); }
+  }, [primary, ssl, email, onChanged]);
+
+  const onUnset = useCallback(async () => {
+    setUnsetting(true);
+    try {
+      const res = await fetch("/api/networking/domain", {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (res.ok) {
+        addToast({ title: "Domain reset to localhost", color: "success" });
+        setConfirmUnset(false);
+        onChanged();
+      }
+    } finally { setUnsetting(false); }
+  }, [onChanged]);
+
   return (
-    <div className="flex flex-wrap items-start gap-3">
-      <div className="flex-1 min-w-[260px]">
-        <p className="text-sm font-medium text-foreground">{title}</p>
-        <p className="mt-0.5 text-xs text-default-500">{description}</p>
-        <pre className="mt-2 overflow-x-auto rounded-lg bg-content2 px-3 py-2 font-mono text-xs text-foreground">
-          <code>{command}</code>
-        </pre>
+    <>
+      <div className="flex flex-wrap items-center gap-2">
+        {!current?.primary ? (
+          <>
+            <p className="flex-1 text-sm text-default-500 min-w-[200px]">
+              No domain configured. Set one to expose your services on the public internet.
+            </p>
+            <Button
+              size="sm"
+              color="primary"
+              radius="md"
+              startContent={<Globe className="h-3.5 w-3.5" />}
+              onPress={() => setOpen(true)}
+            >
+              Set up domain
+            </Button>
+          </>
+        ) : (
+          <>
+            <p className="flex-1 text-sm text-default-500 min-w-[200px]">
+              Editing the domain re-renders Traefik routing. Brief routing downtime is expected.
+            </p>
+            <Button
+              size="sm"
+              variant="bordered"
+              radius="md"
+              startContent={<Pencil className="h-3.5 w-3.5" />}
+              onPress={() => setOpen(true)}
+            >
+              Edit domain
+            </Button>
+            <Button
+              size="sm"
+              variant="bordered"
+              color="danger"
+              radius="md"
+              startContent={<Trash2 className="h-3.5 w-3.5" />}
+              onPress={() => setConfirmUnset(true)}
+            >
+              Reset
+            </Button>
+          </>
+        )}
       </div>
-      <Button
-        size="sm"
-        variant="bordered"
-        radius="md"
-        startContent={
-          copied
-            ? <Check className="h-3.5 w-3.5 text-primary" />
-            : <Copy className="h-3.5 w-3.5" />
-        }
-        onPress={() => {
-          void navigator.clipboard.writeText(command).then(() => {
-            setCopied(true);
-            addToast({ title: "Command copied", color: "success" });
-            setTimeout(() => setCopied(false), 1500);
-          });
-        }}
-      >
-        {copied ? "Copied" : "Copy"}
-      </Button>
-    </div>
+
+      {/* Edit modal */}
+      <Modal isOpen={open} onClose={() => setOpen(false)} size="md">
+        <ModalContent>
+          {() => (
+            <>
+              <ModalHeader>
+                {current?.primary ? "Edit domain" : "Set up domain"}
+              </ModalHeader>
+              <ModalBody className="space-y-3">
+                <Input
+                  size="sm"
+                  variant="bordered"
+                  label="Primary domain"
+                  labelPlacement="outside"
+                  placeholder="example.com"
+                  value={primary}
+                  onValueChange={setPrimary}
+                  description="Eve generates pod.<domain>, openclaw.<domain>, etc. — point those A records to this server."
+                />
+                <div className="flex items-center gap-3">
+                  <Switch
+                    size="sm"
+                    isSelected={ssl}
+                    onValueChange={setSsl}
+                  />
+                  <div className="text-sm">
+                    <span className="text-foreground">Provision SSL via Let&apos;s Encrypt</span>
+                    <span className="block text-xs text-default-500">
+                      Requires the email below + an A record already resolving to this server.
+                    </span>
+                  </div>
+                </div>
+                {ssl && (
+                  <Input
+                    size="sm"
+                    variant="bordered"
+                    type="email"
+                    label="Let's Encrypt email"
+                    labelPlacement="outside"
+                    placeholder="you@example.com"
+                    value={email}
+                    onValueChange={setEmail}
+                  />
+                )}
+              </ModalBody>
+              <ModalFooter>
+                <Button size="sm" variant="light" onPress={() => setOpen(false)}>Cancel</Button>
+                <Button
+                  size="sm"
+                  color="primary"
+                  isLoading={saving}
+                  isDisabled={!primary.trim() || (ssl && !email.trim())}
+                  onPress={() => void onSave()}
+                  startContent={!saving ? <Lock className="h-3.5 w-3.5" /> : undefined}
+                >
+                  Save
+                </Button>
+              </ModalFooter>
+            </>
+          )}
+        </ModalContent>
+      </Modal>
+
+      {/* Reset confirm */}
+      <Modal isOpen={confirmUnset} onClose={() => setConfirmUnset(false)} size="sm">
+        <ModalContent>
+          {() => (
+            <>
+              <ModalHeader>Reset domain?</ModalHeader>
+              <ModalBody>
+                <p className="text-sm text-default-600">
+                  This reverts Traefik to <code className="font-mono">localhost</code> routing only — your domain stops resolving to this stack until you set a new one.
+                </p>
+              </ModalBody>
+              <ModalFooter>
+                <Button size="sm" variant="light" onPress={() => setConfirmUnset(false)}>Cancel</Button>
+                <Button
+                  size="sm"
+                  color="danger"
+                  isLoading={unsetting}
+                  onPress={() => void onUnset()}
+                >
+                  Reset
+                </Button>
+              </ModalFooter>
+            </>
+          )}
+        </ModalContent>
+      </Modal>
+    </>
   );
 }
 

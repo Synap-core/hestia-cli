@@ -19,6 +19,7 @@
     "@eve/builder": "workspace:*",
     "@eve/cli-kit": "workspace:*",
     "@eve/dna": "workspace:*",
+    "@eve/lifecycle": "workspace:*",
     "@eve/eyes": "workspace:*",
     "@eve/legs": "workspace:*",
     "boxen": "^7.1.1",

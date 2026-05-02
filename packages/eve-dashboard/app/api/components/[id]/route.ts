@@ -6,7 +6,8 @@
  */
 
 import { NextResponse } from "next/server";
-import { execSync, spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import {
   COMPONENTS,
   resolveComponent,
@@ -15,6 +16,16 @@ import {
   readEveSecrets,
 } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
+import {
+  runAction,
+  runActionToCompletion,
+  type LifecycleAction,
+  type LifecycleEvent,
+} from "@eve/lifecycle";
+
+const VALID_ACTIONS: ReadonlySet<LifecycleAction> = new Set([
+  "install", "start", "stop", "restart", "update", "remove",
+]);
 
 interface InspectInfo {
   id: string;
@@ -26,12 +37,16 @@ interface InspectInfo {
   restartCount: number;
 }
 
-function inspectContainer(name: string): InspectInfo | null {
+const execFileAsync = promisify(execFile);
+
+async function inspectContainer(name: string): Promise<InspectInfo | null> {
   try {
-    const raw = execSync(
-      `docker inspect --format '{{json .}}' ${name}`,
-      { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] },
-    ).trim();
+    const { stdout } = await execFileAsync(
+      "docker",
+      ["inspect", "--format", "{{json .}}", name],
+      { encoding: "utf-8" },
+    );
+    const raw = stdout.trim();
     if (!raw) return null;
     const data = JSON.parse(raw) as {
       Id?: string;
@@ -67,12 +82,16 @@ function inspectContainer(name: string): InspectInfo | null {
   }
 }
 
-function readLogs(name: string, lines = 50): string | null {
+async function readLogs(name: string, lines = 50): Promise<string | null> {
   try {
-    return execSync(
-      `docker logs --tail ${lines} ${name} 2>&1`,
+    // 2>&1 needs a shell, but we don't want the shell — call docker without
+    // `2>&1` and let `execFile` capture stderr separately, then merge.
+    const { stdout, stderr } = await execFileAsync(
+      "docker",
+      ["logs", "--tail", String(lines), name],
       { encoding: "utf-8", maxBuffer: 1024 * 1024 },
     );
+    return [stdout, stderr].filter(Boolean).join("");
   } catch {
     return null;
   }
@@ -126,10 +145,15 @@ export async function GET(_req: Request, ctx: RouteContext) {
     return { id: reqId, label: req?.label ?? reqId };
   });
 
-  // Live container info — only if a container is expected.
+  // Live container info — only if a container is expected. Both calls are
+  // independent and both spawn docker, so we run them in parallel.
   const containerName = component.service?.containerName ?? null;
-  const inspect = installed && containerName ? inspectContainer(containerName) : null;
-  const logs = installed && containerName ? readLogs(containerName, 50) : null;
+  const [inspect, logs] = installed && containerName
+    ? await Promise.all([
+        inspectContainer(containerName),
+        readLogs(containerName, 50),
+      ])
+    : [null, null];
 
   return NextResponse.json({
     id: component.id,
@@ -160,40 +184,101 @@ export async function GET(_req: Request, ctx: RouteContext) {
   });
 }
 
+/**
+ * POST /api/components/[id]
+ *
+ * Body: { action: "start"|"stop"|"restart"|"update"|"remove" }
+ * Query: ?stream=1 → returns SSE stream of LifecycleEvent JSON lines.
+ * Otherwise → returns { ok, summary, logs, error? } once the action completes.
+ */
 export async function POST(req: Request, ctx: RouteContext) {
   const auth = await requireAuth();
   if ("error" in auth) return auth.error;
 
   const { id } = await ctx.params;
 
-  let component: ComponentInfo;
+  // Validate component up-front so we can return 404 with a clean error.
   try {
-    component = resolveComponent(id);
+    resolveComponent(id);
   } catch {
     return NextResponse.json({ error: `Unknown component: ${id}` }, { status: 404 });
   }
 
   const body = (await req.json().catch(() => ({}))) as { action?: string };
+  const action = body.action as LifecycleAction | undefined;
 
-  if (body.action === "restart") {
-    if (!component.service?.containerName) {
-      return NextResponse.json(
-        { error: `${component.label} doesn't have a container to restart` },
-        { status: 400 },
-      );
-    }
-    const r = spawnSync("docker", ["restart", component.service.containerName], {
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf-8",
-    });
-    if (r.status !== 0) {
-      return NextResponse.json(
-        { error: `docker restart exited ${r.status}: ${r.stderr ?? r.stdout}` },
-        { status: 500 },
-      );
-    }
-    return NextResponse.json({ ok: true, container: component.service.containerName });
+  if (!action || !VALID_ACTIONS.has(action)) {
+    return NextResponse.json(
+      { error: `Unknown action: ${action ?? "(none)"}. Valid: ${[...VALID_ACTIONS].join(", ")}` },
+      { status: 400 },
+    );
   }
 
-  return NextResponse.json({ error: `Unknown action: ${body.action ?? "(none)"}` }, { status: 400 });
+  const wantsStream = new URL(req.url).searchParams.get("stream") === "1";
+
+  if (wantsStream) {
+    return streamingResponse(id, action);
+  }
+
+  const result = await runActionToCompletion(id, action);
+  return NextResponse.json(result, { status: result.ok ? 200 : 500 });
+}
+
+/**
+ * Render a LifecycleEvent generator as a Server-Sent Events stream.
+ * Drawer subscribes via fetch streaming (not EventSource — POST + SSE).
+ *
+ * Cancellation: the client may abort mid-action (e.g. close the tab during
+ * a 5-minute `docker compose pull`). When that happens the ReadableStream's
+ * `cancel` fires; we set a flag the generator loop checks on every iteration
+ * and stop pumping events. The underlying docker subprocess is *not* killed
+ * — that would leave the host in a half-applied state. The generator
+ * naturally completes when docker exits.
+ */
+function streamingResponse(id: string, action: LifecycleAction): Response {
+  const encoder = new TextEncoder();
+  let cancelled = false;
+  let heartbeat: ReturnType<typeof setInterval> | null = null;
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const send = (ev: LifecycleEvent) => {
+        try { controller.enqueue(encoder.encode(`data: ${JSON.stringify(ev)}\n\n`)); }
+        catch { /* already closed */ }
+      };
+
+      // Long actions can run for minutes — keep SSE proxies awake.
+      heartbeat = setInterval(() => {
+        try { controller.enqueue(encoder.encode(": keepalive\n\n")); }
+        catch { if (heartbeat) clearInterval(heartbeat); }
+      }, 25_000);
+
+      try {
+        for await (const ev of runAction(id, action)) {
+          if (cancelled) break;
+          send(ev);
+        }
+      } catch (err) {
+        send({ type: "error", message: err instanceof Error ? err.message : String(err) });
+      } finally {
+        if (heartbeat) { clearInterval(heartbeat); heartbeat = null; }
+        try { controller.enqueue(encoder.encode(`event: end\ndata: \n\n`)); }
+        catch { /* already closed */ }
+        try { controller.close(); } catch { /* already closed */ }
+      }
+    },
+
+    cancel() {
+      cancelled = true;
+      if (heartbeat) { clearInterval(heartbeat); heartbeat = null; }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      "X-Accel-Buffering": "no",
+    },
+  });
 }

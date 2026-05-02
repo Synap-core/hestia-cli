@@ -1,19 +1,23 @@
 # Eve (Hestia CLI monorepo)
 
-This repository is a **pnpm monorepo** that builds **`eve`**: a command-line installer and operator for a **self-hosted stack** around **Synap** (your Data Pod) and optional sidecars (local LLMs, tunnels, builder tooling, OpenClaw, RSSHub, database UI).
+This repository is a **pnpm monorepo** that builds **`eve`**: a command-line installer and operator for a **self-hosted stack** around **Synap** (your Data Pod) and optional sidecars (local LLMs, tunnels, builder tooling, OpenClaw, RSSHub, Open WebUI, database UI).
 
-If you only remember one thing: **Synap is the "heart" (data + Hub + governance). Eve is the "hands" (Docker sidecars + wiring + secrets + convenience).** Eve does not replace Synap's server; it orchestrates what runs *next to* it.
+It also ships a **web dashboard** — `eve.<your-domain>` — that's the front door to your stack. From there you can see what's running, jump into each component's UI, configure AI providers once and propagate the keys everywhere, inspect Traefik routes and DNS, and rotate the dashboard key.
+
+If you only remember one thing: **Synap is the "heart" (data + Hub + governance). Eve is the "hands" (Docker sidecars + wiring + secrets + convenience). The Eve Dashboard is the "face" — the calm control panel sitting on top of both.** Eve does not replace Synap's server; it orchestrates what runs *next to* it.
 
 ---
 
 ## What Eve actually does
 
-1. **Composable install** — `eve install` lets you pick which components to install (Synap, Ollama, Traefik, OpenClaw, RSSHub, builder tools). An interactive wizard or CLI flags (`--components`, `--ai-mode`, `--tunnel`, etc.) drive the flow.
-2. **Legacy setup** — `eve setup` still works with three profiles (`inference_only`, `data_pod`, `full`) for backward compatibility with bootstrap scripts.
-3. **Add / remove components** — `eve add <component>` and `eve remove <component>` let you grow or shrink your entity after the initial install.
-4. **Entity health** — `eve status` shows organ and component tables; `eve doctor` runs diagnostics with fix suggestions.
-5. **Hub wiring for agents** — Builder flows write project `.env` and skill layout so coding agents can call Synap's **Hub** with an API key and skills.
-6. **Explicit sync to Synap workspace settings** — `eve ai sync` pushes **non-secret** "provider routing" policy to the pod when your backend exposes the Hub route.
+1. **Web dashboard** — A self-hosted Next.js app at `eve.<domain>` that gives you a live read on every component, a service launcher into their UIs, a single AI-provider config that propagates to every consumer, a writable networking page, a Doctor page that mirrors `eve doctor` with inline repair buttons, and per-component drawers with full lifecycle actions (install / start / stop / restart / update / remove), streaming logs, and component-specific config panels (RSSHub feeds, OpenClaw MCP / voice / messaging, Hermes daemon, Synap volume backups).
+2. **Composable install** — `eve install` lets you pick which components to install (Synap, Ollama, Traefik, OpenClaw, RSSHub, Open WebUI, builder tools, dashboard). An interactive wizard or CLI flags (`--components`, `--ai-mode`, `--tunnel`, etc.) drive the flow.
+3. **Legacy setup** — `eve setup` still works with three profiles (`inference_only`, `data_pod`, `full`) for backward compatibility with bootstrap scripts.
+4. **Add / remove components** — `eve add <component>` and `eve remove <component>` let you grow or shrink your entity after the initial install.
+5. **Entity health** — `eve status` shows organ and component tables; `eve doctor` runs diagnostics with fix suggestions.
+6. **Centralized AI provider config** — Set provider keys once in `eve ai providers add` (or in the dashboard); Eve propagates them to Synap IS, OpenClaw, and Open WebUI on demand. No per-component duplication.
+7. **Hub wiring for agents** — Builder flows write project `.env` and skill layout so coding agents can call Synap's **Hub** with an API key and skills.
+8. **Explicit sync to Synap workspace settings** — `eve ai sync` pushes **non-secret** "provider routing" policy to the pod when your backend exposes the Hub route.
 
 ---
 
@@ -39,22 +43,30 @@ Reference repositories:
 ## How the pieces connect (mental wiring)
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  Your server / VM                                                │
-│                                                                  │
-│  Synap Data Pod (optional)     ←── eve install --components synap │
-│  • Caddy :80 / :443            ←── synap install (delegated)     │
-│  • API :4000                    ←── synap.apiUrl in secrets        │
-│  • Hub /api/hub               ←── HUB_BASE_URL + synap.apiKey    │
-│                                                                  │
-│  Eve sidecars (optional)       ←── eve install / eve add          │
-│  • Traefik gateway :11435      ←── always installed              │
-│  • Ollama (Docker network)     ←── eve install --components ollama│
-│  • eve-network (Docker)      ←── shared bridge for sidecars     │
-│                                                                  │
-│  Developer "hand" (optional)   ←── eve builder init               │
-│  • OpenCode / OpenClaude / Claude Code + .env + ~/.eve/skills    │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│  Your server / VM                                                 │
+│                                                                   │
+│  Eve Dashboard (always)        ←── eve add eve-dashboard          │
+│  • Container :3000 / :7979      ←── joins eve-network             │
+│  • Routed at eve.<domain>       ←── via Traefik subdomain         │
+│  • Reads /opt + ~/.local/share  ←── for secrets, state, registry  │
+│                                                                   │
+│  Traefik (always)               ←── eve install / always-on infra │
+│  • :80 / :443 / :8080           ←── reverse proxy + SSL           │
+│  • eve-network (Docker bridge)  ←── one network for all services  │
+│                                                                   │
+│  Synap Data Pod (optional)      ←── eve install --components synap│
+│  • Caddy :80 / :443             ←── synap install (delegated)     │
+│  • API :4000                    ←── synap.apiUrl in secrets       │
+│  • Hub /api/hub                 ←── HUB_BASE_URL + synap.apiKey   │
+│                                                                   │
+│  Eve sidecars (optional)        ←── eve install / eve add         │
+│  • Ollama (Docker network)      ←── eve add ollama                │
+│  • OpenClaw / RSSHub / Open WebUI / Hermes                        │
+│                                                                   │
+│  Developer "hand" (optional)    ←── eve builder init              │
+│  • OpenCode / OpenClaude / Claude Code + .env + ~/.eve/skills     │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 **Important split (avoid confusion):**
@@ -75,34 +87,101 @@ Reference repositories:
 
 ## Component registry
 
-Eve's composable installer works with a registry of 10 components across 6 categories:
+Eve's composable installer works with a registry of 12 components across 6 categories:
 
-| Component        | Organ    | Category       | Always? | Prerequisites  |
-| ---------------- | ---------|----------------|---------|----------------|
-| Traefik          | Legs     | infrastructure | yes     | —              |
-| Ollama           | Brain    | data           | no      | traefik        |
-| Synap Data Pod   | Brain    | data           | no      | traefik        |
-| OpenClaw         | Arms     | agent          | no      | synap          |
-| Hermes           | Builder  | builder        | no      | synap          |
-| RSSHub           | Eyes     | perception     | no      | synap          |
-| Open WebUI       | —        | add-on         | no      | synap          |
-| Dokploy          | Builder  | add-on         | no      | —              |
-| OpenCode         | Builder  | add-on         | no      | —              |
-| OpenClaude       | Builder  | add-on         | no      | —              |
+| Component             | Organ    | Category       | Always? | Prerequisites      |
+| --------------------- | -------- | -------------- | ------- | ------------------ |
+| Traefik               | Legs     | infrastructure | yes     | —                  |
+| Eve Dashboard         | Legs     | infrastructure | yes     | traefik            |
+| Synap Data Pod        | Brain    | data           | no      | traefik            |
+| Ollama                | Brain    | data           | no      | traefik            |
+| OpenClaw              | Arms     | agent          | no      | synap              |
+| Hermes                | Builder  | builder        | no      | synap              |
+| RSSHub                | Eyes     | perception     | no      | synap              |
+| Open WebUI            | —        | add-on         | no      | synap              |
+| Open WebUI Pipelines  | —        | add-on         | no      | openwebui, synap   |
+| Dokploy               | Builder  | add-on         | no      | —                  |
+| OpenCode              | Builder  | add-on         | no      | —                  |
+| OpenClaude            | Builder  | add-on         | no      | —                  |
 
-- **Always** components (Traefik) are installed unconditionally.
+- **Always** components (Traefik, Eve Dashboard) are installed unconditionally — they're the platform itself.
 - **Add-on** components are excluded from the default wizard selection and installed with `eve add <id>` or by selecting them in the wizard.
+
+The full registry — including the human-readable `longDescription` shown in the dashboard's component detail drawer — lives in `packages/@eve/dna/src/components.ts`. That's the single source of truth for what Eve can install, route, and explain.
 
 ### Install presets (interactive wizard)
 
-| Preset           | Components                              |
+Every preset includes Traefik **and** the Eve Dashboard (always-on infrastructure).
+
+| Preset           | Components on top of the platform       |
 | ---------------- | --------------------------------------- |
-| 🧠 Personal pod  | Traefik + Synap                         |
-| 🚀 Full stack    | Traefik + Synap + Ollama + OpenClaw     |
-| 💬 AI chat server| Traefik + Synap + Open WebUI            |
-| 🏗️ Builder server| Traefik + Synap + OpenClaw + Hermes     |
-| ⚡ Minimal       | Traefik only                            |
+| 🧠 Personal pod  | + Synap                                 |
+| 🚀 Full stack    | + Synap + Ollama + OpenClaw             |
+| 💬 AI chat server| + Synap + Open WebUI                    |
+| 🏗️ Builder server| + Synap + OpenClaw + Hermes             |
+| ⚡ Minimal       | (just the platform)                     |
 | 🔧 Custom        | Pick each component individually        |
+
+---
+
+## Eve Dashboard (web UI)
+
+Once `eve install` completes, you can reach the dashboard three ways:
+- `http://localhost:7979` — direct, on the host itself.
+- `http://<server-ip>:7979` — direct, from another machine on the LAN.
+- `https://eve.<your-domain>` — via Traefik with SSL (after `eve domain set`).
+
+You unlock it with the **dashboard key** generated during install (also shown by `eve ui` on the host).
+
+### Page taxonomy
+
+The dashboard is organized into six focused pages, each owning one mental model:
+
+| Page         | Mental model                                  | What lives here                                                                                                            |
+| ------------ | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Home         | "Is my stack alive, and where do I go?"       | Setup checklist (only when something's missing) · stack pulse (organ chips, click to restart) · service launcher tiles     |
+| Components   | "What's installed and what isn't?"            | Full catalog grouped by category, status / version / subdomain per row, click any row → detail drawer                      |
+| AI Providers | "What model serves my agents?"                | Per-provider CRUD with API keys + default models · "Apply to components" · "Wired components" view                         |
+| Networking   | "How is my stack reachable from the world?"   | Domain & SSL form (set/edit/reset) · subdomain map with live DNS check · read-only Traefik dynamic + static config preview |
+| Doctor       | "What's broken and can you fix it for me?"    | Mirror of `eve doctor` (platform / network / containers / AI / wiring) with inline Repair buttons for fix-able issues       |
+| Settings     | "Stuff about Eve itself, not my stack"        | Rotate dashboard key (one-shot reveal) · explicit theme picker · backup snippet · Eve version + hostname + init timestamp  |
+
+### Component detail drawer
+
+Click any row on the Components page → a side drawer slides in with everything about that component:
+- **About** — multi-paragraph plain-language explanation: what it is, why a sovereign stack uses it, what it pairs with. Copy comes from `longDescription` on the registry.
+- **Lifecycle actions** — real **Install / Start / Stop / Restart / Update / Remove** buttons (no more "copy this command and run it on the host"). Progress streams live over SSE; **Update** and **Remove** ask for confirmation. The dashboard and the CLI share the same code path via `@eve/lifecycle`.
+- **Streaming logs** — Follow / Stop / Clear controls, replacing the old static last-50 snapshot.
+- **Per-component config panels** — appear in the drawer when the component supports them:
+  - **RSSHub** — feed CRUD persisted at `~/.eve/feeds.json`.
+  - **OpenClaw** — MCP server list + 5 preset installers (filesystem / github / postgres / sqlite / puppeteer), voice config (Twilio / Signal / SIP), messaging config (Telegram / Signal / Matrix bot tokens).
+  - **Hermes** — daemon settings (enabled, poll interval, max concurrent), an explainer about the "no UI by design" model, plus host CLI command cards.
+  - **Synap** — pod identity, admin bootstrap state, deep link to the Synap dashboard, Docker volume list with one-click backup buttons (runs `docker run --rm alpine tar czf` against each volume into `$EVE_HOME/backups`) plus copy-cmd fallbacks.
+- **Endpoints** — container name, image, ID, internal/host ports, subdomain.
+- **Wiring** — "depends on" + "required by" chips so you can see ripple effects of removing something.
+
+### Lifecycle (`eve ui` on the host)
+
+The dashboard is a Docker container (`eve-dashboard`) joined to `eve-network` and routed by Traefik just like every other service. The `eve ui` family of commands manages it:
+
+| Command                   | What it does                                                                  |
+| ------------------------- | ----------------------------------------------------------------------------- |
+| `eve ui`                  | Print the dashboard URL + key, optionally open the browser                    |
+| `eve ui --rebuild`        | Rebuild the Docker image and restart the container                            |
+| `eve ui --stop`           | Stop and remove the container (use `eve add eve-dashboard` to bring it back)  |
+| `eve ui --status`         | Whether the container is running                                              |
+
+### Design system
+
+- **Fonts:** Fraunces (display/headings) + DM Sans (body) + JetBrains Mono (keys, container names, CLI snippets) — all loaded via `next/font`.
+- **Colors:** emerald primary, warm slate neutrals, full HeroUI light + dark themes living in `tailwind.config.js`.
+- **No shadows** — depth comes from 1px borders on `bg-content1` surfaces.
+- **HeroUI components** are the default for inputs, buttons, chips, switches, drawers, dropdowns, toasts. Custom HTML only when HeroUI's outside-label slot doesn't fit.
+- **Light + dark** with system-default detection via `next-themes`. Toggle in the rail and explicit picker in Settings.
+
+### Auth model
+
+Single dashboard key — a 32-byte hex secret stored in `.eve/secrets/secrets.json`. The login screen verifies the typed key against `secrets.dashboard.secret`, signs a 48h JWT with that secret, sets it as an httpOnly + SameSite=strict cookie. Middleware (`proxy.ts`) verifies the JWT on every request that isn't `/login` or `/api/auth/verify`. Rotating the key in Settings invalidates the current session.
 
 ---
 
@@ -110,19 +189,20 @@ Eve's composable installer works with a registry of 10 components across 6 categ
 
 Only these workspaces are built and published from this tree:
 
-| Package          | Role                                                                                    |
-| ---------------- | --------------------------------------------------------------------------------------- |
-| `@eve/cli`       | `eve` binary — all user-facing commands                                                 |
-| `@eve/dna`       | Shared schemas: secrets, setup profile, USB manifest, builder/Hub helpers, state manager |
-| `@eve/brain`     | Synap delegation, `runBrainInit`, `runInferenceInit`, Ollama / Postgres / Redis helpers |
-| `@eve/legs`      | Traefik, inference gateway, `eve legs newt` (Pangolin Newt)                             |
-| `@eve/arms`      | OpenClaw install / wiring                                                               |
-| `@eve/eyes`      | RSSHub + `eve eyes database` (Outerbase Studio runner)                                  |
-| `@eve/builder`   | OpenCode, OpenClaude, Claude Code, Dokploy (optional), builder stack, sandbox           |
-| `@eve/usb`       | USB / Ventoy helpers used by `eve birth`                                                |
-| `@eve/install`   | Server install script assets                                                            |
-| `@eve/cli-kit`   | Shared CLI flags / JSON output helpers                                                  |
-| `types`, `utils` | Small shared TS utilities                                                               |
+| Package           | Role                                                                                    |
+| ----------------- | --------------------------------------------------------------------------------------- |
+| `@eve/cli`        | `eve` binary — all user-facing commands                                                 |
+| `@eve/dashboard`  | Next.js web dashboard — packaged as a Docker image, joins `eve-network`, routed at `eve.<domain>` |
+| `@eve/dna`        | Component registry + shared schemas: secrets, setup profile, USB manifest, builder/Hub helpers, state manager, AI wiring |
+| `@eve/brain`      | Synap delegation, `runBrainInit`, `runInferenceInit`, Ollama / Postgres / Redis helpers |
+| `@eve/legs`       | Traefik, inference gateway, `eve legs newt` (Pangolin Newt), dashboard container lifecycle |
+| `@eve/arms`       | OpenClaw install / wiring                                                               |
+| `@eve/eyes`       | RSSHub + `eve eyes database` (Outerbase Studio runner)                                  |
+| `@eve/builder`    | OpenCode, OpenClaude, Claude Code, Dokploy (optional), builder stack, sandbox           |
+| `@eve/usb`        | USB / Ventoy helpers used by `eve birth`                                                |
+| `@eve/install`    | Server install script assets                                                            |
+| `@eve/cli-kit`    | Shared CLI flags / JSON output helpers                                                  |
+| `types`, `utils`  | Small shared TS utilities                                                               |
 
 ---
 
@@ -340,6 +420,17 @@ Then every **`git push`** runs [`.githooks/pre-push`](.githooks/pre-push) (same 
 | `eve update`                                   | Print update guidance (delegates to synap-backend)       |
 | `eve recreate`                                 | Dangerous: full cleanup + recreation (requires "recreate")|
 
+### Web dashboard
+
+| Command                                        | Description                                              |
+| ---------------------------------------------- | -------------------------------------------------------- |
+| `eve ui`                                       | Print the dashboard URL + login key, optionally open the browser |
+| `eve ui --rebuild`                             | Rebuild the Docker image from source and restart the container |
+| `eve ui --stop`                                | Stop and remove the dashboard container                  |
+| `eve ui --status`                              | Show whether the dashboard container is running          |
+| `eve add eve-dashboard`                        | (Re-)install the dashboard container — same path as any other component |
+| `eve domain set <host> --ssl --email <email>`  | Configure the public domain — Traefik provisions the `eve.<host>` cert automatically |
+
 ### AI management
 
 | Command                                              | Description                                        |
@@ -429,7 +520,7 @@ eve update --only openwebui
 ```
 eve add <component> [options]
 
-Component IDs: traefik, synap, ollama, openclaw, rsshub, hermes, openwebui, dokploy, opencode, openclaude
+Component IDs: traefik, eve-dashboard, synap, ollama, openclaw, rsshub, hermes, openwebui, openwebui-pipelines, dokploy, opencode, openclaude
 
 Options:
   --synap-repo <path>   Path to synap-backend checkout (for synap component)
@@ -489,9 +580,16 @@ eve ai sync --workspace <workspace-uuid>
 ## Roadmap (not guaranteed in CLI yet)
 
 - TLS on the inference gateway (today often HTTP + Basic auth on localhost).
-- Open WebUI Pipelines sidecar: Python pipelines for Synap memory injection, channel sync, and Hermes job dispatch.
 - Optional sidecars (e.g. Whisper) on `eve-network`.
 - Richer CI: mocked `synap` for `data_pod` integration tests.
+
+### Recently shipped
+
+- **Dashboard lifecycle actions** — Install / Start / Stop / Restart / Update / Remove run from the drawer with live SSE progress; the dashboard and the CLI share the same code path via `@eve/lifecycle`.
+- **Open WebUI Pipelines sidecar** (`openwebui-pipelines`) — Python sidecar that hooks Open WebUI into Synap. Three reference pipelines ship by default at `packages/@eve/lifecycle/assets/pipelines/`: `synap_memory_filter.py` (pre-prompt context injection from Hub Protocol), `synap_channel_sync.py` (one-way OWUI → Synap channel mirror), `synap_hermes_dispatch.py` (slash commands `/scaffold` `/deploy` `/fix` `/build` `/migrate` `/test` → Hermes tasks).
+- **Doctor page** in the dashboard — mirrors `eve doctor` with inline Repair buttons (`create-eve-network`, `start-container`, `rewire-openclaw`).
+- **Per-component config panels** in the drawer — RSSHub feeds, OpenClaw MCP servers + voice + messaging, Hermes daemon settings, Synap volume backups.
+- **Networking page is writable** — domain set / edit / reset is now a real form that calls `POST /api/networking/domain` (same `TraefikService.configureSubdomains` code path as `eve domain set`).
 
 ---
 

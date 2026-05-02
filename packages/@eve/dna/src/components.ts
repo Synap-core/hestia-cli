@@ -232,6 +232,29 @@ This is usually the most-used UI in a daily stack: it's where humans talk to the
     },
   },
   {
+    id: 'openwebui-pipelines',
+    label: 'Open WebUI Pipelines',
+    emoji: '🪈',
+    description: 'Python pipelines sidecar for Open WebUI. Wires chat into Synap memory + channel sync + Hermes job dispatch.',
+    longDescription: `Open WebUI Pipelines is the bridge between everyday chat and your agent stack. It runs as a small Python service alongside Open WebUI; Open WebUI calls it as an OpenAI-compatible "filter" endpoint, and the pipelines decide what to do.
+
+Three reference pipelines ship by default:
+  - Synap memory injection — pre-prompt hook that pulls relevant entities from your pod via Hub Protocol and injects them as context, so the model sees what you actually have.
+  - Channel sync — every conversation in Open WebUI becomes a Synap channel; messages flow both ways.
+  - Hermes job dispatch — slash commands in chat ("/scaffold a Telegram bot") are picked up by Hermes and the result is reported back as a channel message.
+
+This is what turns Open WebUI from a generic chat front-end into the Synap-aware chat front-end. Without it, Open WebUI is just a model picker.`,
+    homepage: 'https://docs.openwebui.com/pipelines/',
+    category: 'add-on',
+    requires: ['openwebui', 'synap'],
+    service: {
+      containerName: 'eve-openwebui-pipelines',
+      internalPort: 9099,
+      hostPort: null, // internal-only — Open WebUI calls it on the docker network
+      subdomain: null,
+    },
+  },
+  {
     id: 'eve-dashboard',
     label: 'Eve Dashboard',
     emoji: '🌿',
