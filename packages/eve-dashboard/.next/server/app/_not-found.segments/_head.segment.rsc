@@ -1,5 +1,0 @@
-1:"$Sreact.fragment"
-2:I[25495,["/_next/static/chunks/230e9d0a44e49fc5.js","/_next/static/chunks/8c9e9f7ec178463f.js","/_next/static/chunks/d0b24f03a00337e4.js","/_next/static/chunks/0d488aca1772d1c4.js","/_next/static/chunks/10f89679ef3b65b6.js"],"ViewportBoundary"]
-3:I[25495,["/_next/static/chunks/230e9d0a44e49fc5.js","/_next/static/chunks/8c9e9f7ec178463f.js","/_next/static/chunks/d0b24f03a00337e4.js","/_next/static/chunks/0d488aca1772d1c4.js","/_next/static/chunks/10f89679ef3b65b6.js"],"MetadataBoundary"]
-4:"$Sreact.suspense"
-0:{"buildId":"_2uMOn3V8FJHR-ESFytsc","rsc":["$","$1","h",{"children":[["$","meta",null,{"name":"robots","content":"noindex"}],["$","$L2",null,{"children":[["$","meta","0",{"charSet":"utf-8"}],["$","meta","1",{"name":"viewport","content":"width=device-width, initial-scale=1"}]]}],["$","div",null,{"hidden":true,"children":["$","$L3",null,{"children":["$","$4",null,{"name":"Next.Metadata","children":[["$","title","0",{"children":"Eve Dashboard"}],["$","meta","1",{"name":"description","content":"Your sovereign stack control panel."}]]}]}]}],["$","meta",null,{"name":"next-size-adjust","content":""}]]}],"loading":null,"isPartial":false}

@@ -137,6 +137,11 @@ export class TraefikService {
       'run', '-d',
       '--name', 'eve-legs-traefik',
       '--restart', 'unless-stopped',
+      // Map host.docker.internal to the host gateway so Traefik can reach
+      // host-bound services (the eve-dashboard runs on the host at port 7979).
+      // The bridge gateway IP (172.18.0.1) doesn't always route reliably
+      // through host firewalls — host-gateway uses Docker's official mechanism.
+      '--add-host', 'host.docker.internal:host-gateway',
       '-p', '80:80',
       '-p', '443:443',
       '-p', '8080:8080',
@@ -172,15 +177,19 @@ export class TraefikService {
     // Build routes from the component registry — single source of truth.
     const services: Array<{ id: string; subdomain: string; upstream: string; requires: string | null }> = [];
 
-    // 1. Always-on Eve dashboard. Runs on the host gateway, not in a container.
+    // 1. Always-on Eve dashboard. Runs on the host (not in a container) so we
+    //    use host.docker.internal — Traefik's --add-host flag maps it to the
+    //    host gateway. More reliable than 172.18.0.1 across firewalls.
     if (EVE_DASHBOARD_SERVICE.service.subdomain) {
       services.push({
         id: 'eve-dashboard',
         subdomain: EVE_DASHBOARD_SERVICE.service.subdomain,
-        upstream: `http://${dockerGateway}:${EVE_DASHBOARD_SERVICE.service.internalPort}`,
+        upstream: `http://host.docker.internal:${EVE_DASHBOARD_SERVICE.service.internalPort}`,
         requires: null,
       });
     }
+    // Suppress unused-warning since dockerGateway may now only be referenced in fallback paths
+    void dockerGateway;
 
     // 2. Components with a service. Synap pod is special: prefer its real
     //    container name (the synap-backend project's pattern) over the registry default.

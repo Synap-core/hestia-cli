@@ -336,31 +336,120 @@ export async function runInstall(opts: InstallOptions): Promise<void> {
   }
 
   // -----------------------------------------------------------------
-  // 8. Done
+  // 8. Final recap — context-aware
   // -----------------------------------------------------------------
   if (!jsonMode) {
-    console.log();
-    printSuccess('Entity installation complete.');
-    console.log();
-    printInfo(`  Components installed: ${installList.join(', ')}`);
-    console.log();
-    printInfo('Next steps:');
-    printInfo(`  - Run "eve status"               to check entity state`);
-    printInfo(`  - Run "eve ui"                   to open the web dashboard`);
-    printInfo(`  - Run "eve domain show"          to see all access URLs`);
-    printInfo(`  - Run "eve domain set <domain>"  to configure remote domain access`);
-    printInfo(`  - Run "eve grow organ"           to add more capabilities later`);
-    printInfo(`  - Run "eve add <component>"      to add add-ons (dokploy, opencode, openclaude)`);
-    const serverIp = getServerIp();
-    if (serverIp) {
-      console.log();
-      console.log(colors.muted(`  Your server IP: ${serverIp}`));
-      console.log(colors.muted(`  Dashboard: http://${serverIp}:7979  (open port 7979 in your firewall)`));
-    }
-    console.log();
+    await printInstallationRecap(installedComponents);
   } else {
     outputJson({ ok: true, components: installList });
   }
+}
+
+/**
+ * Final summary at the end of `eve install`. Tells the user clearly:
+ *   - What was installed (with health if available)
+ *   - Where to access it (domain if set, IP:port otherwise — domain preferred)
+ *   - The dashboard key (so they can log in)
+ *   - What's left to do (only what's actually missing)
+ */
+async function printInstallationRecap(installedComponents: string[]): Promise<void> {
+  const secrets = await readEveSecrets(process.cwd());
+  const serverIp = getServerIp();
+  const domain = secrets?.domain?.primary;
+  const ssl = !!secrets?.domain?.ssl;
+  const protocol = ssl ? 'https' : 'http';
+  const hasAi = hasAnyProvider(secrets);
+  const dashboardSecret = secrets?.dashboard?.secret;
+  const hasSystemd = process.platform === 'linux'
+    && existsSync('/etc/systemd/system/eve-dashboard.service');
+
+  // Pick the best UI URL based on what's configured. Domain > IP > localhost.
+  const uiUrl = domain
+    ? `${protocol}://eve.${domain}`
+    : serverIp
+      ? `http://${serverIp}:7979`
+      : `http://localhost:7979`;
+
+  console.log();
+  console.log(colors.success.bold('━'.repeat(60)));
+  console.log(colors.success.bold('  ✓  Eve installation complete'));
+  console.log(colors.success.bold('━'.repeat(60)));
+  console.log();
+
+  // What was installed
+  console.log(colors.primary.bold('  Installed components'));
+  for (const id of installedComponents) {
+    const comp = COMPONENTS.find(c => c.id === id);
+    if (!comp) continue;
+    const subdomainHint = domain && comp.service?.subdomain
+      ? colors.muted(`  →  ${protocol}://${comp.service.subdomain}.${domain}`)
+      : '';
+    console.log(`    ${colors.success('●')} ${comp.emoji} ${comp.label.padEnd(22)} ${subdomainHint}`);
+  }
+
+  // Open the dashboard
+  console.log();
+  console.log(colors.primary.bold('  Open your dashboard'));
+  console.log(`    ${colors.primary.bold(uiUrl)}`);
+  if (dashboardSecret) {
+    console.log(`    ${colors.muted('Login key:')} ${colors.primary(dashboardSecret)}`);
+  }
+  if (!domain) {
+    console.log(colors.warning(`    ! No domain set — using direct IP. For HTTPS access, run:  eve domain set <yourdomain> --ssl --email <you@example.com>`));
+  } else if (!ssl) {
+    console.log(colors.warning(`    ! Domain set but SSL not enabled — re-run "eve domain set ${domain} --ssl" to provision certs`));
+  }
+
+  // What's left to do — only show what's actually missing
+  const todos: Array<{ label: string; cmd: string; severity: 'must' | 'recommended' }> = [];
+
+  if (!domain) {
+    todos.push({
+      label: 'Configure a public domain so you can access the dashboard from anywhere',
+      cmd: 'eve domain set <yourdomain> --ssl --email <you@example.com>',
+      severity: 'recommended',
+    });
+  }
+  if (!hasAi) {
+    const aiConsumers = ['synap', 'openclaw', 'openwebui'];
+    if (installedComponents.some(c => aiConsumers.includes(c))) {
+      todos.push({
+        label: 'Add an AI provider — OpenClaw / Open WebUI / agents are idle without one',
+        cmd: 'eve ai providers add anthropic --api-key sk-ant-...',
+        severity: 'must',
+      });
+    }
+  }
+  if (!hasSystemd && process.platform === 'linux') {
+    todos.push({
+      label: 'Auto-start the dashboard on boot (instead of running `eve ui` manually)',
+      cmd: 'sudo eve ui --install-service',
+      severity: 'recommended',
+    });
+  }
+
+  if (todos.length > 0) {
+    console.log();
+    console.log(colors.primary.bold('  Next steps'));
+    for (const t of todos) {
+      const dot = t.severity === 'must' ? colors.error('●') : colors.warning('●');
+      console.log(`    ${dot} ${t.label}`);
+      console.log(`        ${colors.muted('→')} ${colors.info(t.cmd)}`);
+    }
+  }
+
+  // Quick reference
+  console.log();
+  console.log(colors.muted('  Quick reference'));
+  console.log(colors.muted(`    eve status               check what's running`));
+  console.log(colors.muted(`    eve doctor               full health diagnostic`));
+  console.log(colors.muted(`    eve add <component>      install another component`));
+  if (domain) {
+    console.log(colors.muted(`    eve domain check         verify all routes`));
+  }
+  console.log();
+  console.log(colors.success.bold('━'.repeat(60)));
+  console.log();
 }
 
 // ---------------------------------------------------------------------------
