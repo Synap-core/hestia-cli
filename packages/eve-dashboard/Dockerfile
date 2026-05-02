@@ -24,6 +24,7 @@ COPY packages/@eve/builder/package.json ./packages/@eve/builder/
 COPY packages/@eve/dna/package.json ./packages/@eve/dna/
 COPY packages/@eve/eyes/package.json ./packages/@eve/eyes/
 COPY packages/@eve/legs/package.json ./packages/@eve/legs/
+COPY packages/@eve/lifecycle/package.json ./packages/@eve/lifecycle/
 COPY packages/cli-kit/package.json ./packages/cli-kit/
 COPY packages/eve-cli/package.json ./packages/eve-cli/
 COPY packages/eve-dashboard/package.json ./packages/eve-dashboard/
