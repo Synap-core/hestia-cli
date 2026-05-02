@@ -50,17 +50,34 @@ export interface CheckResult {
     | "openwebui-pipelines";
 }
 
+/**
+ * Per-call hard timeout for docker subprocesses we spawn from the doctor
+ * route. Without this, a stuck docker daemon (paused VM, daemon under
+ * load, partial network outage) would let `/api/doctor` hang for minutes
+ * — visible to users as "Running diagnostics…" with no progress.
+ */
+const DOCKER_TIMEOUT_MS = 4000;
+
 async function dockerOk(): Promise<boolean> {
-  try { await execFileAsync("docker", ["version"]); return true; } catch { return false; }
+  try {
+    await execFileAsync("docker", ["version"], { timeout: DOCKER_TIMEOUT_MS });
+    return true;
+  } catch { return false; }
 }
 
 async function composeOk(): Promise<boolean> {
-  try { await execFileAsync("docker", ["compose", "version"]); return true; } catch { return false; }
+  try {
+    await execFileAsync("docker", ["compose", "version"], { timeout: DOCKER_TIMEOUT_MS });
+    return true;
+  } catch { return false; }
 }
 
 async function eveNetworkExists(): Promise<boolean> {
   try {
-    const { stdout } = await execFileAsync("docker", ["network", "ls", "--format", "{{.Name}}"]);
+    const { stdout } = await execFileAsync(
+      "docker", ["network", "ls", "--format", "{{.Name}}"],
+      { timeout: DOCKER_TIMEOUT_MS },
+    );
     return stdout.split("\n").some(l => l.trim() === "eve-network");
   } catch { return false; }
 }
@@ -77,8 +94,8 @@ async function listContainers(): Promise<{ running: Map<string, string>; all: Ma
 
   try {
     const [psOut, allOut] = await Promise.all([
-      execFileAsync("docker", ["ps", "--format", "{{.Names}}\t{{.Status}}"]),
-      execFileAsync("docker", ["ps", "-a", "--format", "{{.Names}}\t{{.Status}}"]),
+      execFileAsync("docker", ["ps", "--format", "{{.Names}}\t{{.Status}}"], { timeout: DOCKER_TIMEOUT_MS }),
+      execFileAsync("docker", ["ps", "-a", "--format", "{{.Names}}\t{{.Status}}"], { timeout: DOCKER_TIMEOUT_MS }),
     ]);
     return { running: parse(psOut.stdout), all: parse(allOut.stdout) };
   } catch {
@@ -92,7 +109,7 @@ async function checkOpenclawWiring(): Promise<CheckResult> {
       "exec", "eve-arms-openclaw",
       "sh", "-c",
       "test -f /home/node/.openclaw/agents/main/agent/auth-profiles.json && echo OK || echo MISSING",
-    ], { encoding: "utf-8" });
+    ], { encoding: "utf-8", timeout: DOCKER_TIMEOUT_MS });
     if (stdout.trim() === "OK") {
       return {
         group: "wiring", name: "OpenClaw AI wiring", status: "pass",
@@ -194,9 +211,14 @@ export async function runDoctor(): Promise<CheckResult[]> {
   }
 
   // ─── Network reachability — verifyComponent from @eve/legs ───────────────
+  // `quick: true` collapses the retry budget (5x container + 4x reachability
+  // probes, ~17.5s worst case) into a single probe per check. The dashboard
+  // calls this interactively — users want a snapshot, not a "wait while
+  // unhealthy components retry for 10s each" experience. The slower retry
+  // mode is still used by post-install verification where retries matter.
   await Promise.all(expected.map(async c => {
     try {
-      const result = await verifyComponent(c.id);
+      const result = await verifyComponent(c.id, { quick: true });
       if (result.ok) {
         checks.push({
           group: "network",

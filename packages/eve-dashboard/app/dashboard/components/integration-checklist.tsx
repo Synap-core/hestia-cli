@@ -50,15 +50,26 @@ export function IntegrationChecklist({
   const [checks, setChecks] = useState<CheckResult[] | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [repairing, setRepairing] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchData = useCallback(async (silent = false) => {
     if (!silent) setRefreshing(true);
+    setError(null);
     try {
       const res = await fetch("/api/doctor", { credentials: "include" });
       if (res.ok) {
         const data = await res.json() as DoctorResponse;
         setChecks(data.checks.filter(c => c.integrationId === integrationId));
+      } else {
+        // Don't get stuck on the loading shell — surface a real error so
+        // the user can retry rather than wait forever on a failed call.
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        setError(body.error ?? `Doctor API returned ${res.status}`);
+        setChecks([]);
       }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Doctor API unreachable");
+      setChecks([]);
     } finally { setRefreshing(false); }
   }, [integrationId]);
 
@@ -98,6 +109,28 @@ export function IntegrationChecklist({
       <div className="rounded-lg border border-divider bg-content2/40 p-4 flex items-center gap-3">
         <Spinner size="sm" />
         <span className="text-xs text-default-500">Checking {title.toLowerCase()}…</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-lg border border-danger/30 bg-danger/5 p-4 flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-medium uppercase tracking-wider text-danger">{title} · check failed</p>
+          <p className="mt-1 text-xs text-default-500">{error}</p>
+        </div>
+        <Button
+          size="sm"
+          variant="light"
+          radius="md"
+          isIconOnly
+          isLoading={refreshing}
+          onPress={() => void fetchData()}
+          aria-label="Retry"
+        >
+          {!refreshing && <RefreshCw className="h-3.5 w-3.5" />}
+        </Button>
       </div>
     );
   }

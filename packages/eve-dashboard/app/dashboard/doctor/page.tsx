@@ -55,13 +55,26 @@ export default function DoctorPage() {
   const [data, setData] = useState<DoctorResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchData = useCallback(async (silent = false) => {
     if (!silent) setRefreshing(true);
+    setError(null);
     try {
       const res = await fetch("/api/doctor", { credentials: "include" });
       if (res.status === 401) { router.push("/login"); return; }
-      if (res.ok) setData(await res.json());
+      if (res.ok) {
+        setData(await res.json());
+      } else {
+        // 500 / 503 / etc — surface the message instead of letting the
+        // spinner run forever. The /api/doctor handler catches per-check
+        // errors and returns a result, so this branch usually means the
+        // route itself crashed (auth misconfig, missing secrets file).
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        setError(body.error ?? `Diagnostics failed (${res.status})`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Diagnostics request failed");
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -101,11 +114,30 @@ export default function DoctorPage() {
 
   useEffect(() => { void fetchData(); }, [fetchData]);
 
-  if (loading || !data) {
+  if (loading) {
     return (
       <div className="flex flex-col items-center justify-center gap-3 min-h-[60vh] text-default-500">
         <Spinner size="lg" color="primary" />
         <p className="text-sm">Running diagnostics…</p>
+      </div>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 min-h-[60vh] text-center">
+        <XCircle className="h-8 w-8 text-danger" />
+        <p className="text-sm text-foreground">{error ?? "No diagnostics data"}</p>
+        <Button
+          size="sm"
+          variant="bordered"
+          radius="md"
+          startContent={<RefreshCw className="h-3.5 w-3.5" />}
+          isLoading={refreshing}
+          onPress={() => void fetchData()}
+        >
+          Retry
+        </Button>
       </div>
     );
   }

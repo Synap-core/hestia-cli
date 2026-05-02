@@ -7,8 +7,11 @@
  * when the service is in fact broken.
  */
 
-import { execSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { resolveComponent } from '@eve/dna';
+
+const execFileAsync = promisify(execFile);
 
 export interface VerifyResult {
   ok: boolean;
@@ -23,42 +26,76 @@ function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
 }
 
-/** True if `docker ps` shows the container running. */
-function isContainerRunning(name: string): boolean {
+/**
+ * Hard cap (ms) on every docker subprocess we spawn. Without this, a stuck
+ * docker daemon or paused container can hold a single check open for the
+ * full retry budget and — because execFile shares the Node event loop with
+ * other awaiters — block all sibling probes that should be running in
+ * parallel via `Promise.all`. The legacy `execSync` version of this file
+ * blocked the entire event loop, which is what made the dashboard's
+ * `/api/doctor` route hang for minutes when probing many components.
+ */
+const DOCKER_CALL_TIMEOUT_MS = 4000;
+
+/** True if `docker ps` shows the container running. Async + timed out. */
+async function isContainerRunning(name: string): Promise<boolean> {
   try {
-    const out = execSync(`docker ps --filter "name=^${name}$" --format "{{.Names}}"`, {
-      encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'],
-    }).trim();
-    return out === name;
+    const { stdout } = await execFileAsync(
+      'docker',
+      ['ps', '--filter', `name=^${name}$`, '--format', '{{.Names}}'],
+      { timeout: DOCKER_CALL_TIMEOUT_MS },
+    );
+    return stdout.trim() === name;
   } catch {
     return false;
   }
 }
 
 /** True if Traefik can curl the upstream successfully (any 2xx/3xx/401/403/404). */
-function canReachFromTraefik(host: string, port: number, path: string): boolean {
+async function canReachFromTraefik(host: string, port: number, path: string): Promise<boolean> {
   try {
-    const code = execSync(
-      `docker exec eve-legs-traefik wget -q -O /dev/null --timeout=3 --server-response http://${host}:${port}${path} 2>&1 | grep "HTTP/" | tail -1 || echo "no-response"`,
-      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
-    ).trim();
-    // wget --server-response prints the response status line. Anything < 500 means we got a response.
-    if (code.includes('no-response')) return false;
-    const match = code.match(/HTTP\/\S+\s+(\d{3})/);
+    // wget already has its own --timeout; the outer execFile timeout is a
+    // belt-and-braces guard for the case where docker exec itself stalls
+    // (e.g. paused container, daemon under load).
+    const { stdout } = await execFileAsync(
+      'docker',
+      [
+        'exec', 'eve-legs-traefik',
+        'sh', '-c',
+        `wget -q -O /dev/null --timeout=3 --server-response http://${host}:${port}${path} 2>&1 | grep "HTTP/" | tail -1 || echo "no-response"`,
+      ],
+      { timeout: DOCKER_CALL_TIMEOUT_MS },
+    );
+    const out = stdout.trim();
+    if (out.includes('no-response')) return false;
+    const match = out.match(/HTTP\/\S+\s+(\d{3})/);
     if (!match) return false;
-    const status = parseInt(match[1], 10);
-    return status < 500;
+    return parseInt(match[1], 10) < 500;
   } catch {
     return false;
   }
 }
 
+export interface VerifyOptions {
+  /**
+   * Fast snapshot mode — skip the retry loops. Used by the dashboard's
+   * `/api/doctor` route, which is called interactively and must return
+   * in ~1s. Default is the slower retry-friendly mode used by post-install
+   * verification.
+   */
+  quick?: boolean;
+}
+
 /**
  * Run all checks for a component. For services that aren't HTTP-ish (no
- * service field), only state is checked. Retries reachability for ~10 seconds
- * to account for slow container start.
+ * service field), only state is checked. By default retries reachability
+ * for ~10 seconds to account for slow container start; pass `{ quick: true }`
+ * for a fast snapshot (single probe, no retries).
  */
-export async function verifyComponent(componentId: string): Promise<VerifyResult> {
+export async function verifyComponent(
+  componentId: string,
+  opts: VerifyOptions = {},
+): Promise<VerifyResult> {
   const checks: VerifyResult['checks'] = [];
   let comp;
   try {
@@ -81,37 +118,47 @@ export async function verifyComponent(componentId: string): Promise<VerifyResult
   }
 
   const containerName = comp.service.containerName;
+  const containerAttempts = opts.quick ? 1 : 5;
+  const reachableAttempts = opts.quick ? 1 : 4;
 
-  // Step 1 — container running (retry up to 5x with 1.5s gap)
+  // Step 1 — container running. Retries: 5x in slow mode (~7.5s budget),
+  // 1x in quick mode (single probe).
   let running = false;
-  for (let i = 0; i < 5; i++) {
-    if (isContainerRunning(containerName)) { running = true; break; }
-    await sleep(1500);
+  for (let i = 0; i < containerAttempts; i++) {
+    if (await isContainerRunning(containerName)) { running = true; break; }
+    if (i < containerAttempts - 1) await sleep(1500);
   }
   checks.push({
     name: 'container',
     ok: running,
-    detail: running ? `${containerName} is running` : `${containerName} not in docker ps after 7.5s`,
+    detail: running
+      ? `${containerName} is running`
+      : opts.quick
+        ? `${containerName} not in docker ps`
+        : `${containerName} not in docker ps after 7.5s`,
   });
   if (!running) {
     return { ok: false, checks, summary: `${comp.label}: container not running` };
   }
 
-  // Step 2 — reachable from Traefik (retry up to 4x with 2s gap, total 10s)
+  // Step 2 — reachable from Traefik. 4x retries in slow mode (~10s budget),
+  // 1x in quick mode.
   if (comp.service.healthPath) {
     let reachable = false;
-    for (let i = 0; i < 4; i++) {
-      if (canReachFromTraefik(containerName, comp.service.internalPort, comp.service.healthPath)) {
+    for (let i = 0; i < reachableAttempts; i++) {
+      if (await canReachFromTraefik(containerName, comp.service.internalPort, comp.service.healthPath)) {
         reachable = true; break;
       }
-      await sleep(2000);
+      if (i < reachableAttempts - 1) await sleep(2000);
     }
     checks.push({
       name: 'reachable',
       ok: reachable,
       detail: reachable
         ? `responded on :${comp.service.internalPort}${comp.service.healthPath}`
-        : `not responding on :${comp.service.internalPort}${comp.service.healthPath} after 10s`,
+        : opts.quick
+          ? `not responding on :${comp.service.internalPort}${comp.service.healthPath}`
+          : `not responding on :${comp.service.internalPort}${comp.service.healthPath} after 10s`,
     });
     if (!reachable) {
       return { ok: false, checks, summary: `${comp.label}: container running but not responding on its port` };
