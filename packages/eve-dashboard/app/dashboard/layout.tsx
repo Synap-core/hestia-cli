@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, Sparkles, LogOut } from "lucide-react";
+import {
+  LayoutDashboard, Sparkles, Boxes, Globe, Settings as SettingsIcon, LogOut,
+} from "lucide-react";
 import { useEffect, useState, type ComponentType } from "react";
 import { Wordmark } from "../components/wordmark";
 import { ThemeToggle } from "../components/theme-toggle";
@@ -14,8 +16,11 @@ interface NavItem {
 }
 
 const NAV: NavItem[] = [
-  { href: "/dashboard",     label: "Home",         icon: LayoutDashboard },
-  { href: "/dashboard/ai",  label: "AI Providers", icon: Sparkles },
+  { href: "/dashboard",            label: "Home",         icon: LayoutDashboard },
+  { href: "/dashboard/components", label: "Components",   icon: Boxes },
+  { href: "/dashboard/ai",         label: "AI Providers", icon: Sparkles },
+  { href: "/dashboard/networking", label: "Networking",   icon: Globe },
+  { href: "/dashboard/settings",   label: "Settings",     icon: SettingsIcon },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -35,10 +40,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <div className="flex min-h-screen">
       {/* ----------------------------------------------------------------
-       * Rail — wordmark, primary nav, host badge, footer (theme + signout)
+       * Rail — sticky to the viewport, never taller than 100vh.
+       * Wordmark + nav scroll internally if items overflow; footer pinned.
        * --------------------------------------------------------------- */}
-      <aside className="hidden lg:flex flex-col w-60 shrink-0 border-r border-divider bg-content1/60 backdrop-blur-sm">
-        <div className="px-5 pt-6 pb-4">
+      <aside
+        className="hidden lg:flex sticky top-0 h-screen flex-col w-60 shrink-0 border-r border-divider bg-content1/60 backdrop-blur-sm"
+      >
+        {/* Header — fixed */}
+        <div className="px-5 pt-6 pb-4 shrink-0">
           <Wordmark size="md" />
           {hostname && (
             <p className="mt-2 truncate font-mono text-[11px] text-default-400" title={hostname}>
@@ -47,7 +56,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           )}
         </div>
 
-        <nav className="flex-1 px-3 mt-2 space-y-0.5">
+        {/* Nav — scrolls internally if it ever overflows */}
+        <nav className="flex-1 min-h-0 overflow-y-auto px-3 mt-2 space-y-0.5">
           {NAV.map(({ href, label, icon: Icon }) => {
             const active = pathname === href;
             return (
@@ -61,7 +71,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     : "text-default-500 hover:bg-content2/60 hover:text-foreground")
                 }
               >
-                {/* Active indicator — emerald notch on the left edge */}
                 {active && (
                   <span
                     className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r-full bg-primary"
@@ -75,7 +84,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           })}
         </nav>
 
-        <div className="px-3 pb-4 pt-3 border-t border-divider space-y-1">
+        {/* Footer — pinned to bottom */}
+        <div className="px-3 pb-4 pt-3 border-t border-divider space-y-1 shrink-0">
           <div className="flex items-center justify-between px-3 py-1.5">
             <span className="text-[11px] uppercase tracking-wider text-default-400">Theme</span>
             <ThemeToggle compact />

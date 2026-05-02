@@ -6,7 +6,7 @@ import {
   Button, Input, Select, SelectItem, Spinner, addToast, Switch, Chip,
 } from "@heroui/react";
 import {
-  Plus, Trash2, RefreshCw, Save, Check, AlertCircle,
+  Plus, Trash2, RefreshCw, Save, Check, AlertCircle, Plug,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -85,9 +85,18 @@ function Surface({ className = "", children }: { className?: string; children: R
 // Page
 // ---------------------------------------------------------------------------
 
+interface ComponentSummary {
+  id: string;
+  label: string;
+  installed: boolean;
+}
+
+const AI_CONSUMERS = ["synap", "openclaw", "openwebui"];
+
 export default function AiProvidersPage() {
   const router = useRouter();
   const [config, setConfig] = useState<AiConfig | null>(null);
+  const [consumers, setConsumers] = useState<ComponentSummary[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
@@ -96,9 +105,20 @@ export default function AiProvidersPage() {
 
   const fetchConfig = useCallback(async () => {
     try {
-      const res = await fetch("/api/ai", { credentials: "include" });
-      if (res.status === 401) { router.push("/login"); return; }
-      if (res.ok) setConfig(await res.json() as AiConfig);
+      const [aiRes, compRes] = await Promise.all([
+        fetch("/api/ai", { credentials: "include" }),
+        fetch("/api/components", { credentials: "include" }),
+      ]);
+      if (aiRes.status === 401) { router.push("/login"); return; }
+      if (aiRes.ok) setConfig(await aiRes.json() as AiConfig);
+      if (compRes.ok) {
+        const data = await compRes.json() as { components: Array<{ id: string; label: string; installed: boolean }> };
+        setConsumers(
+          data.components
+            .filter(c => AI_CONSUMERS.includes(c.id))
+            .map(c => ({ id: c.id, label: c.label, installed: c.installed })),
+        );
+      }
     } finally { setLoading(false); }
   }, [router]);
 
@@ -485,6 +505,40 @@ export default function AiProvidersPage() {
             </Surface>
           )}
         </div>
+      )}
+
+      {/* -----------------------------------------------------------------
+       * Wired components — closes the loop on what Apply does
+       * -------------------------------------------------------------- */}
+      {consumers && consumers.length > 0 && (
+        <Surface className="p-5">
+          <div className="flex items-center gap-2">
+            <Plug className="h-4 w-4 text-default-500" />
+            <h3 className="font-medium text-foreground">Wired components</h3>
+          </div>
+          <p className="mt-1 text-xs text-default-500">
+            These installed components consume the providers above. &quot;Apply&quot; pushes
+            keys + model choices to each.
+          </p>
+          <ul className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+            {consumers.map(c => (
+              <li
+                key={c.id}
+                className="flex items-center justify-between rounded-lg border border-divider bg-content1 px-3 py-2"
+              >
+                <span className="text-sm text-foreground">{c.label}</span>
+                <Chip
+                  size="sm"
+                  variant="flat"
+                  color={c.installed ? "success" : "default"}
+                  radius="sm"
+                >
+                  {c.installed ? "wired" : "not installed"}
+                </Chip>
+              </li>
+            ))}
+          </ul>
+        </Surface>
       )}
 
       {/* -----------------------------------------------------------------

@@ -2,9 +2,10 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Button, Spinner, addToast, Chip } from "@heroui/react";
+import Link from "next/link";
+import { Button, Spinner, Chip, addToast } from "@heroui/react";
 import {
-  RefreshCw, RotateCcw, Wifi, WifiOff, Copy, ExternalLink, Check, ArrowRight,
+  RefreshCw, RotateCcw, ArrowRight, ExternalLink, Check,
   Brain, Wrench, Hammer, Eye, Footprints,
   type LucideIcon,
 } from "lucide-react";
@@ -42,33 +43,45 @@ interface SecretsSummary {
   arms: { openclaw: { configured: boolean }; messaging: { configured: boolean } };
 }
 
-interface ServiceAccess {
-  id: string;
-  label: string;
-  emoji: string;
-  localUrl: string | null;
-  serverUrl: string | null;
-  domainUrl: string | null;
-  port: number;
-  requires: string | null;
-  dnsReady: boolean | null;
-}
-
 interface AccessData {
-  urls: ServiceAccess[];
+  urls: Array<{
+    id: string;
+    label: string;
+    emoji: string;
+    localUrl: string | null;
+    serverUrl: string | null;
+    domainUrl: string | null;
+    port: number;
+    requires: string | null;
+    dnsReady: boolean | null;
+  }>;
   domain: { primary?: string; ssl?: boolean } | null;
   serverIp?: string | null;
 }
 
+interface ComponentRow {
+  id: string;
+  label: string;
+  emoji: string;
+  description: string;
+  category: string;
+  organ: string | null;
+  installed: boolean;
+  containerRunning: boolean | null;
+  hostPort: number | null;
+  subdomain: string | null;
+  domainUrl: string | null;
+  state: string | null;
+  version: string | null;
+  alwaysInstall: boolean;
+}
+
 // ---------------------------------------------------------------------------
-// Visual primitives — local, theme-token-only, no shadows
+// Visual primitives
 // ---------------------------------------------------------------------------
 
 function Section({
-  title,
-  description,
-  action,
-  children,
+  title, description, action, children,
 }: {
   title: string;
   description?: string;
@@ -82,9 +95,7 @@ function Section({
           <h2 className="font-heading text-xl font-medium tracking-tightest text-foreground">
             {title}
           </h2>
-          {description && (
-            <p className="mt-0.5 text-sm text-default-500">{description}</p>
-          )}
+          {description && <p className="mt-0.5 text-sm text-default-500">{description}</p>}
         </div>
         {action}
       </div>
@@ -93,13 +104,7 @@ function Section({
   );
 }
 
-function Surface({
-  className = "",
-  children,
-}: {
-  className?: string;
-  children: React.ReactNode;
-}) {
+function Surface({ className = "", children }: { className?: string; children: React.ReactNode }) {
   return (
     <div className={`rounded-xl border border-divider bg-content1 ${className}`}>{children}</div>
   );
@@ -114,90 +119,19 @@ const STATE_DOT: Record<OrganState, string> = {
   missing:    "bg-default-300",
 };
 
-function StateDot({ state }: { state: OrganState }) {
-  return (
-    <span className="inline-flex items-center gap-1.5 text-xs">
-      <span className={`h-1.5 w-1.5 rounded-full ${STATE_DOT[state]}`} aria-hidden />
-      <span className="capitalize text-default-500">{state}</span>
-    </span>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Organs config — lucide icons, not emoji, for proper theme integration
-// ---------------------------------------------------------------------------
-
 interface OrganMeta {
   id: "brain" | "arms" | "builder" | "eyes" | "legs";
   label: string;
-  desc: string;
   Icon: LucideIcon;
 }
 
 const ORGANS: OrganMeta[] = [
-  { id: "brain",   label: "Brain",   desc: "Synap pod + data stores", Icon: Brain },
-  { id: "arms",    label: "Arms",    desc: "OpenClaw / MCP actions",  Icon: Wrench },
-  { id: "builder", label: "Builder", desc: "Code engine",             Icon: Hammer },
-  { id: "eyes",    label: "Eyes",    desc: "RSSHub / feeds",          Icon: Eye },
-  { id: "legs",    label: "Legs",    desc: "Traefik / domains",       Icon: Footprints },
+  { id: "brain",   label: "Brain",   Icon: Brain },
+  { id: "arms",    label: "Arms",    Icon: Wrench },
+  { id: "builder", label: "Builder", Icon: Hammer },
+  { id: "eyes",    label: "Eyes",    Icon: Eye },
+  { id: "legs",    label: "Legs",    Icon: Footprints },
 ];
-
-// ---------------------------------------------------------------------------
-// Cells
-// ---------------------------------------------------------------------------
-
-function CopyButton({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        void navigator.clipboard.writeText(value).then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        });
-      }}
-      className="inline-flex items-center justify-center text-default-400 hover:text-foreground transition-colors"
-      aria-label="Copy"
-    >
-      {copied ? <Check className="h-3.5 w-3.5 text-primary" /> : <Copy className="h-3.5 w-3.5" />}
-    </button>
-  );
-}
-
-function UrlCell({ url, pending }: { url: string | null; pending?: boolean }) {
-  if (!url) return <span className="text-default-300 text-xs">—</span>;
-  const linkClass = pending
-    ? "text-default-400 line-through"
-    : "text-foreground hover:text-primary";
-  return (
-    <span className="inline-flex items-center gap-1.5 max-w-full">
-      <a
-        href={url}
-        target="_blank"
-        rel="noreferrer"
-        className={`font-mono text-xs truncate transition-colors ${linkClass}`}
-        title={pending ? "DNS not yet pointing to this server" : url}
-      >
-        {url.replace(/^https?:\/\//, "")}
-      </a>
-      <ExternalLink className="h-3 w-3 shrink-0 text-default-400" />
-      <CopyButton value={url} />
-      {pending && (
-        <Chip
-          size="sm"
-          color="warning"
-          variant="flat"
-          radius="sm"
-          classNames={{ content: "px-1 text-[10px] font-medium uppercase tracking-wider" }}
-          title="DNS A record is missing or pointing elsewhere"
-        >
-          DNS
-        </Chip>
-      )}
-    </span>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Page
@@ -208,6 +142,7 @@ export default function DashboardPage() {
   const [state, setState] = useState<EntityState | null>(null);
   const [secrets, setSecrets] = useState<SecretsSummary | null>(null);
   const [access, setAccess] = useState<AccessData | null>(null);
+  const [components, setComponents] = useState<ComponentRow[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [restarting, setRestarting] = useState<string | null>(null);
@@ -216,31 +151,34 @@ export default function DashboardPage() {
   const fetchData = useCallback(async (silent = false) => {
     if (!silent) setRefreshing(true);
     try {
-      const [stateRes, secretsRes, accessRes] = await Promise.all([
+      const [stateRes, secretsRes, accessRes, componentsRes] = await Promise.all([
         fetch("/api/state",            { credentials: "include" }),
         fetch("/api/secrets-summary",  { credentials: "include" }),
         fetch("/api/access",           { credentials: "include" }),
+        fetch("/api/components",       { credentials: "include" }),
       ]);
 
-      if ([stateRes, secretsRes, accessRes].some(r => r.status === 401)) {
+      if ([stateRes, secretsRes, accessRes, componentsRes].some(r => r.status === 401)) {
         router.push("/login");
         return;
       }
 
-      const failed = [stateRes, secretsRes, accessRes].filter(r => !r.ok);
+      const failed = [stateRes, secretsRes, accessRes, componentsRes].filter(r => !r.ok);
       if (failed.length > 0) {
-        const codes = failed.map(r => r.status).join(", ");
-        setLoadError(`API responded with status ${codes}. Check the dashboard container logs.`);
+        setLoadError(`API responded with status ${failed.map(r => r.status).join(", ")}.`);
       } else {
         setLoadError(null);
       }
 
-      if (stateRes.ok)   setState(await stateRes.json() as EntityState);
-      if (secretsRes.ok) setSecrets(await secretsRes.json() as SecretsSummary);
-      if (accessRes.ok)  setAccess(await accessRes.json() as AccessData);
+      if (stateRes.ok)      setState(await stateRes.json() as EntityState);
+      if (secretsRes.ok)    setSecrets(await secretsRes.json() as SecretsSummary);
+      if (accessRes.ok)     setAccess(await accessRes.json() as AccessData);
+      if (componentsRes.ok) {
+        const data = await componentsRes.json() as { components: ComponentRow[] };
+        setComponents(data.components);
+      }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Network error";
-      setLoadError(`Could not reach the dashboard API — ${msg}`);
+      setLoadError(`Could not reach the dashboard API — ${err instanceof Error ? err.message : "Network error"}`);
       if (!silent) addToast({ title: "Failed to load state", color: "danger" });
     } finally {
       setLoading(false);
@@ -258,8 +196,7 @@ export default function DashboardPage() {
     setRestarting(organ);
     try {
       const res = await fetch(`/api/actions/${organ}/restart`, {
-        method: "POST",
-        credentials: "include",
+        method: "POST", credentials: "include",
       });
       if (res.status === 401) { router.push("/login"); return; }
       if (res.ok) {
@@ -271,9 +208,7 @@ export default function DashboardPage() {
       }
     } catch {
       addToast({ title: "Restart request failed", color: "danger" });
-    } finally {
-      setRestarting(null);
-    }
+    } finally { setRestarting(null); }
   }
 
   if (loading) {
@@ -287,13 +222,15 @@ export default function DashboardPage() {
 
   const organs = state?.organs ?? {};
   const readyCount = Object.values(organs).filter(o => o.state === "ready").length;
-  const hasDomain = !!access?.domain?.primary;
-  const hasAnyData = state !== null || secrets !== null || access !== null;
+  const launchable = (components ?? [])
+    .filter(c => c.installed && c.containerRunning && (c.domainUrl || c.hostPort))
+    .filter(c => c.id !== "eve-dashboard"); // hide self
+  const checklist = buildChecklist({ access, secrets, components });
 
   return (
     <div className="space-y-10">
       {/* -----------------------------------------------------------------
-       * Page header
+       * Page header — overview heading, refresh
        * -------------------------------------------------------------- */}
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
@@ -324,280 +261,247 @@ export default function DashboardPage() {
         </Button>
       </header>
 
+      {/* -----------------------------------------------------------------
+       * Diagnostics
+       * -------------------------------------------------------------- */}
       {loadError && (
         <div className="rounded-xl border border-danger/30 bg-danger/5 px-4 py-3 text-sm">
           <p className="font-medium text-foreground">Couldn&apos;t load some data</p>
           <p className="mt-0.5 text-default-500">{loadError}</p>
-          <p className="mt-2 text-default-500">
-            Check{" "}
-            <code className="rounded bg-content2 px-1.5 py-0.5 font-mono text-xs text-foreground">
-              docker logs eve-dashboard
-            </code>{" "}
-            on the host. The container needs <code className="rounded bg-content2 px-1.5 py-0.5 font-mono text-xs text-foreground">/opt</code>{" "}
-            and <code className="rounded bg-content2 px-1.5 py-0.5 font-mono text-xs text-foreground">~/.local/share/eve</code> mounted to read state + secrets.
-          </p>
-        </div>
-      )}
-
-      {!hasAnyData && !loadError && (
-        <div className="rounded-xl border border-divider bg-content1 p-6 text-sm text-default-500">
-          <p>No state on disk yet. Run <code className="rounded bg-content2 px-1.5 py-0.5 font-mono text-xs text-foreground">eve install</code> on the host to bootstrap the stack.</p>
         </div>
       )}
 
       {/* -----------------------------------------------------------------
-       * Organs
+       * Setup checklist — renders only while something is missing
        * -------------------------------------------------------------- */}
-      <Section title="Organs" description="The five layers that make up your sovereign entity.">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-          {ORGANS.map(({ id, label, desc, Icon }) => {
-            const organ = organs[id];
-            const organState = (organ?.state ?? "missing") as OrganState;
-            return (
-              <Surface key={id} className="p-4 flex flex-col gap-3 transition-colors hover:bg-content2/40">
-                <div className="flex items-center gap-2">
-                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-content2 text-default-700">
-                    <Icon className="h-4 w-4" />
-                  </span>
-                  <span className="font-medium text-foreground">{label}</span>
-                  <span className="ml-auto"><StateDot state={organState} /></span>
-                </div>
-                <p className="text-xs text-default-500">{desc}</p>
-                <div className="mt-auto flex items-center gap-2 pt-1 text-[11px] text-default-400">
-                  {organ?.version && (
-                    <span className="font-mono">v{organ.version}</span>
-                  )}
-                  {organ?.lastChecked && (
-                    <span>· {new Date(organ.lastChecked).toLocaleTimeString()}</span>
-                  )}
-                </div>
-                <Button
-                  size="sm"
-                  variant="light"
-                  radius="md"
-                  startContent={
-                    restarting === id
-                      ? <Spinner size="sm" color="default" />
-                      : <RotateCcw className="h-3.5 w-3.5" />
+      {checklist.length > 0 && (
+        <Section
+          title="Set up"
+          description="A few quick actions to get the rest of your stack live."
+        >
+          <Surface className="overflow-hidden">
+            {checklist.map((item, i) => (
+              <div
+                key={item.id}
+                className={
+                  "flex items-start gap-3 px-4 py-3.5 " +
+                  (i > 0 ? "border-t border-divider" : "")
+                }
+              >
+                <span
+                  className={
+                    "mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full " +
+                    (item.severity === "must"
+                      ? "bg-warning/15 text-warning"
+                      : "bg-default-200 text-default-500")
                   }
-                  isDisabled={restarting !== null || organState === "missing"}
-                  onPress={() => void restartOrgan(id)}
-                  className="justify-start text-default-600 hover:text-foreground"
+                  aria-hidden
                 >
-                  Restart
-                </Button>
-                {organ?.errorMessage && (
-                  <p className="truncate text-xs text-danger" title={organ.errorMessage}>
-                    {organ.errorMessage}
-                  </p>
+                  <span className="text-[11px] font-medium">{i + 1}</span>
+                </span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-foreground">{item.label}</p>
+                  <p className="mt-0.5 text-xs text-default-500">{item.description}</p>
+                </div>
+                {item.cta && (
+                  <Link
+                    href={item.cta.href}
+                    className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-divider bg-content1 px-2.5 py-1.5 text-xs text-default-700 hover:border-primary/50 hover:text-primary transition-colors"
+                  >
+                    {item.cta.label}
+                    <ArrowRight className="h-3 w-3" />
+                  </Link>
                 )}
-              </Surface>
-            );
-          })}
-        </div>
+              </div>
+            ))}
+          </Surface>
+        </Section>
+      )}
+
+      {/* -----------------------------------------------------------------
+       * Stack pulse — compact one-row organ + count
+       * -------------------------------------------------------------- */}
+      <Section
+        title="Stack pulse"
+        description="Each organ wires together a layer of your sovereign entity."
+        action={
+          <Link
+            href="/dashboard/components"
+            className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
+          >
+            View components <ArrowRight className="h-3.5 w-3.5" />
+          </Link>
+        }
+      >
+        <Surface className="p-4">
+          <div className="flex flex-wrap items-center gap-2">
+            {ORGANS.map(({ id, label, Icon }) => {
+              const organ = organs[id];
+              const organState = (organ?.state ?? "missing") as OrganState;
+              const dim = organState === "missing";
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  className={
+                    "group inline-flex items-center gap-2 rounded-lg border px-3 py-2 transition-colors " +
+                    (dim
+                      ? "border-divider bg-content1 opacity-60 hover:opacity-100"
+                      : "border-divider bg-content1 hover:border-primary/40")
+                  }
+                  onClick={() => organState !== "missing" && void restartOrgan(id)}
+                  disabled={restarting !== null || organState === "missing"}
+                  title={
+                    organState === "missing"
+                      ? `${label} not installed`
+                      : `Click to restart ${label}`
+                  }
+                >
+                  <Icon className="h-3.5 w-3.5 text-default-500" />
+                  <span className="text-sm text-foreground">{label}</span>
+                  <span className={`h-1.5 w-1.5 rounded-full ${STATE_DOT[organState]}`} aria-hidden />
+                  <span className="text-[11px] text-default-400 capitalize">{organState}</span>
+                  {restarting === id ? (
+                    <Spinner size="sm" color="default" />
+                  ) : organState !== "missing" ? (
+                    <RotateCcw className="h-3 w-3 text-default-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+        </Surface>
       </Section>
 
       {/* -----------------------------------------------------------------
-       * Access — service URL table
+       * Service launcher — every running service the user can open
        * -------------------------------------------------------------- */}
       <Section
-        title="Access"
-        description="Every place you can reach this stack from."
+        title="Open"
+        description="Jump into the apps your stack is running."
         action={
-          hasDomain ? (
+          access?.domain?.primary ? (
             <Chip
               size="sm"
               variant="bordered"
               color="success"
               classNames={{ content: "font-mono text-xs" }}
             >
-              {access?.domain?.ssl ? "https" : "http"}://{access?.domain?.primary}
+              {access.domain.ssl ? "https" : "http"}://{access.domain.primary}
             </Chip>
           ) : null
         }
       >
-        {!hasDomain && (
-          <div className="rounded-xl border border-warning/30 bg-warning/5 px-4 py-3 text-sm text-warning-700 dark:text-warning">
-            <p>
-              No domain configured.{" "}
-              <span className="text-foreground/80">For HTTPS access, run </span>
-              <code className="rounded bg-content2 px-1.5 py-0.5 font-mono text-xs text-foreground">
-                eve domain set yourdomain.com --ssl
-              </code>
-              .
+        {launchable.length === 0 ? (
+          <Surface className="p-6">
+            <p className="text-sm text-default-500">
+              No services are running yet — install components from the{" "}
+              <Link href="/dashboard/components" className="text-primary hover:underline">
+                catalog
+              </Link>{" "}
+              to populate this section.
             </p>
+          </Surface>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {launchable.map(c => (
+              <LaunchCard key={c.id} comp={c} />
+            ))}
           </div>
         )}
-
-        <Surface className="overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-divider bg-content1">
-                {["Service", "Local", "Server IP", "Domain"].map(h => (
-                  <th
-                    key={h}
-                    className="px-4 py-2.5 text-left text-[11px] font-medium uppercase tracking-wider text-default-400"
-                  >
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {(access?.urls ?? []).map((svc, i) => (
-                <tr
-                  key={svc.id}
-                  className={
-                    "transition-colors hover:bg-content2/40 " +
-                    (i > 0 ? "border-t border-divider" : "")
-                  }
-                >
-                  <td className="px-4 py-3 align-middle">
-                    <span className="font-medium text-foreground">{svc.label}</span>
-                  </td>
-                  <td className="px-4 py-3 align-middle"><UrlCell url={svc.localUrl} /></td>
-                  <td className="px-4 py-3 align-middle"><UrlCell url={svc.serverUrl} /></td>
-                  <td className="px-4 py-3 align-middle">
-                    <UrlCell
-                      url={svc.domainUrl}
-                      pending={svc.domainUrl !== null && svc.dnsReady === false}
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Surface>
-      </Section>
-
-      {/* -----------------------------------------------------------------
-       * AI Providers — at-a-glance, link to full editor
-       * -------------------------------------------------------------- */}
-      <Section
-        title="AI Providers"
-        description="The brain behind your agents — keys live only on this server."
-        action={
-          <a
-            href="/dashboard/ai"
-            className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
-          >
-            Configure <ArrowRight className="h-3.5 w-3.5" />
-          </a>
-        }
-      >
-        <Surface className="p-5 space-y-4">
-          {!secrets ? (
-            <p className="text-sm text-default-400">No provider config found.</p>
-          ) : secrets.ai.providers.length === 0 ? (
-            <a
-              href="/dashboard/ai"
-              className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
-            >
-              No providers yet — add one
-              <ArrowRight className="h-3.5 w-3.5" />
-            </a>
-          ) : (
-            <>
-              {secrets.ai.defaultProvider && (
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs uppercase tracking-wider text-default-400">Default</span>
-                  <Chip size="sm" color="primary" variant="flat" radius="sm">
-                    {secrets.ai.defaultProvider}
-                  </Chip>
-                  {secrets.ai.mode && (
-                    <Chip size="sm" variant="flat" radius="sm">
-                      {secrets.ai.mode}
-                    </Chip>
-                  )}
-                </div>
-              )}
-              <div className="flex flex-wrap gap-2">
-                {secrets.ai.providers.map(p => {
-                  const ok = p.configured && p.hasKey;
-                  return (
-                    <Chip
-                      key={p.id}
-                      size="md"
-                      variant="bordered"
-                      radius="md"
-                      color={ok ? "success" : "default"}
-                      startContent={
-                        <span
-                          className={`ml-1 h-1.5 w-1.5 rounded-full ${ok ? "bg-primary" : "bg-default-400"}`}
-                          aria-hidden
-                        />
-                      }
-                    >
-                      <span className="font-medium text-foreground mr-1">{p.id}</span>
-                      <span className="text-default-400">{ok ? "configured" : "no key"}</span>
-                    </Chip>
-                  );
-                })}
-              </div>
-            </>
-          )}
-        </Surface>
-      </Section>
-
-      {/* -----------------------------------------------------------------
-       * Wiring
-       * -------------------------------------------------------------- */}
-      <Section title="Wiring" description="Connections between organs and external services.">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <WiringCard
-            label="Synap Pod"
-            sub={secrets?.synap.apiUrl ?? "Not configured"}
-            online={secrets?.synap.configured ?? false}
-            badgeOk={secrets?.synap.hasApiKey ?? false}
-            okText="API key set"
-            offText="No API key"
-          />
-          <WiringCard
-            label="OpenClaw"
-            sub="Arms organ bridge"
-            online={secrets?.arms.openclaw.configured ?? false}
-            badgeOk={secrets?.arms.openclaw.configured ?? false}
-            okText="wired"
-            offText="not wired"
-          />
-        </div>
       </Section>
     </div>
   );
 }
 
-function WiringCard({
-  label, sub, online, badgeOk, okText, offText,
-}: {
-  label: string;
-  sub: string;
-  online: boolean;
-  badgeOk: boolean;
-  okText: string;
-  offText: string;
-}) {
+// ---------------------------------------------------------------------------
+// Launch card — service tile
+// ---------------------------------------------------------------------------
+
+function LaunchCard({ comp }: { comp: ComponentRow }) {
+  // Pick the best URL: domain wins (proper hostname); fall back to host port.
+  const href = comp.domainUrl
+    ?? (comp.hostPort ? `http://${typeof window === "undefined" ? "localhost" : window.location.hostname}:${comp.hostPort}` : null);
+  if (!href) return null;
+
   return (
-    <Surface className="p-4 flex items-center gap-3">
-      <span
-        className={
-          "inline-flex h-9 w-9 items-center justify-center rounded-lg " +
-          (online ? "bg-primary/10 text-primary" : "bg-content2 text-default-400")
-        }
-      >
-        {online ? <Wifi className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="group flex items-center gap-3 rounded-xl border border-divider bg-content1 p-4 transition-colors hover:border-primary/40 hover:bg-content2/40"
+    >
+      <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+        <span className="text-lg" aria-hidden>{comp.emoji}</span>
       </span>
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium text-foreground">{label}</p>
-        <p className="truncate font-mono text-xs text-default-400">{sub}</p>
+        <p className="font-medium text-foreground">{comp.label}</p>
+        <p className="truncate font-mono text-xs text-default-400" title={href}>
+          {href.replace(/^https?:\/\//, "")}
+        </p>
       </div>
-      <Chip
-        size="sm"
-        variant="flat"
-        radius="sm"
-        color={badgeOk ? "success" : "warning"}
-      >
-        {badgeOk ? okText : offText}
-      </Chip>
-    </Surface>
+      <ExternalLink className="h-4 w-4 shrink-0 text-default-400 transition-transform group-hover:-translate-y-0.5 group-hover:text-primary" />
+    </a>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Setup checklist — derives "what's missing" from current state
+// ---------------------------------------------------------------------------
+
+interface ChecklistItem {
+  id: string;
+  label: string;
+  description: string;
+  severity: "must" | "recommended";
+  cta?: { label: string; href: string };
+}
+
+function buildChecklist({
+  access, secrets, components,
+}: {
+  access: AccessData | null;
+  secrets: SecretsSummary | null;
+  components: ComponentRow[] | null;
+}): ChecklistItem[] {
+  const out: ChecklistItem[] = [];
+
+  // 1. Domain — recommended, gates HTTPS routing.
+  if (!access?.domain?.primary) {
+    out.push({
+      id: "domain",
+      label: "Configure a domain",
+      description: "Without one, services are reachable only by IP and port.",
+      severity: "recommended",
+      cta: { label: "Networking", href: "/dashboard/networking" },
+    });
+  }
+
+  // 2. AI provider — must, agents idle without it.
+  const hasAi = (secrets?.ai.providers ?? []).some(p => p.hasKey || p.id === "ollama");
+  const aiConsumers = ["synap", "openclaw", "openwebui"];
+  const hasAiConsumer = (components ?? []).some(c => c.installed && aiConsumers.includes(c.id));
+  if (hasAiConsumer && !hasAi) {
+    out.push({
+      id: "ai",
+      label: "Add an AI provider",
+      description: "OpenClaw / Open WebUI / agents are idle without one.",
+      severity: "must",
+      cta: { label: "AI Providers", href: "/dashboard/ai" },
+    });
+  }
+
+  // 3. Synap not running — recommended for a useful stack.
+  const synap = (components ?? []).find(c => c.id === "synap");
+  if (synap && !synap.installed) {
+    out.push({
+      id: "synap",
+      label: "Install Synap Pod",
+      description: "The data store every other component reads from.",
+      severity: "recommended",
+      cta: { label: "Components", href: "/dashboard/components" },
+    });
+  }
+
+  return out;
 }
