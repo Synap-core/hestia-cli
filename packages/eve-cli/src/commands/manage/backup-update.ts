@@ -1,11 +1,12 @@
 import { Command } from 'commander';
 import { execa } from 'execa';
-import { execSync, spawnSync } from 'node:child_process';
+import { execSync } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { getGlobalCliFlags } from '@eve/cli-kit';
+import { runActionToCompletion } from '@eve/lifecycle';
 import {
   printInfo,
   printSuccess,
@@ -43,10 +44,37 @@ interface UpdateTarget {
   update: () => Promise<void>;
 }
 
+/**
+ * Wrap `runActionToCompletion(id, "update")` so each top-level update
+ * target is a thin shim that delegates to `@eve/lifecycle`. Single source
+ * of truth: the lifecycle's UPDATE_PLAN handles compose/imagePull strategy,
+ * recreate-vs-restart for env-bound components, missing-container drift,
+ * and the obsolete-`version:` sanitization.
+ */
+function lifecycleUpdate(id: string, label: string): UpdateTarget {
+  return {
+    id,
+    label,
+    update: async () => {
+      const result = await runActionToCompletion(id, 'update');
+      if (!result.ok) {
+        // Surface the lifecycle's last few log lines so the user sees
+        // why the update failed (image not found, container drift, etc.)
+        // without scrolling through the full stream.
+        const tail = result.logs.slice(-3).join('\n  ');
+        throw new Error(result.error ?? `update failed${tail ? `\n  ${tail}` : ''}`);
+      }
+    },
+  };
+}
+
 function buildUpdateTargets(deployDir: string | undefined): UpdateTarget[] {
   const targets: UpdateTarget[] = [];
 
-  // 1. Synap Data Pod (brain)
+  // Synap stays bespoke — its update path runs a `compose run --rm
+  // backend-migrate` step before bringing the backend up so schema
+  // changes land before code that depends on them. The lifecycle's
+  // generic UPDATE_PLAN doesn't model migrations yet.
   if (deployDir) {
     targets.push({
       id: 'synap',
@@ -56,65 +84,35 @@ function buildUpdateTargets(deployDir: string | undefined): UpdateTarget[] {
         await execa('docker', ['compose', 'pull', 'backend', 'backend-migrate', 'realtime', '--ignore-pull-failures'], { cwd: deployDir, env, stdio: 'inherit' });
         await execa('docker', ['compose', 'run', '--rm', 'backend-migrate'], { cwd: deployDir, env, stdio: 'inherit' });
         await execa('docker', ['compose', 'up', '-d', '--no-deps', 'backend', 'realtime'], { cwd: deployDir, env, stdio: 'inherit' });
-        // Reconnect to eve-network (container gets recreated)
         const name = getSynapBackendContainer();
         if (name) connectToEveNetwork(name);
       },
     });
   }
 
-  // 2. Ollama (brain - AI)
-  targets.push({
-    id: 'ollama',
-    label: '🤖 Ollama',
-    update: async () => {
-      spawnSync('docker', ['pull', 'ollama/ollama:latest'], { stdio: 'inherit' });
-      spawnSync('docker', ['restart', 'eve-brain-ollama'], { stdio: 'inherit' });
-    },
-  });
+  // Everything else delegates to the lifecycle's UPDATE_PLAN. Order
+  // matters only cosmetically here (spinner output) — there are no
+  // cross-component update dependencies.
+  targets.push(lifecycleUpdate('ollama', '🤖 Ollama'));
+  targets.push(lifecycleUpdate('openclaw', '🦾 OpenClaw'));
+  targets.push(lifecycleUpdate('rsshub', '👁️  RSSHub'));
+  targets.push(lifecycleUpdate('traefik', '🦿 Traefik'));
+  targets.push(lifecycleUpdate('openwebui', '💬 Open WebUI'));
+  targets.push(lifecycleUpdate('openwebui-pipelines', '🪈 Pipelines'));
 
-  // 3. OpenClaw (arms)
-  targets.push({
-    id: 'openclaw',
-    label: '🦾 OpenClaw',
-    update: async () => {
-      spawnSync('docker', ['pull', 'ghcr.io/openclaw/openclaw:latest'], { stdio: 'inherit' });
-      spawnSync('docker', ['restart', 'eve-arms-openclaw'], { stdio: 'inherit' });
-    },
-  });
-
-  // 4. RSSHub (eyes)
-  targets.push({
-    id: 'rsshub',
-    label: '👁️  RSSHub',
-    update: async () => {
-      spawnSync('docker', ['pull', 'diygod/rsshub:latest'], { stdio: 'inherit' });
-      spawnSync('docker', ['restart', 'eve-eyes-rsshub'], { stdio: 'inherit' });
-    },
-  });
-
-  // 5. Traefik (legs)
-  targets.push({
-    id: 'traefik',
-    label: '🦿 Traefik',
-    update: async () => {
-      spawnSync('docker', ['pull', 'traefik:v3.0'], { stdio: 'inherit' });
-      spawnSync('docker', ['restart', 'eve-legs-traefik'], { stdio: 'inherit' });
-      // Reconnect synap to eve-network — Traefik restart doesn't affect other containers
+  // Traefik can recreate its container on update; reconnect synap to
+  // eve-network afterwards so cross-container DNS keeps working. (Done
+  // here rather than in the lifecycle because eve-network reconnect is
+  // a `eve update` orchestration concern, not a per-component one.)
+  const traefikTarget = targets.find(t => t.id === 'traefik');
+  if (traefikTarget) {
+    const inner = traefikTarget.update;
+    traefikTarget.update = async () => {
+      await inner();
       const name = getSynapBackendContainer();
       if (name) connectToEveNetwork(name);
-    },
-  });
-
-  // 6. Open WebUI (chat UI)
-  targets.push({
-    id: 'openwebui',
-    label: '💬 Open WebUI',
-    update: async () => {
-      spawnSync('docker', ['pull', 'ghcr.io/open-webui/open-webui:main'], { stdio: 'inherit' });
-      spawnSync('docker', ['restart', 'hestia-openwebui'], { stdio: 'inherit' });
-    },
-  });
+    };
+  }
 
   return targets;
 }
@@ -159,7 +157,7 @@ export function backupUpdateCommands(program: Command): void {
 
   program
     .command('update')
-    .description('Pull latest images and restart all Eve organs (Synap, Ollama, OpenClaw, RSSHub, Traefik, Open WebUI)')
+    .description('Update all Eve organs (Synap, Ollama, OpenClaw, RSSHub, Traefik, Open WebUI, Pipelines). Delegates to @eve/lifecycle so behavior matches the dashboard.')
     .option('--only <organs>', 'Comma-separated organs to update, e.g. synap,ollama')
     .option('--skip <organs>', 'Comma-separated organs to skip, e.g. traefik')
     .action(async (opts: { only?: string; skip?: string }) => {

@@ -27,6 +27,7 @@ import {
   pickPrimaryProvider,
   wireComponentAi,
   AI_CONSUMERS,
+  AI_CONSUMERS_NEEDING_RECREATE,
   type ComponentInfo,
 } from "@eve/dna";
 import {
@@ -244,17 +245,97 @@ async function* updateContainer(comp: ComponentInfo): AsyncGenerator<LifecycleEv
   }
 
   if (plan.imagePull && comp.service?.containerName) {
-    let code = yield* dockerExec(["pull", plan.imagePull], `Pulling ${plan.imagePull}…`);
+    const code = yield* dockerExec(["pull", plan.imagePull], `Pulling ${plan.imagePull}…`);
     if (code !== 0) { yield { type: "error", message: `pull exited ${code}` }; return; }
 
-    code = yield* dockerExec(
+    // Three branches after a successful pull:
+    //
+    //   1. Container missing (drift) — `docker restart` would fail with
+    //      "No such container". If we have an install recipe, recreate
+    //      so the user gets recovery. Otherwise surface the drift.
+    //
+    //   2. Component is env-bound (`AI_CONSUMERS_NEEDING_RECREATE`) —
+    //      `docker restart` keeps the stale env from the original
+    //      `docker run`, so config changes (DEFAULT_MODEL, messaging,
+    //      voice) wouldn't land. Recreate instead.
+    //
+    //   3. Plain restart for everything else (ollama, traefik, rsshub).
+    const exists = await containerExists(comp.service.containerName);
+    const needsRecreate = AI_CONSUMERS_NEEDING_RECREATE.has(comp.id);
+    const hasInstallRecipe = HAS_INSTALL_RECIPE.has(comp.id);
+
+    if (!exists && hasInstallRecipe) {
+      yield { type: "log", line: `${comp.service.containerName} not found — recreating from install recipe…` };
+      yield* installOne(comp, {});
+      return;
+    }
+    if (!exists) {
+      yield { type: "error", message: `${comp.service.containerName} not found — re-install with \`eve add ${comp.id}\`` };
+      return;
+    }
+    if (needsRecreate && hasInstallRecipe) {
+      yield { type: "log", line: `${comp.label} is env-bound — recreating to apply current config` };
+      yield* recreateContainer(comp, {});
+      return;
+    }
+
+    const restartCode = yield* dockerExec(
       ["restart", comp.service.containerName],
       `Restarting ${comp.label}…`,
     );
-    if (code !== 0) { yield { type: "error", message: `restart exited ${code}` }; return; }
+    if (restartCode !== 0) {
+      yield { type: "error", message: `restart exited ${restartCode}` };
+      return;
+    }
 
     yield { type: "done", summary: `${comp.label} updated to latest` };
   }
+}
+
+/**
+ * Components that have an install recipe in this module (vs. CLI-only).
+ * `update` falls back to the install path for these when the container
+ * is missing (drift recovery). Keep in sync with the `runInstallRecipe`
+ * switch below.
+ */
+const HAS_INSTALL_RECIPE: ReadonlySet<string> = new Set([
+  "synap",
+  "ollama",
+  "rsshub",
+  "openwebui",
+  "openwebui-pipelines",
+  "openclaw",
+  "eve-dashboard",
+]);
+
+/** True if a container with that name exists (any state). 4s timeout. */
+async function containerExists(name: string): Promise<boolean> {
+  return new Promise(resolve => {
+    const child = spawn("docker", ["ps", "-a", "--filter", `name=^${name}$`, "--format", "{{.Names}}"], {
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    let out = "";
+    let done = false;
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      child.kill("SIGKILL");
+      resolve(false);
+    }, 4000);
+    child.stdout?.on("data", chunk => { out += chunk.toString(); });
+    child.on("close", () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(out.trim() === name);
+    });
+    child.on("error", () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(false);
+    });
+  });
 }
 
 async function* removeOne(comp: ComponentInfo): AsyncGenerator<LifecycleEvent> {
