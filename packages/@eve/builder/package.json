@@ -6,14 +6,12 @@
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts",
-    "dev": "tsup src/index.ts --format esm --dts --watch"
+    "dev": "tsup src/index.ts --format esm --dts --watch",
+    "test": "vitest run"
   },
   "dependencies": {
     "@eve/dna": "workspace:*",
     "commander": "^11.0.0"
-  },
-  "scripts": {
-    "test": "vitest run"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
