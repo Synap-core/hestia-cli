@@ -12,7 +12,15 @@ export function Providers({ children }: { children: React.ReactNode }) {
       disableTransitionOnChange
     >
       <HeroUIProvider>
-        <ToastProvider placement="bottom-right" />
+        <ToastProvider
+          placement="bottom-right"
+          toastProps={{
+            timeout: 4000,
+            shouldShowTimeoutProgress: true,
+            variant: "flat",
+            radius: "md",
+          }}
+        />
         {children}
       </HeroUIProvider>
     </NextThemesProvider>

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Button, Spinner, addToast } from "@heroui/react";
+import { Button, Spinner, addToast, Chip } from "@heroui/react";
 import {
   RefreshCw, RotateCcw, Wifi, WifiOff, Copy, ExternalLink, Check, ArrowRight,
   Brain, Wrench, Hammer, Eye, Footprints,
@@ -184,12 +184,16 @@ function UrlCell({ url, pending }: { url: string | null; pending?: boolean }) {
       <ExternalLink className="h-3 w-3 shrink-0 text-default-400" />
       <CopyButton value={url} />
       {pending && (
-        <span
-          className="rounded-full bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-warning"
+        <Chip
+          size="sm"
+          color="warning"
+          variant="flat"
+          radius="sm"
+          classNames={{ content: "px-1 text-[10px] font-medium uppercase tracking-wider" }}
           title="DNS A record is missing or pointing elsewhere"
         >
           DNS
-        </span>
+        </Chip>
       )}
     </span>
   );
@@ -401,12 +405,14 @@ export default function DashboardPage() {
         description="Every place you can reach this stack from."
         action={
           hasDomain ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-divider bg-content1 px-2.5 py-1 text-xs">
-              <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />
-              <span className="font-mono text-default-700">
-                {access?.domain?.ssl ? "https" : "http"}://{access?.domain?.primary}
-              </span>
-            </span>
+            <Chip
+              size="sm"
+              variant="bordered"
+              color="success"
+              classNames={{ content: "font-mono text-xs" }}
+            >
+              {access?.domain?.ssl ? "https" : "http"}://{access?.domain?.primary}
+            </Chip>
           ) : null
         }
       >
@@ -495,13 +501,13 @@ export default function DashboardPage() {
               {secrets.ai.defaultProvider && (
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs uppercase tracking-wider text-default-400">Default</span>
-                  <span className="rounded-md bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">
+                  <Chip size="sm" color="primary" variant="flat" radius="sm">
                     {secrets.ai.defaultProvider}
-                  </span>
+                  </Chip>
                   {secrets.ai.mode && (
-                    <span className="rounded-md bg-content2 px-2 py-0.5 text-xs text-default-600">
+                    <Chip size="sm" variant="flat" radius="sm">
                       {secrets.ai.mode}
-                    </span>
+                    </Chip>
                   )}
                 </div>
               )}
@@ -509,17 +515,22 @@ export default function DashboardPage() {
                 {secrets.ai.providers.map(p => {
                   const ok = p.configured && p.hasKey;
                   return (
-                    <span
+                    <Chip
                       key={p.id}
-                      className="inline-flex items-center gap-2 rounded-lg border border-divider bg-content1 px-3 py-1.5 text-xs"
+                      size="md"
+                      variant="bordered"
+                      radius="md"
+                      color={ok ? "success" : "default"}
+                      startContent={
+                        <span
+                          className={`ml-1 h-1.5 w-1.5 rounded-full ${ok ? "bg-primary" : "bg-default-400"}`}
+                          aria-hidden
+                        />
+                      }
                     >
-                      <span
-                        className={`h-1.5 w-1.5 rounded-full ${ok ? "bg-primary" : "bg-default-400"}`}
-                        aria-hidden
-                      />
-                      <span className="font-medium text-foreground">{p.id}</span>
+                      <span className="font-medium text-foreground mr-1">{p.id}</span>
                       <span className="text-default-400">{ok ? "configured" : "no key"}</span>
-                    </span>
+                    </Chip>
                   );
                 })}
               </div>
@@ -579,14 +590,14 @@ function WiringCard({
         <p className="text-sm font-medium text-foreground">{label}</p>
         <p className="truncate font-mono text-xs text-default-400">{sub}</p>
       </div>
-      <span
-        className={
-          "rounded-full px-2 py-0.5 text-[11px] font-medium " +
-          (badgeOk ? "bg-primary/15 text-primary" : "bg-warning/15 text-warning")
-        }
+      <Chip
+        size="sm"
+        variant="flat"
+        radius="sm"
+        color={badgeOk ? "success" : "warning"}
       >
         {badgeOk ? okText : offText}
-      </span>
+      </Chip>
     </Surface>
   );
 }

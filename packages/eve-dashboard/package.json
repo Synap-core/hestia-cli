@@ -11,6 +11,7 @@
   "dependencies": {
     "@eve/dna": "workspace:*",
     "@heroui/react": "^2.4.0",
+    "@heroui/theme": "^2.4.0",
     "framer-motion": "^11.0.0",
     "jose": "^5.0.0",
     "lucide-react": "^0.441.0",

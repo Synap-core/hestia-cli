@@ -16,7 +16,9 @@ module.exports = {
   content: [
     "./app/**/*.{js,ts,jsx,tsx,mdx}",
     "./components/**/*.{js,ts,jsx,tsx,mdx}",
-    "./node_modules/@heroui/theme/dist/**/*.{js,ts,jsx,tsx}",
+    // @heroui/theme bundles all the tailwind-variants strings for every
+    // component — symlinked locally because we depend on it directly.
+    "./node_modules/@heroui/theme/dist/**/*.{js,ts,jsx,tsx,mjs}",
   ],
   darkMode: "class",
   theme: {
