@@ -3,11 +3,12 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Button, Input, Select, SelectItem, Spinner, addToast, Switch,
+  Button, Select, SelectItem, Spinner, addToast, Switch,
 } from "@heroui/react";
 import {
   Plus, Trash2, RefreshCw, Save, Check, AlertCircle,
 } from "lucide-react";
+import { Field } from "../../components/field";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -299,36 +300,32 @@ export default function AiProvidersPage() {
                 {/* Fields */}
                 <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
                   {p.id !== "ollama" && (
-                    <Input
+                    <Field
                       label="API key"
-                      labelPlacement="outside"
                       placeholder={isEditing ? KEY_PLACEHOLDERS[p.id] : (p.apiKeyMasked ?? "Click edit to set")}
                       value={editState.apiKey ?? ""}
-                      onValueChange={v =>
-                        setEditing(prev => ({ ...prev, [p.id]: { ...prev[p.id], apiKey: v } }))
+                      onChange={e =>
+                        setEditing(prev => ({ ...prev, [p.id]: { ...prev[p.id], apiKey: e.target.value } }))
                       }
                       type="password"
-                      size="md"
-                      isDisabled={!isEditing}
-                      classNames={{ input: "font-mono text-sm" }}
+                      disabled={!isEditing}
+                      mono
                     />
                   )}
-                  <Input
+                  <Field
                     label="Default model"
-                    labelPlacement="outside"
                     placeholder={DEFAULT_MODEL_PLACEHOLDERS[p.id]}
                     value={editState.defaultModel ?? p.defaultModel ?? ""}
-                    onValueChange={v =>
-                      setEditing(prev => ({ ...prev, [p.id]: { ...prev[p.id], defaultModel: v } }))
+                    onChange={e =>
+                      setEditing(prev => ({ ...prev, [p.id]: { ...prev[p.id], defaultModel: e.target.value } }))
                     }
-                    size="md"
-                    isDisabled={!isEditing}
-                    description={
+                    disabled={!isEditing}
+                    hint={
                       p.id === "openrouter"
                         ? "Form: provider/model — e.g. anthropic/claude-sonnet-4-7"
                         : undefined
                     }
-                    classNames={{ input: "font-mono text-sm" }}
+                    mono
                   />
                 </div>
 
@@ -405,47 +402,45 @@ export default function AiProvidersPage() {
                 Configure the key, set a default model, then save. You can apply it to components afterwards.
               </p>
               <div className="mt-4 space-y-4">
-                <Select
-                  label="Provider"
-                  labelPlacement="outside"
-                  placeholder="Pick a provider"
-                  size="md"
-                  selectedKeys={adding.id ? [adding.id] : []}
-                  onSelectionChange={keys => {
-                    const id = Array.from(keys)[0] as ProviderId | undefined;
-                    setAdding({ id, defaultModel: id ? DEFAULT_MODEL_PLACEHOLDERS[id] : undefined });
-                  }}
-                >
-                  {availableToAdd.map(id => (
-                    <SelectItem key={id}>{PROVIDER_LABELS[id]}</SelectItem>
-                  ))}
-                </Select>
+                <div className="space-y-1.5">
+                  <span className="block text-xs font-medium text-default-600">Provider</span>
+                  <Select
+                    aria-label="Provider"
+                    placeholder="Pick a provider"
+                    size="md"
+                    selectedKeys={adding.id ? [adding.id] : []}
+                    onSelectionChange={keys => {
+                      const id = Array.from(keys)[0] as ProviderId | undefined;
+                      setAdding({ id, defaultModel: id ? DEFAULT_MODEL_PLACEHOLDERS[id] : undefined });
+                    }}
+                  >
+                    {availableToAdd.map(id => (
+                      <SelectItem key={id}>{PROVIDER_LABELS[id]}</SelectItem>
+                    ))}
+                  </Select>
+                </div>
                 {adding.id && adding.id !== "ollama" && (
-                  <Input
+                  <Field
                     label="API key"
-                    labelPlacement="outside"
                     placeholder={KEY_PLACEHOLDERS[adding.id]}
                     value={adding.apiKey ?? ""}
-                    onValueChange={v => setAdding(prev => ({ ...prev, apiKey: v }))}
+                    onChange={e => setAdding(prev => ({ ...prev, apiKey: e.target.value }))}
                     type="password"
-                    size="md"
-                    classNames={{ input: "font-mono text-sm" }}
+                    mono
                   />
                 )}
                 {adding.id && (
-                  <Input
+                  <Field
                     label="Default model"
-                    labelPlacement="outside"
                     placeholder={DEFAULT_MODEL_PLACEHOLDERS[adding.id]}
                     value={adding.defaultModel ?? ""}
-                    onValueChange={v => setAdding(prev => ({ ...prev, defaultModel: v }))}
-                    size="md"
-                    description={
+                    onChange={e => setAdding(prev => ({ ...prev, defaultModel: e.target.value }))}
+                    hint={
                       adding.id === "openrouter"
                         ? "OpenRouter requires the form provider/model."
                         : undefined
                     }
-                    classNames={{ input: "font-mono text-sm" }}
+                    mono
                   />
                 )}
               </div>

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button, addToast } from "@heroui/react";
+import { Button } from "@heroui/react";
 import { Eye, EyeOff, KeyRound } from "lucide-react";
 import { Wordmark } from "../components/wordmark";
 import { ThemeToggle } from "../components/theme-toggle";
@@ -29,7 +29,7 @@ export default function LoginPage() {
       });
 
       if (res.ok) {
-        addToast({ title: "Welcome back", color: "success" });
+        // No success toast — the page transition is the confirmation.
         router.push("/dashboard");
       } else {
         const data = await res.json() as { error?: string };
