@@ -7,6 +7,8 @@
 
 import type { Command } from 'commander';
 import { execa } from 'execa';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -17,6 +19,19 @@ import {
   ensureEveSkillsLayout,
   defaultSkillsDir,
 } from '@eve/dna';
+
+const execFileAsync = promisify(execFile);
+
+/** True if a container with that name exists (any state). */
+async function containerExists(name: string): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync(
+      'docker', ['ps', '-a', '--filter', `name=^${name}$`, '--format', '{{.Names}}'],
+      { timeout: 4000 },
+    );
+    return stdout.trim() === name;
+  } catch { return false; }
+}
 import { runBrainInit, runInferenceInit } from '@eve/brain';
 import { runLegsProxySetup, refreshTraefikRoutes, verifyComponent, installDashboardContainer } from '@eve/legs';
 import {
@@ -155,7 +170,23 @@ export async function runAdd(
   const existing = await entityStateManager.isComponentInstalled(componentId);
   if (existing) {
     printWarning(`${comp.label} is already installed.`);
-    printInfo(`  Run "eve ${comp.organ} status" to check its state.`);
+    // `comp.organ` is optional in the registry; fall back to `eve status`
+    // when missing so we never print "eve undefined status".
+    const statusCmd = comp.organ ? `eve ${comp.organ} status` : 'eve status';
+    printInfo(`  Run "${statusCmd}" to check its state.`);
+
+    // Drift detection: state.json says installed but the container is
+    // gone (manually removed, host wiped, container never created
+    // because a previous install failed mid-way). Tell the user the
+    // right recovery instead of just "already installed". Skip for
+    // services that aren't containers (hermes, opencode, openclaude).
+    const containerName = comp.service?.containerName;
+    if (containerName && !(await containerExists(containerName))) {
+      printWarning(`  …but the ${containerName} container is missing.`);
+      printInfo(`  Recover with "eve update ${componentId}" (recreates from compose) or "eve remove ${componentId} && eve add ${componentId}".`);
+    } else {
+      printInfo(`  Or "eve update ${componentId}" to pull the latest image.`);
+    }
     return;
   }
 

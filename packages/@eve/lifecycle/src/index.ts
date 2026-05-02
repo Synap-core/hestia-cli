@@ -213,6 +213,13 @@ async function* updateContainer(comp: ComponentInfo): AsyncGenerator<LifecycleEv
       yield { type: "error", message: `Compose dir not found: ${plan.compose.cwd}.` };
       return;
     }
+
+    // Compose v2 warns about the obsolete `version:` top-level key on
+    // every command. Older versions of our install recipe (or hand-edited
+    // files) may still have it. Strip it idempotently here so the user
+    // doesn't see warning noise on every update.
+    sanitizeComposeFile(join(plan.compose.cwd, "docker-compose.yml"));
+
     const services = plan.compose.services ?? [];
     let code = yield* runCommand(
       "docker",
@@ -221,11 +228,15 @@ async function* updateContainer(comp: ComponentInfo): AsyncGenerator<LifecycleEv
     );
     if (code !== 0) { yield { type: "error", message: `compose pull exited ${code}` }; return; }
 
-    code = yield* runCommand(
-      "docker",
-      ["compose", "up", "-d", "--no-deps", ...services],
-      { cwd: plan.compose.cwd },
-    );
+    // Compose v2 rejects `--no-deps` without service names ("no service
+    // selected"). The flag only matters when we scope to specific
+    // services in a multi-service file (synap), so drop it when the
+    // services list is empty (openwebui, openwebui-pipelines — single
+    // service per file → bringing up the whole file is what we want).
+    const upArgs = services.length > 0
+      ? ["compose", "up", "-d", "--no-deps", ...services]
+      : ["compose", "up", "-d"];
+    code = yield* runCommand("docker", upArgs, { cwd: plan.compose.cwd });
     if (code !== 0) { yield { type: "error", message: `compose up exited ${code}` }; return; }
 
     yield { type: "done", summary: `${comp.label} updated` };
@@ -758,6 +769,26 @@ async function* installOpenclaw(): AsyncGenerator<LifecycleEvent> {
   const runCode = yield* runCommand("docker", args);
   if (runCode !== 0) throw new Error(`docker run exited ${runCode}`);
   yield { type: "log", line: "OpenClaw container running" };
+}
+
+/**
+ * Remove deprecated top-level keys from a docker-compose.yml file in place.
+ *
+ * Currently strips `version:` (obsolete in Compose v2 — every command
+ * prints a warning when it's present). Idempotent: leaves files without
+ * the key untouched. Best-effort: missing file or unreadable content is
+ * a no-op so we don't fail the update over a sanitization step.
+ */
+function sanitizeComposeFile(path: string): void {
+  try {
+    if (!existsSync(path)) return;
+    const cur = readFileSync(path, "utf-8");
+    // Match `version:` at start of a line, regardless of quotes/whitespace.
+    const cleaned = cur.replace(/^version:\s*['"]?[^\n]*['"]?\s*\n/m, "");
+    if (cleaned !== cur) writeFileSync(path, cleaned);
+  } catch {
+    // non-fatal — update can still proceed with the version warning
+  }
 }
 
 async function* ensureEveNetwork(): AsyncGenerator<LifecycleEvent> {
