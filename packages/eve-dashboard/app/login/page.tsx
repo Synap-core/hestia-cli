@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Input, Button, addToast } from "@heroui/react";
+import { Button, addToast } from "@heroui/react";
 import { Eye, EyeOff, KeyRound } from "lucide-react";
 import { Wordmark } from "../components/wordmark";
 import { ThemeToggle } from "../components/theme-toggle";
@@ -66,39 +66,49 @@ export default function LoginPage() {
             onSubmit={handleSubmit}
             className="rounded-2xl border border-divider bg-content1 p-6 sm:p-7 space-y-5"
           >
-            <Input
-              type={visible ? "text" : "password"}
-              label="Dashboard key"
-              labelPlacement="outside"
-              placeholder="Paste your key"
-              value={secret}
-              onValueChange={setSecret}
-              autoComplete="off"
-              autoFocus
-              startContent={
+            {/* Plain styled input — sidesteps HeroUI Input's outside-label
+                positioning quirks for what is fundamentally a one-field form. */}
+            <div className="space-y-1.5">
+              <label
+                htmlFor="dashboard-key"
+                className="block text-sm font-medium text-foreground"
+              >
+                Dashboard key
+              </label>
+              <div
+                className={
+                  "group flex items-center gap-2 rounded-lg border bg-content2 px-3 transition-colors " +
+                  (error
+                    ? "border-danger/60 focus-within:border-danger"
+                    : "border-divider focus-within:border-primary/60")
+                }
+              >
                 <KeyRound className="h-4 w-4 shrink-0 text-default-400" />
-              }
-              endContent={
+                <input
+                  id="dashboard-key"
+                  type={visible ? "text" : "password"}
+                  placeholder="Paste your key"
+                  value={secret}
+                  onChange={e => setSecret(e.target.value)}
+                  autoComplete="off"
+                  autoFocus
+                  spellCheck={false}
+                  className="flex-1 min-w-0 bg-transparent border-0 outline-none py-3 text-sm font-mono tracking-tight text-foreground placeholder:font-sans placeholder:text-default-400"
+                />
                 <button
                   type="button"
                   onClick={() => setVisible(!visible)}
-                  className="text-default-400 hover:text-foreground transition-colors"
+                  className="shrink-0 rounded p-1 text-default-400 hover:text-foreground transition-colors"
                   aria-label={visible ? "Hide key" : "Show key"}
                 >
                   {visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
-              }
-              isInvalid={!!error}
-              errorMessage={error ?? undefined}
-              variant="bordered"
-              size="lg"
-              classNames={{
-                // Mono ONLY on the typed value, not the label/placeholder.
-                input: "font-mono text-sm tracking-tight",
-                inputWrapper: "h-12",
-                label: "font-sans",
-              }}
-            />
+              </div>
+              {error && (
+                <p className="text-xs text-danger" role="alert">{error}</p>
+              )}
+            </div>
+
             <Button
               type="submit"
               color="primary"

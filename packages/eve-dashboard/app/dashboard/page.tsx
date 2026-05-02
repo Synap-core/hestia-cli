@@ -207,6 +207,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [restarting, setRestarting] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const fetchData = useCallback(async (silent = false) => {
     if (!silent) setRefreshing(true);
@@ -222,10 +223,20 @@ export default function DashboardPage() {
         return;
       }
 
+      const failed = [stateRes, secretsRes, accessRes].filter(r => !r.ok);
+      if (failed.length > 0) {
+        const codes = failed.map(r => r.status).join(", ");
+        setLoadError(`API responded with status ${codes}. Check the dashboard container logs.`);
+      } else {
+        setLoadError(null);
+      }
+
       if (stateRes.ok)   setState(await stateRes.json() as EntityState);
       if (secretsRes.ok) setSecrets(await secretsRes.json() as SecretsSummary);
       if (accessRes.ok)  setAccess(await accessRes.json() as AccessData);
-    } catch {
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Network error";
+      setLoadError(`Could not reach the dashboard API — ${msg}`);
       if (!silent) addToast({ title: "Failed to load state", color: "danger" });
     } finally {
       setLoading(false);
@@ -263,8 +274,9 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
+      <div className="flex flex-col items-center justify-center gap-3 min-h-[60vh] text-default-500">
         <Spinner size="lg" color="primary" />
+        <p className="text-sm">Loading your stack…</p>
       </div>
     );
   }
@@ -272,6 +284,7 @@ export default function DashboardPage() {
   const organs = state?.organs ?? {};
   const readyCount = Object.values(organs).filter(o => o.state === "ready").length;
   const hasDomain = !!access?.domain?.primary;
+  const hasAnyData = state !== null || secrets !== null || access !== null;
 
   return (
     <div className="space-y-10">
@@ -306,6 +319,27 @@ export default function DashboardPage() {
           Refresh
         </Button>
       </header>
+
+      {loadError && (
+        <div className="rounded-xl border border-danger/30 bg-danger/5 px-4 py-3 text-sm">
+          <p className="font-medium text-foreground">Couldn&apos;t load some data</p>
+          <p className="mt-0.5 text-default-500">{loadError}</p>
+          <p className="mt-2 text-default-500">
+            Check{" "}
+            <code className="rounded bg-content2 px-1.5 py-0.5 font-mono text-xs text-foreground">
+              docker logs eve-dashboard
+            </code>{" "}
+            on the host. The container needs <code className="rounded bg-content2 px-1.5 py-0.5 font-mono text-xs text-foreground">/opt</code>{" "}
+            and <code className="rounded bg-content2 px-1.5 py-0.5 font-mono text-xs text-foreground">~/.local/share/eve</code> mounted to read state + secrets.
+          </p>
+        </div>
+      )}
+
+      {!hasAnyData && !loadError && (
+        <div className="rounded-xl border border-divider bg-content1 p-6 text-sm text-default-500">
+          <p>No state on disk yet. Run <code className="rounded bg-content2 px-1.5 py-0.5 font-mono text-xs text-foreground">eve install</code> on the host to bootstrap the stack.</p>
+        </div>
+      )}
 
       {/* -----------------------------------------------------------------
        * Organs
