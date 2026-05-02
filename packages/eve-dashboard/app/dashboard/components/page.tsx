@@ -8,9 +8,10 @@ import {
 } from "@heroui/react";
 import {
   Box, Brain, Wrench, Hammer, Eye, Footprints,
-  ExternalLink, Copy, Check, MoreHorizontal, ArrowDownToLine,
+  ExternalLink, Copy, Check, MoreHorizontal, ArrowDownToLine, ChevronRight,
   type LucideIcon,
 } from "lucide-react";
+import { ComponentDetailDrawer } from "./component-detail-drawer";
 
 // ---------------------------------------------------------------------------
 // Types — mirror /api/components response shape
@@ -86,6 +87,7 @@ export default function ComponentsPage() {
   const router = useRouter();
   const [rows, setRows] = useState<ComponentRow[] | null>(null);
   const [loading, setLoading] = useState(true);
+  const [openId, setOpenId] = useState<string | null>(null);
 
   const fetchRows = useCallback(async () => {
     try {
@@ -154,6 +156,7 @@ export default function ComponentsPage() {
                   key={c.id}
                   row={c}
                   isFirst={i === 0}
+                  onOpen={() => setOpenId(c.id)}
                 />
               ))}
             </div>
@@ -179,6 +182,14 @@ export default function ComponentsPage() {
           Per-row &quot;Copy install command&quot; gives you the exact line for each item.
         </p>
       </section>
+
+      {/* Detail drawer — slides in from the right when a row is clicked. */}
+      <ComponentDetailDrawer
+        componentId={openId}
+        isOpen={openId !== null}
+        onClose={() => setOpenId(null)}
+        onChange={() => void fetchRows()}
+      />
     </div>
   );
 }
@@ -187,15 +198,26 @@ export default function ComponentsPage() {
 // Row
 // ---------------------------------------------------------------------------
 
-function Row({ row, isFirst }: { row: ComponentRow; isFirst: boolean }) {
+function Row({
+  row, isFirst, onOpen,
+}: { row: ComponentRow; isFirst: boolean; onOpen: () => void }) {
   const status = statusFor(row);
   const OrganIcon = row.organ ? ORGAN_ICON[row.organ] ?? Box : Box;
   const dim = !row.installed;
 
   return (
     <div
+      role="button"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
       className={
-        "group flex items-center gap-4 px-4 py-3.5 transition-colors hover:bg-content2/40 " +
+        "group flex cursor-pointer items-center gap-4 px-4 py-3.5 transition-colors hover:bg-content2/40 focus:outline-none focus-visible:bg-content2/40 " +
         (isFirst ? "" : "border-t border-divider") +
         (dim ? " opacity-70 hover:opacity-100" : "")
       }
@@ -235,8 +257,12 @@ function Row({ row, isFirst }: { row: ComponentRow; isFirst: boolean }) {
         </p>
       </div>
 
-      {/* Right-rail: status + version + actions */}
-      <div className="flex shrink-0 items-center gap-3">
+      {/* Right-rail: status + version + actions.
+          stopPropagation everywhere so clicks on these don't also open the drawer. */}
+      <div
+        className="flex shrink-0 items-center gap-3"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="hidden md:flex flex-col items-end text-right gap-0.5">
           <Chip size="sm" color={status.color} variant="flat" radius="sm">
             {status.label}
@@ -260,6 +286,9 @@ function Row({ row, isFirst }: { row: ComponentRow; isFirst: boolean }) {
         )}
 
         <RowMenu row={row} />
+
+        {/* Affordance — chevron hints the row itself opens detail. */}
+        <ChevronRight className="h-4 w-4 shrink-0 text-default-300 transition-colors group-hover:text-default-500" />
       </div>
     </div>
   );

@@ -30,7 +30,17 @@ export interface ComponentInfo {
   organ?: string;
   label: string;
   emoji: string;
+  /** One-sentence summary used in lists and tooltips. */
   description: string;
+  /**
+   * Multi-paragraph plain-language explanation rendered on the component
+   * detail panel. Tells the user what it is, why a sovereign stack uses it,
+   * and what they can do with it once it's running. Optional — falls back
+   * to `description` when missing.
+   */
+  longDescription?: string;
+  /** Project URL for the underlying upstream — shown in the "Learn more" link. */
+  homepage?: string;
   category: 'infrastructure' | 'data' | 'agent' | 'builder' | 'perception' | 'add-on';
   /** Whether this is always installed as infrastructure */
   alwaysInstall?: boolean;
@@ -47,6 +57,12 @@ export const COMPONENTS: ComponentInfo[] = [
     label: 'Traefik',
     emoji: '🦿',
     description: 'Reverse proxy & routing. Handles domain exposure, SSL termination, and service discovery for all Eve services. Always installed.',
+    longDescription: `Traefik is the front door of your stack. It listens on ports 80 and 443, terminates SSL with automatic Let's Encrypt certificates, and routes incoming requests to the right container based on the hostname.
+
+Every other Eve service hides behind it — Synap pod, Open WebUI, OpenClaw, the dashboard itself. When you set a domain (e.g. \`mystack.com\`), Traefik provisions certs for every \`<service>.mystack.com\` subdomain and routes traffic by container name on the shared \`eve-network\`.
+
+Traefik is always-on infrastructure. It can't be removed; the rest of the stack depends on it for any externally-reachable URL.`,
+    homepage: 'https://traefik.io',
     category: 'infrastructure',
     alwaysInstall: true,
     service: {
@@ -63,6 +79,12 @@ export const COMPONENTS: ComponentInfo[] = [
     label: 'Ollama',
     emoji: '🤖',
     description: 'Local AI inference engine. Runs open-source models (Llama, Mistral, etc.) on your server. Keeps your data private.',
+    longDescription: `Ollama is a local model runtime — a self-contained LLM server you can pull models into and call via an OpenAI-compatible API. Llama, Mistral, Qwen, Gemma — pick what fits your hardware.
+
+Why a sovereign stack runs Ollama: your prompts and outputs never leave the machine. Synap IS will route to Ollama as a provider just like it routes to Anthropic or OpenAI, so agents and Open WebUI can use a local model without any code change.
+
+Heads up: model quality and speed depend heavily on your server's RAM and GPU. A 7B model is the practical baseline on CPU; 13B+ benefits from a GPU.`,
+    homepage: 'https://ollama.ai',
     category: 'data',
     requires: ['traefik'],
     service: {
@@ -79,6 +101,12 @@ export const COMPONENTS: ComponentInfo[] = [
     label: 'Synap Data Pod',
     emoji: '🧠',
     description: 'Your sovereign second brain. Stores and organises all your data — notes, tasks, contacts, bookmarks. The foundation of your personal AI infrastructure.',
+    longDescription: `Synap is the data store every other component reads from. It captures notes, tasks, contacts, bookmarks, and any other entity type you define — typed JSONB profiles in Postgres, indexed by Typesense and pgvector for full-text and semantic search.
+
+The pod exposes both a tRPC API (for the Synap web/desktop apps) and a REST Hub Protocol (for AI agents like OpenClaw and external connectors). Once installed, agents can read and write data through Synap rather than each maintaining their own private store.
+
+This is the brain of the brain organ — most of what makes your stack feel intelligent depends on Synap being healthy. Watch its logs first when something feels off.`,
+    homepage: 'https://github.com/synap-core/synap-backend',
     category: 'data',
     requires: ['traefik'],
     service: {
@@ -95,6 +123,12 @@ export const COMPONENTS: ComponentInfo[] = [
     label: 'OpenClaw',
     emoji: '🦾',
     description: 'AI action layer. Gives your AI agent the ability to execute commands, access your files, and interact with the world.',
+    longDescription: `OpenClaw turns your AI from a chat companion into an agent that can actually do things. It runs as a sandboxed Linux environment with shell access, a filesystem, network tooling, and a skill system that scopes what an agent is allowed to touch.
+
+Eve wires OpenClaw against Synap IS as its OpenAI-compatible provider, so the agent's brain can be any provider you've configured (Anthropic, OpenAI, OpenRouter, local Ollama). When the agent reads or writes data, it goes through Synap's Hub Protocol — full audit trail, governance via proposals when permissions don't allow direct writes.
+
+This is the heart of the arms organ. Without OpenClaw, your stack can think and store; with it, the stack can act on your behalf.`,
+    homepage: 'https://github.com/synap-core/openclaw',
     category: 'agent',
     requires: ['synap'],
     service: {
@@ -113,6 +147,11 @@ export const COMPONENTS: ComponentInfo[] = [
     label: 'Hermes',
     emoji: '🏗️',
     description: 'AI builder system. Enables the agent to create, deploy, and manage new applications and services automatically.',
+    longDescription: `Hermes is the builder that lets your stack grow itself. It accepts high-level intents ("scaffold a Next.js app for tracking my reading", "deploy a Telegram bot for my notes") and produces real code, real Dockerfiles, real deployments — all through OpenClaw's actions and Synap's data.
+
+Hermes runs as a CLI helper rather than a long-running service: the agent invokes it on demand. That's why it has no UI of its own and no port — its surface lives inside the conversations you have with the agent.
+
+Pair this with Dokploy or OpenCode if you want a full AI-driven development loop on your own server.`,
     category: 'builder',
     requires: ['synap'],
     // No service — Hermes is a CLI helper, not a network service
@@ -123,6 +162,12 @@ export const COMPONENTS: ComponentInfo[] = [
     label: 'RSSHub Feeds',
     emoji: '👁️',
     description: 'Data perception layer. Turns any website into RSS feeds so your AI can stay informed about what matters.',
+    longDescription: `RSSHub generates RSS feeds for sources that don't expose them — Twitter accounts, GitHub issues, LinkedIn updates, news sites, anything that publishes regularly without a feed. It runs ~1,000 source adapters out of the box.
+
+For a sovereign stack this matters because it's how your AI keeps up with the world without any external service in the loop. Synap subscribes to RSSHub feeds, captures items as bookmark entities, and your agents see new content in their context the same way they see your manually-captured notes.
+
+This is the eyes organ — the part of your stack that watches things you care about so you don't have to.`,
+    homepage: 'https://docs.rsshub.app',
     category: 'perception',
     requires: ['synap'],
     service: {
@@ -138,6 +183,10 @@ export const COMPONENTS: ComponentInfo[] = [
     label: 'Dokploy',
     emoji: '🔧',
     description: 'Low-code PaaS for deploying applications. Optional — install later if you need a visual deployment dashboard.',
+    longDescription: `Dokploy is a self-hosted PaaS — think Heroku or Railway, running on your own server. It manages app deployments, databases, and SSL through a visual UI, sitting alongside Eve's Traefik (or replacing it if you prefer Dokploy's routing).
+
+Install this if you want a clicky deploy story for the apps Hermes generates — push code, click deploy, get a URL. Skip it if you're happy running compose files by hand.`,
+    homepage: 'https://dokploy.com',
     category: 'add-on',
   },
   {
@@ -145,6 +194,10 @@ export const COMPONENTS: ComponentInfo[] = [
     label: 'OpenCode',
     emoji: '💻',
     description: 'AI-powered code editor. Lets your agent write and edit code directly on your server.',
+    longDescription: `OpenCode is an AI-augmented code editor exposed as a service. Your agents (and you) can open files, edit them, run commands — all from the same machine your stack lives on, with Synap's data as context.
+
+This is how a sovereign stack does development without bouncing through someone else's cloud IDE. It pairs especially well with Hermes for "describe what you want, watch the agent write it" loops.`,
+    homepage: 'https://github.com/sst/opencode',
     category: 'add-on',
   },
   {
@@ -152,6 +205,9 @@ export const COMPONENTS: ComponentInfo[] = [
     label: 'OpenClaude',
     emoji: '🤖',
     description: 'Claude Code as a service. Exposes Claude Code to your agent for advanced coding tasks.',
+    longDescription: `OpenClaude wraps Claude Code as a long-running service so your agents can delegate hard coding tasks to it. Where OpenClaw is general-purpose action, OpenClaude is specifically the heavyweight coding sub-agent.
+
+Use this when you want the best-in-class coding model on tap from inside your stack — without exposing your codebase to a third party that doesn't run on your hardware.`,
     category: 'add-on',
   },
   {
@@ -159,6 +215,12 @@ export const COMPONENTS: ComponentInfo[] = [
     label: 'Open WebUI',
     emoji: '💬',
     description: 'Self-hosted chat UI wired to Synap IS (AI provider). No external DB — SQLite by default. Pipelines sidecar enables Synap memory and channel sync.',
+    longDescription: `Open WebUI is the chat interface for everyone in your household or team — looks like ChatGPT, runs on your stack. Eve wires it against Synap IS as the OpenAI-compatible backend, so any provider you've configured (Anthropic, OpenAI, OpenRouter, Ollama) is available behind a normal model picker.
+
+State (conversations, users, settings) lives in a local SQLite by default — no external database. Once you install the Pipelines sidecar, conversations sync into Synap as channels and your agents can read them as context.
+
+This is usually the most-used UI in a daily stack: it's where humans talk to the AI, while OpenClaw handles the actions and Hermes builds.`,
+    homepage: 'https://openwebui.com',
     category: 'add-on',
     requires: ['synap'],
     service: {
@@ -174,6 +236,11 @@ export const COMPONENTS: ComponentInfo[] = [
     label: 'Eve Dashboard',
     emoji: '🌿',
     description: 'Web dashboard for Eve — view installed components, manage AI providers, configure your stack from a browser.',
+    longDescription: `The Eve Dashboard is the meta-UI you're looking at right now: a Next.js app shipped as a Docker container that joins the same network as everything else. It reads your stack's secrets and state via mounted host paths and talks to Docker via the daemon socket.
+
+It's the front door — the place where you check that your stack is alive, jump into other components' UIs, and configure the plumbing every component needs (AI keys, domain, SSL). The actual work happens in the apps it launches you into.
+
+Always-on infrastructure, like Traefik. Removing it would leave you with no UI control plane.`,
     category: 'infrastructure',
     requires: ['traefik'],
     alwaysInstall: true,
