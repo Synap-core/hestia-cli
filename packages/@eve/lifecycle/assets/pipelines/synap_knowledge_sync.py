@@ -1,7 +1,7 @@
 """
 title: Synap Knowledge Sync
 author: Eve
-version: 0.1.0
+version: 0.2.0
 license: MIT
 description: |
   Pulls relevant key/value knowledge entries from the user's Synap pod and
@@ -15,6 +15,11 @@ description: |
   This is a counterpart to synap_memory_filter.py — together they give the
   model both fuzzy recall (memory) and structured pinned facts (knowledge).
   Each runs at a different priority so their context blocks stack cleanly.
+
+  v0.2.0 — adds optional per-user sub-token forwarding. When PER_USER_TOKENS
+  is on AND the pod has HUB_PROTOCOL_SUB_TOKENS=true, the OWUI user.id is
+  forwarded via X-External-User-Id so each human's knowledge lands on the
+  right Synap user. Default off — single-tenant behavior is byte-identical.
 """
 
 from __future__ import annotations
@@ -40,6 +45,10 @@ class Pipeline:
         NAMESPACE: str = ""
         # Append a "📚 Recalled N facts" footer to assistant replies.
         SHOW_FOOTER: bool = True
+        # When on AND the pod has HUB_PROTOCOL_SUB_TOKENS=true, forwards the
+        # OWUI user.id via X-External-User-Id so each human's data lands under
+        # the right Synap user. OFF by default (opt-in).
+        PER_USER_TOKENS: bool = False
         DEBUG: bool = False
 
     def __init__(self) -> None:
@@ -54,6 +63,7 @@ class Pipeline:
             **{
                 "SYNAP_API_URL": os.getenv("SYNAP_API_URL", self.Valves().SYNAP_API_URL),
                 "SYNAP_API_KEY": os.getenv("SYNAP_API_KEY", self.Valves().SYNAP_API_KEY),
+                "PER_USER_TOKENS": os.getenv("SYNAP_PER_USER_TOKENS", "0") == "1",
                 "DEBUG": os.getenv("SYNAP_PIPELINE_DEBUG", "0") == "1",
             },
         )
@@ -79,8 +89,10 @@ class Pipeline:
         if not last_user:
             return body
 
+        owui_user_id = (user or {}).get("id")
+
         try:
-            entries = await self._search_knowledge(last_user)
+            entries = await self._search_knowledge(last_user, owui_user_id)
         except Exception as err:
             logger.warning("[synap-knowledge] search failed: %s", err)
             return body
@@ -118,7 +130,21 @@ class Pipeline:
     # Hub Protocol
     # ---------------------------------------------------------------------
 
-    async def _search_knowledge(self, query: str) -> list[dict[str, Any]]:
+    def _headers(self, owui_user_id: str | None = None) -> dict[str, str]:
+        headers = {
+            "Authorization": f"Bearer {self.valves.SYNAP_API_KEY}",
+            "Content-Type": "application/json",
+        }
+        # When the pod has HUB_PROTOCOL_SUB_TOKENS=true, this header tells
+        # the auth middleware to swap c.userId to the per-OWUI-user mapping.
+        # Off by default (opt-in via the PER_USER_TOKENS valve / env var).
+        if self.valves.PER_USER_TOKENS and owui_user_id:
+            headers["X-External-User-Id"] = owui_user_id
+        return headers
+
+    async def _search_knowledge(
+        self, query: str, owui_user_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         params: dict[str, Any] = {"q": query, "limit": self.valves.TOP_K}
         # Namespace filter is honoured by the list endpoint, not the
         # full-text-search one — that scopes by workspace only. So if
@@ -127,7 +153,7 @@ class Pipeline:
             res = await client.get(
                 f"{self.valves.SYNAP_API_URL}/api/hub/knowledge/search",
                 params=params,
-                headers={"Authorization": f"Bearer {self.valves.SYNAP_API_KEY}"},
+                headers=self._headers(owui_user_id),
             )
             if not res.is_success:
                 logger.debug("[synap-knowledge] search HTTP %s", res.status_code)

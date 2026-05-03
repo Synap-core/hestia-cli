@@ -203,6 +203,16 @@ All three shipped as standalone filter pipelines. Bidirectionality is
 Synap into context, but we don't yet pull OpenWebUI's local stores
 back into Synap or vice-versa. That requires Track C.
 
+**Pipelines (dedup):** `synap_channel_sync.py` (v0.3.0+) now relies on
+server-side dedup via `externalId`. The pipeline POSTs every chat to
+`/api/hub/threads` with `externalSource=openwebui` and
+`externalId=<owui_user>:<chat_id>`; the Hub Protocol upserts on the
+partial unique index `channels_external_source_id_unique` and returns
+`reused: true` when the thread already exists. The previous in-process
+`_thread_cache` was removed — it reset on every container restart and
+caused duplicate threads. Other sidecars that mirror conversations
+(future Slack/Discord/etc.) should follow the same convention.
+
 ### B1. Knowledge sync pipeline — **SHIPPED as `synap_knowledge_sync.py`**
 
 Pulls relevant key/value entries from `/api/hub/knowledge/search` and

@@ -81,6 +81,11 @@ class Pipeline:
         SHOW_FOOTER: bool = True
         # Cap title length — long titles look bad in entity lists.
         TITLE_MAX: int = 80
+        # Per-user sub-tokens — when on AND the pod has
+        # HUB_PROTOCOL_SUB_TOKENS=true, each note creation forwards the OWUI
+        # user.id via X-External-User-Id so notes land on a per-human Synap
+        # user. OFF by default (opt-in).
+        PER_USER_TOKENS: bool = False
         DEBUG: bool = False
 
     def __init__(self) -> None:
@@ -95,6 +100,7 @@ class Pipeline:
             **{
                 "SYNAP_API_URL": os.getenv("SYNAP_API_URL", self.Valves().SYNAP_API_URL),
                 "SYNAP_API_KEY": os.getenv("SYNAP_API_KEY", self.Valves().SYNAP_API_KEY),
+                "PER_USER_TOKENS": os.getenv("SYNAP_PER_USER_TOKENS", "0") == "1",
                 "DEBUG": os.getenv("SYNAP_PIPELINE_DEBUG", "0") == "1",
             },
         )
@@ -125,8 +131,12 @@ class Pipeline:
         if note_body is None:
             return body
 
+        owui_user_id = (user or {}).get("id")
+
         try:
-            entity_id, title = await self._create_note(note_body, last_user)
+            entity_id, title = await self._create_note(
+                note_body, last_user, owui_user_id
+            )
         except Exception as err:
             logger.warning("[synap-notes] create failed: %s", err)
             return body
@@ -166,11 +176,20 @@ class Pipeline:
     # Hub Protocol
     # ---------------------------------------------------------------------
 
-    async def _create_note(self, note_body: str, full_message: str) -> tuple[str, str]:
+    async def _create_note(
+        self,
+        note_body: str,
+        full_message: str,
+        owui_user_id: str | None = None,
+    ) -> tuple[str, str]:
         """Create a note entity, return (id, title).
 
         The full user message is preserved as `properties.source.original`
         so we don't lose context if the trigger-stripping was too aggressive.
+
+        When PER_USER_TOKENS is on and an OWUI user id is available, we
+        forward it via X-External-User-Id so the pod auth middleware can
+        route the write to the correct per-human Synap user.
         """
         title = note_body.strip().splitlines()[0][: self.valves.TITLE_MAX]
         if len(title) == self.valves.TITLE_MAX and not title.endswith("…"):
@@ -189,14 +208,18 @@ class Pipeline:
             },
         }
 
+        headers = {
+            "Authorization": f"Bearer {self.valves.SYNAP_API_KEY}",
+            "Content-Type": "application/json",
+        }
+        if self.valves.PER_USER_TOKENS and owui_user_id:
+            headers["X-External-User-Id"] = owui_user_id
+
         async with httpx.AsyncClient(timeout=8.0) as client:
             res = await client.post(
                 f"{self.valves.SYNAP_API_URL}/api/hub/entities",
                 json=payload,
-                headers={
-                    "Authorization": f"Bearer {self.valves.SYNAP_API_KEY}",
-                    "Content-Type": "application/json",
-                },
+                headers=headers,
             )
             res.raise_for_status()
             data = res.json()

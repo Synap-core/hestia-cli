@@ -1,7 +1,7 @@
 """
 title: Synap Memory Injection
 author: Eve
-version: 0.1.0
+version: 0.2.0
 license: MIT
 description: |
   Pre-prompt filter that pulls relevant memories + entities from your Synap pod
@@ -11,6 +11,11 @@ description: |
   Without this, Open WebUI is a generic chat front-end. With it, the model
   sees your notes, tasks, projects, and learned facts — your Synap pod becomes
   the model's long-term memory.
+
+  v0.2.0 — adds optional per-user sub-token forwarding. When PER_USER_TOKENS
+  is on AND the pod has HUB_PROTOCOL_SUB_TOKENS=true, the OWUI user.id is
+  forwarded via X-External-User-Id so each human's recall lands on the right
+  Synap user. Default off — single-tenant behavior is byte-identical.
 """
 
 from __future__ import annotations
@@ -42,6 +47,10 @@ class Pipeline:
         # assistant reply so users can see the integration ran. Off-switch
         # for power users who want clean output.
         SHOW_FOOTER: bool = True
+        # When on AND the pod has HUB_PROTOCOL_SUB_TOKENS=true, forwards the
+        # OWUI user.id via X-External-User-Id so each human's data lands under
+        # the right Synap user. OFF by default (opt-in).
+        PER_USER_TOKENS: bool = False
         # When true, every injection is logged with the matched count.
         DEBUG: bool = False
 
@@ -57,6 +66,7 @@ class Pipeline:
             **{
                 "SYNAP_API_URL": os.getenv("SYNAP_API_URL", self.Valves().SYNAP_API_URL),
                 "SYNAP_API_KEY": os.getenv("SYNAP_API_KEY", self.Valves().SYNAP_API_KEY),
+                "PER_USER_TOKENS": os.getenv("SYNAP_PER_USER_TOKENS", "0") == "1",
                 "DEBUG": os.getenv("SYNAP_PIPELINE_DEBUG", "0") == "1",
             },
         )
@@ -87,8 +97,10 @@ class Pipeline:
         if not last_user:
             return body
 
+        owui_user_id = (user or {}).get("id")
+
         try:
-            ctx = await self._fetch_context(last_user)
+            ctx = await self._fetch_context(last_user, owui_user_id)
         except Exception as err:
             logger.warning("[synap-memory] context fetch failed: %s", err)
             return body
@@ -138,12 +150,23 @@ class Pipeline:
     # Hub Protocol calls
     # ---------------------------------------------------------------------
 
-    async def _fetch_context(self, query: str) -> dict[str, list[dict[str, Any]]]:
-        """Pull relevant memories + entities from the Synap pod."""
+    def _headers(self, owui_user_id: str | None = None) -> dict[str, str]:
         headers = {
             "Authorization": f"Bearer {self.valves.SYNAP_API_KEY}",
             "Content-Type": "application/json",
         }
+        # When the pod has HUB_PROTOCOL_SUB_TOKENS=true, this header tells
+        # the auth middleware to swap c.userId to the per-OWUI-user mapping.
+        # Off by default (opt-in via the PER_USER_TOKENS valve / env var).
+        if self.valves.PER_USER_TOKENS and owui_user_id:
+            headers["X-External-User-Id"] = owui_user_id
+        return headers
+
+    async def _fetch_context(
+        self, query: str, owui_user_id: str | None = None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Pull relevant memories + entities from the Synap pod."""
+        headers = self._headers(owui_user_id)
 
         async with httpx.AsyncClient(timeout=8.0) as client:
             # GET /api/hub/memory — semantic recall over the user's notes.

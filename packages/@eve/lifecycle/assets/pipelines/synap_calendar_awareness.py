@@ -1,7 +1,7 @@
 """
 title: Synap Calendar Awareness
 author: Eve
-version: 0.1.0
+version: 0.2.0
 license: MIT
 description: |
   Pulls upcoming event entities from the user's Synap pod and injects
@@ -16,6 +16,11 @@ description: |
   Trigger detection is a small regex over canonical phrases, plus the
   presence of date words ("today", "tomorrow", weekday names, "this
   week"). Conservative — when in doubt, no injection.
+
+  v0.2.0 — adds optional per-user sub-token forwarding. When PER_USER_TOKENS
+  is on AND the pod has HUB_PROTOCOL_SUB_TOKENS=true, the OWUI user.id is
+  forwarded via X-External-User-Id so each human's calendar lands on the
+  right Synap user. Default off — single-tenant behavior is byte-identical.
 """
 
 from __future__ import annotations
@@ -61,6 +66,10 @@ class Pipeline:
         WINDOW_DAYS: int = 14
         # Append a "📅 Pulled N events" footer.
         SHOW_FOOTER: bool = True
+        # When on AND the pod has HUB_PROTOCOL_SUB_TOKENS=true, forwards the
+        # OWUI user.id via X-External-User-Id so each human's data lands under
+        # the right Synap user. OFF by default (opt-in).
+        PER_USER_TOKENS: bool = False
         DEBUG: bool = False
 
     def __init__(self) -> None:
@@ -74,6 +83,7 @@ class Pipeline:
             **{
                 "SYNAP_API_URL": os.getenv("SYNAP_API_URL", self.Valves().SYNAP_API_URL),
                 "SYNAP_API_KEY": os.getenv("SYNAP_API_KEY", self.Valves().SYNAP_API_KEY),
+                "PER_USER_TOKENS": os.getenv("SYNAP_PER_USER_TOKENS", "0") == "1",
                 "DEBUG": os.getenv("SYNAP_PIPELINE_DEBUG", "0") == "1",
             },
         )
@@ -98,8 +108,10 @@ class Pipeline:
         if not last_user or not CALENDAR_TRIGGERS.search(last_user):
             return body
 
+        owui_user_id = (user or {}).get("id")
+
         try:
-            events = await self._fetch_upcoming()
+            events = await self._fetch_upcoming(owui_user_id)
         except Exception as err:
             logger.warning("[synap-calendar] fetch failed: %s", err)
             return body
@@ -133,7 +145,21 @@ class Pipeline:
     # Hub Protocol
     # ---------------------------------------------------------------------
 
-    async def _fetch_upcoming(self) -> list[dict[str, Any]]:
+    def _headers(self, owui_user_id: str | None = None) -> dict[str, str]:
+        headers = {
+            "Authorization": f"Bearer {self.valves.SYNAP_API_KEY}",
+            "Content-Type": "application/json",
+        }
+        # When the pod has HUB_PROTOCOL_SUB_TOKENS=true, this header tells
+        # the auth middleware to swap c.userId to the per-OWUI-user mapping.
+        # Off by default (opt-in via the PER_USER_TOKENS valve / env var).
+        if self.valves.PER_USER_TOKENS and owui_user_id:
+            headers["X-External-User-Id"] = owui_user_id
+        return headers
+
+    async def _fetch_upcoming(
+        self, owui_user_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         """List event entities, then filter to those in the next WINDOW_DAYS.
 
         Hub Protocol's GET /entities doesn't accept a date filter, so we
@@ -149,7 +175,7 @@ class Pipeline:
                     "limit": self.valves.TOP_K * 4,
                     "sort": "updatedAt:desc",
                 },
-                headers={"Authorization": f"Bearer {self.valves.SYNAP_API_KEY}"},
+                headers=self._headers(owui_user_id),
             )
             if not res.is_success:
                 logger.debug("[synap-calendar] HTTP %s", res.status_code)

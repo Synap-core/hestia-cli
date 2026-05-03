@@ -1,7 +1,7 @@
 """
 title: Hermes Dispatch
 author: Eve
-version: 0.1.0
+version: 0.2.0
 license: MIT
 description: |
   Intercepts builder slash commands in Open WebUI and dispatches them to
@@ -19,6 +19,12 @@ description: |
   Without this, slash commands would be answered as plain text by whatever
   model is selected — which is fine for chat but doesn't actually build
   anything. With it, your stack does the work.
+
+  v0.2.0 — adds optional per-user sub-token forwarding. When PER_USER_TOKENS
+  is on AND the pod has HUB_PROTOCOL_SUB_TOKENS=true, the OWUI user.id is
+  forwarded via X-External-User-Id so the Hermes task is created under the
+  correct human's Synap user (not the parent agent's). Default off —
+  single-tenant behavior is byte-identical.
 """
 
 from __future__ import annotations
@@ -57,6 +63,10 @@ class Pipeline:
             "I'll post the result back to this channel when it's done. "
             "You can check progress at any time from the Hermes drawer in the dashboard."
         )
+        # When on AND the pod has HUB_PROTOCOL_SUB_TOKENS=true, forwards the
+        # OWUI user.id via X-External-User-Id so the dispatched task is
+        # created under the correct per-human Synap user. OFF by default.
+        PER_USER_TOKENS: bool = False
         DEBUG: bool = False
 
     def __init__(self) -> None:
@@ -70,6 +80,7 @@ class Pipeline:
             **{
                 "SYNAP_API_URL": os.getenv("SYNAP_API_URL", self.Valves().SYNAP_API_URL),
                 "SYNAP_API_KEY": os.getenv("SYNAP_API_KEY", self.Valves().SYNAP_API_KEY),
+                "PER_USER_TOKENS": os.getenv("SYNAP_PER_USER_TOKENS", "0") == "1",
                 "DEBUG": os.getenv("SYNAP_PIPELINE_DEBUG", "0") == "1",
             },
         )
@@ -100,8 +111,10 @@ class Pipeline:
         command = match.group("command")
         argument = (match.group("argument") or "").strip()
 
+        owui_user_id = (user or {}).get("id")
+
         try:
-            task_id = await self._dispatch(command, argument, user, body)
+            task_id = await self._dispatch(command, argument, user, body, owui_user_id)
         except Exception as err:
             logger.warning("[hermes-dispatch] dispatch failed: %s", err)
             return body  # let the model handle it as if it were a normal message
@@ -137,18 +150,29 @@ class Pipeline:
     # Task creation via Hub Protocol
     # ---------------------------------------------------------------------
 
+    def _headers(self, owui_user_id: str | None = None) -> dict[str, str]:
+        headers = {
+            "Authorization": f"Bearer {self.valves.SYNAP_API_KEY}",
+            "Content-Type": "application/json",
+        }
+        # When the pod has HUB_PROTOCOL_SUB_TOKENS=true, this header tells
+        # the auth middleware to swap c.userId to the per-OWUI-user mapping
+        # so the dispatched task is created under the correct human.
+        # Off by default (opt-in via the PER_USER_TOKENS valve / env var).
+        if self.valves.PER_USER_TOKENS and owui_user_id:
+            headers["X-External-User-Id"] = owui_user_id
+        return headers
+
     async def _dispatch(
         self,
         command: str,
         argument: str,
         user: dict[str, Any] | None,
         body: dict[str, Any],
+        owui_user_id: str | None = None,
     ) -> str:
         """Create a Hermes-flagged task in Synap and return its id."""
-        headers = {
-            "Authorization": f"Bearer {self.valves.SYNAP_API_KEY}",
-            "Content-Type": "application/json",
-        }
+        headers = self._headers(owui_user_id)
 
         # `command` already came from a constrained regex group, but
         # double-check before interpolating it into a tag string.
@@ -160,7 +184,7 @@ class Pipeline:
 
         # Identifiers on the request body come from arbitrary OpenAI-compat
         # clients — type-check and length-cap them before storing.
-        owui_user_id = _safe_id((user or {}).get("id"))
+        safe_owui_user_id = _safe_id((user or {}).get("id"))
         owui_chat_id = _safe_id(body.get("chat_id") or body.get("id"))
 
         payload = {
@@ -175,7 +199,7 @@ class Pipeline:
                 "raw": json.dumps({
                     "command": command,
                     "argument": argument_clean,
-                    "owuiUserId": owui_user_id,
+                    "owuiUserId": safe_owui_user_id,
                     "owuiChatId": owui_chat_id,
                 })[:4000],
             },
