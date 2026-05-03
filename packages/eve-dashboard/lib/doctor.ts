@@ -7,6 +7,7 @@
  */
 
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import {
   COMPONENTS, entityStateManager, readEveSecrets, hasAnyProvider,
@@ -284,8 +285,29 @@ export async function runDoctor(): Promise<CheckResult[]> {
   // and (c) the parsed `openapi: "3.x"` tag gates "is this backend new
   // enough to know about the recently-shipped capabilities" (idempotency,
   // sub-tokens, threads upsert, batch messages, source enum).
+  //
+  // After the OpenAPI probe passes, smoke-test three concrete capabilities:
+  //   • Idempotency replay  — POST twice with same key, expect cached reply
+  //   • SSE event stream    — wait for a heartbeat frame within 35s
+  //   • Sub-token mode      — detect whether HUB_PROTOCOL_SUB_TOKENS=true
+  //
+  // The three follow-ups run in parallel (the SSE probe alone is up to 35s;
+  // serial would mean ~36s+ vs ~35s parallel). They stay independent — a
+  // single failing capability surfaces as one red row, not a cascading
+  // failure that hides which feature is broken.
   if (installed.includes("synap") && running.has("synap-backend-backend-1")) {
-    checks.push(await probeSynapHubProtocol(secrets));
+    const openapiResult = await probeSynapHubProtocol(secrets);
+    checks.push(openapiResult);
+    if (openapiResult.status === "pass") {
+      const baseUrl = (secrets?.synap?.apiUrl ?? "").replace(/\/+$/, "");
+      const apiKey = secrets?.synap?.apiKey ?? "";
+      const [idem, sse, subTokens] = await Promise.all([
+        probeSynapIdempotency(baseUrl, apiKey),
+        probeSynapEventStream(baseUrl, apiKey),
+        probeSynapSubTokens(baseUrl, apiKey),
+      ]);
+      checks.push(idem, sse, subTokens);
+    }
   }
 
   // ─── Pair-wise integration scenarios ────────────────────────────────────
@@ -871,6 +893,471 @@ async function probeSynapHubProtocol(secrets: Secrets): Promise<CheckResult> {
     componentId: "synap",
     integrationId,
   };
+}
+
+/**
+ * Probe A — Idempotency replay.
+ *
+ * Posts a throwaway entity twice with the same `Idempotency-Key` and the
+ * same body. The middleware MUST return the cached response on the second
+ * call (with `X-Idempotent-Replay: true`). Two failure modes we care about:
+ *   • The header is missing  → middleware not mounted / older backend
+ *   • Two distinct entity ids → middleware silently created a duplicate
+ *
+ * Best-effort cleanup: try DELETE on the created entity but never let a
+ * failed cleanup demote the probe — the probe judges idempotency, not
+ * delete-permission scope.
+ */
+async function probeSynapIdempotency(baseUrl: string, apiKey: string): Promise<CheckResult> {
+  const integrationId = "synap" as const;
+  const name = "Synap idempotency replay";
+  if (!baseUrl || !apiKey) {
+    return {
+      group: "ai", name, status: "warn",
+      message: "Skipped — Synap URL or API key missing",
+      componentId: "synap", integrationId,
+    };
+  }
+
+  const url = `${baseUrl}/api/hub/entities`;
+  const idempotencyKey = randomUUID();
+  const body = {
+    profileSlug: "note",
+    title: "eve-doctor-idempotency-smoke",
+    source: "openwebui-pipeline",
+  };
+  const bodyJson = JSON.stringify(body);
+
+  const post = async (): Promise<{ res: Response; text: string } | { error: string }> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "Idempotency-Key": idempotencyKey,
+        },
+        body: bodyJson,
+        signal: controller.signal,
+      });
+      const text = await res.text();
+      return { res, text };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : "network error" };
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  const first = await post();
+  if ("error" in first) {
+    return {
+      group: "ai", name, status: "fail",
+      message: `Cannot reach ${url} (${first.error})`,
+      fix: "Check the Synap container is running and the URL is reachable",
+      componentId: "synap", integrationId,
+    };
+  }
+  if (first.res.status === 401 || first.res.status === 403) {
+    return {
+      group: "ai", name, status: "fail",
+      message: `API key rejected — ${first.res.status} from POST /api/hub/entities`,
+      fix: "Re-run setup to mint a fresh agent API key",
+      componentId: "synap", integrationId,
+    };
+  }
+  if (first.res.status === 404) {
+    return {
+      group: "ai", name, status: "fail",
+      message: "POST /api/hub/entities not available — backend version too old",
+      fix: "Update Synap (`eve update synap`)",
+      componentId: "synap", integrationId,
+    };
+  }
+  if (!first.res.ok) {
+    return {
+      group: "ai", name, status: "fail",
+      message: `First POST returned ${first.res.status}: ${truncate(first.text)}`,
+      componentId: "synap", integrationId,
+    };
+  }
+
+  const second = await post();
+  if ("error" in second) {
+    return {
+      group: "ai", name, status: "fail",
+      message: `Second POST failed (${second.error}) — couldn't verify replay`,
+      componentId: "synap", integrationId,
+    };
+  }
+  if (!second.res.ok) {
+    return {
+      group: "ai", name, status: "fail",
+      message: `Second POST returned ${second.res.status}: ${truncate(second.text)}`,
+      componentId: "synap", integrationId,
+    };
+  }
+
+  // Best-effort cleanup BEFORE we judge — if both calls returned the same
+  // entity id we only need to delete it once. Wrapped so failures don't
+  // mask the real probe outcome.
+  const entityId = extractEntityId(first.text);
+  if (entityId) {
+    void deleteEntityBestEffort(baseUrl, apiKey, entityId);
+  }
+
+  const replayHeader = second.res.headers.get("X-Idempotent-Replay")
+    ?? second.res.headers.get("x-idempotent-replay");
+  if (replayHeader !== "true") {
+    return {
+      group: "ai", name, status: "fail",
+      message: "Backend doesn't echo X-Idempotent-Replay — idempotency middleware not mounted",
+      fix: "Update Synap (`eve update synap`) — needs 2026-05+ Hub Protocol",
+      componentId: "synap", integrationId,
+    };
+  }
+
+  if (first.text !== second.text) {
+    return {
+      group: "ai", name, status: "fail",
+      message: "Backend created a duplicate entity (idempotency middleware not honouring the key)",
+      fix: "Update Synap (`eve update synap`) — needs 2026-05+ Hub Protocol",
+      componentId: "synap", integrationId,
+    };
+  }
+
+  return {
+    group: "ai", name, status: "pass",
+    message: "Replay confirmed — same Idempotency-Key returns the cached response",
+    componentId: "synap", integrationId,
+  };
+}
+
+/**
+ * Probe B — SSE heartbeat.
+ *
+ * Opens a long-lived `text/event-stream` to `/api/hub/events/stream` and
+ * waits up to 35 seconds for any frame whose event line is `heartbeat` or
+ * `event`. Either proves three things at once:
+ *   • Route is mounted (no 404)
+ *   • Auth accepted (no 401/403)
+ *   • Heartbeat loop is alive (no proxy / load balancer killing the stream)
+ *
+ * AbortController cleans up the in-flight fetch + reader on success or
+ * timeout — leaving SSE connections hanging would slowly leak file
+ * descriptors on the dashboard.
+ */
+async function probeSynapEventStream(baseUrl: string, apiKey: string): Promise<CheckResult> {
+  const integrationId = "synap" as const;
+  const name = "Synap event stream";
+  if (!baseUrl || !apiKey) {
+    return {
+      group: "ai", name, status: "warn",
+      message: "Skipped — Synap URL or API key missing",
+      componentId: "synap", integrationId,
+    };
+  }
+
+  const url = `${baseUrl}/api/hub/events/stream`;
+  const controller = new AbortController();
+  const timeoutMs = 35_000;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: "text/event-stream",
+      },
+      signal: controller.signal,
+    });
+  } catch (err) {
+    clearTimeout(timer);
+    const aborted = err instanceof Error && err.name === "AbortError";
+    return {
+      group: "ai", name, status: "fail",
+      message: aborted
+        ? `No SSE response within ${timeoutMs / 1000}s — proxy may be killing the stream`
+        : `Cannot open event stream at ${url} (${err instanceof Error ? err.message : "network error"})`,
+      fix: aborted
+        ? "Check reverse-proxy buffering: nginx needs `proxy_buffering off` for SSE"
+        : "Check the Synap container is running",
+      componentId: "synap", integrationId,
+    };
+  }
+
+  if (res.status === 401 || res.status === 403) {
+    controller.abort();
+    clearTimeout(timer);
+    return {
+      group: "ai", name, status: "fail",
+      message: `API key rejected on /api/hub/events/stream (${res.status})`,
+      fix: "Re-run setup to mint a fresh agent API key",
+      componentId: "synap", integrationId,
+    };
+  }
+  if (res.status === 404) {
+    controller.abort();
+    clearTimeout(timer);
+    return {
+      group: "ai", name, status: "fail",
+      message: "GET /api/hub/events/stream not available — backend version too old",
+      fix: "Update Synap (`eve update synap`)",
+      componentId: "synap", integrationId,
+    };
+  }
+  if (!res.ok || !res.body) {
+    controller.abort();
+    clearTimeout(timer);
+    return {
+      group: "ai", name, status: "fail",
+      message: `Event stream returned ${res.status} (no body: ${!res.body})`,
+      componentId: "synap", integrationId,
+    };
+  }
+
+  // Read the stream chunk-by-chunk and look for an `event:` line whose
+  // value is heartbeat or event. We don't need to consume more than that.
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let received = false;
+  let receivedKind = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("event:")) {
+          const kind = trimmed.slice(6).trim();
+          if (kind === "heartbeat" || kind === "event") {
+            received = true;
+            receivedKind = kind;
+            break;
+          }
+        }
+      }
+      if (received) break;
+    }
+  } catch (err) {
+    if (!(err instanceof Error && err.name === "AbortError")) {
+      // Real read error (not our timeout) — surface it.
+      try { await reader.cancel(); } catch { /* ignore */ }
+      controller.abort();
+      clearTimeout(timer);
+      return {
+        group: "ai", name, status: "fail",
+        message: `Stream read error: ${err instanceof Error ? err.message : "unknown"}`,
+        componentId: "synap", integrationId,
+      };
+    }
+  } finally {
+    try { await reader.cancel(); } catch { /* ignore */ }
+    controller.abort();
+    clearTimeout(timer);
+  }
+
+  if (!received) {
+    return {
+      group: "ai", name, status: "fail",
+      message: `No heartbeat received within ${timeoutMs / 1000}s — stream may be proxied without flush`,
+      fix: "Check reverse-proxy: SSE needs `proxy_buffering off` and no response gzip",
+      componentId: "synap", integrationId,
+    };
+  }
+
+  return {
+    group: "ai", name, status: "pass",
+    message: `Stream open — received \`${receivedKind}\` frame within ${timeoutMs / 1000}s`,
+    componentId: "synap", integrationId,
+  };
+}
+
+/**
+ * Probe C — Sub-token round-trip.
+ *
+ * Calls `/api/hub/users/me` twice, once without and once with
+ * `X-External-User-Id`. If the backend honours the header, the second
+ * response should resolve to a different user id (a freshly-mapped
+ * sub-token derived from the parent agent key). If the ids match, the
+ * header was ignored — that's the expected state when
+ * `HUB_PROTOCOL_SUB_TOKENS=false` and we report it as a "skipped" warn,
+ * not a failure.
+ *
+ * The timestamp suffix on the external id guarantees a fresh mapping
+ * each run — without it, an existing mapping from a previous probe
+ * would still produce a different id and we'd never see "OFF".
+ */
+async function probeSynapSubTokens(baseUrl: string, apiKey: string): Promise<CheckResult> {
+  const integrationId = "synap" as const;
+  const name = "Synap sub-token mode";
+  if (!baseUrl || !apiKey) {
+    return {
+      group: "ai", name, status: "warn",
+      message: "Skipped — Synap URL or API key missing",
+      componentId: "synap", integrationId,
+    };
+  }
+
+  const url = `${baseUrl}/api/hub/users/me`;
+  const externalUserId = `eve-doctor-smoke-${Date.now()}`;
+
+  const fetchMe = async (extraHeaders: Record<string, string>): Promise<
+    | { ok: true; userId: string | null; status: number }
+    | { ok: false; status: number; message: string }
+  > => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    try {
+      const res = await fetch(url, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          Accept: "application/json",
+          ...extraHeaders,
+        },
+        signal: controller.signal,
+      });
+      const text = await res.text();
+      if (!res.ok) {
+        return { ok: false, status: res.status, message: truncate(text) };
+      }
+      let id: string | null = null;
+      try {
+        const parsed = JSON.parse(text) as Record<string, unknown>;
+        const candidate = parsed.id ?? (parsed.user as Record<string, unknown> | undefined)?.id;
+        if (typeof candidate === "string") id = candidate;
+      } catch {
+        return { ok: false, status: res.status, message: "response was not JSON" };
+      }
+      return { ok: true, userId: id, status: res.status };
+    } catch (err) {
+      return {
+        ok: false, status: 0,
+        message: err instanceof Error ? err.message : "network error",
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  const parent = await fetchMe({});
+  if (!parent.ok) {
+    if (parent.status === 401 || parent.status === 403) {
+      return {
+        group: "ai", name, status: "fail",
+        message: `API key rejected on /api/hub/users/me (${parent.status})`,
+        fix: "Re-run setup to mint a fresh agent API key",
+        componentId: "synap", integrationId,
+      };
+    }
+    if (parent.status === 404) {
+      return {
+        group: "ai", name, status: "fail",
+        message: "GET /api/hub/users/me not available — backend version too old",
+        fix: "Update Synap (`eve update synap`)",
+        componentId: "synap", integrationId,
+      };
+    }
+    return {
+      group: "ai", name, status: "fail",
+      message: `Couldn't fetch parent user (${parent.status || "network error"}): ${parent.message}`,
+      componentId: "synap", integrationId,
+    };
+  }
+  if (!parent.userId) {
+    return {
+      group: "ai", name, status: "fail",
+      message: "Backend returned /users/me without an id field",
+      componentId: "synap", integrationId,
+    };
+  }
+
+  const sub = await fetchMe({ "X-External-User-Id": externalUserId });
+  if (!sub.ok) {
+    return {
+      group: "ai", name, status: "fail",
+      message: `Couldn't fetch user with X-External-User-Id (${sub.status || "network error"}): ${sub.message}`,
+      componentId: "synap", integrationId,
+    };
+  }
+  if (!sub.userId) {
+    return {
+      group: "ai", name, status: "fail",
+      message: "Backend returned /users/me without an id field on sub-token call",
+      componentId: "synap", integrationId,
+    };
+  }
+
+  if (parent.userId === sub.userId) {
+    // Header ignored — this is the EXPECTED state when
+    // HUB_PROTOCOL_SUB_TOKENS is off. Multi-user mode is opt-in.
+    return {
+      group: "ai", name, status: "warn",
+      message: "Multi-user mode: OFF — X-External-User-Id ignored (HUB_PROTOCOL_SUB_TOKENS=false)",
+      componentId: "synap", integrationId,
+    };
+  }
+
+  return {
+    group: "ai", name, status: "pass",
+    message: `Multi-user mode: ON — sub-token resolved to a separate user id (parent=${shortId(parent.userId)}, sub=${shortId(sub.userId)})`,
+    componentId: "synap", integrationId,
+  };
+}
+
+/** Truncate response bodies so error messages stay readable in the UI. */
+function truncate(text: string, max = 160): string {
+  const oneline = text.replace(/\s+/g, " ").trim();
+  return oneline.length > max ? `${oneline.slice(0, max)}…` : oneline;
+}
+
+/** Last 8 chars of an id for display — full UUIDs are noise in messages. */
+function shortId(id: string): string {
+  return id.length > 8 ? `…${id.slice(-8)}` : id;
+}
+
+/** Pull `id` out of an entity-create response without throwing. */
+function extractEntityId(text: string): string | null {
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    const direct = parsed.id;
+    if (typeof direct === "string") return direct;
+    const nested = (parsed.entity as Record<string, unknown> | undefined)?.id;
+    if (typeof nested === "string") return nested;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Fire-and-forget DELETE — failures are silently ignored. */
+async function deleteEntityBestEffort(baseUrl: string, apiKey: string, entityId: string): Promise<void> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 4000);
+  try {
+    await fetch(`${baseUrl}/api/hub/entities/${encodeURIComponent(entityId)}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: controller.signal,
+    });
+  } catch {
+    // Cleanup is best-effort — the throwaway entity is identifiable by
+    // its `eve-doctor-idempotency-smoke` title if a user wants to remove
+    // it manually.
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function readOpenwebuiEnv(): Promise<OpenwebuiEnv> {

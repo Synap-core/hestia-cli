@@ -1171,3 +1171,13 @@ export async function runActionToCompletion(
 /** Re-export the component registry so callers don't need a separate import. */
 export { COMPONENTS, resolveComponent } from "@eve/dna";
 export type { ComponentInfo } from "@eve/dna";
+
+// Atomic .env file helpers — used by `eve mode` and anyone else
+// flipping a single key on a compose-based component without
+// reimplementing parse/write/atomic-rename for the Nth time.
+export {
+  readEnvVar,
+  readEnvFile,
+  writeEnvVar,
+  type WriteEnvVarResult,
+} from "./env-files.js";
