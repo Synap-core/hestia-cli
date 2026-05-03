@@ -27,6 +27,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { getAuthStatus, type AuthFailure, type AuthStatus } from "./auth.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -35,10 +36,21 @@ import { randomUUID } from "node:crypto";
 export type ProbeStatus = "pass" | "fail" | "skip";
 
 export type HubProtocolProbeId =
+  // The auth probe replaces the old openapi probe in the same slot. The
+  // id stays `hub-protocol-openapi` so dashboard rows that key off it
+  // (HubProtocolDiagnostic.id) keep rendering — only the underlying check
+  // changed (hits /auth/status now, gives concrete fix hints).
   | "hub-protocol-openapi"
   | "hub-protocol-idempotency"
   | "hub-protocol-events"
-  | "hub-protocol-sub-tokens";
+  | "hub-protocol-sub-tokens"
+  // Optional discovery probe — informational only, never gates anything.
+  // Hits /openapi.json WITHOUT auth (which was made public in the
+  // 2026-05+ backend). 200 = good, 401 = backend not yet on the public
+  // version, 404 = older backend without the endpoint. Surface as a
+  // separate row but mark it `skip` on anything other than 200 — we
+  // don't want users to see this as a hard failure.
+  | "hub-protocol-discovery";
 
 export interface HubProtocolDiagnostic {
   id: HubProtocolProbeId;
@@ -181,12 +193,14 @@ export interface DoctorRunnerStream {
 // ---------------------------------------------------------------------------
 
 const OPENAPI_TIMEOUT_MS = 4_000;
+const AUTH_TIMEOUT_MS = 6_000;
 const ENTITY_POST_TIMEOUT_MS = 6_000;
 const SSE_TIMEOUT_MS = 35_000;
 const ME_TIMEOUT_MS = 6_000;
 const DELETE_TIMEOUT_MS = 4_000;
 
-const OPENAPI_NAME = "Synap Hub Protocol";
+const AUTH_NAME = "Synap auth";
+const DISCOVERY_NAME = "Synap public discovery";
 const IDEMPOTENCY_NAME = "Synap idempotency replay";
 const EVENTS_NAME = "Synap event stream";
 const SUB_TOKENS_NAME = "Synap sub-token mode";
@@ -216,18 +230,23 @@ export async function runHubProtocolProbes(
   const runner = opts.runner ?? new FetchRunner();
   const onRunnerNote = opts.onRunnerNote;
 
-  const openapi = await probeOpenapi(runner, synapUrl, apiKey, signal, onRunnerNote);
+  // The auth probe replaces the old openapi probe in this slot. It does
+  // strictly more — every failure case the openapi probe surfaced (401,
+  // 404, 5xx, transport) flows through the structured AuthResult shape,
+  // and on top of that we now get the actual key state (scopes, age,
+  // user) when auth is healthy.
+  const auth = await probeSynapAuth(runner, synapUrl, apiKey, signal, onRunnerNote);
 
-  // If OpenAPI didn't pass, the other probes have no chance — skip them
+  // If auth didn't pass, the other probes have no chance — skip them
   // but still emit rows so the renderer doesn't have to special-case
   // "partial result" shapes.
-  if (openapi.status !== "pass") {
-    const skipMsg = openapi.status === "skip"
+  if (auth.status !== "pass") {
+    const skipMsg = auth.status === "skip"
       ? "Skipped — Synap URL or API key missing"
-      : `Skipped — ${OPENAPI_NAME} probe didn't pass`;
+      : "Skipped — auth probe didn't pass";
 
     return [
-      openapi,
+      auth,
       skipDiag("hub-protocol-idempotency", IDEMPOTENCY_NAME, skipMsg),
       skipDiag("hub-protocol-events", EVENTS_NAME, skipMsg),
       skipDiag("hub-protocol-sub-tokens", SUB_TOKENS_NAME, skipMsg),
@@ -240,14 +259,24 @@ export async function runHubProtocolProbes(
     probeSubTokens(runner, synapUrl, apiKey, signal),
   ]);
 
-  return [openapi, idem, sse, subTokens];
+  return [auth, idem, sse, subTokens];
 }
 
 // ---------------------------------------------------------------------------
-// Probe 1 — OpenAPI / Hub Protocol reachability
+// Probe 1 — Synap auth (replaces the old OpenAPI probe)
+//
+// Hits `GET /api/hub/auth/status` and turns the structured envelope into a
+// `HubProtocolDiagnostic` with concrete fix hints. This is strictly better
+// than the old openapi probe: every failure case the openapi probe surfaced
+// (401 / 404 / 5xx / transport) flows through the same code path AND we
+// learn the actual key state (scopes, age, user) on the success path.
+//
+// Slot id stays `hub-protocol-openapi` so dashboard rows that key off the
+// id keep rendering. Probes downstream that need a healthy auth check
+// (idempotency, SSE, sub-tokens) gate on this row's status.
 // ---------------------------------------------------------------------------
 
-async function probeOpenapi(
+async function probeSynapAuth(
   runner: IDoctorRunner,
   synapUrl: string,
   apiKey: string,
@@ -259,7 +288,7 @@ async function probeOpenapi(
   if (!synapUrl) {
     return {
       id: "hub-protocol-openapi",
-      name: OPENAPI_NAME,
+      name: AUTH_NAME,
       status: "skip",
       message: "Synap apiUrl not configured in secrets",
       fix: "Re-run setup or open the AI page → Save",
@@ -269,108 +298,222 @@ async function probeOpenapi(
   if (!apiKey) {
     return {
       id: "hub-protocol-openapi",
-      name: OPENAPI_NAME,
+      name: AUTH_NAME,
       status: "skip",
-      message: "Synap API key missing — Hub Protocol probe needs Bearer auth",
+      message: "Synap API key missing — auth probe needs Bearer auth",
       fix: "Re-install Synap (`eve add synap`) to provision an API key",
       durationMs: Date.now() - start,
     };
   }
 
-  const url = `${synapUrl}/api/hub/openapi.json`;
-  const headers = { Authorization: `Bearer ${apiKey}`, Accept: "application/json" };
-
   // The opening probe is the place where the runner decides to swap
   // transports. Pass the note hook in so a `FallbackRunner` can announce
-  // the swap once and only once.
-  const res = await runner.httpGet(url, headers, { signal: outer, timeoutMs: OPENAPI_TIMEOUT_MS });
-
-  // Surface the runner's name change after the call, in case the runner
-  // self-reports through `onRunnerNote` at construction or after a swap.
-  // (FallbackRunner emits its own notes via the hook directly; we don't
-  // duplicate them here.)
+  // the swap once and only once. (FallbackRunner emits its own notes
+  // via the hook directly; we don't duplicate them here.)
   void onRunnerNote;
 
-  if (res.status === 0) {
+  const result = await getAuthStatus({
+    synapUrl,
+    apiKey,
+    runner,
+    signal: outer,
+    timeoutMs: AUTH_TIMEOUT_MS,
+  });
+
+  if (result.ok) {
     return {
       id: "hub-protocol-openapi",
-      name: OPENAPI_NAME,
-      status: "fail",
-      message: `Cannot reach Synap backend at ${synapUrl} (${res.error ?? "network error"})`,
-      fix: "Check the Synap container is running and the URL is reachable",
+      name: AUTH_NAME,
+      status: "pass",
+      message: authPassMessage(result.status),
       durationMs: Date.now() - start,
     };
   }
 
+  return failureToDiagnostic(result.failure, synapUrl, Date.now() - start);
+}
+
+function authPassMessage(s: AuthStatus): string {
+  const userTag = s.userId.slice(0, 8);
+  const emailPart = s.userEmail ?? "no email";
+  const scopes = s.scopes.length > 0 ? `[${s.scopes.join(", ")}]` : "[no scopes]";
+  return `Auth OK — user ${userTag} (${emailPart}), scopes ${scopes}, key age ${s.ageDays}d`;
+}
+
+function failureToDiagnostic(
+  failure: AuthFailure,
+  synapUrl: string,
+  durationMs: number,
+): HubProtocolDiagnostic {
+  // Per-reason fix hints. The mapping below is the single source of
+  // truth for "what should the user do when auth fails" — both the
+  // CLI doctor and the dashboard pull these from `diag.fix`, so any
+  // edits here propagate to both surfaces.
+  switch (failure.reason) {
+    case "key_revoked":
+      return {
+        id: "hub-protocol-openapi",
+        name: AUTH_NAME,
+        status: "fail",
+        message: failure.message || "API key was revoked or never registered",
+        fix: "eve auth renew",
+        durationMs,
+      };
+    case "expired":
+      return {
+        id: "hub-protocol-openapi",
+        name: AUTH_NAME,
+        status: "fail",
+        message: failure.message || "API key expired",
+        fix: "eve auth renew",
+        durationMs,
+      };
+    case "invalid_format":
+      return {
+        id: "hub-protocol-openapi",
+        name: AUTH_NAME,
+        status: "fail",
+        message: failure.message || "API key format is malformed",
+        fix: "Re-run `eve install` or `eve auth renew`",
+        durationMs,
+      };
+    case "no_auth":
+      return {
+        id: "hub-protocol-openapi",
+        name: AUTH_NAME,
+        status: "fail",
+        message: "No bearer key sent — internal probe bug or missing secrets.synap.apiKey",
+        fix: "Check ~/.eve/secrets/secrets.json has synap.apiKey set",
+        durationMs,
+      };
+    case "missing_scope":
+      return {
+        id: "hub-protocol-openapi",
+        name: AUTH_NAME,
+        status: "fail",
+        message: failure.message || `Key lacks required scope '${failure.missingScope ?? "?"}'`,
+        fix: failure.missingScope
+          ? `eve auth grant ${failure.missingScope}`
+          : "Re-mint the agent key with the required scopes (eve auth renew)",
+        durationMs,
+      };
+    case "backend_unhealthy":
+      return {
+        id: "hub-protocol-openapi",
+        name: AUTH_NAME,
+        status: "fail",
+        message: failure.message || `Backend returned ${failure.httpStatus}`,
+        fix: "docker logs synap-backend-backend-1 --tail 50",
+        durationMs,
+      };
+    case "transport":
+      return {
+        id: "hub-protocol-openapi",
+        name: AUTH_NAME,
+        status: "fail",
+        message: `Cannot reach pod at ${synapUrl} (${failure.message})`,
+        fix: "Run `eve doctor` for a deeper view (check Synap container is running)",
+        durationMs,
+      };
+    case "unknown":
+    default:
+      return {
+        id: "hub-protocol-openapi",
+        name: AUTH_NAME,
+        status: "fail",
+        message: failure.message || `Auth check failed (${failure.httpStatus})`,
+        durationMs,
+      };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Probe 1.5 — Public discovery (informational, never gates)
+//
+// Hits `GET /api/hub/openapi.json` WITHOUT auth. Per the 2026-05 backend
+// contract this endpoint is public. The point isn't to validate the
+// schema — that's `probeSynapAuth`'s job — it's to verify the backend
+// is on a version that exposes the public-discovery surface.
+//
+// Outcomes:
+//   200 → pass (good)
+//   401 → skip + note "auth still required, backend predates the public-discovery release"
+//   404 → skip + note "older backend; no openapi.json endpoint"
+//   transport / 5xx → skip
+// ---------------------------------------------------------------------------
+
+export async function probeSynapDiscovery(
+  runner: IDoctorRunner,
+  synapUrl: string,
+  outer?: AbortSignal,
+): Promise<HubProtocolDiagnostic> {
+  const start = Date.now();
+  if (!synapUrl) {
+    return {
+      id: "hub-protocol-discovery",
+      name: DISCOVERY_NAME,
+      status: "skip",
+      message: "Synap apiUrl not configured",
+      durationMs: Date.now() - start,
+    };
+  }
+
+  const url = `${synapUrl.replace(/\/+$/, "")}/api/hub/openapi.json`;
+  const res = await runner.httpGet(
+    url,
+    { Accept: "application/json" },
+    { signal: outer, timeoutMs: OPENAPI_TIMEOUT_MS },
+  );
+
+  if (res.status === 0) {
+    return {
+      id: "hub-protocol-discovery",
+      name: DISCOVERY_NAME,
+      status: "skip",
+      message: `Could not reach ${url} (${res.error ?? "network error"})`,
+      durationMs: Date.now() - start,
+    };
+  }
+  if (res.status === 200) {
+    let version = "?";
+    try {
+      const parsed = JSON.parse(res.body) as { openapi?: unknown };
+      if (typeof parsed.openapi === "string") version = parsed.openapi;
+    } catch {
+      // Body wasn't JSON — still treat as pass since the 200 came back,
+      // just don't promise a version string.
+    }
+    return {
+      id: "hub-protocol-discovery",
+      name: DISCOVERY_NAME,
+      status: "pass",
+      message: `Public openapi.json reachable (OpenAPI ${version})`,
+      durationMs: Date.now() - start,
+    };
+  }
   if (res.status === 401 || res.status === 403) {
     return {
-      id: "hub-protocol-openapi",
-      name: OPENAPI_NAME,
-      status: "fail",
-      message: `API key missing or wrong scopes — ${res.status} from ${url}`,
-      fix: "Re-run setup to mint a fresh agent API key",
+      id: "hub-protocol-discovery",
+      name: DISCOVERY_NAME,
+      status: "skip",
+      message: `Backend still requires auth on /api/hub/openapi.json (${res.status}) — predates the public-discovery release`,
       durationMs: Date.now() - start,
     };
   }
   if (res.status === 404) {
     return {
-      id: "hub-protocol-openapi",
-      name: OPENAPI_NAME,
-      status: "fail",
-      message: "Hub Protocol not available — backend version too old (404 on /api/hub/openapi.json)",
-      fix: "Update Synap (`eve update synap`)",
+      id: "hub-protocol-discovery",
+      name: DISCOVERY_NAME,
+      status: "skip",
+      message: "Older backend — /api/hub/openapi.json not exposed",
       durationMs: Date.now() - start,
     };
   }
-  if (res.status < 200 || res.status >= 300) {
-    return {
-      id: "hub-protocol-openapi",
-      name: OPENAPI_NAME,
-      status: "fail",
-      message: `Hub Protocol returned ${res.status} from ${url}`,
-      durationMs: Date.now() - start,
-    };
-  }
-
-  let body: unknown;
-  try {
-    body = JSON.parse(res.body);
-  } catch {
-    return {
-      id: "hub-protocol-openapi",
-      name: OPENAPI_NAME,
-      status: "fail",
-      message: "Endpoint returned unexpected payload (not JSON) — likely a proxy error page",
-      durationMs: Date.now() - start,
-    };
-  }
-
-  const openapi = (body as { openapi?: unknown })?.openapi;
-  if (typeof openapi !== "string" || openapi.length === 0) {
-    return {
-      id: "hub-protocol-openapi",
-      name: OPENAPI_NAME,
-      status: "fail",
-      message: "Hub Protocol older than 2026-05 — update synap-backend (no openapi field in response)",
-      fix: "Update Synap (`eve update synap`)",
-      durationMs: Date.now() - start,
-    };
-  }
-  if (!openapi.startsWith("3.")) {
-    return {
-      id: "hub-protocol-openapi",
-      name: OPENAPI_NAME,
-      status: "fail",
-      message: `Hub Protocol returned an unexpected OpenAPI version (${openapi}) — expected 3.x`,
-      durationMs: Date.now() - start,
-    };
-  }
-
   return {
-    id: "hub-protocol-openapi",
-    name: OPENAPI_NAME,
-    status: "pass",
-    message: `Reachable; OpenAPI ${openapi}`,
+    id: "hub-protocol-discovery",
+    name: DISCOVERY_NAME,
+    status: "skip",
+    message: `Unexpected status ${res.status} from ${url}`,
     durationMs: Date.now() - start,
   };
 }

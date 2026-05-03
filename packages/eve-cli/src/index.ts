@@ -24,6 +24,7 @@ import { configCommands } from './commands/manage/config-cmd.js';
 import { backupUpdateCommands } from './commands/manage/backup-update.js';
 import { purgeCommand } from './commands/manage/purge.js';
 import { modeCommands } from './commands/mode.js';
+import { authCommand } from './commands/auth.js';
 import { aiCommandGroup } from './commands/ai.js';
 import { uiCommand } from './commands/ui.js';
 import { domainCommand } from './commands/domain.js';
@@ -121,6 +122,7 @@ inspectCommand(program);
 configCommands(program);
 backupUpdateCommands(program);
 modeCommands(program);
+authCommand(program);
 purgeCommand(program);
 
 // --- AI ---
@@ -181,7 +183,7 @@ const DEFAULT_CATEGORIES: HelpCategory[] = [
   { title: 'Lifecycle',     commands: ['install', 'update', 'add', 'remove'] },
   { title: 'Status',        commands: ['status', 'doctor'] },
   { title: 'Operations',    commands: ['logs', 'recreate', 'backup'] },
-  { title: 'Configuration', commands: ['config', 'domain', 'mode', 'ai'] },
+  { title: 'Configuration', commands: ['config', 'domain', 'mode', 'auth', 'ai'] },
   { title: 'UI',            commands: ['ui'] },
 ];
 

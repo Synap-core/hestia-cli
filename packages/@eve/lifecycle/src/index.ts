@@ -388,6 +388,76 @@ async function* runPostUpdateHooks(comp: ComponentInfo): AsyncGenerator<Lifecycl
   if (comp.id === "openclaw") {
     yield* postUpdateReconcileOpenclaw();
   }
+  if (comp.id === "synap") {
+    yield* postUpdateReconcileAuth();
+  }
+}
+
+/**
+ * After every `eve update synap`, verify the agent API key is still
+ * accepted by the freshly-updated backend. If the backend rejects the
+ * key with a recoverable reason (revoked, expired) we attempt to mint a
+ * fresh one inline so the operator never has to babysit the renew.
+ *
+ * Pattern mirrors `postUpdateReconcileOpenclaw`: log silently on the
+ * happy path, surface concrete next steps when something needed action.
+ * Auth failures are NEVER fatal — a 5xx during `eve update` shouldn't
+ * blow up because of a key issue we can fix on the next pass.
+ *
+ * Note: secrets.json is read by clients (openwebui-pipelines, openclaw,
+ * etc.), not by the backend itself, so a key swap doesn't need a
+ * synap-backend restart. Downstream consumers may need a restart to pick
+ * up the new key — surfaced as a hint, not enforced here.
+ */
+async function* postUpdateReconcileAuth(): AsyncGenerator<LifecycleEvent> {
+  const { getAuthStatus, renewAgentKey } = await import("./auth.js");
+  const secrets = await readEveSecrets();
+  const synapUrl = secrets?.synap?.apiUrl?.trim() ?? "";
+  const apiKey = secrets?.synap?.apiKey?.trim() ?? "";
+  if (!synapUrl || !apiKey) {
+    // No configured key — nothing to validate. Stay quiet.
+    return;
+  }
+
+  const status = await getAuthStatus({ synapUrl, apiKey });
+  if (status.ok) {
+    // Healthy — quiet on the happy path, matching the openclaw hook.
+    return;
+  }
+
+  const reason = status.failure.reason;
+  const recoverable = reason === "key_revoked" || reason === "expired";
+  if (!recoverable) {
+    // Non-recoverable failure (transport / backend_unhealthy / unknown):
+    // surface it but don't break the update. The user runs `eve auth
+    // status` for details, `eve auth renew` if they want to force.
+    yield {
+      type: "log",
+      line: `↳ post-update auth check returned ${reason} (${status.failure.message}) — run \`eve auth status\` for details`,
+    };
+    return;
+  }
+
+  yield {
+    type: "log",
+    line: `↳ agent key invalid (${reason}) — auto-renewing`,
+  };
+  const renewed = await renewAgentKey({ reason: `${reason} during update` });
+  if (renewed.renewed) {
+    yield {
+      type: "log",
+      line: `↳ refreshed agent key (was ${reason} during update) — new prefix ${renewed.keyIdPrefix}`,
+    };
+    yield {
+      type: "log",
+      line: "↳ downstream clients (openwebui-pipelines, openclaw) may need restart to pick up the new key",
+    };
+  } else {
+    yield {
+      type: "log",
+      line: `↳ auto-renew failed: ${renewed.reason} — run \`eve auth renew\` manually`,
+    };
+  }
 }
 
 /**
@@ -1318,6 +1388,7 @@ export {
 // the neutral `HubProtocolDiagnostic` into their own row shape.
 export {
   runHubProtocolProbes,
+  probeSynapDiscovery,
   truncate,
   shortId,
   extractEntityId,
@@ -1333,6 +1404,21 @@ export {
   type DoctorRunnerResponse,
   type DoctorRunnerStream,
 } from "./diagnostics.js";
+
+// Auth — introspectable, renewable agent key. Replaces the older
+// "mint random secret on install, never check it again" model.
+export {
+  getAuthStatus,
+  isKeyValid,
+  renewAgentKey,
+  type AuthStatus,
+  type AuthFailure,
+  type AuthFailReason,
+  type AuthResult,
+  type GetAuthStatusOptions,
+  type RenewAgentKeyOptions,
+  type RenewResult,
+} from "./auth.js";
 
 // OpenClaw reconciliation — re-applies Eve's expected `allowedOrigins`
 // after the container regenerates its config. Used by the lifecycle's
