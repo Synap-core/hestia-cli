@@ -38,6 +38,10 @@ class Pipeline:
         TOP_K_ENTITIES: int = 4
         # Models the filter should run for. Empty = all.
         MODELS: list[str] = []
+        # Append a small "💭 Recalled N from your Synap pod" footer to the
+        # assistant reply so users can see the integration ran. Off-switch
+        # for power users who want clean output.
+        SHOW_FOOTER: bool = True
         # When true, every injection is logged with the matched count.
         DEBUG: bool = False
 
@@ -56,6 +60,11 @@ class Pipeline:
                 "DEBUG": os.getenv("SYNAP_PIPELINE_DEBUG", "0") == "1",
             },
         )
+
+        # Per-(user, chat) counters of what we injected on the most recent
+        # inlet — used by the outlet to render a "💭 Recalled N" footer
+        # without re-fetching context.
+        self._last_injection: dict[tuple[str, str], tuple[int, int]] = {}
 
     async def on_startup(self) -> None:
         logger.info("[synap-memory] startup; pod=%s", self.valves.SYNAP_API_URL)
@@ -95,16 +104,34 @@ class Pipeline:
             },
         )
 
+        n_mem = len(ctx.get("memories", []))
+        n_ent = len(ctx.get("entities", []))
+        cache_key = ((user or {}).get("id", "anon"), body.get("chat_id") or body.get("id") or "unknown")
+        self._last_injection[cache_key] = (n_mem, n_ent)
+
         if self.valves.DEBUG:
-            logger.info(
-                "[synap-memory] injected %d memories + %d entities",
-                len(ctx.get("memories", [])),
-                len(ctx.get("entities", [])),
-            )
+            logger.info("[synap-memory] injected %d memories + %d entities", n_mem, n_ent)
         return body
 
     async def outlet(self, body: dict[str, Any], user: dict[str, Any] | None = None) -> dict[str, Any]:
-        """No outlet behavior — this is a one-way context injection."""
+        """Append a 'Recalled N' footer so users see the integration worked."""
+        if not self.valves.SHOW_FOOTER:
+            return body
+
+        cache_key = ((user or {}).get("id", "anon"), body.get("chat_id") or body.get("id") or "unknown")
+        injected = self._last_injection.pop(cache_key, None)
+        if not injected:
+            return body
+        n_mem, n_ent = injected
+        if n_mem == 0 and n_ent == 0:
+            return body
+
+        bits: list[str] = []
+        if n_mem:
+            bits.append(f"{n_mem} memor{'y' if n_mem == 1 else 'ies'}")
+        if n_ent:
+            bits.append(f"{n_ent} entit{'y' if n_ent == 1 else 'ies'}")
+        _append_footer(body, f"💭 Recalled {' + '.join(bits)} from your Synap pod")
         return body
 
     # ---------------------------------------------------------------------
@@ -125,10 +152,11 @@ class Pipeline:
                 params={"q": query, "limit": self.valves.TOP_K_MEMORIES},
                 headers=headers,
             )
-            # POST /api/hub/entities/search — entity search by content + label.
-            ent_task = client.post(
-                f"{self.valves.SYNAP_API_URL}/api/hub/entities/search",
-                json={"q": query, "limit": self.valves.TOP_K_ENTITIES},
+            # GET /api/hub/entities?q=... — search via Typesense (Hub Protocol
+            # routes the query through the search collection when `q` is set).
+            ent_task = client.get(
+                f"{self.valves.SYNAP_API_URL}/api/hub/entities",
+                params={"q": query, "limit": self.valves.TOP_K_ENTITIES},
                 headers=headers,
             )
             mem_res, ent_res = await _gather_results(mem_task, ent_task)
@@ -136,12 +164,20 @@ class Pipeline:
         memories: list[dict[str, Any]] = []
         if mem_res is not None and mem_res.status_code == 200:
             data = mem_res.json()
-            memories = data.get("memories", []) if isinstance(data, dict) else []
+            # /memory returns either {memories:[...]} or a list — accept both.
+            if isinstance(data, dict):
+                memories = data.get("memories", []) or []
+            elif isinstance(data, list):
+                memories = data
 
         entities: list[dict[str, Any]] = []
         if ent_res is not None and ent_res.status_code == 200:
             data = ent_res.json()
-            entities = data.get("entities", []) if isinstance(data, dict) else []
+            # /entities returns a JSON array of entity rows.
+            if isinstance(data, list):
+                entities = data
+            elif isinstance(data, dict):
+                entities = data.get("entities", []) or []
 
         return {"memories": memories, "entities": entities}
 
@@ -205,3 +241,19 @@ async def _gather_results(*coros: Any) -> tuple[Any, ...]:
             return None
 
     return tuple(await asyncio.gather(*(safe(c) for c in coros)))
+
+
+def _append_footer(body: dict[str, Any], footer: str) -> None:
+    """Append italicized footer to the last assistant message in `body`."""
+    messages = body.get("messages") or []
+    for msg in reversed(messages):
+        if msg.get("role") != "assistant":
+            continue
+        content = msg.get("content")
+        if isinstance(content, list):
+            content.append({"type": "text", "text": f"\n\n_{footer}_"})
+            return
+        if isinstance(content, str):
+            msg["content"] = content.rstrip() + f"\n\n_{footer}_"
+            return
+        return

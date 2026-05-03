@@ -1,17 +1,20 @@
 """
 title: Synap Channel Sync
 author: Eve
-version: 0.1.0
+version: 0.2.0
 license: MIT
 description: |
-  Mirrors every Open WebUI conversation into a Synap channel. Each chat
-  becomes a channel; each user / assistant message gets posted via the
-  Hub Protocol. This makes Open WebUI conversations show up in your Synap
-  views, agent contexts, and search results — without leaving the chat UI.
+  Mirrors every Open WebUI conversation into a Synap channel via the Hub
+  Protocol. Each chat becomes a thread; each user / assistant message is
+  posted to that thread. The result: Open WebUI conversations show up in
+  Synap views, agent contexts, and search — without leaving the chat UI.
 
-  This is a one-way mirror: messages flow from Open WebUI → Synap. We don't
-  pull Synap messages back into Open WebUI to keep the UX simple. If you
-  want bidirectional, use Synap's own chat UI.
+  One-way mirror: Open WebUI → Synap. We don't pull Synap messages back
+  into Open WebUI; if you want bidirectional, use Synap's own chat UI.
+
+  Reply augmentation: when DEBUG_FOOTER is on, the assistant reply gets a
+  small "🔗 Mirrored to Synap" footer so the user can see the integration
+  did its job. Off by default to keep replies clean.
 """
 
 from __future__ import annotations
@@ -30,11 +33,13 @@ class Pipeline:
     class Valves(BaseModel):
         SYNAP_API_URL: str = "http://synap-backend-backend-1:4000"
         SYNAP_API_KEY: str = ""
-        # Channel type to use when creating channels for new conversations.
-        # `external_import` keeps them clearly tagged as not-native-Synap.
-        CHANNEL_TYPE: str = "external_import"
-        # Source identifier — shows up in Synap as the channel's `source` field.
-        SOURCE: str = "openwebui"
+        # Thread title prefix — makes Open WebUI threads easy to filter on
+        # the Synap side.
+        TITLE_PREFIX: str = "💬 "
+        # Show a small footer on assistant replies confirming the mirror
+        # worked. Helps users discover the integration; can be turned off
+        # by power users who want clean output.
+        SHOW_FOOTER: bool = True
         DEBUG: bool = False
 
     def __init__(self) -> None:
@@ -52,10 +57,11 @@ class Pipeline:
             },
         )
 
-        # Cache: { (user_id, owui_chat_id) → synap_channel_id }
-        # In-process — fine for a single pipelines container; persistence
-        # comes from Synap itself (we re-discover by external_id on miss).
-        self._channel_cache: dict[tuple[str, str], str] = {}
+        # Cache: { (owui_user_id, owui_chat_id) → synap_thread_id }
+        self._thread_cache: dict[tuple[str, str], str] = {}
+        # Resolved auth context — fetched lazily on first call.
+        self._synap_user_id: str | None = None
+        self._workspace_id: str | None = None
 
     async def on_startup(self) -> None:
         logger.info("[synap-channel-sync] startup")
@@ -77,11 +83,11 @@ class Pipeline:
             return body
 
         chat_id = body.get("chat_id") or body.get("id") or "unknown"
-        user_id = (user or {}).get("id", "anonymous")
+        owui_user_id = (user or {}).get("id", "anonymous")
 
         try:
-            channel_id = await self._ensure_channel(user_id, chat_id, body)
-            await self._post_message(channel_id, "user", last_user, user_id)
+            thread_id = await self._ensure_thread(owui_user_id, chat_id, body)
+            await self._post_message(thread_id, "user", last_user)
         except Exception as err:
             logger.warning("[synap-channel-sync] inlet failed: %s", err)
 
@@ -97,26 +103,29 @@ class Pipeline:
             return body
 
         chat_id = body.get("chat_id") or body.get("id") or "unknown"
-        user_id = (user or {}).get("id", "anonymous")
-        cache_key = (user_id, chat_id)
-        channel_id = self._channel_cache.get(cache_key)
-        if not channel_id:
-            # No inlet was recorded for this turn — best-effort lookup.
+        owui_user_id = (user or {}).get("id", "anonymous")
+        cache_key = (owui_user_id, chat_id)
+        thread_id = self._thread_cache.get(cache_key)
+        if not thread_id:
             try:
-                channel_id = await self._ensure_channel(user_id, chat_id, body)
+                thread_id = await self._ensure_thread(owui_user_id, chat_id, body)
             except Exception as err:
-                logger.warning("[synap-channel-sync] outlet channel lookup failed: %s", err)
+                logger.warning("[synap-channel-sync] outlet thread lookup failed: %s", err)
                 return body
 
         try:
-            await self._post_message(channel_id, "assistant", last_assistant, user_id)
+            await self._post_message(thread_id, "assistant", last_assistant)
         except Exception as err:
             logger.warning("[synap-channel-sync] outlet post failed: %s", err)
+            return body
+
+        if self.valves.SHOW_FOOTER:
+            _append_footer(body, "🔗 Mirrored to Synap channel")
 
         return body
 
     # ---------------------------------------------------------------------
-    # Hub Protocol — channel + message helpers
+    # Hub Protocol — auth context, thread + message helpers
     # ---------------------------------------------------------------------
 
     def _enabled(self) -> bool:
@@ -128,64 +137,112 @@ class Pipeline:
             "Content-Type": "application/json",
         }
 
-    async def _ensure_channel(
-        self, user_id: str, chat_id: str, body: dict[str, Any],
-    ) -> str:
-        """Find or create a Synap channel for this Open WebUI conversation."""
-        cache_key = (user_id, chat_id)
-        if cache_key in self._channel_cache:
-            return self._channel_cache[cache_key]
+    async def _resolve_context(self, client: httpx.AsyncClient) -> tuple[str, str] | None:
+        """Resolve Synap user + default workspace from the bearer token.
 
-        # External_id makes lookups deterministic on the Synap side — even
-        # across pipelines container restarts.
-        external_id = f"openwebui:{user_id}:{chat_id}"
-        title = body.get("title") or _summarize_first_message(body) or "Open WebUI chat"
+        Cached after first success — pipelines containers stay alive across
+        many chats, so we only pay this lookup once.
+        """
+        if self._synap_user_id and self._workspace_id:
+            return (self._synap_user_id, self._workspace_id)
+
+        me = await client.get(
+            f"{self.valves.SYNAP_API_URL}/api/hub/users/me",
+            headers=self._headers(),
+        )
+        if not me.is_success:
+            logger.warning(
+                "[synap-channel-sync] /users/me returned HTTP %s — bad API key?",
+                me.status_code,
+            )
+            return None
+        self._synap_user_id = (me.json() or {}).get("id")
+
+        ws = await client.get(
+            f"{self.valves.SYNAP_API_URL}/api/hub/workspaces",
+            headers=self._headers(),
+        )
+        if not ws.is_success:
+            logger.warning(
+                "[synap-channel-sync] /workspaces returned HTTP %s",
+                ws.status_code,
+            )
+            return None
+        wslist = (ws.json() or {}).get("workspaces") or []
+        if not wslist:
+            logger.warning("[synap-channel-sync] no workspaces accessible to API key")
+            return None
+        # Pick the first workspace — Hub Protocol returns them in stable order
+        # for a given user. Multi-workspace users would need explicit routing,
+        # which we'd surface as a per-pipeline valve.
+        self._workspace_id = wslist[0].get("id")
+
+        if not self._synap_user_id or not self._workspace_id:
+            return None
+        return (self._synap_user_id, self._workspace_id)
+
+    async def _ensure_thread(
+        self, owui_user_id: str, chat_id: str, body: dict[str, Any],
+    ) -> str:
+        """Find or create a Synap thread for this Open WebUI conversation."""
+        cache_key = (owui_user_id, chat_id)
+        if cache_key in self._thread_cache:
+            return self._thread_cache[cache_key]
+
+        title = (
+            self.valves.TITLE_PREFIX
+            + (body.get("title") or _summarize_first_message(body) or "Open WebUI chat")
+        )
 
         async with httpx.AsyncClient(timeout=8.0) as client:
+            ctx = await self._resolve_context(client)
+            if ctx is None:
+                raise RuntimeError("could not resolve Synap user/workspace from API key")
+            synap_user_id, workspace_id = ctx
+
             res = await client.post(
-                f"{self.valves.SYNAP_API_URL}/api/hub/channels/upsert",
+                f"{self.valves.SYNAP_API_URL}/api/hub/threads",
                 json={
-                    "type": self.valves.CHANNEL_TYPE,
-                    "source": self.valves.SOURCE,
-                    "externalId": external_id,
-                    "title": title,
-                    "metadata": {
-                        "owuiChatId": chat_id,
-                        "owuiUserId": user_id,
-                    },
+                    "userId": synap_user_id,
+                    "workspaceId": workspace_id,
+                    "title": title[:120],
+                    "branchPurpose": f"openwebui:{chat_id}",
                 },
                 headers=self._headers(),
             )
             res.raise_for_status()
             data = res.json()
 
-        channel_id = data.get("channelId") or data.get("id")
-        if not channel_id:
-            raise RuntimeError(f"Hub Protocol returned no channelId: {data}")
+        thread_id = data.get("id")
+        if not thread_id:
+            raise RuntimeError(f"/threads returned no id: {data}")
 
-        self._channel_cache[cache_key] = channel_id
-        return channel_id
+        self._thread_cache[cache_key] = thread_id
+        if self.valves.DEBUG:
+            logger.info("[synap-channel-sync] created thread %s for chat %s", thread_id, chat_id)
+        return thread_id
 
-    async def _post_message(
-        self, channel_id: str, role: str, content: str, user_id: str,
-    ) -> None:
+    async def _post_message(self, thread_id: str, role: str, content: str) -> None:
         async with httpx.AsyncClient(timeout=8.0) as client:
+            ctx = await self._resolve_context(client)
+            if ctx is None:
+                raise RuntimeError("could not resolve Synap user from API key")
+            synap_user_id, _ws = ctx
+
             res = await client.post(
-                f"{self.valves.SYNAP_API_URL}/api/hub/messages",
+                f"{self.valves.SYNAP_API_URL}/api/hub/threads/{thread_id}/messages",
                 json={
-                    "channelId": channel_id,
                     "role": role,
                     "content": content,
-                    "externalUserId": user_id,
+                    "userId": synap_user_id,
+                    # Disable autoRespond — we don't want Synap's IS replying
+                    # to OWUI mirrors. The user already got their answer here.
+                    "autoRespond": False,
                 },
                 headers=self._headers(),
             )
-            # 4xx means the message was rejected (auth, validation, etc.) —
-            # we don't want to silently swallow that, but we also don't want
-            # to break the user's chat over it. Log the *status* only —
-            # error response bodies from Synap can include auth context,
-            # user identifiers, or token fragments, which shouldn't end up
-            # in container logs that may be shipped elsewhere.
+            # Don't fail closed: log status only (response bodies can include
+            # auth/user tokens and shouldn't end up in container logs).
             if not res.is_success:
                 logger.warning(
                     "[synap-channel-sync] message post returned HTTP %s",
@@ -228,3 +285,24 @@ def _summarize_first_message(body: dict[str, Any]) -> str:
                 continue
             return text[:80] + ("…" if len(text) > 80 else "")
     return ""
+
+
+def _append_footer(body: dict[str, Any], footer: str) -> None:
+    """Append a small footer to the last assistant message in `body`.
+
+    Open WebUI passes the assistant message in `body["messages"]` for outlets;
+    mutating its content is the supported way to augment the visible reply.
+    """
+    messages = body.get("messages") or []
+    for msg in reversed(messages):
+        if msg.get("role") != "assistant":
+            continue
+        content = msg.get("content")
+        if isinstance(content, list):
+            # Multi-part — append a text part rather than mutating existing parts.
+            content.append({"type": "text", "text": f"\n\n_{footer}_"})
+            return
+        if isinstance(content, str):
+            msg["content"] = content.rstrip() + f"\n\n_{footer}_"
+            return
+        return

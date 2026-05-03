@@ -814,11 +814,12 @@ async function* installPipelinesSidecar(): AsyncGenerator<LifecycleEvent> {
   const pipelinesDir = join(deployDir, "pipelines");
   mkdirSync(pipelinesDir, { recursive: true });
 
-  // Drop the three reference pipelines into the bind-mounted dir so the
-  // sidecar picks them up on first boot. Re-running install overwrites them
-  // (idempotent — users editing .py files in place will lose changes; that's
-  // by design for the reference set, custom pipelines should use a different
-  // file name).
+  // Drop the reference pipelines into the bind-mounted dir so the sidecar
+  // picks them up on first boot. Currently 8: welcome, eve-help, hermes-
+  // dispatch, knowledge-sync, calendar-awareness, notes-sync, memory-filter,
+  // channel-sync. Re-running install overwrites them (idempotent — users
+  // editing .py files in place will lose changes; that's by design for the
+  // reference set, custom pipelines should use a different file name).
   yield* copyReferencePipelines(pipelinesDir);
 
   const secrets = await readEveSecrets();
