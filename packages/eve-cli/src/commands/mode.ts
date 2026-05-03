@@ -42,8 +42,9 @@ import {
   runActionToCompletion,
   readEnvVar,
   writeEnvVar,
+  reconcileOpenclawConfig,
 } from '@eve/lifecycle';
-import { entityStateManager } from '@eve/dna';
+import { entityStateManager, readEveSecrets } from '@eve/dna';
 import {
   colors,
   printInfo,
@@ -500,10 +501,173 @@ async function modeStrategy(strategy: Strategy): Promise<void> {
   }
 }
 
+// ── reconcile-openclaw action ────────────────────────────────────────────────
+
+interface ReconcileOpenclawOpts {
+  /** Override the public domain. When undefined, falls back to secrets. */
+  domain?: string;
+  containerName?: string;
+  configPath?: string;
+  /** Restart the container if the file changed. Default true. */
+  restart: boolean;
+}
+
+/**
+ * One-shot reconciliation runner for `eve mode reconcile-openclaw`. The
+ * heavy lifting lives in `@eve/lifecycle`'s `reconcileOpenclawConfig`; this
+ * wrapper just resolves the domain from secrets when the user didn't pass
+ * `--domain`, prints the structured result, and (optionally) restarts.
+ *
+ * Exits non-zero only on hard read/write failures inside the reconcile —
+ * the no-op paths (container down, no domain configured) are reported as
+ * INFO and exit clean. They're "nothing to do", not errors.
+ */
+async function runReconcileOpenclaw(opts: ReconcileOpenclawOpts): Promise<void> {
+  // Resolve the domain. Explicit --domain wins; otherwise pull from secrets.
+  // No domain at all is fine — the reconcile still merges localhost
+  // origins and surfaces a note about the public side being skipped.
+  let domain = opts.domain;
+  if (!domain) {
+    try {
+      const secrets = await readEveSecrets();
+      domain = secrets?.domain?.primary;
+    } catch {
+      // secrets.json missing/unreadable — proceed with no domain. The
+      // reconcile fn already handles this path gracefully.
+    }
+  }
+
+  console.log();
+  console.log(colors.primary.bold('Eve Mode — reconcile-openclaw'));
+  console.log(colors.muted('─'.repeat(50)));
+  if (domain) {
+    printInfo(`Public domain: ${domain} → https://openclaw.${stripScheme(domain)}`);
+  } else {
+    printInfo('No public domain configured — only localhost origins will be reconciled.');
+  }
+
+  const spinner = createSpinner('Reading OpenClaw config…');
+  spinner.start();
+
+  let result;
+  try {
+    result = await reconcileOpenclawConfig({
+      domain,
+      containerName: opts.containerName,
+      configPath: opts.configPath,
+    });
+  } catch (err) {
+    spinner.fail('reconcile threw');
+    printError(err instanceof Error ? err.message : String(err));
+    process.exitCode = 1;
+    return;
+  }
+
+  if (result.changed) {
+    spinner.succeed('OpenClaw config updated');
+  } else {
+    spinner.succeed('OpenClaw config already in sync');
+  }
+
+  // Always print the notes — they describe the no-op cases (container
+  // down, no domain) and the change description on the active path.
+  for (const n of result.notes) {
+    console.log(`  ${colors.muted('↳')} ${n}`);
+  }
+
+  // Diff hint on the change path so the user can verify what landed.
+  if (result.changed) {
+    console.log();
+    console.log(`  ${colors.muted('before:')} ${formatOriginList(result.before.allowedOrigins)}`);
+    console.log(`  ${colors.muted('after: ')} ${formatOriginList(result.after.allowedOrigins)}`);
+  }
+
+  // Restart only when something actually changed AND the caller wants it.
+  // The lifecycle's post-update hook does this automatically; this is the
+  // explicit-CLI mirror.
+  if (result.changed && opts.restart) {
+    console.log();
+    const rs = createSpinner(`Restarting ${opts.containerName ?? 'eve-arms-openclaw'} to apply…`);
+    rs.start();
+    try {
+      execSync(`docker restart ${opts.containerName ?? 'eve-arms-openclaw'}`, {
+        stdio: 'ignore',
+        timeout: 15000,
+      });
+      rs.succeed('Container restarted');
+    } catch (err) {
+      rs.fail('docker restart failed');
+      printWarning(err instanceof Error ? err.message : String(err));
+      // Soft-fail: the file is correct, but the running process still has
+      // the stale list. Tell the user the next step rather than throwing.
+      printInfo(`Run \`docker restart ${opts.containerName ?? 'eve-arms-openclaw'}\` manually to apply.`);
+      process.exitCode = 1;
+      return;
+    }
+  } else if (result.changed && !opts.restart) {
+    printInfo('--no-restart was set; the new origins will take effect on the next OpenClaw restart.');
+  }
+
+  console.log();
+  if (result.changed) {
+    printSuccess('Reconciliation complete.');
+  } else {
+    printSuccess('Nothing to do.');
+  }
+  console.log();
+}
+
+function stripScheme(host: string): string {
+  return host
+    .replace(/^https?:\/\//i, '')
+    .replace(/\/.*$/, '')
+    .replace(/:\d+$/, '');
+}
+
+function formatOriginList(origins: string[]): string {
+  if (origins.length === 0) return colors.muted('(empty)');
+  return origins.map(o => colors.primary(o)).join(', ');
+}
+
 // ── command registration ─────────────────────────────────────────────────────
 
 export function modeCommands(program: Command): void {
-  const mode = program.command('mode').description(`${emojis.sparkles} Toggle stack-wide modes (multi-user…)`);
+  const mode = program.command('mode').description(`${emojis.sparkles} Toggle stack-wide modes (multi-user, reconcile-openclaw…)`);
+
+  // ── reconcile-openclaw — one-shot config drift repair ─────────────────
+  //
+  // OpenClaw resets `gateway.controlUi.allowedOrigins` to localhost-only
+  // every time it regenerates its auth token (e.g. after `eve update`,
+  // image rebuild, or volume restore). The post-update lifecycle hook
+  // already does this automatically, but we also expose it manually for:
+  //   - older installs that pre-date the self-heal hook
+  //   - drift after manual restarts that bypassed the lifecycle
+  //   - new public domains where the user wants to push the config without
+  //     redoing the full update cycle
+  //
+  // Idempotent — running it twice with no input changes leaves the file
+  // alone the second time and reports `already in sync`.
+  mode
+    .command('reconcile-openclaw')
+    .description('Re-add Eve\'s expected entries to OpenClaw\'s gateway.controlUi.allowedOrigins (idempotent).')
+    .option('--domain <host>', 'Public domain to allow (default: secrets.domain.primary)')
+    .option('--container <name>', 'OpenClaw container name', 'eve-arms-openclaw')
+    .option('--config-path <path>', 'In-container path to openclaw.json', '/home/node/.openclaw/openclaw.json')
+    .option('--no-restart', 'Skip the docker restart even when the file changed')
+    .action(async (opts: {
+      domain?: string;
+      container?: string;
+      configPath?: string;
+      restart?: boolean;
+    }) => {
+      await runReconcileOpenclaw({
+        domain: opts.domain,
+        containerName: opts.container,
+        configPath: opts.configPath,
+        // Commander turns `--no-restart` into `restart: false`; default true.
+        restart: opts.restart !== false,
+      });
+    });
 
   const mu = mode
     .command('multi-user')

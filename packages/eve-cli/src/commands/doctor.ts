@@ -10,7 +10,9 @@ import {
   hasAnyProvider,
 } from '@eve/dna';
 import { verifyComponent } from '@eve/legs';
+import { runHubProtocolProbes, type HubProtocolDiagnostic } from '@eve/lifecycle';
 import { probeRoutes, probeVerdict, type RouteProbe } from '../lib/probe-routes.js';
+import { diagnoseFailedRoute, type DeepDiagnostic } from '../lib/diagnose-route.js';
 import {
   colors,
   emojis,
@@ -25,9 +27,20 @@ import {
 
 interface CheckResult {
   name: string;
-  status: 'pass' | 'fail' | 'warn';
+  /**
+   * `skip` is rendered with the warning glyph but a "skipped" message —
+   * distinct from `warn` ("something is sub-optimal") and `fail` ("broken").
+   * The aggregate counter at the bottom still groups skip+warn together.
+   */
+  status: 'pass' | 'fail' | 'warn' | 'skip';
   message: string;
   fix?: string;
+  /**
+   * Deep diagnostic data for failed routes — when present, the renderer
+   * indents a sub-section under the row showing what we learned about the
+   * upstream. Only set on route-check rows; other checks leave this undef.
+   */
+  deep?: DeepDiagnostic;
 }
 
 export function doctorCommand(program: Command): void {
@@ -36,9 +49,16 @@ export function doctorCommand(program: Command): void {
     .alias('doc')
     .description('Run comprehensive diagnostics on the entity')
     .option('-v, --verbose', 'Show verbose output')
+    .option(
+      '--skip-probes',
+      'Skip the Hub Protocol probes (idempotency, SSE, sub-tokens). Useful when debugging unrelated checks — the SSE probe alone takes up to 35s.',
+    )
     .action(async (options) => {
       try {
-        await runDiagnostics(options.verbose);
+        await runDiagnostics({
+          verbose: Boolean(options.verbose),
+          skipProbes: Boolean(options.skipProbes),
+        });
       } catch (error) {
         printError('Diagnostics failed: ' + String(error));
         process.exit(1);
@@ -46,7 +66,13 @@ export function doctorCommand(program: Command): void {
     });
 }
 
-async function runDiagnostics(verbose = false): Promise<void> {
+interface DoctorOptions {
+  verbose: boolean;
+  skipProbes: boolean;
+}
+
+async function runDiagnostics(opts: DoctorOptions = { verbose: false, skipProbes: false }): Promise<void> {
+  const { verbose, skipProbes } = opts;
   console.log();
   printHeader('Entity Diagnostics', emojis.info);
   console.log();
@@ -191,8 +217,68 @@ async function runDiagnostics(verbose = false): Promise<void> {
     reachabilityCheck.warn('Could not probe reachability');
   }
 
-  // Check 4c: Domain & route health (only if a domain is configured)
+  // Check 4b-bis: Hub Protocol probes — ONLY meaningful once we know the
+  // Synap container is up. The probes themselves handle a missing
+  // URL/key gracefully (each row reports `skip`), but running them when
+  // the container is obviously stopped is just noise. We also skip the
+  // whole block when `--skip-probes` is set so users debugging an
+  // unrelated check don't sit through ~35s of SSE wait time.
   const secrets = await readEveSecrets(process.cwd());
+  const synapInstalled = installed.includes('synap');
+  if (synapInstalled && !skipProbes) {
+    const synapApiUrl = secrets?.synap?.apiUrl ?? '';
+    const synapApiKey = secrets?.synap?.apiKey ?? '';
+
+    if (!synapApiUrl || !synapApiKey) {
+      // Skipped — synap not configured locally. NOT a failure: the user
+      // may have installed Synap on a different host and be running the
+      // CLI against a remote pod via env vars they haven't set yet.
+      checks.push({
+        name: 'Synap Hub Protocol probes',
+        status: 'skip',
+        message: 'skipped — synap not configured locally (no apiUrl/apiKey in secrets.json)',
+        fix: 'Run `eve add synap` to provision an API key, or set them manually in ~/.eve/secrets.json',
+      });
+    } else {
+      const probeSpinner = createSpinner('Running Hub Protocol probes (≤35s)...');
+      probeSpinner.start();
+      let diagnostics: HubProtocolDiagnostic[] = [];
+      try {
+        diagnostics = await runHubProtocolProbes({
+          synapUrl: synapApiUrl,
+          apiKey: synapApiKey,
+        });
+        probeSpinner.succeed(`Hub Protocol probes complete (${diagnostics.length} run)`);
+      } catch (err) {
+        probeSpinner.fail('Hub Protocol probes failed to run');
+        checks.push({
+          name: 'Hub Protocol probes',
+          status: 'fail',
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+
+      for (const diag of diagnostics) {
+        // `skip` rows from the lifecycle module flow through unchanged —
+        // the renderer shows them with the warning glyph + "skipped"
+        // label so users see them as informational, not as broken.
+        checks.push({
+          name: diag.name,
+          status: diag.status,
+          message: diag.message,
+          fix: diag.fix,
+        });
+      }
+    }
+  } else if (synapInstalled && skipProbes) {
+    checks.push({
+      name: 'Hub Protocol probes',
+      status: 'skip',
+      message: 'skipped (--skip-probes)',
+    });
+  }
+
+  // Check 4c: Domain & route health (only if a domain is configured)
   if (secrets?.domain?.primary) {
     const routeCheck = createSpinner(`Probing domain routes (${secrets.domain.primary})...`);
     routeCheck.start();
@@ -201,38 +287,68 @@ async function runDiagnostics(verbose = false): Promise<void> {
       const probes: RouteProbe[] = probeRoutes(urls);
       routeCheck.succeed(`Probed ${probes.length} route(s)`);
 
+      // Route check + deep diagnostic for failed routes only. We never
+      // run `diagnoseFailedRoute` on a healthy route — its docker probes
+      // cost ~1s each, and a healthy multi-route stack would multiply
+      // that needlessly.
       for (const p of probes) {
         if (p.outcome === 'ok') {
           checks.push({ name: `route: ${p.host}`, status: 'pass', message: `${p.httpStatus} reachable` });
-        } else if (p.outcome === 'upstream-down') {
-          checks.push({
+          continue;
+        }
+
+        let row: CheckResult;
+        if (p.outcome === 'upstream-down') {
+          row = {
             name: `route: ${p.host}`,
             status: 'fail',
-            message: `${p.httpStatus} — route OK, upstream not responding`,
-            fix: `Check the upstream container is running and listening on its port.`,
-          });
+            message: `${p.httpStatus} — Traefik connected, upstream returned a non-success response`,
+            fix: 'See deep diagnostic below for the matched cause.',
+          };
         } else if (p.outcome === 'not-routing') {
-          checks.push({
+          row = {
             name: `route: ${p.host}`,
             status: 'fail',
-            message: `Traefik returned 404 — no router matched`,
-            fix: `eve domain repair`,
-          });
+            message: 'Traefik returned 404 — no router matched',
+            fix: 'eve domain repair',
+          };
         } else if (p.outcome === 'dns-missing') {
-          checks.push({
+          row = {
             name: `route: ${p.host}`,
             status: 'warn',
             message: `No DNS A record for ${p.host}`,
-            fix: `Create A record at your registrar pointing to your server IP`,
-          });
+            fix: 'Create A record at your registrar pointing to your server IP',
+          };
         } else if (p.outcome === 'dns-wrong') {
-          checks.push({
+          row = {
             name: `route: ${p.host}`,
             status: 'warn',
             message: `DNS resolves to ${p.dnsResolved} (not this server)`,
-            fix: `Update A record at your registrar`,
-          });
+            fix: 'Update A record at your registrar',
+          };
+        } else {
+          // 'timeout'
+          row = {
+            name: `route: ${p.host}`,
+            status: 'fail',
+            message: 'Request timed out — Traefik may be down or unreachable',
+            fix: 'See deep diagnostic below.',
+          };
         }
+
+        // Deep diagnostic for upstream-down / not-routing / timeout — DNS
+        // problems aren't the upstream's fault, so skip the docker probes
+        // there (the probe-from-Traefik would just confirm "yes Traefik
+        // works, your DNS is wrong" which the row already says).
+        if (p.outcome === 'upstream-down' || p.outcome === 'not-routing' || p.outcome === 'timeout') {
+          try {
+            row.deep = await diagnoseFailedRoute(p);
+          } catch {
+            // Deep diagnostic is best-effort enrichment — never let a
+            // failure here demote the actual route check.
+          }
+        }
+        checks.push(row);
       }
 
       const verdict = probeVerdict(probes);
@@ -392,12 +508,23 @@ async function runDiagnostics(verbose = false): Promise<void> {
 
   const passed = checks.filter(c => c.status === 'pass').length;
   const failed = checks.filter(c => c.status === 'fail').length;
-  const warnings = checks.filter(c => c.status === 'warn').length;
+  // `skip` and `warn` both render with the warning glyph and roll into
+  // the same "warnings" counter — the visual distinction is in the
+  // accompanying message ("skipped — ..." vs the warn explanation).
+  const warnings = checks.filter(c => c.status === 'warn' || c.status === 'skip').length;
 
   for (const check of checks) {
-    const icon = check.status === 'pass' ? emojis.check : check.status === 'fail' ? emojis.cross : emojis.warning;
-    const color = check.status === 'pass' ? colors.success : check.status === 'fail' ? colors.error : colors.warning;
-    
+    const icon = check.status === 'pass'
+      ? emojis.check
+      : check.status === 'fail'
+        ? emojis.cross
+        : emojis.warning;
+    const color = check.status === 'pass'
+      ? colors.success
+      : check.status === 'fail'
+        ? colors.error
+        : colors.warning;
+
     console.log(`${color(icon)} ${check.name}`);
     if (verbose || check.status !== 'pass') {
       console.log(colors.muted(`  ${check.message}`));
@@ -405,6 +532,7 @@ async function runDiagnostics(verbose = false): Promise<void> {
         console.log(colors.info(`  Fix: ${check.fix}`));
       }
     }
+    if (check.deep) renderDeepDiagnostic(check.deep);
   }
 
   console.log();
@@ -424,4 +552,53 @@ async function runDiagnostics(verbose = false): Promise<void> {
     printInfo('  Follow the Fix hints above, or run: eve inspect');
   }
   console.log();
+}
+
+/**
+ * Render the deep-diagnostic block under a failing route. The format mirrors
+ * the spec: a "Deep diagnostic:" header, a probe-from-Traefik line, a log
+ * patterns sub-section, and a single "Recommended fix:" footer. Indented
+ * two spaces so it visually nests under the parent route check.
+ */
+function renderDeepDiagnostic(deep: DeepDiagnostic): void {
+  const indent = '  ';
+  const subIndent = indent + '  ';
+  console.log(colors.muted(`${indent}Deep diagnostic:`));
+
+  // Probe-from-Traefik line ────────────────────────────────────────────────
+  if (deep.upstreamContainer) {
+    console.log(colors.muted(`${subIndent}From inside eve-legs-traefik:`));
+    const probe = deep.upstreamProbe;
+    let line = probe.summary;
+    if (probe.contentPreview) {
+      line += `\n${subIndent}  preview: ${probe.contentPreview}`;
+    }
+    const probeColor = probe.status === 'connected' ? colors.success : colors.warning;
+    console.log(probeColor(`${subIndent}  ${line}`));
+  } else {
+    console.log(colors.muted(`${subIndent}${deep.upstreamProbe.summary}`));
+  }
+
+  // Matched log patterns ───────────────────────────────────────────────────
+  if (deep.upstreamContainer) {
+    if (deep.matchedPatterns.length > 0) {
+      console.log(
+        colors.muted(
+          `${subIndent}Upstream container logs (last ${deep.logLineCount} lines, matched ${deep.matchedPatterns.length} pattern${deep.matchedPatterns.length === 1 ? '' : 's'}):`,
+        ),
+      );
+      for (const m of deep.matchedPatterns) {
+        console.log(colors.warning(`${subIndent}  [${m.tag}] ${m.explanation} (line ${m.lineNumber}).`));
+        console.log(colors.muted(`${subIndent}    > ${m.matchedLine}`));
+      }
+    } else if (deep.logLineCount > 0) {
+      console.log(colors.muted(`${subIndent}Upstream container logs (last ${deep.logLineCount} lines): no known issue matched.`));
+    } else {
+      console.log(colors.muted(`${subIndent}Upstream container logs: could not read (container missing or docker unreachable).`));
+    }
+  }
+
+  // Recommended fix ────────────────────────────────────────────────────────
+  console.log(colors.info(`${subIndent}Recommended fix:`));
+  console.log(colors.info(`${subIndent}  ${deep.recommendedFix}`));
 }

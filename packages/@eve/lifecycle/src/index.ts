@@ -35,6 +35,10 @@ import {
   installDashboardContainer,
   uninstallDashboardContainer,
 } from "@eve/legs";
+import {
+  reconcileOpenclawConfig,
+  type OpenclawReconcileResult,
+} from "./components/openclaw/reconcile.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -233,6 +237,35 @@ async function* updateContainer(comp: ComponentInfo): AsyncGenerator<LifecycleEv
     return;
   }
 
+  // Capture the inner update path's outcome so we can layer post-update
+  // reconciliation on top (e.g. OpenClaw's allowedOrigins). Anything inside
+  // the plan branches yields its own `done`/`error` — we use `yield*` on a
+  // dedicated helper so we can intercept the outcome here.
+  let inner: LifecycleEvent[] = [];
+  for await (const ev of runUpdatePlan(comp, plan)) {
+    inner.push(ev);
+    yield ev;
+  }
+  const lastDone = [...inner].reverse().find(e => e.type === "done");
+  const lastErr = [...inner].reverse().find(e => e.type === "error");
+
+  // Post-update component-specific reconciliation. Only fires on a clean
+  // success path, never after an error. Yields its own `log` events so the
+  // caller's stream stays unified.
+  if (lastDone && !lastErr) {
+    yield* runPostUpdateHooks(comp);
+  }
+}
+
+/**
+ * Inner update — the original logic, factored out so the outer
+ * `updateContainer` can layer post-update reconciliation on top without
+ * duplicating the four-branch decision tree below.
+ */
+async function* runUpdatePlan(
+  comp: ComponentInfo,
+  plan: UpdatePlan,
+): AsyncGenerator<LifecycleEvent> {
   if (plan.compose) {
     // Regenerate the compose YAML for components we own end-to-end.
     // This guarantees the file is always our latest template and
@@ -339,6 +372,104 @@ async function* updateContainer(comp: ComponentInfo): AsyncGenerator<LifecycleEv
 
     yield { type: "done", summary: `${comp.label} updated to latest` };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Post-update hooks — component-specific reconciliation that runs AFTER the
+// generic update path succeeded. These exist because Docker images
+// occasionally regenerate config that Eve owns (OpenClaw resets
+// `gateway.controlUi.allowedOrigins` on every auth-token regen). Keeping
+// the reconciliation here — not in install/wire — means it ALSO catches
+// drift after manual restarts, image rebuilds, and dashboard-driven
+// updates: anything that funnels through `runAction(_, "update")`.
+// ---------------------------------------------------------------------------
+
+async function* runPostUpdateHooks(comp: ComponentInfo): AsyncGenerator<LifecycleEvent> {
+  if (comp.id === "openclaw") {
+    yield* postUpdateReconcileOpenclaw();
+  }
+}
+
+/**
+ * Restore Eve's expected entries in `gateway.controlUi.allowedOrigins`
+ * after an OpenClaw update.
+ *
+ * The container regenerates this list to localhost-only whenever its auth
+ * token is missing on boot. After a fresh image pull (recreate path) the
+ * volume can come back with a stale token — the new container regens, and
+ * the user's public domain falls out of the allow-list. Doctor surfaces
+ * this as a 502 on `openclaw.<domain>`. We re-add the public domain (and
+ * the localhost variants the seeder put back) right after compose/run
+ * comes up clean.
+ *
+ * Wait for the seeder to land its config before we read — otherwise we'd
+ * race and find an empty `openclaw.json`. Bounded poll: ~6s total, exits
+ * early as soon as the file is parseable. We don't restart the container
+ * unless the merge actually changed something.
+ */
+async function* postUpdateReconcileOpenclaw(): AsyncGenerator<LifecycleEvent> {
+  const secrets = await readEveSecrets();
+  const domain = secrets?.domain?.primary;
+
+  // Bounded wait so the freshly-recreated container has time to seed its
+  // config. Doing it inline (not as a precondition in the reconcile fn)
+  // keeps the helper testable in isolation while letting the live update
+  // path absorb startup latency.
+  const reconcile = await waitThenReconcileOpenclaw(domain);
+
+  if (reconcile.notes.length > 0) {
+    // Surface the headline note inline — most useful for the user is the
+    // "re-added X" or "already in sync" line. We log every note so dump
+    // logs from the dashboard show full context too.
+    for (const n of reconcile.notes) {
+      yield { type: "log", line: `OpenClaw: ${n}` };
+    }
+  }
+
+  if (reconcile.changed) {
+    // Restart so the new origins take effect — OpenClaw reads its config
+    // at process start, not on every request. Restart is fine here (env
+    // didn't change, only the on-disk file).
+    const code = yield* dockerExec(["restart", "eve-arms-openclaw"], "Restarting OpenClaw to apply allowedOrigins…");
+    if (code !== 0) {
+      yield {
+        type: "log",
+        line: `OpenClaw: docker restart exited ${code} — config was updated but the container may still be serving the stale list`,
+      };
+    }
+  }
+}
+
+/**
+ * Wait up to ~6s for OpenClaw to write its config, then run the
+ * reconcile. If it never appears (container down, image broken, etc.),
+ * return whatever the reconcile says — it has its own structured no-op
+ * paths that surface the cause.
+ */
+async function waitThenReconcileOpenclaw(
+  domain: string | undefined,
+): Promise<OpenclawReconcileResult> {
+  const deadline = Date.now() + 6000;
+  let last: OpenclawReconcileResult | null = null;
+  while (Date.now() < deadline) {
+    last = await reconcileOpenclawConfig({ domain });
+    // Once we've successfully read SOMETHING (changed or already-in-sync),
+    // we're done. The reconcile's no-op notes — `cat exited 1` for missing
+    // file, "container is not running" — keep the loop going until either
+    // the deadline or a clean read.
+    const note = last.notes[0] ?? "";
+    const stillBooting =
+      note.includes("could not read") ||
+      note.includes("not running");
+    if (!stillBooting) return last;
+    await new Promise(r => setTimeout(r, 500));
+  }
+  return last ?? {
+    changed: false,
+    before: { allowedOrigins: [], authTokenChanged: false },
+    after: { allowedOrigins: [] },
+    notes: ["reconcile timed out before OpenClaw seeded its config"],
+  };
 }
 
 /**
@@ -1181,3 +1312,30 @@ export {
   writeEnvVar,
   type WriteEnvVarResult,
 } from "./env-files.js";
+
+// Hub Protocol diagnostics — shared between `eve doctor` (CLI) and the
+// dashboard's `/api/doctor` route. Framework-agnostic; both surfaces map
+// the neutral `HubProtocolDiagnostic` into their own row shape.
+export {
+  runHubProtocolProbes,
+  truncate,
+  shortId,
+  extractEntityId,
+  deleteEntityBestEffort,
+  type HubProtocolDiagnostic,
+  type HubProtocolProbeId,
+  type ProbeStatus,
+  type RunHubProtocolProbesOptions,
+} from "./diagnostics.js";
+
+// OpenClaw reconciliation — re-applies Eve's expected `allowedOrigins`
+// after the container regenerates its config. Used by the lifecycle's
+// post-update hook AND surfaced to the CLI as `eve mode reconcile-openclaw`
+// for one-shot manual repairs (drift, new domain, etc.).
+export {
+  reconcileOpenclawConfig,
+  type OpenclawReconcileResult,
+  type OpenclawReconcileOptions,
+  type OpenclawReconcileBefore,
+  type OpenclawReconcileAfter,
+} from "./components/openclaw/reconcile.js";

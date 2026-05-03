@@ -41,7 +41,8 @@ interface UpdateTarget {
   label: string;
   image?: string;
   container?: string;
-  update: () => Promise<void>;
+  /** Returns optional sub-lines to render under the spinner success row. */
+  update: () => Promise<{ subLines?: string[] } | void>;
 }
 
 /**
@@ -67,8 +68,34 @@ function lifecycleUpdate(id: string, label: string): UpdateTarget {
         const headline = result.error ?? 'update failed';
         throw new Error(tail ? `${headline}\n${tail}` : headline);
       }
+      // Surface OpenClaw reconciliation as a sub-line under the spinner so
+      // the user sees self-healing happen without having to dig through
+      // verbose logs. We prefer the "re-added" or "in sync" headline note
+      // — the rest goes to verbose-only debug output.
+      return { subLines: extractOpenclawSubLines(id, result.logs) };
     },
   };
+}
+
+/**
+ * Pick the headline reconciliation note out of the lifecycle log stream.
+ *
+ * The post-update hook prefixes each note with `OpenClaw:`; we surface
+ * exactly one of those — the most informative — under the spinner. Keep
+ * everything else quiet so the success summary stays tight.
+ */
+function extractOpenclawSubLines(id: string, logs: string[]): string[] {
+  if (id !== 'openclaw') return [];
+  const reconcileLogs = logs.filter(l => l.startsWith('OpenClaw:'));
+  if (reconcileLogs.length === 0) return [];
+  // Prefer the "re-added" line if present — that's the one the user wants
+  // to see on the self-heal path. Otherwise fall back to whatever the
+  // hook surfaced first (typically "already in sync").
+  const reAdded = reconcileLogs.find(l => l.includes('re-added'));
+  const headline = reAdded ?? reconcileLogs[0];
+  // Strip the `OpenClaw: ` prefix — the spinner row already names the
+  // component. Keep it short.
+  return [headline.replace(/^OpenClaw:\s*/, 'reconciled allowedOrigins: ')];
 }
 
 function buildUpdateTargets(deployDir: string | undefined): UpdateTarget[] {
@@ -214,8 +241,16 @@ export function backupUpdateCommands(program: Command): void {
         const spinner = createSpinner(`Updating ${target.label}...`);
         spinner.start();
         try {
-          await target.update();
+          const outcome = await target.update();
           spinner.succeed(`${target.label} updated`);
+          // Render any post-update sub-lines (e.g. OpenClaw allowedOrigins
+          // reconciliation) directly under the spinner row so the user
+          // sees what self-heal happened. Quiet by default — only emits
+          // when the lifecycle actually did something worth reporting.
+          const subLines = outcome?.subLines ?? [];
+          for (const line of subLines) {
+            console.log(`  ${colors.muted('↳')} ${colors.muted(line)}`);
+          }
           results.push({ label: target.label, ok: true });
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
