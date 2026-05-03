@@ -30,33 +30,61 @@ describe('rewriteUrlForDockerExec', () => {
 });
 
 describe('buildWgetArgs', () => {
-  it('builds a sensible argv for GET via docker exec eve-legs-traefik', () => {
-    const { container, argv } = buildWgetArgs(
+  it('builds a BusyBox-compatible argv for GET via docker exec eve-legs-traefik', () => {
+    const built = buildWgetArgs(
       'GET',
       'http://synap-backend-backend-1:4000/api/hub/openapi.json',
       { Authorization: 'Bearer key', Accept: 'application/json' },
-      null,
+      undefined,
       6,
     );
+    if (!built.supported) throw new Error('GET should always be supported');
+    const { container, argv } = built;
     expect(container).toBe('eve-legs-traefik');
-    // First three argv entries describe the docker shell-in.
-    expect(argv.slice(0, 3)).toEqual(['exec', '-i', 'eve-legs-traefik']);
+    // First two argv entries describe the docker exec target.
+    // No `-i` flag — we never pipe stdin, so dropping it avoids a
+    // dangling pipe that some shells interpret oddly.
+    expect(argv.slice(0, 2)).toEqual(['exec', 'eve-legs-traefik']);
     expect(argv).toContain('wget');
-    expect(argv).toContain('--quiet');
-    expect(argv).toContain('--server-response');
-    expect(argv).toContain('--output-document=-');
-    expect(argv).toContain('--timeout=6');
-    expect(argv).toContain('--method=GET');
-    expect(argv).toContain('--header=Authorization: Bearer key');
-    expect(argv).toContain('--header=Accept: application/json');
+    // BusyBox-compatible short flags only.
+    expect(argv).toContain('-q');
+    expect(argv).toContain('-S');
+    // -O - writes body to stdout (two adjacent args).
+    expect(argv.slice(argv.indexOf('-O'), argv.indexOf('-O') + 2)).toEqual(['-O', '-']);
+    // -T <sec> — separate args, value as a string.
+    expect(argv.slice(argv.indexOf('-T'), argv.indexOf('-T') + 2)).toEqual(['-T', '6']);
+    // --header HDR uses the separate-arg form (BusyBox accepts only this).
+    const hdrIdx = argv.indexOf('--header');
+    expect(hdrIdx).toBeGreaterThan(-1);
+    // Either the Authorization or Accept header lands on the first --header.
+    const headerValues = argv
+      .map((arg, i) => (arg === '--header' ? argv[i + 1] : null))
+      .filter((v): v is string => typeof v === 'string');
+    expect(headerValues).toContain('Authorization: Bearer key');
+    expect(headerValues).toContain('Accept: application/json');
+    // No GNU-only flags should be present.
+    expect(argv.find(a => a.startsWith('--method='))).toBeUndefined();
+    expect(argv.find(a => a.startsWith('--header='))).toBeUndefined();
+    expect(argv.find(a => a.startsWith('--timeout='))).toBeUndefined();
+    expect(argv.find(a => a.startsWith('--quiet'))).toBeUndefined();
+    expect(argv.find(a => a.startsWith('--server-response'))).toBeUndefined();
     // URL is the last arg.
     expect(argv[argv.length - 1]).toBe('http://synap-backend-backend-1:4000/api/hub/openapi.json');
   });
 
-  it('attaches an empty body for POST/DELETE without a payload', () => {
-    const { argv } = buildWgetArgs('POST', 'http://x/y', {}, null, 6);
-    expect(argv).toContain('--method=POST');
-    expect(argv).toContain('--body-data=');
+  it('uses --post-data for POST bodies (BusyBox does not support --body-data=)', () => {
+    const built = buildWgetArgs('POST', 'http://x/y', {}, '{"foo":1}', 6);
+    if (!built.supported) throw new Error('POST should be supported');
+    const idx = built.argv.indexOf('--post-data');
+    expect(idx).toBeGreaterThan(-1);
+    expect(built.argv[idx + 1]).toBe('{"foo":1}');
+  });
+
+  it('reports DELETE as unsupported (BusyBox cannot issue DELETE)', () => {
+    const built = buildWgetArgs('DELETE', 'http://x/y', {}, undefined, 6);
+    expect(built.supported).toBe(false);
+    if (built.supported) throw new Error('DELETE should be unsupported');
+    expect(built.reason).toMatch(/BusyBox/);
   });
 });
 

@@ -73,42 +73,68 @@ export function rewriteUrlForDockerExec(url: string): string {
  * (not through `sh -c`) so we don't have to worry about shell quoting of
  * URLs / headers that may contain `&` or `;`.
  *
- * `--server-response` (`-S`) prints the full response status + headers to
- * stderr in `HTTP/1.1 200 OK` / `Header: value` form; `--output-document=-`
- * (`-O -`) writes the body to stdout. We parse stderr for status + headers
- * so we can present a `DoctorRunnerResponse` indistinguishable from the
- * fetch path.
+ * IMPORTANT: Traefik's image is Alpine-based and ships **BusyBox wget**,
+ * not GNU wget. BusyBox supports a tiny subset of GNU's flags. The first
+ * version of this runner used `--method=`, `--quiet`, `--header=`,
+ * `--timeout=`, `--body-file=`, `--body-data=` — all GNU-only — and every
+ * call exited fast with "wget: unrecognized option", which our error
+ * classifier then mis-identified as a timeout (BusyBox's usage help text
+ * contains the word "timeout" in `-T SEC Network read timeout`). Two
+ * silent failures stacked into one inscrutable user message.
+ *
+ * Flags below are BusyBox-compatible AND also valid in GNU wget:
+ *   -q             quiet (no progress)
+ *   -S             show server response on stderr (HTTP/1.1 lines + headers)
+ *   -O -           write body to stdout
+ *   -T <sec>       network read timeout
+ *   --header HDR   request header (separate args, no `=`)
+ *   --post-data S  POST body (BusyBox doesn't understand --body-data=)
+ *
+ * BusyBox wget does NOT support DELETE / PUT / PATCH / arbitrary methods.
+ * For DELETE we return a sentinel that the runner treats as a no-op,
+ * which matches our existing best-effort cleanup semantics.
  */
+type WgetArgs =
+  | { container: string; argv: string[]; supported: true }
+  | { supported: false; reason: string };
+
 export function buildWgetArgs(
   method: "GET" | "POST" | "DELETE",
   url: string,
   headers: Record<string, string>,
-  bodyFile: string | null,
+  body: string | undefined,
   timeoutSec: number,
-): { container: string; argv: string[] } {
+): WgetArgs {
+  if (method === "DELETE") {
+    // BusyBox wget can't issue arbitrary HTTP methods. Cleanup callers
+    // already use .catch(() => undefined) so a no-op response is fine.
+    return {
+      supported: false,
+      reason: "BusyBox wget cannot issue DELETE — cleanup skipped",
+    };
+  }
+
   const argv: string[] = [
     "exec",
-    "-i",
     "eve-legs-traefik",
     "wget",
-    "--quiet",
-    "--server-response",
-    "--output-document=-",
-    `--timeout=${timeoutSec}`,
-    "--tries=1",
-    `--method=${method}`,
+    "-q",
+    "-S",
+    "-O",
+    "-",
+    "-T",
+    String(timeoutSec),
   ];
   for (const [k, v] of Object.entries(headers)) {
-    argv.push(`--header=${k}: ${v}`);
+    // Separate args (no `=`) — BusyBox accepts only this form, GNU
+    // accepts both, so this is the safe intersection.
+    argv.push("--header", `${k}: ${v}`);
   }
-  if (bodyFile) {
-    argv.push(`--body-file=${bodyFile}`);
-  } else if (method === "POST" || method === "DELETE") {
-    // Empty body — wget needs `--body-data=` for POST/DELETE without a payload.
-    argv.push("--body-data=");
+  if (method === "POST") {
+    argv.push("--post-data", body ?? "");
   }
   argv.push(url);
-  return { container: "eve-legs-traefik", argv };
+  return { container: "eve-legs-traefik", argv, supported: true };
 }
 
 /** Parse the `HTTP/1.1 NNN ...` status line out of wget's stderr. */
@@ -176,17 +202,22 @@ export class DockerExecRunner implements IDoctorRunner {
   ): Promise<DoctorRunnerResponse> {
     const innerUrl = rewriteUrlForDockerExec(url);
     const timeoutSec = Math.max(1, Math.round((opts.timeoutMs ?? 6_000) / 1000));
-    // Hard wall-clock cap on the docker exec itself — wget's --timeout is
-    // its OWN socket timeout, not the total exec time. We allow a small
+    // Hard wall-clock cap on the docker exec itself — wget's -T is its
+    // OWN socket timeout, not the total exec time. We allow a small
     // grace margin (+2s) for docker exec startup so wget's timeout fires
     // first when the upstream is slow.
     const execTimeoutMs = timeoutSec * 1000 + 2_000;
 
-    const { argv } = buildWgetArgs(method, innerUrl, headers, null, timeoutSec);
+    const built = buildWgetArgs(method, innerUrl, headers, body, timeoutSec);
+    if (!built.supported) {
+      // DELETE on BusyBox — return a soft failure. Callers use this for
+      // best-effort cleanup and ignore the result via .catch(() => undefined).
+      return { status: 0, body: "", headers: {}, error: built.reason };
+    }
+    const { argv } = built;
 
     try {
       const res = await execa("docker", argv, {
-        input: body, // For POST/DELETE: piped via stdin → wget reads --body-file=- equivalently.
         timeout: execTimeoutMs,
         cancelSignal: opts.signal,
         reject: false,
@@ -227,13 +258,28 @@ export class DockerExecRunner implements IDoctorRunner {
   }
 
   private summarizeTransportError(stderr: string, exitCode: number): string {
+    // Order matters — most specific first. BusyBox wget prints its
+    // entire usage block to stderr when a flag is unrecognized, and
+    // that block contains the literal word "timeout" (e.g. "Network
+    // read timeout is SEC seconds"). The previous version of this
+    // function matched /timeout/ and reported a real timeout — the
+    // exact false positive that masked the BusyBox compatibility bug
+    // in the first place. Detect the usage block first and surface
+    // the actual error reason.
+    if (/Usage:\s*wget/i.test(stderr) && /unrecognized option/i.test(stderr)) {
+      const m = /unrecognized option:\s*([^\n]+)/i.exec(stderr);
+      const flag = m ? m[1].trim() : "(unknown)";
+      return `wget rejected flag '${flag}' — likely BusyBox vs GNU wget mismatch`;
+    }
     if (/bad address|name or service not known|could not resolve/i.test(stderr)) {
       return "DNS lookup failed (container not on eve-network?)";
     }
     if (/connection refused/i.test(stderr)) {
       return "connection refused";
     }
-    if (/timed out|timeout/i.test(stderr)) {
+    // Match runtime timeout phrases only — NOT the literal word
+    // "timeout" which appears in BusyBox's usage help text.
+    if (/timed out|operation timed out|read error.*timed out/i.test(stderr)) {
       return "timeout";
     }
     return `wget exit ${exitCode}: ${stderr.trim().slice(0, 160) || "no diagnostic"}`;
@@ -246,7 +292,20 @@ export class DockerExecRunner implements IDoctorRunner {
   ): Promise<DoctorRunnerStream> {
     const innerUrl = rewriteUrlForDockerExec(url);
     const timeoutSec = Math.max(1, Math.round((opts.timeoutMs ?? 35_000) / 1000));
-    const { argv } = buildWgetArgs("GET", innerUrl, headers, null, timeoutSec);
+    const built = buildWgetArgs("GET", innerUrl, headers, undefined, timeoutSec);
+    if (!built.supported) {
+      // GET should always be supported by buildWgetArgs; this is an
+      // exhaustiveness guard so the type narrows correctly below.
+      return {
+        ok: false,
+        status: 0,
+        headers: {},
+        close: async () => { /* nothing to close */ },
+        error: built.reason,
+        async *[Symbol.asyncIterator]() { /* never yields */ },
+      } as DoctorRunnerStream;
+    }
+    const { argv } = built;
 
     // We need stdout streaming. execa returns a stream-able subprocess
     // when called without `await`; we attach our own data handler.
