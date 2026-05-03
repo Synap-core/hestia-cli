@@ -133,8 +133,13 @@ This is the heart of the arms organ. Without OpenClaw, your stack can think and 
     requires: ['synap'],
     service: {
       containerName: 'eve-arms-openclaw',
-      internalPort: 3000,
-      hostPort: 3000,
+      // OpenClaw's gateway/canvas listens on 18789 inside the container —
+      // observable via `[canvas] host mounted at http://0.0.0.0:18789/`
+      // in the startup logs. The earlier 3000 mapping was wrong; it
+      // exposed a port nothing was actually serving, so Traefik routes
+      // for openclaw.<domain> 502'd with "connection refused."
+      internalPort: 18789,
+      hostPort: 18789,
       subdomain: 'openclaw',
       // healthPath omitted: OpenClaw's web UI may not respond to GET / with
       // 2xx (auth-gated, redirects, etc.). Container-running is enough for

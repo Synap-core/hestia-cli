@@ -82,7 +82,7 @@ interface PatternMatch {
  */
 const FALLBACK_ROUTE_TO_CONTAINER: Record<string, { container: string; port: number }> = {
   pod: { container: 'synap-backend-backend-1', port: 4000 },
-  openclaw: { container: 'eve-arms-openclaw', port: 3000 },
+  openclaw: { container: 'eve-arms-openclaw', port: 18789 },
   feeds: { container: 'eve-eyes-rsshub', port: 1200 },
   chat: { container: 'hestia-openwebui', port: 8080 },
   eve: { container: 'eve-dashboard', port: 3000 },
