@@ -503,6 +503,43 @@ async function checkOpenwebuiSynapIntegration(
     });
   }
 
+  // The decisive check: can OpenWebUI actually see models?
+  //
+  // OpenWebUI's UI shows nothing in the model picker if `/v1/models` on
+  // its configured backend is unreachable, returns 401, or returns no
+  // models. This is the most common "I added a provider but I don't see
+  // it in chat" symptom — and it can't be diagnosed by checking env
+  // vars alone (the env may be perfect but Synap IS down, or the key
+  // wrong, or IS pre-1.0 missing /v1/models entirely).
+  //
+  // Probe from INSIDE the openwebui container so we use the same
+  // network resolution it does (intelligence-hub:3001 only resolves on
+  // eve-network, not from the host).
+  if (owRunning) {
+    const probe = await probeOpenwebuiModels();
+    if (probe.kind === "ok") {
+      out.push({
+        group: "integrations",
+        name: "Models visible to Open WebUI",
+        status: probe.count > 0 ? "pass" : "warn",
+        message: probe.count > 0
+          ? `${probe.count} model(s) discoverable via Synap IS`
+          : "/v1/models returned 200 but with no models — provider key may be wrong",
+        fix: probe.count > 0 ? undefined : "Open AI page → check provider key, then Save",
+        integrationId,
+      });
+    } else {
+      out.push({
+        group: "integrations",
+        name: "Models visible to Open WebUI",
+        status: "fail",
+        message: probe.message,
+        fix: probe.fix,
+        integrationId,
+      });
+    }
+  }
+
   // Use secrets.synap.apiKey too — when set, the wiring action propagates
   // it to /opt/openwebui/.env. Surface mismatch as a warn.
   if (envCheck.found && secrets?.synap?.apiKey
@@ -566,6 +603,112 @@ async function checkOpenwebuiPipelinesIntegration(
 interface OpenwebuiEnv {
   found: boolean;
   env: Record<string, string>;
+}
+
+type ProbeResult =
+  | { kind: "ok"; count: number }
+  | { kind: "error"; message: string; fix?: string };
+
+/**
+ * Probe `GET /v1/models` from inside the openwebui container so we can
+ * tell whether the chat UI will actually surface any models. We use
+ * `docker exec` rather than calling the URL from the dashboard host
+ * because intelligence-hub resolves only inside `eve-network`.
+ *
+ * The container has `curl`-equivalent via wget. We use Python's stdlib
+ * since the open-webui image ships Python — no extra deps needed.
+ *
+ * Returns:
+ *   - ok + count when the call succeeded (count = number of models)
+ *   - error with a message + optional fix hint otherwise
+ */
+async function probeOpenwebuiModels(): Promise<ProbeResult> {
+  // Resolve the URL/key the way OpenWebUI itself would: env_file → env.
+  // We read SYNAP_IS_URL + SYNAP_API_KEY from the container env. Falling
+  // back to /opt/openwebui/.env if `docker exec env` doesn't surface
+  // them (which would itself be a finding).
+  let url = "http://intelligence-hub:3001/v1/models";
+  let key = "";
+
+  try {
+    const { stdout } = await execFileAsync(
+      "docker",
+      ["exec", "hestia-openwebui", "sh", "-c",
+        "echo URL=\"${SYNAP_IS_URL:-http://intelligence-hub:3001}\"; echo KEY=\"${SYNAP_API_KEY:-}\""],
+      { timeout: DOCKER_TIMEOUT_MS },
+    );
+    for (const line of stdout.split("\n")) {
+      if (line.startsWith("URL=")) url = line.slice(4).replace(/\/+$/, "") + "/v1/models";
+      if (line.startsWith("KEY=")) key = line.slice(4);
+    }
+  } catch {
+    return {
+      kind: "error",
+      message: "Could not read env from inside openwebui container",
+      fix: "Restart Open WebUI from the components page",
+    };
+  }
+
+  // Use a tiny Python one-liner — open-webui's image has Python; no
+  // extra packages required. Status is exit code; body is parsed JSON
+  // length (model count).
+  const py = `
+import os, json, urllib.request, sys
+url = "${url}"
+key = "${key.replace(/"/g, '\\"')}"
+req = urllib.request.Request(url, headers={"Authorization": f"Bearer {key}"} if key else {})
+try:
+    with urllib.request.urlopen(req, timeout=4) as r:
+        body = json.loads(r.read())
+        models = body.get("data") or []
+        print("OK", len(models))
+except urllib.error.HTTPError as e:
+    print("HTTP", e.code)
+except Exception as e:
+    print("ERR", str(e)[:120])
+`.trim();
+
+  try {
+    const { stdout } = await execFileAsync(
+      "docker",
+      ["exec", "hestia-openwebui", "python3", "-c", py],
+      { timeout: 6000 },
+    );
+    const line = stdout.trim().split("\n").pop() ?? "";
+    if (line.startsWith("OK")) {
+      return { kind: "ok", count: Number.parseInt(line.split(/\s+/)[1] ?? "0", 10) };
+    }
+    if (line.startsWith("HTTP 401") || line.startsWith("HTTP 403")) {
+      return {
+        kind: "error",
+        message: `Synap IS rejected the API key (${line})`,
+        fix: "Open AI page → re-save provider; then `eve update synap` to refresh IS env",
+      };
+    }
+    if (line.startsWith("HTTP 404")) {
+      return {
+        kind: "error",
+        message: "Synap IS doesn't expose /v1/models — this build is too old",
+        fix: "Update Synap (`eve update synap`)",
+      };
+    }
+    if (line.startsWith("HTTP")) {
+      return { kind: "error", message: `Synap IS returned ${line}` };
+    }
+    if (line.startsWith("ERR")) {
+      return {
+        kind: "error",
+        message: `Network probe failed: ${line.slice(4)}`,
+        fix: "Check Synap IS is running and on eve-network",
+      };
+    }
+    return { kind: "error", message: `Unexpected probe output: ${line}` };
+  } catch (err) {
+    return {
+      kind: "error",
+      message: `docker exec failed: ${err instanceof Error ? err.message : "unknown"}`,
+    };
+  }
 }
 
 async function readOpenwebuiEnv(): Promise<OpenwebuiEnv> {
