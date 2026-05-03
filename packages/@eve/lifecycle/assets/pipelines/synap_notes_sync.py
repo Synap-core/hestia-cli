@@ -1,12 +1,16 @@
 """
 title: Synap Notes Sync
 author: Eve
-version: 0.1.0
+version: 0.2.0
 license: MIT
 description: |
   Detects "save this as a note", "remember this", "make a note" style
   intents in the user's message, and (when matched) creates a note
   entity in the user's Synap pod via the Hub Protocol.
+
+  v0.2.0 — sets top-level `source: "openwebui-pipeline"` on entity
+  creation so the pod's audit trail attributes notes to this pipeline
+  instead of falling back to the default "intelligence" source.
 
   Two flavors:
     1. Slash form: `/note <body>` — explicit, deterministic.
@@ -198,9 +202,17 @@ class Pipeline:
         payload = {
             "title": title,
             "profileSlug": "note",
+            # Top-level attribution — the backend's audit trail uses this
+            # to credit the right surface in /api/hub/entities. Without it
+            # the pod defaults to "intelligence" which is wrong for
+            # OWUI pipeline writes.
+            "source": "openwebui-pipeline",
             "properties": {
                 "content": note_body.strip(),
                 "tags": [self.valves.TAG],
+                # Keep the structured per-entity `properties.source` for
+                # the original message — it's a different field from the
+                # top-level audit `source` enum.
                 "source": {
                     "channel": "openwebui",
                     "original": full_message[:2000],

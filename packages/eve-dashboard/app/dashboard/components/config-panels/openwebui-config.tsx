@@ -22,10 +22,10 @@
 
 import { useEffect, useState } from "react";
 import {
-  Spinner, Chip,
+  Spinner, Chip, Accordion, AccordionItem,
 } from "@heroui/react";
 import {
-  ExternalLink, MessagesSquare, BookOpen, Wand2,
+  ExternalLink, MessagesSquare, BookOpen, Wand2, Zap,
 } from "lucide-react";
 import { IntegrationChecklist } from "../integration-checklist";
 
@@ -37,17 +37,32 @@ interface ComponentDetail {
   hostPort: number | null;
 }
 
+interface SecretsSummary {
+  synap?: { configured: boolean; hasApiKey: boolean; apiUrl?: string };
+}
+
 export function OpenwebuiConfigPanel() {
   const [detail, setDetail] = useState<ComponentDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [synapUrl, setSynapUrl] = useState<string | null>(null);
 
   useEffect(() => {
+    // Fetch components + secrets summary in parallel — both are read-only
+    // and we need the Synap pod URL for the Hub Protocol feature links.
     void (async () => {
       try {
-        const res = await fetch("/api/components", { credentials: "include" });
-        if (res.ok) {
-          const data = await res.json() as { components: ComponentDetail[] };
+        const [compRes, summaryRes] = await Promise.all([
+          fetch("/api/components", { credentials: "include" }),
+          fetch("/api/secrets-summary", { credentials: "include" }),
+        ]);
+        if (compRes.ok) {
+          const data = await compRes.json() as { components: ComponentDetail[] };
           setDetail(data.components.find(c => c.id === "openwebui") ?? null);
+        }
+        if (summaryRes.ok) {
+          const summary = await summaryRes.json() as SecretsSummary;
+          const url = summary.synap?.apiUrl;
+          if (url) setSynapUrl(url.replace(/\/+$/, ""));
         }
       } finally { setLoading(false); }
     })();
@@ -146,6 +161,105 @@ export function OpenwebuiConfigPanel() {
           {" "}<code className="font-mono text-xs">synap/auto</code>{" "}in
           the picker — not provider tabs.
         </p>
+      </div>
+
+      {/* Hub Protocol features — surfaces capabilities the pod just gained
+          so users discover them without reading release notes. Compact:
+          one-line per feature + a collapsible "details" accordion below. */}
+      <div className="rounded-lg border border-divider bg-content2/40 p-4 space-y-3">
+        <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-default-500">
+          <Zap className="h-3.5 w-3.5" />
+          <span>Hub Protocol features</span>
+        </div>
+        <ul className="space-y-1.5 text-sm text-default-700">
+          <li>
+            <span className="font-medium text-foreground">Idempotency-Key</span>
+            {" "}— pipelines automatically benefit from retry safety on POSTs.
+          </li>
+          <li>
+            <span className="font-medium text-foreground">OpenAPI spec</span>
+            {" "}—{" "}
+            {synapUrl ? (
+              <>
+                <a
+                  href={`${synapUrl}/api/hub/openapi.json`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-mono text-xs text-primary hover:underline"
+                >
+                  /api/hub/openapi.json
+                </a>
+                {" "}(machine-readable);{" "}
+                <a
+                  href={`${synapUrl}/api/hub/docs`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-mono text-xs text-primary hover:underline"
+                >
+                  /api/hub/docs
+                </a>
+                {" "}(Swagger UI on dev pods).
+              </>
+            ) : (
+              <span className="text-default-500">
+                <code className="font-mono text-xs">/api/hub/openapi.json</code>
+                {" "}+ Swagger UI at <code className="font-mono text-xs">/api/hub/docs</code>
+                {" "}(configure Synap pod URL to get direct links).
+              </span>
+            )}
+          </li>
+          <li>
+            <span className="font-medium text-foreground">Per-user sub-tokens</span>
+            {" "}— route writes to per-human Synap users in shared OWUI installs (opt-in,{" "}
+            <code className="font-mono text-xs">HUB_PROTOCOL_SUB_TOKENS=true</code>).
+          </li>
+          <li>
+            <span className="font-medium text-foreground">Live event stream</span>
+            {" "}—{" "}
+            {synapUrl ? (
+              <a
+                href={`${synapUrl}/api/hub/events/stream`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-mono text-xs text-primary hover:underline"
+              >
+                /api/hub/events/stream
+              </a>
+            ) : (
+              <code className="font-mono text-xs">/api/hub/events/stream</code>
+            )}
+            {" "}for SSE consumers (live entity / channel updates).
+          </li>
+        </ul>
+        <Accordion isCompact className="px-0">
+          <AccordionItem
+            key="sub-tokens"
+            aria-label="Per-user sub-token modes"
+            title={<span className="text-xs text-default-500">How per-user sub-tokens work</span>}
+            classNames={{ title: "text-xs", content: "text-xs text-default-600 leading-relaxed" }}
+          >
+            <p>
+              <span className="font-medium text-foreground">Mode 1 — header remap.</span>{" "}
+              Keep the parent agent key as Bearer; add{" "}
+              <code className="font-mono">X-External-User-Id: &lt;owui-user&gt;</code>{" "}
+              per request. The pod looks up the mapping and routes the
+              write to the right human. Simplest setup, no token rotation.
+            </p>
+            <p className="mt-2">
+              <span className="font-medium text-foreground">Mode 2 — pre-minted child tokens.</span>{" "}
+              Call <code className="font-mono">POST /api/hub/setup/external-user</code>{" "}
+              with <code className="font-mono">mintSubToken: true</code> once per user;
+              persist the returned <code className="font-mono">subToken</code> and use it as
+              Bearer on subsequent requests. Good for callers that can&apos;t reliably
+              forward a header per-request.
+            </p>
+            <p className="mt-2 text-default-500">
+              The shipped pipelines support Mode 1 via the{" "}
+              <code className="font-mono">PER_USER_TOKENS</code> valve (off by default —
+              enabling it without the matching pod env is a no-op).
+            </p>
+          </AccordionItem>
+        </Accordion>
       </div>
 
       {/* Edit warning — don't lose user config */}

@@ -17,9 +17,10 @@ import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import {
   Spinner, Switch, Select, SelectItem, Input, Button, Chip, addToast,
+  Accordion, AccordionItem,
 } from "@heroui/react";
 import {
-  MessagesSquare, Send, Phone, Lock, ExternalLink, RotateCcw,
+  MessagesSquare, Send, Phone, Lock, ExternalLink, RotateCcw, Users,
 } from "lucide-react";
 import { IntegrationChecklist } from "../components/integration-checklist";
 
@@ -116,6 +117,52 @@ function OpenclawMissing() {
 }
 
 // ---------------------------------------------------------------------------
+// Multi-user OWUI explainer — surfaces per-user sub-token feature without
+// shipping a toggle (env-var propagation through the synap-backend container
+// is a separate piece of work, deferred until users actually ask).
+// ---------------------------------------------------------------------------
+
+function MultiUserOwuiNote() {
+  return (
+    <div className="rounded-lg border border-divider bg-content2/40 px-4">
+      <Accordion isCompact className="px-0">
+        <AccordionItem
+          key="multi-user-owui"
+          aria-label="Multi-user OWUI deployments"
+          title={
+            <span className="flex items-center gap-2 text-sm font-medium text-foreground">
+              <Users className="h-3.5 w-3.5 text-default-500" />
+              Multi-user OWUI deployments
+            </span>
+          }
+          classNames={{
+            content: "text-sm text-default-600 leading-relaxed pb-3",
+          }}
+        >
+          <p>
+            Running a shared Open WebUI install with multiple humans? The pod
+            supports <span className="font-medium text-foreground">per-user
+            sub-tokens</span> so each chat user&apos;s notes / tasks / memories
+            land on their own Synap user instead of the parent agent&apos;s.
+            Off by default — enabling it needs{" "}
+            <code className="font-mono text-xs">HUB_PROTOCOL_SUB_TOKENS=true</code>{" "}
+            on the synap-backend container plus the matching valve on each
+            pipeline. See the{" "}
+            <Link
+              href="/dashboard/components?id=openwebui"
+              className="text-primary hover:underline"
+            >
+              Open WebUI panel
+            </Link>{" "}
+            for details on Mode 1 (header remap) vs Mode 2 (child tokens).
+          </p>
+        </AccordionItem>
+      </Accordion>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Surfaces — the real channel toggles when OpenClaw is installed
 // ---------------------------------------------------------------------------
 
@@ -127,6 +174,8 @@ function ChannelSurfaces() {
         title="OpenClaw ↔ Synap setup"
         description="Channels won't run until OpenClaw is wired to your pod."
       />
+
+      <MultiUserOwuiNote />
 
       <section className="space-y-3">
         <h2 className="font-heading text-xl font-medium tracking-tightest text-foreground">

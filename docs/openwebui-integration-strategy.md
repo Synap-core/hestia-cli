@@ -417,6 +417,42 @@ a real install. Track A teaches us what users actually use OpenWebUI
 
 ---
 
+## What's new in hestia-cli (May 2026)
+
+The synap-backend just shipped a batch of Hub Protocol capabilities; this
+release surfaces them in hestia-cli without changing default behavior.
+
+- **Pipeline source attribution.** `synap_notes_sync.py` (→ v0.2.0) and
+  `synap_hermes_dispatch.py` (→ v0.3.0) now set top-level
+  `source: "openwebui-pipeline"` on every entity they create. The pod's
+  audit trail used to default to "intelligence" for these writes — now
+  notes / tasks dispatched from chat are correctly credited to the
+  pipeline surface. `synap_channel_sync.py` is unchanged: it calls
+  `/threads` + `/messages`, neither of which take a `source` field.
+- **Doctor Hub Protocol probe.** A new check in `eve-dashboard/lib/doctor.ts`
+  hits `/api/hub/openapi.json` on the configured pod, parses the response,
+  and asserts `openapi: 3.x`. Failure modes are distinguished: 401/403 vs
+  404 vs network error vs non-JSON vs missing-openapi-field, each with a
+  targeted fix hint. Tagged `integrationId: "synap"` so it can be filtered
+  alongside the existing per-integration checklists.
+- **OpenWebUI drawer capability surface.** The Open WebUI config panel now
+  has a compact "Hub Protocol features" card surfacing Idempotency-Key,
+  the OpenAPI spec link (machine-readable + Swagger UI on dev pods), the
+  per-user sub-token feature with collapsible Mode 1 / Mode 2 explainer,
+  and the live event stream URL. Pulls the pod URL from the existing
+  `/api/secrets-summary` route — no new API.
+- **Channels page multi-user explainer.** The Channels page got a small
+  collapsible accordion explaining per-user sub-tokens for shared OWUI
+  installs, linking back to the Open WebUI drawer for setup details. We
+  deliberately did NOT add a toggle: turning sub-tokens on requires
+  propagating `HUB_PROTOCOL_SUB_TOKENS=true` through the synap-backend
+  container, which is a separate piece of work deferred until users
+  actually ask for it.
+
+Pipeline behavior with the new feature flags off (per-user tokens, etc.) is
+byte-identical to the previous version — only the audit `source` field
+changed for the two pipelines that POST entities.
+
 ## References
 
 - OpenWebUI source: https://github.com/open-webui/open-webui

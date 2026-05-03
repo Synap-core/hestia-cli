@@ -1,7 +1,7 @@
 """
 title: Hermes Dispatch
 author: Eve
-version: 0.2.0
+version: 0.3.0
 license: MIT
 description: |
   Intercepts builder slash commands in Open WebUI and dispatches them to
@@ -25,6 +25,10 @@ description: |
   forwarded via X-External-User-Id so the Hermes task is created under the
   correct human's Synap user (not the parent agent's). Default off —
   single-tenant behavior is byte-identical.
+
+  v0.3.0 — sets top-level `source: "openwebui-pipeline"` on entity
+  creation so dispatched Hermes tasks are correctly attributed in the
+  pod's audit trail (was defaulting to "intelligence").
 """
 
 from __future__ import annotations
@@ -191,6 +195,12 @@ class Pipeline:
             "title": f"/{command} {argument_clean[:80]}".strip(),
             "description": argument_clean,
             "profileSlug": "task",
+            # Top-level attribution for the pod audit trail. Distinct from
+            # `properties.source` below — that one is a free-form per-entity
+            # tag for the user's own filtering, this one is the Hub Protocol's
+            # canonical source enum (intelligence | agent | openwebui-pipeline
+            # | openclaw | extension | cli | n8n | raycast).
+            "source": "openwebui-pipeline",
             "properties": {
                 "status": "todo",
                 "priority": "medium",

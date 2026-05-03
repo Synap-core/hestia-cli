@@ -44,6 +44,7 @@ export interface CheckResult {
    * without duplicating logic.
    */
   integrationId?:
+    | "synap"
     | "hermes-synap"
     | "openclaw-synap"
     | "openwebui-synap"
@@ -275,6 +276,16 @@ export async function runDoctor(): Promise<CheckResult[]> {
     if (installed.includes("openclaw") && running.has("eve-arms-openclaw")) {
       checks.push(await checkOpenclawWiring());
     }
+  }
+
+  // ─── Synap Hub Protocol — proves the pod is alive AND speaking 2026-05+ API ─
+  // We probe /api/hub/openapi.json because (a) it requires a working API key,
+  // (b) a 200 reply is a hard guarantee the Hub Protocol layer is mounted,
+  // and (c) the parsed `openapi: "3.x"` tag gates "is this backend new
+  // enough to know about the recently-shipped capabilities" (idempotency,
+  // sub-tokens, threads upsert, batch messages, source enum).
+  if (installed.includes("synap") && running.has("synap-backend-backend-1")) {
+    checks.push(await probeSynapHubProtocol(secrets));
   }
 
   // ─── Pair-wise integration scenarios ────────────────────────────────────
@@ -709,6 +720,157 @@ except Exception as e:
       message: `docker exec failed: ${err instanceof Error ? err.message : "unknown"}`,
     };
   }
+}
+
+/**
+ * Probe `/api/hub/openapi.json` on the configured Synap pod URL using the
+ * stored API key. Three concentric guarantees:
+ *   1. Hub Protocol is reachable (200) → the API layer is mounted
+ *   2. Body parses as JSON → it's the actual OpenAPI doc, not a 200
+ *      from some upstream proxy or HTML error page
+ *   3. `openapi` field starts with "3." → backend is new enough to expose
+ *      the schema (older Synap builds don't have this endpoint)
+ *
+ * Failure messages are deliberately specific — a 401 is *very* different
+ * from a 404 (key issue vs. version issue), and we want the user to know
+ * which one without hunting through the docker logs.
+ *
+ * Run from the dashboard host (not docker exec) — the pod URL in secrets
+ * is whatever the user configured, which usually resolves on the host
+ * (localhost / a domain).
+ */
+async function probeSynapHubProtocol(secrets: Secrets): Promise<CheckResult> {
+  const integrationId = "synap" as const;
+  const baseUrl = (secrets?.synap?.apiUrl ?? "").replace(/\/+$/, "");
+  const apiKey = secrets?.synap?.apiKey ?? "";
+
+  if (!baseUrl) {
+    return {
+      group: "ai",
+      name: "Synap Hub Protocol",
+      status: "warn",
+      message: "Synap apiUrl not configured in secrets — can't probe Hub Protocol",
+      fix: "Re-run setup or open the AI page → Save",
+      componentId: "synap",
+      integrationId,
+    };
+  }
+  if (!apiKey) {
+    return {
+      group: "ai",
+      name: "Synap Hub Protocol",
+      status: "fail",
+      message: "Synap API key missing — Hub Protocol probe needs Bearer auth",
+      fix: "Re-install Synap (eve add synap) to provision an API key",
+      componentId: "synap",
+      integrationId,
+    };
+  }
+
+  const url = `${baseUrl}/api/hub/openapi.json`;
+  // 4s budget — same envelope as docker subprocess probes elsewhere here;
+  // a slow Hub Protocol is just as bad as a slow docker daemon for the user.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 4000);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+      signal: controller.signal,
+    });
+  } catch (err) {
+    clearTimeout(timer);
+    return {
+      group: "ai",
+      name: "Synap Hub Protocol",
+      status: "fail",
+      message: `Cannot reach Synap backend at ${baseUrl} (${err instanceof Error ? err.message : "network error"})`,
+      fix: "Check the Synap container is running and the URL is reachable from the dashboard",
+      componentId: "synap",
+      integrationId,
+    };
+  }
+  clearTimeout(timer);
+
+  if (res.status === 401 || res.status === 403) {
+    return {
+      group: "ai",
+      name: "Synap Hub Protocol",
+      status: "fail",
+      message: `API key missing or wrong scopes — ${res.status} from ${url}`,
+      fix: "Re-run setup to mint a fresh agent API key",
+      componentId: "synap",
+      integrationId,
+    };
+  }
+  if (res.status === 404) {
+    return {
+      group: "ai",
+      name: "Synap Hub Protocol",
+      status: "fail",
+      message: "Hub Protocol not available — backend version too old (404 on /api/hub/openapi.json)",
+      fix: "Update Synap (`eve update synap`)",
+      componentId: "synap",
+      integrationId,
+    };
+  }
+  if (!res.ok) {
+    return {
+      group: "ai",
+      name: "Synap Hub Protocol",
+      status: "fail",
+      message: `Hub Protocol returned ${res.status} from ${url}`,
+      componentId: "synap",
+      integrationId,
+    };
+  }
+
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch {
+    return {
+      group: "ai",
+      name: "Synap Hub Protocol",
+      status: "fail",
+      message: "Endpoint returned unexpected payload (not JSON) — likely a proxy error page",
+      componentId: "synap",
+      integrationId,
+    };
+  }
+
+  const openapi = (body as { openapi?: unknown })?.openapi;
+  if (typeof openapi !== "string" || openapi.length === 0) {
+    return {
+      group: "ai",
+      name: "Synap Hub Protocol",
+      status: "warn",
+      message: "Hub Protocol older than 2026-05 — update synap-backend (no openapi field in response)",
+      fix: "Update Synap (`eve update synap`)",
+      componentId: "synap",
+      integrationId,
+    };
+  }
+  if (!openapi.startsWith("3.")) {
+    return {
+      group: "ai",
+      name: "Synap Hub Protocol",
+      status: "warn",
+      message: `Hub Protocol returned an unexpected OpenAPI version (${openapi}) — expected 3.x`,
+      componentId: "synap",
+      integrationId,
+    };
+  }
+
+  return {
+    group: "ai",
+    name: "Synap Hub Protocol",
+    status: "pass",
+    message: `Reachable; OpenAPI ${openapi}`,
+    componentId: "synap",
+    integrationId,
+  };
 }
 
 async function readOpenwebuiEnv(): Promise<OpenwebuiEnv> {
