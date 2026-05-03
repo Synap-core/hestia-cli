@@ -1322,10 +1322,16 @@ export {
   shortId,
   extractEntityId,
   deleteEntityBestEffort,
+  combineSignals,
+  isFetchTransportError,
+  FetchRunner,
   type HubProtocolDiagnostic,
   type HubProtocolProbeId,
   type ProbeStatus,
   type RunHubProtocolProbesOptions,
+  type IDoctorRunner,
+  type DoctorRunnerResponse,
+  type DoctorRunnerStream,
 } from "./diagnostics.js";
 
 // OpenClaw reconciliation — re-applies Eve's expected `allowedOrigins`

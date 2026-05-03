@@ -13,6 +13,7 @@ import { verifyComponent } from '@eve/legs';
 import { runHubProtocolProbes, type HubProtocolDiagnostic } from '@eve/lifecycle';
 import { probeRoutes, probeVerdict, type RouteProbe } from '../lib/probe-routes.js';
 import { diagnoseFailedRoute, type DeepDiagnostic } from '../lib/diagnose-route.js';
+import { DockerExecRunner, FallbackRunner, FetchRunner } from '../lib/doctor-runners.js';
 import {
   colors,
   emojis,
@@ -243,12 +244,26 @@ async function runDiagnostics(opts: DoctorOptions = { verbose: false, skipProbes
       const probeSpinner = createSpinner('Running Hub Protocol probes (≤35s)...');
       probeSpinner.start();
       let diagnostics: HubProtocolDiagnostic[] = [];
+      // Build a runner that tries native fetch first and swaps to
+      // `docker exec eve-legs-traefik wget` when the host loopback isn't
+      // reachable. On Eve deployments behind Traefik, synap-backend has
+      // no host port mapping — the configured `apiUrl` of
+      // `http://127.0.0.1:4000` will hit ECONNREFUSED and the probes
+      // would be useless without this fallback.
+      const swapNotes: string[] = [];
+      const runner = new FallbackRunner(
+        new FetchRunner(),
+        new DockerExecRunner(),
+        (note) => swapNotes.push(note),
+      );
       try {
         diagnostics = await runHubProtocolProbes({
           synapUrl: synapApiUrl,
           apiKey: synapApiKey,
+          runner,
         });
-        probeSpinner.succeed(`Hub Protocol probes complete (${diagnostics.length} run)`);
+        const noteSuffix = swapNotes.length > 0 ? ` — ${swapNotes[0]}` : '';
+        probeSpinner.succeed(`Hub Protocol probes complete (${diagnostics.length} run)${noteSuffix}`);
       } catch (err) {
         probeSpinner.fail('Hub Protocol probes failed to run');
         checks.push({

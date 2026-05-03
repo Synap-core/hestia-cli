@@ -120,6 +120,23 @@ function resolveUpstream(route: RouteProbe): { container: string; port: number }
 // Pattern library — most specific first
 // ---------------------------------------------------------------------------
 
+/**
+ * Runtime context fed to patterns that want richer signals than the log
+ * buffer alone. Read once per `diagnoseFailedRoute` call (one `docker
+ * inspect`) and shared across every pattern check for that container.
+ *
+ * Currently only `sigterm-loop` consumes the context (to suppress
+ * false-positives on healthy containers that received a single SIGTERM
+ * during a normal `eve update`). Adding more context-aware patterns
+ * means extending this shape and the `gather` helper that fills it in.
+ */
+interface PatternContext {
+  /** `docker inspect --format '{{.RestartCount}}'`. -1 if unreadable. */
+  restartCount: number;
+  /** Wall-clock seconds since `StartedAt`. -1 if unreadable. */
+  uptimeSec: number;
+}
+
 interface KnownPattern {
   tag: string;
   /**
@@ -139,6 +156,21 @@ interface KnownPattern {
    * the first to appear in the log wins.
    */
   priority: number;
+  /**
+   * Optional richer match function. When set, the pattern's regex is
+   * evaluated FIRST (so we don't pay the cost of a custom callback on
+   * every line); on a hit, `confirm` is called to either accept or
+   * reject the match using the line index, full log buffer, and
+   * runtime context. Returning `false` discards the hit and the
+   * matcher continues scanning. Used by `sigterm-loop` to avoid
+   * firing on a single, expected SIGTERM during a normal restart.
+   */
+  confirm?: (args: {
+    line: string;
+    lineIndex: number;
+    logLines: string[];
+    context: PatternContext;
+  }) => boolean;
 }
 
 const KNOWN_PATTERNS: KnownPattern[] = [
@@ -212,6 +244,43 @@ const KNOWN_PATTERNS: KnownPattern[] = [
     explanation: 'Container is restart-looping (received SIGTERM near the end of its log).',
     fix: 'Check the components full log: `eve logs <component>`. Look for the line right BEFORE SIGTERM.',
     priority: 60,
+    /**
+     * Suppress false positives. A single SIGTERM during a normal `eve
+     * update` is expected — the container is told to stop, then a fresh
+     * one is started. Old behavior fired the pattern on any single match
+     * near the tail of the log and lit up healthy containers (uptime 5
+     * minutes, 0 restarts) with a misleading "restart-looping" warning.
+     *
+     * New rule, two cumulative gates:
+     *
+     *   (1) The Docker runtime says the container is healthy. If
+     *       `RestartCount === 0` AND uptime > 60s, this is NOT a loop
+     *       regardless of what the logs say. Skip the pattern entirely.
+     *
+     *   (2) When the runtime can't tell us (inspect failed) OR the
+     *       runtime DOES suggest something is off, require strong
+     *       log signal: either MULTIPLE SIGTERMs in the captured
+     *       window (≥2) OR a SIGTERM in the LAST 5 lines (very
+     *       recent kill suggests an in-progress crash).
+     */
+    confirm: ({ line, lineIndex, logLines, context }) => {
+      // Gate 1 — runtime says we're fine.
+      if (context.restartCount === 0 && context.uptimeSec > 60) return false;
+
+      // Gate 2 — log strength.
+      const sigtermPattern = /SIGTERM received|shutting down|received signal terminat(ed|ing)/i;
+      let count = 0;
+      for (const l of logLines) {
+        if (sigtermPattern.test(l)) count += 1;
+        if (count >= 2) break;
+      }
+      if (count >= 2) return true;
+
+      // Single hit — only trust it if it's very near the tail (last 5 lines).
+      const distanceFromEnd = logLines.length - 1 - lineIndex;
+      void line; // intentionally unused — `lineIndex` already pinpoints the hit
+      return distanceFromEnd >= 0 && distanceFromEnd < 5;
+    },
   },
 ];
 
@@ -247,7 +316,8 @@ export async function diagnoseFailedRoute(route: RouteProbe): Promise<DeepDiagno
 
   const upstreamProbe = probeFromTraefik(upstream.container, upstream.port);
   const logBuffer = readUpstreamLogs(upstream.container);
-  const matchedPatterns = matchLogPatterns(upstream.container, logBuffer);
+  const context = gatherPatternContext(upstream.container);
+  const matchedPatterns = matchLogPatterns(upstream.container, logBuffer, context);
 
   const recommendedFix = matchedPatterns.length > 0
     ? matchedPatterns[0].fix
@@ -367,8 +437,16 @@ function readUpstreamLogs(container: string): string[] {
  * hits within the same pattern aren't useful to render). Within a tag, we
  * keep the FIRST hit so the line number points at the originating event,
  * not the latest restart-loop echo.
+ *
+ * Patterns may opt into context-aware matching via a `confirm()` callback.
+ * The regex still runs first (cheap path), and `confirm` only fires when
+ * a line matches — keeping the per-line cost low. See `KnownPattern.confirm`.
  */
-function matchLogPatterns(container: string, logLines: string[]): PatternMatch[] {
+function matchLogPatterns(
+  container: string,
+  logLines: string[],
+  context: PatternContext,
+): PatternMatch[] {
   const matches: PatternMatch[] = [];
   const seenTags = new Set<string>();
 
@@ -380,19 +458,63 @@ function matchLogPatterns(container: string, logLines: string[]): PatternMatch[]
     if (pattern.scopeContainer && pattern.scopeContainer !== container) continue;
     for (let i = 0; i < logLines.length; i += 1) {
       const line = logLines[i];
-      if (pattern.match.test(line)) {
-        matches.push({
-          tag: pattern.tag,
-          explanation: pattern.explanation,
-          matchedLine: line.length > 160 ? `${line.slice(0, 160)}…` : line,
-          lineNumber: i + 1,
-          fix: pattern.fix,
-        });
-        seenTags.add(pattern.tag);
-        break;
+      if (!pattern.match.test(line)) continue;
+
+      // Optional confirmation gate — used by sigterm-loop to suppress
+      // false positives on a single, expected SIGTERM during normal
+      // shutdown.
+      if (pattern.confirm && !pattern.confirm({ line, lineIndex: i, logLines, context })) {
+        continue;
       }
+
+      matches.push({
+        tag: pattern.tag,
+        explanation: pattern.explanation,
+        matchedLine: line.length > 160 ? `${line.slice(0, 160)}…` : line,
+        lineNumber: i + 1,
+        fix: pattern.fix,
+      });
+      seenTags.add(pattern.tag);
+      break;
     }
   }
 
   return matches;
+}
+
+/**
+ * Gather the runtime context patterns may consult. One `docker inspect`
+ * call per failed route — bounded cost, never invoked for healthy routes.
+ *
+ * Format string returns `<RestartCount>|<StartedAt>` so we get both fields
+ * in a single shell-out. Anything that goes wrong (container missing,
+ * docker daemon down, parse error) returns sentinel `-1`s, and the
+ * patterns that consume the context treat those as "unknown" — they
+ * fall back to log-only signals.
+ */
+function gatherPatternContext(container: string): PatternContext {
+  try {
+    const out = execSync(
+      `docker inspect ${container} --format '{{.RestartCount}}|{{.State.StartedAt}}'`,
+      { encoding: 'utf-8', timeout: 4000, stdio: ['pipe', 'pipe', 'pipe'] },
+    ).trim();
+
+    const [restartStr, startedAtStr] = out.split('|');
+    const restartCount = Number.parseInt(restartStr, 10);
+
+    let uptimeSec = -1;
+    if (startedAtStr) {
+      const startedMs = Date.parse(startedAtStr);
+      if (Number.isFinite(startedMs)) {
+        uptimeSec = Math.max(0, Math.floor((Date.now() - startedMs) / 1000));
+      }
+    }
+
+    return {
+      restartCount: Number.isFinite(restartCount) ? restartCount : -1,
+      uptimeSec,
+    };
+  } catch {
+    return { restartCount: -1, uptimeSec: -1 };
+  }
 }

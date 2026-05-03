@@ -59,6 +59,121 @@ export interface RunHubProtocolProbesOptions {
   apiKey: string;
   /** Optional outer abort signal (caller cancellation). Each probe still has its own timeout. */
   signal?: AbortSignal;
+  /**
+   * HTTP runner. Controls how probes reach the pod. Defaults to `FetchRunner`
+   * which uses native `fetch()` and works in any environment with direct
+   * network access (dev, dashboard server, container with mapped port).
+   *
+   * The CLI passes a `FallbackRunner` that swaps to a docker-exec-based
+   * runner when the host loopback isn't reachable — a common case on
+   * Eve deployments where synap-backend has no host port mapping and is
+   * only addressable via container DNS inside `eve-network`. See
+   * `packages/eve-cli/src/lib/doctor-runners.ts`.
+   */
+  runner?: IDoctorRunner;
+  /**
+   * Optional one-shot notification hook. Fires once per run if the runner
+   * dynamically switches transport mid-run (e.g. host fetch fails →
+   * docker exec). Callers wire this to a log line so users know why the
+   * probes are still working despite the unreachable URL.
+   */
+  onRunnerNote?: (note: string) => void;
+}
+
+/**
+ * Pluggable HTTP transport for Hub Protocol probes. Two impls ship with
+ * Eve: `FetchRunner` (native fetch — default, used by dashboard) and
+ * `DockerExecRunner` (CLI-side, runs `wget` from inside `eve-legs-traefik`).
+ *
+ * The runner abstraction exists so the framework-agnostic diagnostics
+ * module doesn't have to depend on `execa`/`child_process` — that
+ * dependency lives only in the CLI side. Callers that don't need
+ * docker-exec fallback can ignore the parameter and get fetch.
+ */
+export interface IDoctorRunner {
+  /**
+   * Single request/response GET. Returns the parsed status, headers, and
+   * body as a string. NEVER throws on HTTP error codes — only for
+   * transport failures (DNS, connection refused, timeout). Transport
+   * errors throw with `name === "TransportError"` and a `code` property
+   * that callers can use to decide on fallback.
+   */
+  httpGet(
+    url: string,
+    headers: Record<string, string>,
+    opts?: { signal?: AbortSignal; timeoutMs?: number },
+  ): Promise<DoctorRunnerResponse>;
+
+  /**
+   * Single request/response POST. Same semantics as `httpGet`. The body
+   * is sent verbatim — caller is responsible for stringifying JSON.
+   */
+  httpPost(
+    url: string,
+    headers: Record<string, string>,
+    body: string,
+    opts?: { signal?: AbortSignal; timeoutMs?: number },
+  ): Promise<DoctorRunnerResponse>;
+
+  /**
+   * Single request/response DELETE. Best-effort cleanup helper — the
+   * idempotency probe uses this to remove the throwaway entity.
+   */
+  httpDelete(
+    url: string,
+    headers: Record<string, string>,
+    opts?: { signal?: AbortSignal; timeoutMs?: number },
+  ): Promise<DoctorRunnerResponse>;
+
+  /**
+   * Streaming GET — the SSE probe uses this. The runner returns an
+   * AsyncIterable of UTF-8 string chunks (already decoded). Callers
+   * iterate until they see what they need, then break (which closes
+   * the underlying stream / kills the subprocess).
+   *
+   * Some runners (DockerExec) can't easily support true streaming and
+   * may buffer up to N bytes before yielding — that's still good enough
+   * for an SSE heartbeat probe, where the heartbeat lands within the
+   * first frame. Runners that can't stream at all should return
+   * `{ ok: false, status: 0, error: "stream-not-supported" }` and let
+   * the caller skip the probe gracefully.
+   */
+  httpStream(
+    url: string,
+    headers: Record<string, string>,
+    opts?: { signal?: AbortSignal; timeoutMs?: number },
+  ): Promise<DoctorRunnerStream>;
+
+  /**
+   * Optional human-readable name shown in logs when the runner is in
+   * use ("fetch", "docker-exec", "fallback"). Used by `onRunnerNote`.
+   */
+  readonly name: string;
+}
+
+export interface DoctorRunnerResponse {
+  /** HTTP status code. 0 means transport failure (no HTTP response at all). */
+  status: number;
+  /** Response body as a string (may be empty). */
+  body: string;
+  /** Lowercased response header name → value. */
+  headers: Record<string, string>;
+  /** Set when status === 0 — the transport-level error message. */
+  error?: string;
+}
+
+export interface DoctorRunnerStream {
+  /** True when the request opened successfully. False → `error` is set. */
+  ok: boolean;
+  status: number;
+  /** Lowercased response header name → value. Populated when `ok === true`. */
+  headers: Record<string, string>;
+  /** Decoded UTF-8 chunks, yielded as they arrive. Only present when `ok === true`. */
+  chunks?: AsyncIterable<string>;
+  /** Always callable — closes the underlying stream / aborts the request. */
+  close: () => Promise<void>;
+  /** Set when `ok === false` — the transport-level error message. */
+  error?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -98,8 +213,10 @@ export async function runHubProtocolProbes(
   const synapUrl = opts.synapUrl.replace(/\/+$/, "");
   const apiKey = opts.apiKey;
   const signal = opts.signal;
+  const runner = opts.runner ?? new FetchRunner();
+  const onRunnerNote = opts.onRunnerNote;
 
-  const openapi = await probeOpenapi(synapUrl, apiKey, signal);
+  const openapi = await probeOpenapi(runner, synapUrl, apiKey, signal, onRunnerNote);
 
   // If OpenAPI didn't pass, the other probes have no chance — skip them
   // but still emit rows so the renderer doesn't have to special-case
@@ -118,9 +235,9 @@ export async function runHubProtocolProbes(
   }
 
   const [idem, sse, subTokens] = await Promise.all([
-    probeIdempotency(synapUrl, apiKey, signal),
-    probeEventStream(synapUrl, apiKey, signal),
-    probeSubTokens(synapUrl, apiKey, signal),
+    probeIdempotency(runner, synapUrl, apiKey, signal),
+    probeEventStream(runner, synapUrl, apiKey, signal),
+    probeSubTokens(runner, synapUrl, apiKey, signal),
   ]);
 
   return [openapi, idem, sse, subTokens];
@@ -131,9 +248,11 @@ export async function runHubProtocolProbes(
 // ---------------------------------------------------------------------------
 
 async function probeOpenapi(
+  runner: IDoctorRunner,
   synapUrl: string,
   apiKey: string,
   outer?: AbortSignal,
+  onRunnerNote?: (note: string) => void,
 ): Promise<HubProtocolDiagnostic> {
   const start = Date.now();
 
@@ -159,26 +278,28 @@ async function probeOpenapi(
   }
 
   const url = `${synapUrl}/api/hub/openapi.json`;
-  const ac = combineSignals(outer, OPENAPI_TIMEOUT_MS);
+  const headers = { Authorization: `Bearer ${apiKey}`, Accept: "application/json" };
 
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method: "GET",
-      headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
-      signal: ac.signal,
-    });
-  } catch (err) {
+  // The opening probe is the place where the runner decides to swap
+  // transports. Pass the note hook in so a `FallbackRunner` can announce
+  // the swap once and only once.
+  const res = await runner.httpGet(url, headers, { signal: outer, timeoutMs: OPENAPI_TIMEOUT_MS });
+
+  // Surface the runner's name change after the call, in case the runner
+  // self-reports through `onRunnerNote` at construction or after a swap.
+  // (FallbackRunner emits its own notes via the hook directly; we don't
+  // duplicate them here.)
+  void onRunnerNote;
+
+  if (res.status === 0) {
     return {
       id: "hub-protocol-openapi",
       name: OPENAPI_NAME,
       status: "fail",
-      message: `Cannot reach Synap backend at ${synapUrl} (${err instanceof Error ? err.message : "network error"})`,
+      message: `Cannot reach Synap backend at ${synapUrl} (${res.error ?? "network error"})`,
       fix: "Check the Synap container is running and the URL is reachable",
       durationMs: Date.now() - start,
     };
-  } finally {
-    ac.cleanup();
   }
 
   if (res.status === 401 || res.status === 403) {
@@ -201,7 +322,7 @@ async function probeOpenapi(
       durationMs: Date.now() - start,
     };
   }
-  if (!res.ok) {
+  if (res.status < 200 || res.status >= 300) {
     return {
       id: "hub-protocol-openapi",
       name: OPENAPI_NAME,
@@ -213,7 +334,7 @@ async function probeOpenapi(
 
   let body: unknown;
   try {
-    body = await res.json();
+    body = JSON.parse(res.body);
   } catch {
     return {
       id: "hub-protocol-openapi",
@@ -259,6 +380,7 @@ async function probeOpenapi(
 // ---------------------------------------------------------------------------
 
 async function probeIdempotency(
+  runner: IDoctorRunner,
   synapUrl: string,
   apiKey: string,
   outer?: AbortSignal,
@@ -277,52 +399,40 @@ async function probeIdempotency(
     source: "openwebui-pipeline",
   };
   const bodyJson = JSON.stringify(body);
-
-  const post = async (): Promise<{ res: Response; text: string } | { error: string }> => {
-    const ac = combineSignals(outer, ENTITY_POST_TIMEOUT_MS);
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-          "Idempotency-Key": idempotencyKey,
-        },
-        body: bodyJson,
-        signal: ac.signal,
-      });
-      const text = await res.text();
-      return { res, text };
-    } catch (err) {
-      return { error: err instanceof Error ? err.message : "network error" };
-    } finally {
-      ac.cleanup();
-    }
+  const headers = {
+    Authorization: `Bearer ${apiKey}`,
+    "Content-Type": "application/json",
+    Accept: "application/json",
+    "Idempotency-Key": idempotencyKey,
   };
 
+  const post = () => runner.httpPost(url, headers, bodyJson, {
+    signal: outer,
+    timeoutMs: ENTITY_POST_TIMEOUT_MS,
+  });
+
   const first = await post();
-  if ("error" in first) {
+  if (first.status === 0) {
     return {
       id: "hub-protocol-idempotency",
       name: IDEMPOTENCY_NAME,
       status: "fail",
-      message: `Cannot reach ${url} (${first.error})`,
+      message: `Cannot reach ${url} (${first.error ?? "network error"})`,
       fix: "Check the Synap container is running and the URL is reachable",
       durationMs: Date.now() - start,
     };
   }
-  if (first.res.status === 401 || first.res.status === 403) {
+  if (first.status === 401 || first.status === 403) {
     return {
       id: "hub-protocol-idempotency",
       name: IDEMPOTENCY_NAME,
       status: "fail",
-      message: `API key rejected — ${first.res.status} from POST /api/hub/entities`,
+      message: `API key rejected — ${first.status} from POST /api/hub/entities`,
       fix: "Re-run setup to mint a fresh agent API key",
       durationMs: Date.now() - start,
     };
   }
-  if (first.res.status === 404) {
+  if (first.status === 404) {
     return {
       id: "hub-protocol-idempotency",
       name: IDEMPOTENCY_NAME,
@@ -332,45 +442,45 @@ async function probeIdempotency(
       durationMs: Date.now() - start,
     };
   }
-  if (!first.res.ok) {
+  if (first.status < 200 || first.status >= 300) {
     return {
       id: "hub-protocol-idempotency",
       name: IDEMPOTENCY_NAME,
       status: "fail",
-      message: `First POST returned ${first.res.status}: ${truncate(first.text)}`,
+      message: `First POST returned ${first.status}: ${truncate(first.body)}`,
       durationMs: Date.now() - start,
     };
   }
 
   const second = await post();
-  if ("error" in second) {
+  if (second.status === 0) {
     return {
       id: "hub-protocol-idempotency",
       name: IDEMPOTENCY_NAME,
       status: "fail",
-      message: `Second POST failed (${second.error}) — couldn't verify replay`,
+      message: `Second POST failed (${second.error ?? "network error"}) — couldn't verify replay`,
       durationMs: Date.now() - start,
     };
   }
-  if (!second.res.ok) {
+  if (second.status < 200 || second.status >= 300) {
     return {
       id: "hub-protocol-idempotency",
       name: IDEMPOTENCY_NAME,
       status: "fail",
-      message: `Second POST returned ${second.res.status}: ${truncate(second.text)}`,
+      message: `Second POST returned ${second.status}: ${truncate(second.body)}`,
       durationMs: Date.now() - start,
     };
   }
 
   // Best-effort cleanup BEFORE we judge — if both calls returned the same
   // entity id we only need to delete it once.
-  const entityId = extractEntityId(first.text);
+  const entityId = extractEntityId(first.body);
   if (entityId) {
-    void deleteEntityBestEffort(synapUrl, apiKey, entityId);
+    void deleteEntityBestEffort(synapUrl, apiKey, entityId, runner);
   }
 
-  const replayHeader = second.res.headers.get("X-Idempotent-Replay")
-    ?? second.res.headers.get("x-idempotent-replay");
+  // Header lookup is case-insensitive at the runner layer (lowercase keys).
+  const replayHeader = second.headers["x-idempotent-replay"];
   if (replayHeader !== "true") {
     return {
       id: "hub-protocol-idempotency",
@@ -382,7 +492,7 @@ async function probeIdempotency(
     };
   }
 
-  if (first.text !== second.text) {
+  if (first.body !== second.body) {
     return {
       id: "hub-protocol-idempotency",
       name: IDEMPOTENCY_NAME,
@@ -407,6 +517,7 @@ async function probeIdempotency(
 // ---------------------------------------------------------------------------
 
 async function probeEventStream(
+  runner: IDoctorRunner,
   synapUrl: string,
   apiKey: string,
   outer?: AbortSignal,
@@ -418,106 +529,102 @@ async function probeEventStream(
   }
 
   const url = `${synapUrl}/api/hub/events/stream`;
-  const ac = combineSignals(outer, SSE_TIMEOUT_MS);
+  const headers = { Authorization: `Bearer ${apiKey}`, Accept: "text/event-stream" };
+  const stream = await runner.httpStream(url, headers, { signal: outer, timeoutMs: SSE_TIMEOUT_MS });
 
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method: "GET",
-      headers: { Authorization: `Bearer ${apiKey}`, Accept: "text/event-stream" },
-      signal: ac.signal,
-    });
-  } catch (err) {
-    ac.cleanup();
-    const aborted = err instanceof Error && err.name === "AbortError";
-    return {
-      id: "hub-protocol-events",
-      name: EVENTS_NAME,
-      status: "fail",
-      message: aborted
-        ? `No SSE response within ${SSE_TIMEOUT_MS / 1000}s — proxy may be killing the stream`
-        : `Cannot open event stream at ${url} (${err instanceof Error ? err.message : "network error"})`,
-      fix: aborted
-        ? "Check reverse-proxy buffering: nginx needs `proxy_buffering off` for SSE"
-        : "Check the Synap container is running",
-      durationMs: Date.now() - start,
-    };
-  }
-
-  if (res.status === 401 || res.status === 403) {
-    ac.cleanup();
-    return {
-      id: "hub-protocol-events",
-      name: EVENTS_NAME,
-      status: "fail",
-      message: `API key rejected on /api/hub/events/stream (${res.status})`,
-      fix: "Re-run setup to mint a fresh agent API key",
-      durationMs: Date.now() - start,
-    };
-  }
-  if (res.status === 404) {
-    ac.cleanup();
-    return {
-      id: "hub-protocol-events",
-      name: EVENTS_NAME,
-      status: "fail",
-      message: "GET /api/hub/events/stream not available — backend version too old",
-      fix: "Update Synap (`eve update synap`)",
-      durationMs: Date.now() - start,
-    };
-  }
-  if (!res.ok || !res.body) {
-    ac.cleanup();
-    return {
-      id: "hub-protocol-events",
-      name: EVENTS_NAME,
-      status: "fail",
-      message: `Event stream returned ${res.status} (no body: ${!res.body})`,
-      durationMs: Date.now() - start,
-    };
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let received = false;
-  let receivedKind = "";
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed.startsWith("event:")) {
-          const kind = trimmed.slice(6).trim();
-          if (kind === "heartbeat" || kind === "event") {
-            received = true;
-            receivedKind = kind;
-            break;
-          }
-        }
-      }
-      if (received) break;
+  if (!stream.ok) {
+    if (stream.error === "stream-not-supported") {
+      return skipDiag(
+        "hub-protocol-events",
+        EVENTS_NAME,
+        "Skipped — SSE probing not supported by current runner (e.g. docker-exec wget without unbuffered piping)",
+      );
     }
-  } catch (err) {
-    if (!(err instanceof Error && err.name === "AbortError")) {
-      try { await reader.cancel(); } catch { /* ignore */ }
-      ac.cleanup();
+    if (stream.status === 401 || stream.status === 403) {
       return {
         id: "hub-protocol-events",
         name: EVENTS_NAME,
         status: "fail",
-        message: `Stream read error: ${err instanceof Error ? err.message : "unknown"}`,
+        message: `API key rejected on /api/hub/events/stream (${stream.status})`,
+        fix: "Re-run setup to mint a fresh agent API key",
         durationMs: Date.now() - start,
       };
     }
+    if (stream.status === 404) {
+      return {
+        id: "hub-protocol-events",
+        name: EVENTS_NAME,
+        status: "fail",
+        message: "GET /api/hub/events/stream not available — backend version too old",
+        fix: "Update Synap (`eve update synap`)",
+        durationMs: Date.now() - start,
+      };
+    }
+    if (stream.status === 0) {
+      const aborted = stream.error?.toLowerCase().includes("abort") || stream.error?.toLowerCase().includes("timeout");
+      return {
+        id: "hub-protocol-events",
+        name: EVENTS_NAME,
+        status: "fail",
+        message: aborted
+          ? `No SSE response within ${SSE_TIMEOUT_MS / 1000}s — proxy may be killing the stream`
+          : `Cannot open event stream at ${url} (${stream.error ?? "network error"})`,
+        fix: aborted
+          ? "Check reverse-proxy buffering: nginx needs `proxy_buffering off` for SSE"
+          : "Check the Synap container is running",
+        durationMs: Date.now() - start,
+      };
+    }
+    return {
+      id: "hub-protocol-events",
+      name: EVENTS_NAME,
+      status: "fail",
+      message: `Event stream returned ${stream.status} (${stream.error ?? "no body"})`,
+      durationMs: Date.now() - start,
+    };
+  }
+
+  let received = false;
+  let receivedKind = "";
+  let buffer = "";
+  let readError: Error | null = null;
+
+  try {
+    if (stream.chunks) {
+      for await (const chunk of stream.chunks) {
+        buffer += chunk;
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith("event:")) {
+            const kind = trimmed.slice(6).trim();
+            if (kind === "heartbeat" || kind === "event") {
+              received = true;
+              receivedKind = kind;
+              break;
+            }
+          }
+        }
+        if (received) break;
+      }
+    }
+  } catch (err) {
+    if (!(err instanceof Error && err.name === "AbortError")) {
+      readError = err instanceof Error ? err : new Error(String(err));
+    }
   } finally {
-    try { await reader.cancel(); } catch { /* ignore */ }
-    ac.cleanup();
+    await stream.close();
+  }
+
+  if (readError) {
+    return {
+      id: "hub-protocol-events",
+      name: EVENTS_NAME,
+      status: "fail",
+      message: `Stream read error: ${readError.message}`,
+      durationMs: Date.now() - start,
+    };
   }
 
   if (!received) {
@@ -545,6 +652,7 @@ async function probeEventStream(
 // ---------------------------------------------------------------------------
 
 async function probeSubTokens(
+  runner: IDoctorRunner,
   synapUrl: string,
   apiKey: string,
   outer?: AbortSignal,
@@ -562,39 +670,34 @@ async function probeSubTokens(
     | { ok: true; userId: string | null; status: number }
     | { ok: false; status: number; message: string }
   > => {
-    const ac = combineSignals(outer, ME_TIMEOUT_MS);
-    try {
-      const res = await fetch(url, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          Accept: "application/json",
-          ...extraHeaders,
-        },
-        signal: ac.signal,
-      });
-      const text = await res.text();
-      if (!res.ok) {
-        return { ok: false, status: res.status, message: truncate(text) };
-      }
-      let id: string | null = null;
-      try {
-        const parsed = JSON.parse(text) as Record<string, unknown>;
-        const candidate = parsed.id ?? (parsed.user as Record<string, unknown> | undefined)?.id;
-        if (typeof candidate === "string") id = candidate;
-      } catch {
-        return { ok: false, status: res.status, message: "response was not JSON" };
-      }
-      return { ok: true, userId: id, status: res.status };
-    } catch (err) {
+    const res = await runner.httpGet(
+      url,
+      {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: "application/json",
+        ...extraHeaders,
+      },
+      { signal: outer, timeoutMs: ME_TIMEOUT_MS },
+    );
+    if (res.status === 0) {
       return {
         ok: false,
         status: 0,
-        message: err instanceof Error ? err.message : "network error",
+        message: res.error ?? "network error",
       };
-    } finally {
-      ac.cleanup();
     }
+    if (res.status < 200 || res.status >= 300) {
+      return { ok: false, status: res.status, message: truncate(res.body) };
+    }
+    let id: string | null = null;
+    try {
+      const parsed = JSON.parse(res.body) as Record<string, unknown>;
+      const candidate = parsed.id ?? (parsed.user as Record<string, unknown> | undefined)?.id;
+      if (typeof candidate === "string") id = candidate;
+    } catch {
+      return { ok: false, status: res.status, message: "response was not JSON" };
+    }
+    return { ok: true, userId: id, status: res.status };
   };
 
   const parent = await fetchMe({});
@@ -712,26 +815,30 @@ export function extractEntityId(text: string): string | null {
   }
 }
 
-/** Fire-and-forget DELETE — failures are silently ignored. */
+/**
+ * Fire-and-forget DELETE — failures are silently ignored. Routes through
+ * the same runner as the calling probe so docker-exec mode also cleans up
+ * its throwaway entities. When called without a runner (legacy callers,
+ * tests), falls back to a fresh `FetchRunner`.
+ */
 export async function deleteEntityBestEffort(
   synapUrl: string,
   apiKey: string,
   entityId: string,
+  runner?: IDoctorRunner,
 ): Promise<void> {
-  const ac = combineSignals(undefined, DELETE_TIMEOUT_MS);
+  const r = runner ?? new FetchRunner();
   try {
-    await fetch(`${synapUrl}/api/hub/entities/${encodeURIComponent(entityId)}`, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${apiKey}` },
-      signal: ac.signal,
-    });
+    await r.httpDelete(
+      `${synapUrl}/api/hub/entities/${encodeURIComponent(entityId)}`,
+      { Authorization: `Bearer ${apiKey}` },
+      { timeoutMs: DELETE_TIMEOUT_MS },
+    );
   } catch {
     // Cleanup is best-effort. The throwaway entity is identifiable by its
     // `eve-doctor-idempotency-smoke` title if a user wants to remove it
     // manually. A failed cleanup must NOT demote the probe — that would
     // confuse "your idempotency works" with "you can't delete entities".
-  } finally {
-    ac.cleanup();
   }
 }
 
@@ -741,7 +848,7 @@ export async function deleteEntityBestEffort(
  * function clears the timeout AND removes the outer-signal listener so we
  * don't leak listeners across many probes within the same caller signal.
  */
-function combineSignals(outer: AbortSignal | undefined, timeoutMs: number): {
+export function combineSignals(outer: AbortSignal | undefined, timeoutMs: number): {
   signal: AbortSignal;
   cleanup: () => void;
 } {
@@ -765,4 +872,165 @@ function combineSignals(outer: AbortSignal | undefined, timeoutMs: number): {
       if (onAbort && outer) outer.removeEventListener("abort", onAbort);
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// FetchRunner — default IDoctorRunner using the platform's native fetch.
+// Works in any environment with direct network access (dev, dashboard
+// server, container with mapped port). Used by the dashboard exclusively;
+// the CLI uses `FallbackRunner` (in `packages/eve-cli/src/lib/doctor-runners.ts`)
+// which falls through to a docker-exec-based runner when host fetch fails.
+// ---------------------------------------------------------------------------
+
+/** Lowercase headers from a Fetch `Response` into a plain record. */
+function headersToRecord(h: Headers): Record<string, string> {
+  const out: Record<string, string> = {};
+  h.forEach((value, key) => {
+    out[key.toLowerCase()] = value;
+  });
+  return out;
+}
+
+/**
+ * Detect transport-level errors that should trigger fallback to a different
+ * runner. The CLI's `FallbackRunner` calls this on every fetch error. The
+ * exact set: connection-refused / DNS failure / host-unreachable. Anything
+ * else (HTTP 5xx, JSON parse error, etc.) is a real failure to report,
+ * not a runner-mismatch problem.
+ */
+export function isFetchTransportError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  // Node fetch wraps the underlying error: `cause.code` is the useful bit.
+  const cause = (err as { cause?: { code?: string } }).cause;
+  const code = cause?.code;
+  if (code === "ECONNREFUSED" || code === "EHOSTUNREACH" || code === "ENOTFOUND" || code === "EAI_AGAIN") {
+    return true;
+  }
+  // Some platforms surface the code in the message instead of the cause.
+  // Match conservatively — only the codes above, never broad substrings
+  // like "fetch failed" alone (which happens on plain HTTP errors too).
+  const msg = err.message || "";
+  return /\bECONNREFUSED\b|\bEHOSTUNREACH\b|\bENOTFOUND\b/.test(msg);
+}
+
+export class FetchRunner implements IDoctorRunner {
+  readonly name = "fetch";
+
+  async httpGet(
+    url: string,
+    headers: Record<string, string>,
+    opts: { signal?: AbortSignal; timeoutMs?: number } = {},
+  ): Promise<DoctorRunnerResponse> {
+    return this.request("GET", url, headers, undefined, opts);
+  }
+
+  async httpPost(
+    url: string,
+    headers: Record<string, string>,
+    body: string,
+    opts: { signal?: AbortSignal; timeoutMs?: number } = {},
+  ): Promise<DoctorRunnerResponse> {
+    return this.request("POST", url, headers, body, opts);
+  }
+
+  async httpDelete(
+    url: string,
+    headers: Record<string, string>,
+    opts: { signal?: AbortSignal; timeoutMs?: number } = {},
+  ): Promise<DoctorRunnerResponse> {
+    return this.request("DELETE", url, headers, undefined, opts);
+  }
+
+  private async request(
+    method: string,
+    url: string,
+    headers: Record<string, string>,
+    body: string | undefined,
+    opts: { signal?: AbortSignal; timeoutMs?: number },
+  ): Promise<DoctorRunnerResponse> {
+    const ac = combineSignals(opts.signal, opts.timeoutMs ?? 6_000);
+    try {
+      const res = await fetch(url, {
+        method,
+        headers,
+        body,
+        signal: ac.signal,
+      });
+      const text = await res.text();
+      return {
+        status: res.status,
+        body: text,
+        headers: headersToRecord(res.headers),
+      };
+    } catch (err) {
+      return {
+        status: 0,
+        body: "",
+        headers: {},
+        error: err instanceof Error ? err.message : "network error",
+      };
+    } finally {
+      ac.cleanup();
+    }
+  }
+
+  async httpStream(
+    url: string,
+    headers: Record<string, string>,
+    opts: { signal?: AbortSignal; timeoutMs?: number } = {},
+  ): Promise<DoctorRunnerStream> {
+    const ac = combineSignals(opts.signal, opts.timeoutMs ?? 35_000);
+
+    let res: Response;
+    try {
+      res = await fetch(url, { method: "GET", headers, signal: ac.signal });
+    } catch (err) {
+      ac.cleanup();
+      return {
+        ok: false,
+        status: 0,
+        headers: {},
+        close: async () => { /* nothing to close */ },
+        error: err instanceof Error ? err.message : "network error",
+      };
+    }
+
+    if (!res.ok || !res.body) {
+      // Drain to free the connection. Body might still be a stream we
+      // need to cancel; a fresh attempt to read it post-cleanup is fine.
+      try { await res.body?.cancel(); } catch { /* ignore */ }
+      ac.cleanup();
+      return {
+        ok: false,
+        status: res.status,
+        headers: headersToRecord(res.headers),
+        close: async () => { /* already closed */ },
+        error: res.body ? undefined : "no body",
+      };
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+
+    async function* iterate(): AsyncGenerator<string> {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) return;
+        if (value) yield decoder.decode(value, { stream: true });
+      }
+    }
+
+    const close = async () => {
+      try { await reader.cancel(); } catch { /* ignore */ }
+      ac.cleanup();
+    };
+
+    return {
+      ok: true,
+      status: res.status,
+      headers: headersToRecord(res.headers),
+      chunks: iterate(),
+      close,
+    };
+  }
 }
