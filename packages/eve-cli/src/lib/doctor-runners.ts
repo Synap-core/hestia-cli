@@ -425,6 +425,13 @@ export class FallbackRunner implements IDoctorRunner {
     // genuinely a server-side error, but the host-unreachable case
     // is way more common in the deployment we're hardening against.
     if (/fetch failed/i.test(error)) return true;
+    // On hosts with no port mapping, fetch can hang until timeout
+    // instead of getting a quick RST (e.g. when the host firewall
+    // silently drops the SYN, or when Node tries IPv6 first). The
+    // user-visible symptom is "(timeout)" not "ECONNREFUSED". Treat
+    // any timeout / aborted-by-deadline as a transport failure too —
+    // we'd rather waste one docker exec than report the probe as dead.
+    if (/timeout|timed out|TimeoutError|AbortError|aborted|signal aborted|ETIMEDOUT/i.test(error)) return true;
     return false;
   }
 
