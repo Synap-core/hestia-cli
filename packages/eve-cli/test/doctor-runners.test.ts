@@ -1,67 +1,81 @@
 import { describe, it, expect } from 'vitest';
 import { createServer } from 'node:http';
 import {
-  buildWgetArgs,
+  buildExecArgs,
   FallbackRunner,
   FetchRunner,
   DockerExecRunner,
 } from '../src/lib/doctor-runners.js';
 import type { IDoctorRunner, DoctorRunnerResponse, DoctorRunnerStream } from '@eve/lifecycle';
 
-describe('buildWgetArgs', () => {
-  it('builds a BusyBox-compatible argv for GET into the supplied container', () => {
-    const built = buildWgetArgs(
+describe('buildExecArgs', () => {
+  it('builds a docker-exec argv that runs a Node fetch script in the container', () => {
+    const built = buildExecArgs(
       'GET',
       'http://127.0.0.1:4000/api/hub/openapi.json',
       { Authorization: 'Bearer key', Accept: 'application/json' },
       undefined,
-      6,
+      6_000,
       'synap-backend-backend-1',
+      false,
     );
     if (!built.supported) throw new Error('GET should always be supported');
-    const { container, argv } = built;
-    expect(container).toBe('synap-backend-backend-1');
-    // First two argv entries describe the docker exec target.
-    expect(argv.slice(0, 2)).toEqual(['exec', 'synap-backend-backend-1']);
-    expect(argv).toContain('wget');
-    // BusyBox-compatible short flags only.
-    expect(argv).toContain('-q');
-    expect(argv).toContain('-S');
-    // -O - writes body to stdout (two adjacent args).
-    expect(argv.slice(argv.indexOf('-O'), argv.indexOf('-O') + 2)).toEqual(['-O', '-']);
-    // -T <sec> — separate args, value as a string.
-    expect(argv.slice(argv.indexOf('-T'), argv.indexOf('-T') + 2)).toEqual(['-T', '6']);
-    // BusyBox needs SPACE form for --header (= form is silently dropped).
-    // See the long comment in buildWgetArgs for the empirical findings.
-    const headerValues = argv
-      .map((arg, i) => (arg === '--header' ? argv[i + 1] : null))
-      .filter((v): v is string => typeof v === 'string');
-    expect(headerValues).toContain('Authorization: Bearer key');
-    expect(headerValues).toContain('Accept: application/json');
-    // = form must NOT be used for headers.
-    expect(argv.find(a => a.startsWith('--header='))).toBeUndefined();
-    // No other GNU-only flags should be present.
-    expect(argv.find(a => a.startsWith('--method='))).toBeUndefined();
-    expect(argv.find(a => a.startsWith('--timeout='))).toBeUndefined();
-    expect(argv.find(a => a.startsWith('--quiet'))).toBeUndefined();
-    expect(argv.find(a => a.startsWith('--server-response'))).toBeUndefined();
-    // URL is the last arg.
-    expect(argv[argv.length - 1]).toBe('http://127.0.0.1:4000/api/hub/openapi.json');
+    expect(built.container).toBe('synap-backend-backend-1');
+    // `-i` is required so docker exec attaches stdin (the body channel).
+    expect(built.argv.slice(0, 3)).toEqual(['exec', '-i', 'synap-backend-backend-1']);
+    // The script is invoked via `node -e <inline>`. Six argv elements total:
+    //   exec, -i, container, node, -e, <script>
+    expect(built.argv[3]).toBe('node');
+    expect(built.argv[4]).toBe('-e');
+    expect(built.argv).toHaveLength(6);
+
+    // Script content: must reference Node fetch with the right URL/method/headers.
+    const script = built.argv[5];
+    expect(script).toContain('fetch(');
+    expect(script).toContain('"http://127.0.0.1:4000/api/hub/openapi.json"');
+    expect(script).toContain('"GET"');
+    // Headers are JSON-stringified into the script — value-includes assertion
+    // is enough (we don't care about formatting).
+    expect(script).toContain('"Authorization":"Bearer key"');
+    expect(script).toContain('"Accept":"application/json"');
+    // GET must NOT pipe stdin into the body field.
+    expect(script).toContain('HAS_BODY=false');
+    // Stdin is empty for GET — execa closes it immediately.
+    expect(built.stdin).toBe('');
   });
 
-  it('uses --post-data=VALUE single-argv form (BusyBox space form drops the body)', () => {
-    const built = buildWgetArgs('POST', 'http://x/y', {}, '{"foo":1}', 6, 'some-container');
+  it('passes POST body via stdin so shell escaping never matters', () => {
+    // Body deliberately includes characters that would need escaping in a
+    // shell command line (quotes, ampersand, newline) — proving the body
+    // travels via stdin, not argv.
+    const trickyBody = '{"foo":"a&b","quote":"\\"x\\"","nl":"line1\\nline2"}';
+    const built = buildExecArgs('POST', 'http://x/y', {}, trickyBody, 6_000, 'some-container', false);
     if (!built.supported) throw new Error('POST should be supported');
-    // `=` form: single argv element. NOT the space form (`--post-data` then value).
-    expect(built.argv).toContain('--post-data={"foo":1}');
-    expect(built.argv.find(a => a === '--post-data')).toBeUndefined();
+    // Body goes via stdin verbatim.
+    expect(built.stdin).toBe(trickyBody);
+    // Body must NOT appear anywhere in argv (the script reads it from stdin).
+    expect(built.argv.some(a => a.includes('a&b'))).toBe(false);
+    // Script reads stdin and gates it on HAS_BODY=true.
+    expect(built.argv[5]).toContain('process.stdin');
+    expect(built.argv[5]).toContain('HAS_BODY=true');
   });
 
-  it('reports DELETE as unsupported (BusyBox cannot issue DELETE)', () => {
-    const built = buildWgetArgs('DELETE', 'http://x/y', {}, undefined, 6, 'some-container');
-    expect(built.supported).toBe(false);
-    if (built.supported) throw new Error('DELETE should be unsupported');
-    expect(built.reason).toMatch(/BusyBox/);
+  it('supports DELETE natively (Node fetch handles arbitrary methods)', () => {
+    const built = buildExecArgs('DELETE', 'http://x/y', {}, undefined, 6_000, 'some-container', false);
+    expect(built.supported).toBe(true);
+    if (!built.supported) throw new Error('DELETE should be supported');
+    expect(built.argv[5]).toContain('"DELETE"');
+  });
+
+  it('streaming mode emits a body sentinel between envelope and chunks', () => {
+    const built = buildExecArgs('GET', 'http://x/y', {}, undefined, 30_000, 'c', true);
+    if (!built.supported) throw new Error('GET should be supported');
+    // Sentinel string must appear in the inline script — it's how the
+    // host code splits envelope-from-body when reading stdout.
+    expect(built.argv[5]).toContain('---SYNAP-BODY---');
+    // Streaming script pipes Buffer-of-chunk to stdout, not r.text().
+    expect(built.argv[5]).toContain('r.body');
+    expect(built.argv[5]).toContain('getReader');
   });
 });
 
@@ -166,9 +180,9 @@ describe('FallbackRunner', () => {
 });
 
 // TODO: integration test exercising DockerExecRunner against a real
-// docker daemon — requires a running eve-legs-traefik container, so
-// this lives outside the unit suite. Run via `eve doctor` on a host
-// where the loopback is unreachable to validate end-to-end.
+// docker daemon — requires a running synap-backend container, so this
+// lives outside the unit suite. Run via `eve doctor` on a host where
+// the loopback is unreachable to validate end-to-end.
 describe('DockerExecRunner (constructor smoke)', () => {
   it('instantiates without throwing', () => {
     expect(() => new DockerExecRunner()).not.toThrow();

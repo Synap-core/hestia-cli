@@ -7,9 +7,12 @@
  * at startup based on where we're running:
  *
  *   • **On the pod host** (synap-backend container is here):
- *     `DockerExecRunner` execs straight into the container with
- *     `127.0.0.1:4000`. No DNS, no Traefik, no TLS, no firewall — the
- *     fastest, most reliable path possible.
+ *     `DockerExecRunner` execs into the synap-backend container itself
+ *     and runs a tiny inline Node script (`docker exec -i <c> node -e ...`)
+ *     that calls `fetch('http://127.0.0.1:4000/...')`. No DNS, no Traefik,
+ *     no TLS, no firewall — and crucially no BusyBox/wget either. The
+ *     synap-backend image runs Node 20-alpine, which has native fetch, so
+ *     we use the same HTTP client the app itself uses.
  *
  *   • **Off the pod host** (managing a remote pod from a laptop):
  *     `FetchRunner` against the public Traefik URL. The only option, but
@@ -22,15 +25,18 @@
  * silently retrying via the slower public path (which often won't work
  * from inside the pod host either — split-DNS, firewall, cert pending).
  *
- * # Why DockerExecRunner is preferred
+ * # Why we don't use wget anymore
  *
- * The previous architecture went through the public URL even when on the
- * pod host. That meant CLI calls did:
- *   DNS → public IP (same machine) → port 443 → Traefik → eve-network → synap
- * just to reach a container running locally. Three failure modes (DNS,
- * cert, traefik routing) for what should be a localhost call. After hours
- * of chasing 401-without-envelope and 404-on-setup/agent symptoms, the
- * real fix was to stop pretending we're a remote client.
+ * The previous version of `DockerExecRunner` shelled into the synap
+ * container and ran BusyBox `wget`. That worked, *mostly*, but BusyBox
+ * supports a tiny, idiosyncratic subset of wget's flags and silently
+ * misbehaves on the wrong arg form (`--header=` is dropped, `--post-data`
+ * space-form is dropped, `--method` doesn't exist, etc.). We chased
+ * intermittent 404s and "wrong status code" bugs for two days that
+ * turned out to be BusyBox quirks, not real backend errors. Replacing
+ * `wget` with `node -e 'fetch(...)'` removes the entire failure surface:
+ * one inline script, no shell escaping (body via stdin), arbitrary
+ * methods supported natively, JSON envelope back. Don't reintroduce wget.
  *
  * # `FallbackRunner` is retained but UNUSED in production
  *
@@ -109,7 +115,7 @@ export function resetSynapContainerCache(): void {
 export interface ExecPlan {
   /** Container we'll exec INTO. */
   container: string;
-  /** URL we'll ask wget INSIDE that container to fetch. */
+  /** URL the in-container Node script will fetch. */
   url: string;
 }
 
@@ -125,10 +131,10 @@ export interface ExecPlan {
  * could fail in between.
  *
  * Pinning to `127.0.0.1` (not `localhost`) is deliberate: Alpine's
- * `/etc/hosts` maps `localhost` to BOTH `::1` and `127.0.0.1`, and
- * BusyBox wget often picks `::1` first. The Node HTTP listener binds to
- * `0.0.0.0` (IPv4-only), so any IPv6 attempt comes back ECONNREFUSED —
- * which we previously misdiagnosed as "backend is dead." Pin to IPv4.
+ * `/etc/hosts` maps `localhost` to BOTH `::1` and `127.0.0.1`. The Node
+ * HTTP listener binds to `0.0.0.0` (IPv4-only), so any IPv6 attempt
+ * comes back ECONNREFUSED — which we previously misdiagnosed as
+ * "backend is dead." Pin to IPv4.
  *
  * Returns null if no synap-backend container is running locally; the
  * caller (`DockerExecRunner`) surfaces this as a transport error.
@@ -144,7 +150,7 @@ export function planExecRequest(url: string): ExecPlan | null {
     path = parsed.pathname || "/";
     search = parsed.search;
   } catch {
-    // Unparseable — fall through with a bare path. wget will still produce
+    // Unparseable — fall through with a bare path. fetch will produce
     // a useful error if the input was truly nonsense.
   }
 
@@ -155,120 +161,132 @@ export function planExecRequest(url: string): ExecPlan | null {
 }
 
 // ---------------------------------------------------------------------------
-// DockerExecRunner — runs HTTP requests via wget inside eve-legs-traefik
+// DockerExecRunner — runs HTTP requests via Node's native fetch inside the
+// synap-backend container (image is node:20-alpine, fetch is built in).
 // ---------------------------------------------------------------------------
 
 /**
- * Build the `wget` argv used to make the request. We call wget directly
- * (not through `sh -c`) so we don't have to worry about shell quoting of
- * URLs / headers that may contain `&` or `;`.
- *
- * IMPORTANT: Traefik's image is Alpine-based and ships **BusyBox wget**,
- * not GNU wget. BusyBox supports a tiny subset of GNU's flags. The first
- * version of this runner used `--method=`, `--quiet`, `--header=`,
- * `--timeout=`, `--body-file=`, `--body-data=` — all GNU-only — and every
- * call exited fast with "wget: unrecognized option", which our error
- * classifier then mis-identified as a timeout (BusyBox's usage help text
- * contains the word "timeout" in `-T SEC Network read timeout`). Two
- * silent failures stacked into one inscrutable user message.
- *
- * Flags below are BusyBox-compatible AND also valid in GNU wget:
- *   -q             quiet (no progress)
- *   -S             show server response on stderr (HTTP/1.1 lines + headers)
- *   -O -           write body to stdout
- *   -T <sec>       network read timeout
- *   --header HDR   request header (separate args, no `=`)
- *   --post-data S  POST body (BusyBox doesn't understand --body-data=)
- *
- * BusyBox wget does NOT support DELETE / PUT / PATCH / arbitrary methods.
- * For DELETE we return a sentinel that the runner treats as a no-op,
- * which matches our existing best-effort cleanup semantics.
+ * Sentinel that separates the JSON status envelope from streaming body
+ * bytes when the in-container script is run in streaming mode. Chosen to
+ * be highly unlikely to appear in a JSON header line (it starts with a
+ * literal newline).
  */
-type WgetArgs =
-  | { container: string; argv: string[]; supported: true }
+const STREAM_BODY_SENTINEL = "\n---SYNAP-BODY---\n";
+
+/**
+ * Build the `docker exec` argv that runs a small inline Node script inside
+ * the synap-backend container. The script:
+ *
+ *   1. Reads the request body from stdin (so callers that POST a payload
+ *      avoid shell escaping entirely — the body is a stream of bytes,
+ *      never an argv element).
+ *   2. Calls `fetch(URL, { method, headers, body, signal })` with an
+ *      AbortController wired to a hard timeout.
+ *   3. **Non-streaming mode**: writes a single JSON envelope to stdout —
+ *      `{ status, body, headers, error? }`. The host parses it and
+ *      returns a `DoctorRunnerResponse`.
+ *   4. **Streaming mode**: writes the JSON envelope (status + headers)
+ *      followed by the body sentinel, then pipes the response body
+ *      chunk-by-chunk to stdout. The host reads stdout, splits on the
+ *      sentinel, and yields the rest as the SSE stream.
+ *
+ * The script is passed to `node -e` as a SINGLE argv element, so there
+ * is no shell to escape — quotes and newlines inside the script are
+ * literal. All call-site values (URL, method, headers, timeout) are
+ * embedded via `JSON.stringify`, which produces valid JS literals.
+ *
+ * `-i` is required so docker exec attaches stdin (the body channel).
+ */
+type ExecArgs =
+  | { container: string; argv: string[]; stdin: string; supported: true }
   | { supported: false; reason: string };
 
-export function buildWgetArgs(
+export function buildExecArgs(
   method: "GET" | "POST" | "DELETE",
   url: string,
   headers: Record<string, string>,
   body: string | undefined,
-  timeoutSec: number,
+  timeoutMs: number,
   container: string,
-): WgetArgs {
-  if (method === "DELETE") {
-    // BusyBox wget can't issue arbitrary HTTP methods. Cleanup callers
-    // already use .catch(() => undefined) so a no-op response is fine.
-    return {
-      supported: false,
-      reason: "BusyBox wget cannot issue DELETE — cleanup skipped",
-    };
-  }
-
-  const argv: string[] = [
-    "exec",
+  streaming: boolean,
+): ExecArgs {
+  const script = buildNodeFetchScript(method, url, headers, !!body, timeoutMs, streaming);
+  return {
+    supported: true,
     container,
-    "wget",
-    "-q",
-    "-S",
-    "-O",
-    "-",
-    "-T",
-    String(timeoutSec),
-  ];
-  // BusyBox wget arg-form quirks (verified empirically against the
-  // wget shipped in the synap-backend container):
-  //
-  //   --header VALUE  (separate args)  → WORKS
-  //   --header=VALUE  (= form)         → BROKEN (silently dropped /
-  //                                      treated as positional URL)
-  //   --post-data VALUE (separate args) → BROKEN (treated as if
-  //                                       --post-data had no value;
-  //                                       falls through to GET)
-  //   --post-data=VALUE (= form)       → WORKS
-  //
-  // So the only safe combination is mixed: space form for `--header`,
-  // `=` form for `--post-data`. This matches the manual `docker exec`
-  // commands that returned real HTTP responses (400/401) during
-  // debugging — anything else returned a misleading 404 from a GET
-  // on a POST-only route. Don't "simplify" this without re-testing
-  // both flags against BusyBox.
-  for (const [k, v] of Object.entries(headers)) {
-    argv.push("--header", `${k}: ${v}`);
-  }
-  if (method === "POST") {
-    argv.push(`--post-data=${body ?? ""}`);
-  }
-  argv.push(url);
-  return { container, argv, supported: true };
+    argv: ["exec", "-i", container, "node", "-e", script],
+    // Body always goes via stdin — even on GET (empty string closes the pipe).
+    stdin: body ?? "",
+  };
 }
 
-/** Parse the `HTTP/1.1 NNN ...` status line out of wget's stderr. */
-function parseStatusFromStderr(stderr: string): { status: number; headers: Record<string, string> } {
-  const out: Record<string, string> = {};
-  let status = 0;
+/**
+ * Compose the inline Node script. Call-site values are injected via
+ * JSON.stringify (safe to embed inside JS source — JSON is a subset of JS).
+ *
+ * Why all helpers are inlined: docker exec runs this as a one-shot
+ * `node -e <script>` invocation with no module resolution, no top-level
+ * await, no `require` (we're running plain `node -e`, no bundler). Keep
+ * it self-contained.
+ */
+function buildNodeFetchScript(
+  method: "GET" | "POST" | "DELETE",
+  url: string,
+  headers: Record<string, string>,
+  hasBody: boolean,
+  timeoutMs: number,
+  streaming: boolean,
+): string {
+  const consts =
+    `const URL_=${JSON.stringify(url)};` +
+    `const METHOD=${JSON.stringify(method)};` +
+    `const HEADERS=${JSON.stringify(headers)};` +
+    `const TIMEOUT_MS=${timeoutMs};` +
+    `const HAS_BODY=${hasBody ? "true" : "false"};`;
 
-  // wget prints `  HTTP/1.1 200 OK` (with leading spaces) followed by
-  // `  Header: value` lines, optionally repeated for redirects (we
-  // disabled redirects via --max-redirect=0 implicitly — wget follows
-  // by default; for our endpoints this isn't an issue).
-  const lines = stderr.split(/\r?\n/);
-  for (const raw of lines) {
-    const line = raw.trim();
-    const m = /^HTTP\/[\d.]+\s+(\d{3})\b/.exec(line);
-    if (m) {
-      // Last status line wins (in case of redirects).
-      status = parseInt(m[1], 10);
-      // Reset headers — only keep the headers from the FINAL response.
-      for (const k of Object.keys(out)) delete out[k];
-      continue;
-    }
-    const h = /^([A-Za-z][A-Za-z0-9-]*)\s*:\s*(.*)$/.exec(line);
-    if (h) {
-      out[h[1].toLowerCase()] = h[2];
-    }
+  // Common prefix: collect stdin into `b`, then run main when it closes.
+  const prelude =
+    `let b='';` +
+    `process.stdin.on('data',c=>{b+=c;});` +
+    `process.stdin.on('end',async()=>{` +
+    `const ac=new AbortController();` +
+    `const tid=setTimeout(()=>ac.abort(),TIMEOUT_MS);` +
+    `try{` +
+    `const r=await fetch(URL_,{method:METHOD,headers:HEADERS,body:HAS_BODY?b:undefined,signal:ac.signal});`;
+
+  if (streaming) {
+    // Streaming: write envelope + sentinel, then pipe body chunks raw.
+    return (
+      consts +
+      prelude +
+      `const env={status:r.status,headers:Object.fromEntries(r.headers)};` +
+      `process.stdout.write(JSON.stringify(env)+${JSON.stringify(STREAM_BODY_SENTINEL)});` +
+      `if(r.body){` +
+      `const reader=r.body.getReader();` +
+      `while(true){` +
+      `const{done,value}=await reader.read();` +
+      `if(done)break;` +
+      `process.stdout.write(Buffer.from(value));` +
+      `}` +
+      `}` +
+      `}catch(e){` +
+      `process.stdout.write(JSON.stringify({status:0,headers:{},error:String(e&&e.message||e)})+${JSON.stringify(STREAM_BODY_SENTINEL)});` +
+      `}finally{clearTimeout(tid);}` +
+      `});`
+    );
   }
-  return { status, headers: out };
+
+  // Non-streaming: read full body, write single JSON envelope.
+  return (
+    consts +
+    prelude +
+    `const t=await r.text();` +
+    `process.stdout.write(JSON.stringify({status:r.status,body:t,headers:Object.fromEntries(r.headers)}));` +
+    `}catch(e){` +
+    `process.stdout.write(JSON.stringify({status:0,body:'',headers:{},error:String(e&&e.message||e)}));` +
+    `}finally{clearTimeout(tid);}` +
+    `});`
+  );
 }
 
 export class DockerExecRunner implements IDoctorRunner {
@@ -315,38 +333,40 @@ export class DockerExecRunner implements IDoctorRunner {
         error: "no synap-backend container available for docker-exec — run on the pod host or use FetchRunner",
       };
     }
-    const timeoutSec = Math.max(1, Math.round((opts.timeoutMs ?? 6_000) / 1000));
-    // Hard wall-clock cap on the docker exec itself — wget's -T is its
-    // OWN socket timeout, not the total exec time. We allow a small
-    // grace margin (+2s) for docker exec startup so wget's timeout fires
+    const timeoutMs = opts.timeoutMs ?? 6_000;
+    // Hard wall-clock cap on the docker exec itself — fetch's AbortController
+    // is the inner timeout (and produces a clean error envelope). We give
+    // docker exec startup a few extra seconds so the inner timeout fires
     // first when the upstream is slow.
-    const execTimeoutMs = timeoutSec * 1000 + 2_000;
+    const execTimeoutMs = timeoutMs + 4_000;
 
-    const built = buildWgetArgs(method, plan.url, headers, body, timeoutSec, plan.container);
+    const built = buildExecArgs(method, plan.url, headers, body, timeoutMs, plan.container, false);
     if (!built.supported) {
-      // DELETE on BusyBox — return a soft failure. Callers use this for
-      // best-effort cleanup and ignore the result via .catch(() => undefined).
       return { status: 0, body: "", headers: {}, error: built.reason };
     }
-    const { argv } = built;
 
-    // Optional verbose mode — `EVE_DEBUG_RUNNER=1 eve <cmd>` prints the
-    // exact docker invocation + wget response. Off by default; never
-    // touches happy-path performance. Critical when a probe fails and
-    // we need to see what the runner actually did.
+    // Optional verbose mode — `EVE_DEBUG_RUNNER=1 eve <cmd>` prints what
+    // we're about to run + the response. Off by default; never touches
+    // happy-path performance. Critical when a probe fails and we need to
+    // see what the runner actually did.
     const debug = process.env.EVE_DEBUG_RUNNER === "1";
     if (debug) {
+      // Print the docker prefix only — the full inline script is long
+      // and noisy. The script's behavior is a function of (method, url,
+      // headers, body), all of which are visible from the surrounding
+      // command flow.
+      const prefix = built.argv.slice(0, 5).join(" ");
       process.stderr.write(
-        `[debug-runner] exec: docker ${argv.map(a => /[\s'"]/.test(a) ? JSON.stringify(a) : a).join(" ")}\n`,
+        `[debug-runner] exec: docker ${prefix} <node-script> stdin=${built.stdin.length}b method=${method} url=${plan.url}\n`,
       );
     }
 
     try {
-      const res = await execa("docker", argv, {
+      const res = await execa("docker", built.argv, {
         timeout: execTimeoutMs,
         cancelSignal: opts.signal,
         reject: false,
-        stripFinalNewline: false,
+        input: built.stdin,
         encoding: "utf8",
       });
 
@@ -355,71 +375,43 @@ export class DockerExecRunner implements IDoctorRunner {
 
       if (debug) {
         process.stderr.write(
-          `[debug-runner] exitCode=${res.exitCode} stdout(${stdout.length}b)=${JSON.stringify(stdout.slice(0, 200))} stderr(${stderr.length}b)=${JSON.stringify(stderr.slice(0, 500))}\n`,
+          `[debug-runner] exitCode=${res.exitCode} stdout(${stdout.length}b)=${JSON.stringify(stdout.slice(0, 300))} stderr(${stderr.length}b)=${JSON.stringify(stderr.slice(0, 300))}\n`,
         );
       }
 
-      const parsed = parseStatusFromStderr(stderr);
-      if (debug) {
-        process.stderr.write(
-          `[debug-runner] parsedStatus=${parsed.status} parsedHeaders=${JSON.stringify(parsed.headers)}\n`,
-        );
+      // Happy path: stdout is a JSON envelope produced by our inline
+      // script. Anything else means the script never ran (no node? no
+      // container? docker exec failed?). Surface stderr in that case —
+      // it'll have the docker error message.
+      try {
+        const parsed = JSON.parse(stdout) as {
+          status: number;
+          body?: string;
+          headers?: Record<string, string>;
+          error?: string;
+        };
+        return {
+          status: parsed.status,
+          body: parsed.body ?? "",
+          headers: parsed.headers ?? {},
+          error: parsed.error,
+        };
+      } catch {
+        return {
+          status: 0,
+          body: "",
+          headers: {},
+          error:
+            stderr.trim().slice(0, 240) ||
+            `node-exec produced no JSON envelope (exit ${res.exitCode ?? -1})`,
+        };
       }
-
-      // wget exit codes:
-      //   0 = OK
-      //   1 = generic
-      //   4 = network failure (DNS, refused, unreachable)
-      //   5 = SSL verification
-      //   8 = server response (4xx/5xx) — we still get the body in stdout
-      //
-      // We map exit==0 OR exit==8 (got a response) to "we have a status
-      // code"; anything else is a transport failure (status 0).
-      if (parsed.status > 0) {
-        return { status: parsed.status, body: stdout, headers: parsed.headers };
-      }
-
-      // No HTTP status parsed → genuine transport error (DNS, refused).
-      return {
-        status: 0,
-        body: stdout,
-        headers: {},
-        error: this.summarizeTransportError(stderr, res.exitCode ?? -1),
-      };
     } catch (err) {
       // execa throws when the process is killed (timeout, abort signal).
       const e = err as { timedOut?: boolean; isCanceled?: boolean; message?: string };
       const reason = e.timedOut ? "timeout" : e.isCanceled ? "aborted" : (e.message || "exec failed");
       return { status: 0, body: "", headers: {}, error: reason };
     }
-  }
-
-  private summarizeTransportError(stderr: string, exitCode: number): string {
-    // Order matters — most specific first. BusyBox wget prints its
-    // entire usage block to stderr when a flag is unrecognized, and
-    // that block contains the literal word "timeout" (e.g. "Network
-    // read timeout is SEC seconds"). The previous version of this
-    // function matched /timeout/ and reported a real timeout — the
-    // exact false positive that masked the BusyBox compatibility bug
-    // in the first place. Detect the usage block first and surface
-    // the actual error reason.
-    if (/Usage:\s*wget/i.test(stderr) && /unrecognized option/i.test(stderr)) {
-      const m = /unrecognized option:\s*([^\n]+)/i.exec(stderr);
-      const flag = m ? m[1].trim() : "(unknown)";
-      return `wget rejected flag '${flag}' — likely BusyBox vs GNU wget mismatch`;
-    }
-    if (/bad address|name or service not known|could not resolve/i.test(stderr)) {
-      return "DNS lookup failed (container not on eve-network?)";
-    }
-    if (/connection refused/i.test(stderr)) {
-      return "connection refused";
-    }
-    // Match runtime timeout phrases only — NOT the literal word
-    // "timeout" which appears in BusyBox's usage help text.
-    if (/timed out|operation timed out|read error.*timed out/i.test(stderr)) {
-      return "timeout";
-    }
-    return `wget exit ${exitCode}: ${stderr.trim().slice(0, 160) || "no diagnostic"}`;
   }
 
   async httpStream(
@@ -437,31 +429,29 @@ export class DockerExecRunner implements IDoctorRunner {
         error: "no synap-backend container available for docker-exec",
       };
     }
-    const timeoutSec = Math.max(1, Math.round((opts.timeoutMs ?? 35_000) / 1000));
-    const built = buildWgetArgs("GET", plan.url, headers, undefined, timeoutSec, plan.container);
+    const timeoutMs = opts.timeoutMs ?? 35_000;
+    const built = buildExecArgs("GET", plan.url, headers, undefined, timeoutMs, plan.container, true);
     if (!built.supported) {
-      // GET should always be supported by buildWgetArgs; this is an
-      // exhaustiveness guard so the type narrows correctly below.
       return {
         ok: false,
         status: 0,
         headers: {},
         close: async () => { /* nothing to close */ },
         error: built.reason,
-        async *[Symbol.asyncIterator]() { /* never yields */ },
-      } as DoctorRunnerStream;
+      };
     }
-    const { argv } = built;
 
-    // We need stdout streaming. execa returns a stream-able subprocess
-    // when called without `await`; we attach our own data handler.
     let child: ResultPromise<{ encoding: "utf8"; reject: false }>;
     try {
-      child = execa("docker", argv, {
+      child = execa("docker", built.argv, {
         encoding: "utf8",
         reject: false,
-        timeout: timeoutSec * 1000 + 2_000,
+        // Stream timeout = caller's timeout + grace. The inner script
+        // also has its own AbortController on the same budget.
+        timeout: timeoutMs + 4_000,
         cancelSignal: opts.signal,
+        // Close stdin immediately — streaming is GET-only, no body.
+        input: "",
       });
     } catch (err) {
       return {
@@ -473,77 +463,104 @@ export class DockerExecRunner implements IDoctorRunner {
       };
     }
 
-    // wget --server-response writes status/headers to stderr BEFORE the
-    // first body byte. We collect stderr until we see the blank line
-    // marking end-of-headers, then start emitting body chunks from
-    // stdout. SSE bodies stream line-by-line — wget itself buffers
-    // some, but not pathologically.
-    let stderrBuf = "";
-    let headersResolved: ((value: { status: number; headers: Record<string, string> }) => void) | null = null;
-    const headersPromise = new Promise<{ status: number; headers: Record<string, string> }>((resolve) => {
-      headersResolved = resolve;
-    });
-
-    child.stderr?.setEncoding("utf8");
-    child.stderr?.on("data", (chunk: string) => {
-      stderrBuf += chunk;
-      // End of headers = a blank line after the last header. wget puts
-      // the blank line right after the final header it parsed.
-      if (headersResolved && /\n\s*\n/.test(stderrBuf)) {
-        const parsed = parseStatusFromStderr(stderrBuf);
-        if (parsed.status > 0) {
-          headersResolved(parsed);
-          headersResolved = null;
-        }
-      }
-    });
-
-    // Wait up to a small budget for headers — if wget never emits them,
-    // assume the request itself failed (DNS, refused) and surface the
-    // transport error.
-    const headerTimeout = new Promise<{ status: number; headers: Record<string, string> }>((resolve) => {
-      const t = setTimeout(() => resolve({ status: 0, headers: {} }), Math.min(8_000, timeoutSec * 1000));
-      // Don't keep the Node event loop alive on this timer.
-      t.unref?.();
-    });
-    // Also resolve on early exit — child died before headers arrived.
-    const exitGuard = child.then(() => ({ status: 0, headers: {} }));
-
-    const headerInfo = await Promise.race([headersPromise, headerTimeout, exitGuard]);
-
-    if (headerInfo.status === 0) {
-      // No headers seen → kill the child and surface as transport error.
+    const stdout = child.stdout;
+    if (!stdout) {
       try { child.kill("SIGKILL"); } catch { /* ignore */ }
-      const result = await child.catch(() => null);
-      const stderr = typeof result?.stderr === "string" ? result.stderr : stderrBuf;
       return {
         ok: false,
         status: 0,
         headers: {},
-        close: async () => { /* already dead */ },
-        error: this.summarizeTransportErrorPublic(stderr),
+        close: async () => { await child.catch(() => null); },
+        error: "no stdout pipe on docker exec subprocess",
+      };
+    }
+    stdout.setEncoding("utf8");
+
+    // Read stdout until we see the body sentinel. Everything before is
+    // the JSON envelope; everything after is the streamed response body.
+    //
+    // The envelope is wrapped in `state` so TypeScript's control-flow
+    // analysis doesn't collapse the post-await type to `never`. With a
+    // bare `let envelope = null`, TS sees no synchronous reassignment
+    // (the closures' assignments happen via callbacks it can't track)
+    // and narrows the variable to `null` forever — making the success
+    // branch unreachable from its perspective. Property-on-object
+    // assignments aren't narrowed the same way, so this stays correct.
+    type Envelope = { status: number; headers: Record<string, string>; error?: string };
+    const state: { envelope: Envelope | null; leftover: string; pre: string } = {
+      envelope: null,
+      leftover: "",
+      pre: "",
+    };
+
+    const onSentinel = new Promise<void>((resolve) => {
+      const handler = (chunk: string) => {
+        state.pre += chunk;
+        const idx = state.pre.indexOf(STREAM_BODY_SENTINEL);
+        if (idx < 0) return;
+
+        const headerJson = state.pre.slice(0, idx);
+        try {
+          state.envelope = JSON.parse(headerJson);
+        } catch {
+          state.envelope = {
+            status: 0,
+            headers: {},
+            error: `bad envelope: ${headerJson.slice(0, 200)}`,
+          };
+        }
+        state.leftover = state.pre.slice(idx + STREAM_BODY_SENTINEL.length);
+        stdout.removeListener("data", handler);
+        resolve();
+      };
+      stdout.on("data", handler);
+    });
+
+    const headerWaitMs = Math.min(8_000, timeoutMs);
+    const onTimeout = new Promise<void>((resolve) => {
+      const t = setTimeout(() => {
+        if (!state.envelope) {
+          state.envelope = { status: 0, headers: {}, error: "timed out waiting for envelope" };
+        }
+        resolve();
+      }, headerWaitMs);
+      t.unref?.();
+    });
+    const onExit = child.then((result) => {
+      if (!state.envelope) {
+        state.envelope = {
+          status: 0,
+          headers: {},
+          error: `subprocess exited before envelope (exit ${result?.exitCode ?? -1})`,
+        };
+      }
+    });
+
+    await Promise.race([onSentinel, onTimeout, onExit]);
+
+    const env = state.envelope;
+    if (!env || env.status === 0) {
+      try { child.kill("SIGKILL"); } catch { /* ignore */ }
+      return {
+        ok: false,
+        status: 0,
+        headers: env?.headers ?? {},
+        close: async () => { await child.catch(() => null); },
+        error: env?.error ?? "unknown stream failure",
       };
     }
 
-    // Successful headers → stream stdout. We yield decoded UTF-8 chunks.
-    // Caller breaks out of the loop and invokes `close()` to terminate
-    // the docker exec (which terminates wget which closes the SSE
-    // connection).
     let closed = false;
     const close = async () => {
       if (closed) return;
       closed = true;
       try { child.kill("SIGTERM"); } catch { /* ignore */ }
-      // Drain so the subprocess actually exits.
       await child.catch(() => null);
     };
 
+    const leftover = state.leftover;
     async function* iterate(): AsyncGenerator<string> {
-      const stdout = child.stdout;
-      if (!stdout) return;
-      stdout.setEncoding("utf8");
-      // Use the readable iterator — Node streams are async-iterable
-      // out of the box, yielding string chunks (encoding set above).
+      if (leftover) yield leftover;
       for await (const chunk of stdout) {
         if (closed) return;
         yield typeof chunk === "string" ? chunk : chunk.toString();
@@ -552,18 +569,11 @@ export class DockerExecRunner implements IDoctorRunner {
 
     return {
       ok: true,
-      status: headerInfo.status,
-      headers: headerInfo.headers,
+      status: env.status,
+      headers: env.headers,
       chunks: iterate(),
       close,
     };
-  }
-
-  // Public wrapper so the stream path can reuse the helper. (Renamed
-  // because TS doesn't like a private and a public method sharing a
-  // name on the same class.)
-  private summarizeTransportErrorPublic(stderr: string): string {
-    return this.summarizeTransportError(stderr, -1);
   }
 }
 
