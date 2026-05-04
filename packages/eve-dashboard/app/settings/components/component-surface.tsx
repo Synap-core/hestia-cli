@@ -6,7 +6,7 @@
  * Renders About / Actions / Config / Monitoring / Logs / Endpoints / Wiring
  * for one component. State (fetching, running action, progress feed, log
  * stream) lives here so both the drawer (slide-in) and the full-page route
- * (`/dashboard/components/[id]`) can use it without duplicating logic.
+ * (`/settings/components/[id]`) can use it without duplicating logic.
  *
  * `layout="drawer"` keeps spacing tight — the drawer's own header already
  * shows the title + status. `layout="page"` adds a top header with the
@@ -181,7 +181,7 @@ export function ComponentSurface({
         <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
           <div className="min-w-0">
             <Link
-              href="/dashboard/components"
+              href="/settings/components"
               className="inline-flex items-center gap-1 text-sm font-medium text-default-500 hover:text-primary"
             >
               <ChevronLeft className="h-4 w-4" />
@@ -416,7 +416,7 @@ function DetailBody({
                 {detail.requires.map(d => (
                   <Link
                     key={d.id}
-                    href={`/dashboard/components/${d.id}`}
+                    href={`/settings/components/${d.id}`}
                     className="inline-block"
                   >
                     <Chip size="sm" variant="flat" radius="sm" className="cursor-pointer hover:bg-content3">
@@ -436,7 +436,7 @@ function DetailBody({
                 {detail.requiredBy.map(d => (
                   <Link
                     key={d.id}
-                    href={`/dashboard/components/${d.id}`}
+                    href={`/settings/components/${d.id}`}
                     className="inline-block"
                   >
                     <Chip size="sm" variant="flat" radius="sm" color="primary" className="cursor-pointer hover:opacity-80">

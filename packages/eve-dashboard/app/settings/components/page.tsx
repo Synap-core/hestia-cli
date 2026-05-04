@@ -289,7 +289,7 @@ function Row({
 
         {/* Quick path to the full page (right-click → open in new tab works). */}
         <Link
-          href={`/dashboard/components/${row.id}`}
+          href={`/settings/components/${row.id}`}
           aria-label={`Open ${row.label} full page`}
           className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-default-400 hover:text-foreground hover:bg-content2 transition-colors"
           title="Open full page"

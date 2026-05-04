@@ -21,7 +21,7 @@ export default function ComponentPage() {
   // handles redirects globally, but if a request slips through (e.g.
   // expired cookie), surface that as a hard back-to-login.
   useEffect(() => {
-    if (!id) router.replace("/dashboard/components");
+    if (!id) router.replace("/settings/components");
   }, [id, router]);
 
   if (!id) return null;

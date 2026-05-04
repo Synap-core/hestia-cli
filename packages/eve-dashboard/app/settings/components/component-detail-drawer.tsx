@@ -5,7 +5,7 @@
  *
  * Thin wrapper around <ComponentSurface>. The drawer owns its own header
  * (title chip, refresh, full-page link, close). The surface renders the
- * body. The same surface is used by `/dashboard/components/[id]` for the
+ * body. The same surface is used by `/settings/components/[id]` for the
  * full-page view.
  */
 
@@ -65,7 +65,7 @@ export function ComponentDetailDrawer({
                   </button>
                   {componentId && (
                     <Link
-                      href={`/dashboard/components/${componentId}`}
+                      href={`/settings/components/${componentId}`}
                       onClick={onClose}
                       aria-label="Open full page"
                       title="Open full page"

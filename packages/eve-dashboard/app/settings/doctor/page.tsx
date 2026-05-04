@@ -267,7 +267,7 @@ function CheckRow({
         )}
         {check.componentId && !check.repair && (
           <a
-            href={`/dashboard/components`}
+            href={`/settings/components`}
             className="text-xs font-medium text-primary hover:underline"
           >
             Open

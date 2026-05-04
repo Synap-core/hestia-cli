@@ -360,7 +360,7 @@ export default function DashboardPage() {
         description="Each organ wires together a layer of your sovereign entity."
         action={
           <Link
-            href="/dashboard/components"
+            href="/settings/components"
             className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
           >
             View components <ArrowRight className="h-3.5 w-3.5" />
@@ -444,7 +444,7 @@ export default function DashboardPage() {
           <Surface className="p-6">
             <p className="text-sm text-default-500">
               No services are running yet — install components from the{" "}
-              <Link href="/dashboard/components" className="text-primary hover:underline">
+              <Link href="/settings/components" className="text-primary hover:underline">
                 catalog
               </Link>{" "}
               to populate this section.
@@ -686,7 +686,7 @@ function buildChecklist({
       label: "Configure a domain",
       description: "Without one, services are reachable only by IP and port.",
       severity: "recommended",
-      cta: { label: "Networking", href: "/dashboard/networking" },
+      cta: { label: "Networking", href: "/settings/networking" },
     });
   }
 
@@ -700,7 +700,7 @@ function buildChecklist({
       label: "Add an AI provider",
       description: "OpenClaw / Open WebUI / agents are idle without one.",
       severity: "must",
-      cta: { label: "AI Providers", href: "/dashboard/ai" },
+      cta: { label: "AI Providers", href: "/settings/ai" },
     });
   }
 
@@ -712,7 +712,7 @@ function buildChecklist({
       label: "Install Synap Pod",
       description: "The data store every other component reads from.",
       severity: "recommended",
-      cta: { label: "Components", href: "/dashboard/components" },
+      cta: { label: "Components", href: "/settings/components" },
     });
   }
 

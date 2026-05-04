@@ -16,18 +16,37 @@ interface NavItem {
   icon: ComponentType<{ className?: string }>;
 }
 
-const NAV: NavItem[] = [
-  { href: "/dashboard",            label: "Home",         icon: LayoutDashboard },
-  { href: "/dashboard/components", label: "Components",   icon: Boxes },
-  { href: "/agents",               label: "Agents",       icon: TermIcon },
-  { href: "/intents",              label: "Intents",      icon: CalendarClock },
-  { href: "/apps",                 label: "Apps",         icon: LayoutGrid },
-  { href: "/dashboard/channels",   label: "Channels",     icon: MessagesSquare },
-  { href: "/dashboard/ai",         label: "AI Providers", icon: Sparkles },
-  { href: "/dashboard/networking", label: "Networking",   icon: Globe },
-  { href: "/dashboard/doctor",     label: "Doctor",       icon: Stethoscope },
-  { href: "/dashboard/settings",   label: "Settings",     icon: SettingsIcon },
+interface NavGroup {
+  label?: string;
+  items: NavItem[];
+}
+
+// Top group: primary surfaces (Home, Agents, Intents, Apps).
+// Settings group: configuration pages (formerly under /dashboard/*).
+const NAV_GROUPS: NavGroup[] = [
+  {
+    items: [
+      { href: "/dashboard", label: "Home",    icon: LayoutDashboard },
+      { href: "/agents",    label: "Agents",  icon: TermIcon },
+      { href: "/intents",   label: "Intents", icon: CalendarClock },
+      { href: "/apps",      label: "Apps",    icon: LayoutGrid },
+    ],
+  },
+  {
+    label: "Settings",
+    items: [
+      { href: "/settings",            label: "General",      icon: SettingsIcon },
+      { href: "/settings/components", label: "Components",   icon: Boxes },
+      { href: "/settings/channels",   label: "Channels",     icon: MessagesSquare },
+      { href: "/settings/ai",         label: "AI Providers", icon: Sparkles },
+      { href: "/settings/networking", label: "Networking",   icon: Globe },
+      { href: "/settings/doctor",     label: "Doctor",       icon: Stethoscope },
+    ],
+  },
 ];
+
+// Flat list for the mobile horizontal nav strip (no group headers there).
+const NAV: NavItem[] = NAV_GROUPS.flatMap(g => g.items);
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -43,8 +62,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     router.push("/login");
   }
 
-  const isActive = (href: string) =>
-    pathname === href || (href !== "/" && pathname?.startsWith(href + "/"));
+  // Exact-match-only routes are roots that have child routes living under
+  // them in the same NAV group (e.g. /settings has /settings/components).
+  // For those, we only want the parent active on its exact path, never on a
+  // child path — otherwise both the parent and the child would highlight.
+  const EXACT_ONLY = new Set<string>(["/settings"]);
+  const isActive = (href: string) => {
+    if (EXACT_ONLY.has(href)) return pathname === href;
+    return pathname === href || (href !== "/" && pathname?.startsWith(href + "/"));
+  };
 
   return (
     <div className="flex min-h-screen">
@@ -58,31 +84,40 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           )}
         </div>
 
-        <nav className="flex-1 min-h-0 overflow-y-auto px-3 mt-2 space-y-0.5">
-          {NAV.map(({ href, label, icon: Icon }) => {
-            const active = isActive(href);
-            return (
-              <Link
-                key={href}
-                href={href}
-                className={
-                  "group relative flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors " +
-                  (active
-                    ? "bg-content2 text-foreground"
-                    : "text-default-500 hover:bg-content2/60 hover:text-foreground")
-                }
-              >
-                {active && (
-                  <span
-                    className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r-full bg-primary"
-                    aria-hidden
-                  />
-                )}
-                <Icon className="h-4 w-4" />
-                <span>{label}</span>
-              </Link>
-            );
-          })}
+        <nav className="flex-1 min-h-0 overflow-y-auto px-3 mt-2 space-y-3">
+          {NAV_GROUPS.map((group, groupIdx) => (
+            <div key={group.label ?? `g${groupIdx}`} className="space-y-0.5">
+              {group.label && (
+                <p className="px-3 pt-1 pb-1.5 text-[10px] font-medium uppercase tracking-wider text-default-400">
+                  {group.label}
+                </p>
+              )}
+              {group.items.map(({ href, label, icon: Icon }) => {
+                const active = isActive(href);
+                return (
+                  <Link
+                    key={href}
+                    href={href}
+                    className={
+                      "group relative flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors " +
+                      (active
+                        ? "bg-content2 text-foreground"
+                        : "text-default-500 hover:bg-content2/60 hover:text-foreground")
+                    }
+                  >
+                    {active && (
+                      <span
+                        className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r-full bg-primary"
+                        aria-hidden
+                      />
+                    )}
+                    <Icon className="h-4 w-4" />
+                    <span>{label}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          ))}
         </nav>
 
         <div className="px-3 pb-4 pt-3 border-t border-divider space-y-1 shrink-0">

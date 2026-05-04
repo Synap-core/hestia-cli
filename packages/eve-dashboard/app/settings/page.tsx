@@ -8,7 +8,7 @@ import {
   Download, Sun, Moon, Monitor,
 } from "lucide-react";
 import { useTheme } from "next-themes";
-import { ThemeToggle } from "../../components/theme-toggle";
+import { ThemeToggle } from "../components/theme-toggle";
 
 // ---------------------------------------------------------------------------
 // Types

@@ -105,7 +105,7 @@ function OpenclawMissing() {
       </p>
       <div className="pt-1">
         <Link
-          href="/dashboard/components"
+          href="/settings/components"
           className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
         >
           Install OpenClaw
@@ -149,7 +149,7 @@ function MultiUserOwuiNote() {
             on the synap-backend container plus the matching valve on each
             pipeline. See the{" "}
             <Link
-              href="/dashboard/components?id=openwebui"
+              href="/settings/components?id=openwebui"
               className="text-primary hover:underline"
             >
               Open WebUI panel
