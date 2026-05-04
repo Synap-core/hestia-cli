@@ -17,6 +17,7 @@ import {
   ensureSecretValue,
   defaultSkillsDir,
   ensureEveSkillsLayout,
+  publicComponentUrl,
   type SetupProfileKind,
   type EveSecrets,
 } from '@eve/dna';
@@ -995,8 +996,22 @@ export function setupCommand(program: Command): void {
         const podKey = ensureSecretValue(
           prevSecrets?.synap?.apiKey ?? process.env.SYNAP_API_KEY ?? process.env.OPENCLAW_SYNAP_API_KEY,
         );
+        // Prefer the public Traefik URL when a real domain is configured.
+        // synap-backend has no host port mapping (`hostPort: null`), so a
+        // loopback apiUrl points at nothing — every CLI call then has to
+        // fall back to docker-exec. Public URL via Traefik is the design.
+        // Only when no domain is set (pure local install) do we fall back
+        // to loopback, which is correct for that case (port-forward dev
+        // setups). Existing apiUrl is preserved unless it's the dead
+        // loopback default and we now have a public route to use.
+        const publicPodUrl = publicComponentUrl('synap', installDomain, Boolean(installEmail));
+        const previousApiUrl = prevSecrets?.synap?.apiUrl;
+        const apiUrl = (() => {
+          if (publicPodUrl) return publicPodUrl;
+          return previousApiUrl ?? 'http://127.0.0.1:4000';
+        })();
         merge.synap = {
-          apiUrl: prevSecrets?.synap?.apiUrl ?? 'http://127.0.0.1:4000',
+          apiUrl,
           apiKey: podKey,
           hubBaseUrl: prevSecrets?.synap?.hubBaseUrl ?? process.env.SYNAP_HUB_BASE_URL ?? undefined,
         };

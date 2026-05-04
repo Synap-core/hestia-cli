@@ -112,13 +112,17 @@ export function planExecRequest(url: string): ExecPlan {
     host === "synap-backend-1";
 
   if (targetsSynap) {
-    // First choice: exec into synap-backend itself with localhost. This
-    // works regardless of network topology. If the container isn't on
-    // this host, fall back to traefik with the in-network hostname.
+    // First choice: exec into synap-backend itself with 127.0.0.1. This
+    // works regardless of network topology. We use 127.0.0.1 (not
+    // `localhost`) because Alpine's /etc/hosts maps `localhost` to BOTH
+    // ::1 and 127.0.0.1, and BusyBox wget often picks ::1 first. The
+    // Node HTTP listener binds to 0.0.0.0 (IPv4 only) so any IPv6
+    // attempt comes back ECONNREFUSED — the original "backend is dead"
+    // false positive that took an hour to diagnose. Pin to IPv4.
     const synap = findRunningSynapContainer();
     if (synap) {
       const u = new URL(url);
-      u.hostname = "localhost";
+      u.hostname = "127.0.0.1";
       return { container: synap, url: u.toString() };
     }
     // No live synap container — let traefik try in case it's on a

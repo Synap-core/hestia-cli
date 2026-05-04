@@ -11,7 +11,7 @@ import {
   hasAnyProvider,
 } from '@eve/dna';
 import { verifyComponent } from '@eve/legs';
-import { runHubProtocolProbes, type HubProtocolDiagnostic } from '@eve/lifecycle';
+import { runHubProtocolProbes, detectLoopbackApiUrl, type HubProtocolDiagnostic } from '@eve/lifecycle';
 import { probeRoutes, probeVerdict, type RouteProbe } from '../lib/probe-routes.js';
 import { diagnoseFailedRoute, type DeepDiagnostic } from '../lib/diagnose-route.js';
 import { DockerExecRunner, FallbackRunner, FetchRunner } from '../lib/doctor-runners.js';
@@ -227,6 +227,30 @@ async function runDiagnostics(opts: DoctorOptions = { verbose: false, skipProbes
   // unrelated check don't sit through ~35s of SSE wait time.
   const secrets = await readEveSecrets(process.cwd());
   const synapInstalled = installed.includes('synap');
+
+  // Check 4b-pre: Pod URL sanity. synap-backend has `hostPort: null` (it's
+  // routed via Traefik, never exposed to the host). When secrets.synap.apiUrl
+  // is loopback BUT a public domain is configured, every CLI call ends up
+  // chasing fallback paths (FetchRunner ECONNREFUSED → docker-exec workaround
+  // → IPv6 quirks → 401-without-envelope misclassifications). Surface this
+  // BEFORE the Hub Protocol probes so the operator sees the upstream cause
+  // instead of debugging downstream symptoms one at a time.
+  if (synapInstalled) {
+    try {
+      const suggestion = await detectLoopbackApiUrl();
+      if (suggestion) {
+        checks.push({
+          name: 'Synap pod URL',
+          status: 'warn',
+          message: `apiUrl is loopback (${suggestion.current}) but pod is behind Traefik on ${suggestion.domain}. synap-backend has no host port; loopback resolves to nothing.`,
+          fix: `eve update synap   # rewrites apiUrl → ${suggestion.suggested}`,
+        });
+      }
+    } catch {
+      // Detection is best-effort — never block the rest of doctor on it.
+    }
+  }
+
   if (synapInstalled && !skipProbes) {
     const synapApiUrl = secrets?.synap?.apiUrl ?? '';
     // Doctor probes use the "eve" agent's key — that agent is reserved

@@ -330,3 +330,47 @@ export function selectedIds(selected: Record<string, boolean>): string[] {
 export function serviceComponents(): ComponentInfo[] {
   return COMPONENTS.filter(c => c.service !== undefined && c.service.subdomain !== null);
 }
+
+/**
+ * Build the public Traefik URL for a component, e.g. `https://pod.example.com`
+ * for `componentId='synap'` + `domain='example.com'` + `ssl=true`.
+ *
+ * Returns `null` when:
+ *   - the domain is missing or `localhost` (no public routing → caller should
+ *     fall back to a host-port loopback URL or container DNS)
+ *   - the component has no subdomain (not Traefik-routed)
+ *
+ * Why this lives in @eve/dna: the subdomain mapping (synap → 'pod', openclaw →
+ * 'openclaw', …) is owned by COMPONENTS. Anything that wants a public URL —
+ * setup write site, doctor, lifecycle reconcile — should derive it from one
+ * helper instead of re-stringifying `https://pod.${domain}` in five places
+ * and drifting when we rename a subdomain.
+ */
+export function publicComponentUrl(
+  componentId: string,
+  domain: string | undefined | null,
+  ssl: boolean,
+): string | null {
+  const cleanDomain = domain?.trim();
+  if (!cleanDomain || cleanDomain === 'localhost') return null;
+  const comp = COMPONENTS.find(c => c.id === componentId);
+  if (!comp || !comp.service?.subdomain) return null;
+  const scheme = ssl ? 'https' : 'http';
+  return `${scheme}://${comp.service.subdomain}.${cleanDomain}`;
+}
+
+/** True if a URL points at a host-loopback address (127.0.0.1, ::1, localhost). */
+export function isLoopbackUrl(url: string | undefined | null): boolean {
+  if (!url) return false;
+  try {
+    const u = new URL(url);
+    return (
+      u.hostname === '127.0.0.1' ||
+      u.hostname === 'localhost' ||
+      u.hostname === '::1' ||
+      u.hostname === '[::1]'
+    );
+  } catch {
+    return false;
+  }
+}

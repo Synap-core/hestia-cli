@@ -27,6 +27,8 @@ import {
   writeEveSecrets,
   pickPrimaryProvider,
   wireComponentAi,
+  publicComponentUrl,
+  isLoopbackUrl,
   AI_CONSUMERS,
   AI_CONSUMERS_NEEDING_RECREATE,
   type ComponentInfo,
@@ -438,9 +440,87 @@ async function* runPostUpdateHooks(comp: ComponentInfo): AsyncGenerator<Lifecycl
  * synap-backend restart. Downstream consumers may need a restart to pick
  * up the new key — surfaced as a hint, not enforced here.
  */
+// ---------------------------------------------------------------------------
+// apiUrl reconcile — loopback → public Traefik URL
+// ---------------------------------------------------------------------------
+
+export interface ApiUrlReconcileSuggestion {
+  /** Current secrets.synap.apiUrl (or empty string if unset). */
+  current: string;
+  /** Public URL that should be used (https://pod.<domain>). */
+  suggested: string;
+  /** Configured primary domain that drove the suggestion. */
+  domain: string;
+}
+
+/**
+ * Returns a suggestion when secrets.synap.apiUrl is loopback AND a public
+ * domain is configured (so a Traefik route exists). Used by both the
+ * lifecycle reconcile (rewrites in place) and the doctor (surfaces a
+ * structured warning so the operator sees WHY the docker-exec fallback
+ * is firing on every probe). Returns `null` when nothing needs changing.
+ */
+export async function detectLoopbackApiUrl(): Promise<ApiUrlReconcileSuggestion | null> {
+  const secrets = await readEveSecrets();
+  const current = secrets?.synap?.apiUrl?.trim() ?? "";
+  if (!isLoopbackUrl(current)) return null;
+  const domain = secrets?.domain?.primary?.trim() ?? "";
+  if (!domain || domain === "localhost") return null;
+  const ssl = Boolean(secrets?.domain?.ssl);
+  const suggested = publicComponentUrl("synap", domain, ssl);
+  if (!suggested) return null;
+  return { current, suggested, domain };
+}
+
+/**
+ * In-place self-heal: detect + rewrite + log. Yields zero or one log
+ * event. Idempotent — a no-op when apiUrl already matches the public
+ * URL or when no domain is configured. Failures (write errors, etc.)
+ * yield a log line but never throw — the rest of the update should
+ * still complete.
+ */
+async function* reconcileLoopbackApiUrl(): AsyncGenerator<LifecycleEvent> {
+  let suggestion: ApiUrlReconcileSuggestion | null;
+  try {
+    suggestion = await detectLoopbackApiUrl();
+  } catch (err) {
+    yield {
+      type: "log",
+      line: `↳ apiUrl reconcile skipped: ${err instanceof Error ? err.message : String(err)}`,
+    };
+    return;
+  }
+  if (!suggestion) return;
+  try {
+    await writeEveSecrets({ synap: { apiUrl: suggestion.suggested } });
+    yield {
+      type: "log",
+      line: `↳ apiUrl rewritten ${suggestion.current} → ${suggestion.suggested} (loopback unreachable behind Traefik; using public route)`,
+    };
+  } catch (err) {
+    yield {
+      type: "log",
+      line: `↳ apiUrl reconcile failed (${err instanceof Error ? err.message : String(err)}) — fix manually: edit .eve/secrets/secrets.json synap.apiUrl=${suggestion.suggested}`,
+    };
+  }
+}
+
 async function* postUpdateReconcileAuth(): AsyncGenerator<LifecycleEvent> {
   const { getAuthStatus, renewAgentKey, migrateLegacyToAgents } = await import("./auth.js");
   const { readAgentKey } = await import("@eve/dna");
+
+  // Step 0 — Reconcile apiUrl FIRST, before any auth probe runs. Older
+  // installs (and the previous setup.ts default) wrote a loopback URL
+  // (http://127.0.0.1:4000) into secrets.synap.apiUrl. synap-backend has
+  // no host port mapping (`hostPort: null` in COMPONENTS), so loopback
+  // points at nothing — every probe then fails with a transport error,
+  // FallbackRunner swaps to docker-exec, and a chain of misleading
+  // symptoms ensues (DNS issues, IPv6 ::1 resolution, 401-without-envelope,
+  // 404-on-setup/agent). Rewriting the URL once means the rest of this
+  // hook — and every subsequent CLI/doctor call — uses the public Traefik
+  // route, which is the actual designed path.
+  yield* reconcileLoopbackApiUrl();
+
   const secrets = await readEveSecrets();
   const synapUrl = secrets?.synap?.apiUrl?.trim() ?? "";
   if (!synapUrl) {

@@ -150,6 +150,8 @@ export {
   addonComponentIds,
   selectedIds,
   serviceComponents,
+  publicComponentUrl,
+  isLoopbackUrl,
 } from './components.js';
 
 // Centralized AI provider wiring
