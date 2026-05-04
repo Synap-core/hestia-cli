@@ -1,27 +1,41 @@
 /**
  * CLI-side IDoctorRunner implementations for `eve doctor` and `eve auth`.
  *
- * Why this lives in the CLI and not in `@eve/lifecycle`:
- *   - The lifecycle module is framework-agnostic and uses only Node built-ins.
- *     Adding `execa` / `child_process` there would force the dashboard's
- *     bundle to ship a Docker shell-out path it would never call.
- *   - `DockerExecRunner` only makes sense on a host where `docker` is on
- *     PATH and a synap-backend container exists — CLI context only.
+ * # Two runners, one decision
  *
- * Composition:
- *   - `DockerExecRunner` — wraps `docker exec` into either synap-backend
- *     directly (when reachable) or eve-legs-traefik. See `planExecRequest`
- *     for the routing logic.
- *   - `FallbackRunner` — tries `FetchRunner` first, swaps to
- *     `DockerExecRunner` on transport-level errors. Sticky for the run.
- *   - `buildDoctorRunner()` — single canonical builder used by every
- *     CLI command. Don't instantiate `FallbackRunner` directly elsewhere.
+ * The CLI talks to its OWN pod's synap-backend. We pick a transport ONCE
+ * at startup based on where we're running:
  *
- * Defensive net, not the happy path. With `resolveSynapUrl` (in `@eve/dna`)
- * returning the public Traefik URL whenever a domain is configured, native
- * fetch reaches the pod fine on every standard install — the swap to
- * docker-exec only fires for true bootstrap edge cases (cert pending,
- * DNS not propagated, no domain).
+ *   • **On the pod host** (synap-backend container is here):
+ *     `DockerExecRunner` execs straight into the container with
+ *     `127.0.0.1:4000`. No DNS, no Traefik, no TLS, no firewall — the
+ *     fastest, most reliable path possible.
+ *
+ *   • **Off the pod host** (managing a remote pod from a laptop):
+ *     `FetchRunner` against the public Traefik URL. The only option, but
+ *     it requires DNS + cert + traefik routing to all be healthy.
+ *
+ * `buildPodRunner()` makes the decision and returns the right one. There
+ * is NO automatic fallback between them: the choice is a property of
+ * WHERE we run, not a recoverable state. If the synap container is
+ * detected but exec fails mid-call, we surface a clear error instead of
+ * silently retrying via the slower public path (which often won't work
+ * from inside the pod host either — split-DNS, firewall, cert pending).
+ *
+ * # Why DockerExecRunner is preferred
+ *
+ * The previous architecture went through the public URL even when on the
+ * pod host. That meant CLI calls did:
+ *   DNS → public IP (same machine) → port 443 → Traefik → eve-network → synap
+ * just to reach a container running locally. Three failure modes (DNS,
+ * cert, traefik routing) for what should be a localhost call. After hours
+ * of chasing 401-without-envelope and 404-on-setup/agent symptoms, the
+ * real fix was to stop pretending we're a remote client.
+ *
+ * # `FallbackRunner` is retained but UNUSED in production
+ *
+ * Kept for the test suite and as a generic primitive someone might want
+ * later. Never wire it into the CLI's happy path.
  */
 
 import { execa, type ResultPromise } from "execa";
@@ -34,27 +48,12 @@ import {
 } from "@eve/lifecycle";
 
 // ---------------------------------------------------------------------------
-// URL → in-network rewrite
+// Synap container detection + URL planning
 // ---------------------------------------------------------------------------
 
 /**
- * Plan a `docker exec wget` invocation: pick the right container to
- * exec INTO, plus the URL form that container should fetch.
- *
- * Why this matters: Eve's `eve-legs-traefik` lives on `eve-network`. The
- * synap-backend pod sometimes lives on its own compose network (e.g.
- * `synap-backend_default`) and is NOT reachable from traefik by hostname.
- * Routing every probe through traefik then fails DNS for `synap-backend-*`.
- *
- * The robust play is: for synap-backend probes (URL points at loopback
- * or at the synap container hostname), exec STRAIGHT INTO synap-backend
- * itself and call `localhost:4000`. No cross-network DNS, no traefik in
- * the path. For public/external URLs, traefik is fine — it has internet
- * egress. For other internal hostnames (`intelligence-hub`, etc.) we
- * still try traefik first.
- *
- * Returns `null` if nothing usable is on this host (no docker, neither
- * candidate container running). Callers should surface a clear error.
+ * Names the synap-backend container is known to register under, depending
+ * on which deploy path created it. We probe in order; first match wins.
  */
 const SYNAP_BACKEND_CONTAINER_CANDIDATES: ReadonlyArray<string> = [
   "synap-backend-backend-1",
@@ -62,17 +61,22 @@ const SYNAP_BACKEND_CONTAINER_CANDIDATES: ReadonlyArray<string> = [
   "synap-backend-1",
 ];
 
-const TRAEFIK_CONTAINER = "eve-legs-traefik";
-
 let cachedSynapContainer: string | null | undefined;
 
-function findRunningSynapContainer(): string | null {
+/**
+ * Returns the name of a running synap-backend container, or null if none.
+ *
+ * Cached for the life of the process because (a) the container's running
+ * state is stable for the duration of any single CLI command and (b) every
+ * `docker inspect` call is ~50ms — without the cache a single probe-heavy
+ * command (`eve doctor`) would burn seconds on redundant checks.
+ *
+ * Tests can reset the cache via `resetSynapContainerCache()`.
+ */
+export function findRunningSynapContainer(): string | null {
   if (cachedSynapContainer !== undefined) return cachedSynapContainer;
   for (const name of SYNAP_BACKEND_CONTAINER_CANDIDATES) {
     try {
-      // `docker inspect` exits non-zero if the container doesn't exist;
-      // `--format` is noise-free and won't paginate. Ignore stdout/stderr
-      // — we only care about the exit code.
       const { execSync } = require("node:child_process") as typeof import("node:child_process");
       execSync(`docker inspect --format='{{.State.Running}}' ${name}`, {
         stdio: ["ignore", "pipe", "ignore"],
@@ -88,59 +92,57 @@ function findRunningSynapContainer(): string | null {
   return null;
 }
 
+/** Test hook — reset the container detection cache. */
+export function resetSynapContainerCache(): void {
+  cachedSynapContainer = undefined;
+}
+
 export interface ExecPlan {
+  /** Container we'll exec INTO. */
   container: string;
+  /** URL we'll ask wget INSIDE that container to fetch. */
   url: string;
 }
 
-export function planExecRequest(url: string): ExecPlan {
-  let parsed: URL | null = null;
-  try {
-    parsed = new URL(url);
-  } catch {
-    // Unparseable — let wget surface the error from inside traefik.
-    return { container: TRAEFIK_CONTAINER, url };
-  }
-
-  const host = parsed.hostname;
-  const targetsSynap =
-    host === "127.0.0.1" ||
-    host === "localhost" ||
-    host === "synap-backend-backend-1" ||
-    host === "synap-backend" ||
-    host === "synap-backend-1";
-
-  if (targetsSynap) {
-    // First choice: exec into synap-backend itself with 127.0.0.1. This
-    // works regardless of network topology. We use 127.0.0.1 (not
-    // `localhost`) because Alpine's /etc/hosts maps `localhost` to BOTH
-    // ::1 and 127.0.0.1, and BusyBox wget often picks ::1 first. The
-    // Node HTTP listener binds to 0.0.0.0 (IPv4 only) so any IPv6
-    // attempt comes back ECONNREFUSED — the original "backend is dead"
-    // false positive that took an hour to diagnose. Pin to IPv4.
-    const synap = findRunningSynapContainer();
-    if (synap) {
-      const u = new URL(url);
-      u.hostname = "127.0.0.1";
-      return { container: synap, url: u.toString() };
-    }
-    // No live synap container — let traefik try in case it's on a
-    // network we share. Rewrite to the canonical hostname.
-    const u = new URL(url);
-    u.hostname = "synap-backend-backend-1";
-    return { container: TRAEFIK_CONTAINER, url: u.toString() };
-  }
-
-  // Anything else (public domain, eve-* hostname) → traefik.
-  return { container: TRAEFIK_CONTAINER, url };
-}
-
 /**
- * Back-compat wrapper retained for existing callers and tests. Returns
- * just the rewritten URL — newer callers should use `planExecRequest`.
+ * Plan a `docker exec` request to reach synap-backend.
+ *
+ * This runner is single-purpose: every URL passed here is meant for THIS
+ * pod's API. The hostname in the input is irrelevant — whether the caller
+ * resolved `https://pod.example.com/...` or `http://127.0.0.1:4000/...`,
+ * we only care about path + query. We always exec INTO the synap-backend
+ * container itself and call `127.0.0.1:4000` — bypassing DNS, Traefik,
+ * TLS, the host network, and any of a dozen other moving parts that
+ * could fail in between.
+ *
+ * Pinning to `127.0.0.1` (not `localhost`) is deliberate: Alpine's
+ * `/etc/hosts` maps `localhost` to BOTH `::1` and `127.0.0.1`, and
+ * BusyBox wget often picks `::1` first. The Node HTTP listener binds to
+ * `0.0.0.0` (IPv4-only), so any IPv6 attempt comes back ECONNREFUSED —
+ * which we previously misdiagnosed as "backend is dead." Pin to IPv4.
+ *
+ * Returns null if no synap-backend container is running locally; the
+ * caller (`DockerExecRunner`) surfaces this as a transport error.
  */
-export function rewriteUrlForDockerExec(url: string): string {
-  return planExecRequest(url).url;
+export function planExecRequest(url: string): ExecPlan | null {
+  const synap = findRunningSynapContainer();
+  if (!synap) return null;
+
+  let path = "/";
+  let search = "";
+  try {
+    const parsed = new URL(url);
+    path = parsed.pathname || "/";
+    search = parsed.search;
+  } catch {
+    // Unparseable — fall through with a bare path. wget will still produce
+    // a useful error if the input was truly nonsense.
+  }
+
+  return {
+    container: synap,
+    url: `http://127.0.0.1:4000${path}${search}`,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -183,7 +185,7 @@ export function buildWgetArgs(
   headers: Record<string, string>,
   body: string | undefined,
   timeoutSec: number,
-  container: string = TRAEFIK_CONTAINER,
+  container: string,
 ): WgetArgs {
   if (method === "DELETE") {
     // BusyBox wget can't issue arbitrary HTTP methods. Cleanup callers
@@ -281,6 +283,14 @@ export class DockerExecRunner implements IDoctorRunner {
     opts: { signal?: AbortSignal; timeoutMs?: number },
   ): Promise<DoctorRunnerResponse> {
     const plan = planExecRequest(url);
+    if (!plan) {
+      return {
+        status: 0,
+        body: "",
+        headers: {},
+        error: "no synap-backend container available for docker-exec — run on the pod host or use FetchRunner",
+      };
+    }
     const timeoutSec = Math.max(1, Math.round((opts.timeoutMs ?? 6_000) / 1000));
     // Hard wall-clock cap on the docker exec itself — wget's -T is its
     // OWN socket timeout, not the total exec time. We allow a small
@@ -371,6 +381,15 @@ export class DockerExecRunner implements IDoctorRunner {
     opts: { signal?: AbortSignal; timeoutMs?: number } = {},
   ): Promise<DoctorRunnerStream> {
     const plan = planExecRequest(url);
+    if (!plan) {
+      return {
+        ok: false,
+        status: 0,
+        headers: {},
+        close: async () => { /* nothing to close */ },
+        error: "no synap-backend container available for docker-exec",
+      };
+    }
     const timeoutSec = Math.max(1, Math.round((opts.timeoutMs ?? 35_000) / 1000));
     const built = buildWgetArgs("GET", plan.url, headers, undefined, timeoutSec, plan.container);
     if (!built.supported) {
@@ -620,28 +639,40 @@ export class FallbackRunner implements IDoctorRunner {
 export { FetchRunner, isFetchTransportError };
 
 // ---------------------------------------------------------------------------
-// Shared builder — single way to construct the CLI's defensive runner
+// Single decision: on-host = docker-exec, off-host = fetch
 // ---------------------------------------------------------------------------
 
 /**
- * Build the canonical CLI runner: native fetch first, docker-exec fallback
- * on transport errors. Used by `eve doctor`, `eve auth provision/renew/status`,
- * and any future commands that need to talk to the pod.
+ * Pick the right transport for talking to THIS pod's API.
  *
- * With the new resolveSynapUrl architecture this should rarely fall back —
- * the resolver returns the public Traefik URL whenever a domain is set, and
- * fetch reaches that fine. Fallback exists for the bootstrap moment (cert
- * pending, DNS not yet propagated) and pure local installs without a domain.
+ * - **On the pod host** (synap-backend container is running locally):
+ *   `DockerExecRunner`. Direct exec with `127.0.0.1:4000`. No DNS, no
+ *   Traefik, no TLS — the fastest, most reliable path. Works regardless
+ *   of public domain config, cert state, or firewall.
  *
- * `onSwapNote` is optional; pass a recorder if the caller wants to surface
- * the swap reason in its UI (the doctor does), or omit for silent fallback.
+ * - **Off the pod host** (managing remotely): `FetchRunner` against the
+ *   public URL. The only option, requires DNS + cert + traefik to be
+ *   healthy. The caller is responsible for resolving the public URL via
+ *   `resolveSynapUrl(secrets)`.
+ *
+ * No automatic fallback between the two. The choice is a property of
+ * WHERE we run, not a transient state to recover from. If we're on the
+ * pod host and exec fails (rare), we surface a clear error instead of
+ * silently retrying via the public URL — which on a pod host often
+ * doesn't work either (split-DNS, firewall, cert pending).
+ *
+ * `onTransportNote` is an optional one-time hook so callers can surface
+ * which path was chosen — the doctor uses it to print a one-liner so
+ * users know whether they're on the local fast path or the remote path.
  */
-export function buildDoctorRunner(
-  onSwapNote?: (note: string) => void,
-): FallbackRunner {
-  return new FallbackRunner(
-    new FetchRunner(),
-    new DockerExecRunner(),
-    onSwapNote,
-  );
+export function buildPodRunner(
+  onTransportNote?: (note: string) => void,
+): IDoctorRunner {
+  const synap = findRunningSynapContainer();
+  if (synap) {
+    onTransportNote?.(`using docker-exec into ${synap} (on-host CLI)`);
+    return new DockerExecRunner();
+  }
+  onTransportNote?.("using fetch against public pod URL (off-host CLI)");
+  return new FetchRunner();
 }

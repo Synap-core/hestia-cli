@@ -15,7 +15,7 @@ import { verifyComponent } from '@eve/legs';
 import { runHubProtocolProbes, type HubProtocolDiagnostic } from '@eve/lifecycle';
 import { probeRoutes, probeVerdict, type RouteProbe } from '../lib/probe-routes.js';
 import { diagnoseFailedRoute, type DeepDiagnostic } from '../lib/diagnose-route.js';
-import { buildDoctorRunner } from '../lib/doctor-runners.js';
+import { buildPodRunner } from '../lib/doctor-runners.js';
 import {
   colors,
   emojis,
@@ -253,19 +253,18 @@ async function runDiagnostics(opts: DoctorOptions = { verbose: false, skipProbes
       const probeSpinner = createSpinner('Running Hub Protocol probes (≤35s)...');
       probeSpinner.start();
       let diagnostics: HubProtocolDiagnostic[] = [];
-      // Defensive runner: native fetch first, docker-exec fallback on
-      // transport errors. With resolveSynapUrl now returning the public
-      // Traefik URL, the swap should rarely fire — it remains a safety
-      // net for the bootstrap moment (cert pending, DNS not propagated).
-      const swapNotes: string[] = [];
-      const runner = buildDoctorRunner((note) => swapNotes.push(note));
+      // Pick transport ONCE based on where we're running. On pod host
+      // → docker-exec (direct, no DNS/cert dependency). Off-host →
+      // fetch on the public URL. No automatic fallback.
+      const transportNotes: string[] = [];
+      const runner = buildPodRunner((note) => transportNotes.push(note));
       try {
         diagnostics = await runHubProtocolProbes({
           synapUrl: synapApiUrl,
           apiKey: synapApiKey,
           runner,
         });
-        const noteSuffix = swapNotes.length > 0 ? ` — ${swapNotes[0]}` : '';
+        const noteSuffix = transportNotes.length > 0 ? ` — ${transportNotes[0]}` : '';
         probeSpinner.succeed(`Hub Protocol probes complete (${diagnostics.length} run)${noteSuffix}`);
       } catch (err) {
         probeSpinner.fail('Hub Protocol probes failed to run');

@@ -47,7 +47,7 @@ import {
   resolveSynapUrl,
   type AgentInfo,
 } from '@eve/dna';
-import { buildDoctorRunner } from '../lib/doctor-runners.js';
+import { buildPodRunner } from '../lib/doctor-runners.js';
 import {
   colors,
   emojis,
@@ -106,9 +106,9 @@ async function resolveAgentConfig(
   };
 }
 
-// Auth UI is concise — discard the runner swap note. `eve doctor` is the
+// Auth UI is concise — discard the transport note. `eve doctor` is the
 // place for verbose runner reporting.
-const buildRunner = () => buildDoctorRunner();
+const buildRunner = () => buildPodRunner();
 
 // ---------------------------------------------------------------------------
 // `eve auth status` — list-or-detail

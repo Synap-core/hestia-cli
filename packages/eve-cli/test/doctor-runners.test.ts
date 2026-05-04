@@ -2,49 +2,27 @@ import { describe, it, expect } from 'vitest';
 import { createServer } from 'node:http';
 import {
   buildWgetArgs,
-  rewriteUrlForDockerExec,
   FallbackRunner,
   FetchRunner,
   DockerExecRunner,
 } from '../src/lib/doctor-runners.js';
 import type { IDoctorRunner, DoctorRunnerResponse, DoctorRunnerStream } from '@eve/lifecycle';
 
-describe('rewriteUrlForDockerExec', () => {
-  it('rewrites loopback URLs to the in-network synap-backend host', () => {
-    expect(rewriteUrlForDockerExec('http://127.0.0.1:4000/api/hub/openapi.json'))
-      .toBe('http://synap-backend-backend-1:4000/api/hub/openapi.json');
-    expect(rewriteUrlForDockerExec('http://localhost:4000/api/hub/users/me'))
-      .toBe('http://synap-backend-backend-1:4000/api/hub/users/me');
-  });
-
-  it('leaves public URLs untouched', () => {
-    expect(rewriteUrlForDockerExec('https://pod.hyperray.shop/api/hub/openapi.json'))
-      .toBe('https://pod.hyperray.shop/api/hub/openapi.json');
-    expect(rewriteUrlForDockerExec('http://my-pod.example.com:4000/foo'))
-      .toBe('http://my-pod.example.com:4000/foo');
-  });
-
-  it('returns malformed URLs unchanged', () => {
-    expect(rewriteUrlForDockerExec('not-a-url')).toBe('not-a-url');
-  });
-});
-
 describe('buildWgetArgs', () => {
-  it('builds a BusyBox-compatible argv for GET via docker exec eve-legs-traefik', () => {
+  it('builds a BusyBox-compatible argv for GET into the supplied container', () => {
     const built = buildWgetArgs(
       'GET',
-      'http://synap-backend-backend-1:4000/api/hub/openapi.json',
+      'http://127.0.0.1:4000/api/hub/openapi.json',
       { Authorization: 'Bearer key', Accept: 'application/json' },
       undefined,
       6,
+      'synap-backend-backend-1',
     );
     if (!built.supported) throw new Error('GET should always be supported');
     const { container, argv } = built;
-    expect(container).toBe('eve-legs-traefik');
+    expect(container).toBe('synap-backend-backend-1');
     // First two argv entries describe the docker exec target.
-    // No `-i` flag — we never pipe stdin, so dropping it avoids a
-    // dangling pipe that some shells interpret oddly.
-    expect(argv.slice(0, 2)).toEqual(['exec', 'eve-legs-traefik']);
+    expect(argv.slice(0, 2)).toEqual(['exec', 'synap-backend-backend-1']);
     expect(argv).toContain('wget');
     // BusyBox-compatible short flags only.
     expect(argv).toContain('-q');
@@ -56,7 +34,6 @@ describe('buildWgetArgs', () => {
     // --header HDR uses the separate-arg form (BusyBox accepts only this).
     const hdrIdx = argv.indexOf('--header');
     expect(hdrIdx).toBeGreaterThan(-1);
-    // Either the Authorization or Accept header lands on the first --header.
     const headerValues = argv
       .map((arg, i) => (arg === '--header' ? argv[i + 1] : null))
       .filter((v): v is string => typeof v === 'string');
@@ -69,11 +46,11 @@ describe('buildWgetArgs', () => {
     expect(argv.find(a => a.startsWith('--quiet'))).toBeUndefined();
     expect(argv.find(a => a.startsWith('--server-response'))).toBeUndefined();
     // URL is the last arg.
-    expect(argv[argv.length - 1]).toBe('http://synap-backend-backend-1:4000/api/hub/openapi.json');
+    expect(argv[argv.length - 1]).toBe('http://127.0.0.1:4000/api/hub/openapi.json');
   });
 
   it('uses --post-data for POST bodies (BusyBox does not support --body-data=)', () => {
-    const built = buildWgetArgs('POST', 'http://x/y', {}, '{"foo":1}', 6);
+    const built = buildWgetArgs('POST', 'http://x/y', {}, '{"foo":1}', 6, 'some-container');
     if (!built.supported) throw new Error('POST should be supported');
     const idx = built.argv.indexOf('--post-data');
     expect(idx).toBeGreaterThan(-1);
@@ -81,7 +58,7 @@ describe('buildWgetArgs', () => {
   });
 
   it('reports DELETE as unsupported (BusyBox cannot issue DELETE)', () => {
-    const built = buildWgetArgs('DELETE', 'http://x/y', {}, undefined, 6);
+    const built = buildWgetArgs('DELETE', 'http://x/y', {}, undefined, 6, 'some-container');
     expect(built.supported).toBe(false);
     if (built.supported) throw new Error('DELETE should be unsupported');
     expect(built.reason).toMatch(/BusyBox/);

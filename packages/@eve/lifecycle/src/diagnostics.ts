@@ -76,10 +76,9 @@ export interface RunHubProtocolProbesOptions {
    * which uses native `fetch()` and works in any environment with direct
    * network access (dev, dashboard server, container with mapped port).
    *
-   * The CLI passes a `FallbackRunner` that swaps to a docker-exec-based
-   * runner when the host loopback isn't reachable — a common case on
-   * Eve deployments where synap-backend has no host port mapping and is
-   * only addressable via container DNS inside `eve-network`. See
+   * The CLI passes a runner from `buildPodRunner()`: docker-exec into
+   * synap-backend on the pod host (no DNS / no Traefik / no TLS), or
+   * fetch on the public URL when run off-host. See
    * `packages/eve-cli/src/lib/doctor-runners.ts`.
    */
   runner?: IDoctorRunner;
@@ -306,10 +305,9 @@ async function probeSynapAuth(
     };
   }
 
-  // The opening probe is the place where the runner decides to swap
-  // transports. Pass the note hook in so a `FallbackRunner` can announce
-  // the swap once and only once. (FallbackRunner emits its own notes
-  // via the hook directly; we don't duplicate them here.)
+  // Note hook is reserved for future transport announcements. The CLI's
+  // `buildPodRunner` already announces its choice via its own callback;
+  // we don't duplicate that here.
   void onRunnerNote;
 
   const result = await getAuthStatus({
@@ -1020,9 +1018,9 @@ export function combineSignals(outer: AbortSignal | undefined, timeoutMs: number
 // ---------------------------------------------------------------------------
 // FetchRunner — default IDoctorRunner using the platform's native fetch.
 // Works in any environment with direct network access (dev, dashboard
-// server, container with mapped port). Used by the dashboard exclusively;
-// the CLI uses `FallbackRunner` (in `packages/eve-cli/src/lib/doctor-runners.ts`)
-// which falls through to a docker-exec-based runner when host fetch fails.
+// server, off-host CLI). Used by the dashboard exclusively; the CLI picks
+// either FetchRunner (off-host) or DockerExecRunner (on the pod host) via
+// `buildPodRunner()` in `packages/eve-cli/src/lib/doctor-runners.ts`.
 // ---------------------------------------------------------------------------
 
 /** Lowercase headers from a Fetch `Response` into a plain record. */
@@ -1035,11 +1033,11 @@ function headersToRecord(h: Headers): Record<string, string> {
 }
 
 /**
- * Detect transport-level errors that should trigger fallback to a different
- * runner. The CLI's `FallbackRunner` calls this on every fetch error. The
- * exact set: connection-refused / DNS failure / host-unreachable. Anything
- * else (HTTP 5xx, JSON parse error, etc.) is a real failure to report,
- * not a runner-mismatch problem.
+ * Detect transport-level errors. Kept exported for any future runner that
+ * wants to distinguish "couldn't reach the server" from "the server said
+ * no." Currently used internally by FetchRunner. Set: connection-refused
+ * / DNS failure / host-unreachable. Anything else (HTTP 5xx, JSON parse
+ * error, etc.) is a real failure, not a transport problem.
  */
 export function isFetchTransportError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;

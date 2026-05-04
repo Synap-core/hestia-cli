@@ -18,7 +18,8 @@
  *
  * Both consume the existing `IDoctorRunner` abstraction so the same code
  * works inside the dashboard (FetchRunner) and on the CLI host where
- * synap-backend has no host port mapping (FallbackRunner → docker exec).
+ * synap-backend has no host port mapping (DockerExecRunner — picked by
+ * `buildPodRunner` based on whether the synap container is local).
  *
  * No new top-level dependencies. Built-in fetch via the runner;
  * `node:fs/promises` for atomic file writes; nothing else.
