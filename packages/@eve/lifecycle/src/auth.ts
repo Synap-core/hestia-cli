@@ -35,7 +35,7 @@ import {
   agentsToProvision,
   readAgentKey,
   readEveSecrets,
-  resolveSynapUrl,
+  resolveSynapUrlOnHost,
   writeAgentKey,
   writeCodeEngine,
   writeEveSecrets,
@@ -335,9 +335,10 @@ export interface ProvisionAgentOptions {
   timeoutMs?: number;
   /**
    * Override the synap pod URL. When unset we derive it via
-   * `resolveSynapUrl(secrets)` — public Traefik URL from `domain.primary`
-   * when configured, otherwise stored override or loopback. Useful for
-   * tests and one-shot CLI flows that target a non-default pod.
+   * `resolveSynapUrlOnHost(secrets)` — prefers the loopback port
+   * published by Eve's compose override when reachable, falls back to
+   * the public Traefik URL otherwise. Useful for tests and one-shot
+   * CLI flows that target a non-default pod.
    */
   synapUrl?: string;
   /**
@@ -368,7 +369,7 @@ export type ProvisionResult =
  * Authoritative flow — every install / renew / migrate path goes
  * through here:
  *
- *   1. Resolve pod URL (option > resolveSynapUrl(secrets)).
+ *   1. Resolve pod URL (option > resolveSynapUrlOnHost(secrets)).
  *   2. Resolve PROVISIONING_TOKEN (option > env > deploy/.env).
  *   3. POST /setup/agent with `{ agentType }`.
  *   4. Persist the returned `{ hubApiKey, agentUserId, workspaceId }`
@@ -389,9 +390,10 @@ export async function provisionAgent(opts: ProvisionAgentOptions): Promise<Provi
 
   const cwd = opts.deployDir ?? process.env.EVE_HOME ?? process.cwd();
   const secrets = await readEveSecrets(cwd);
-  // Single resolver — derives public Traefik URL from domain when set,
-  // ignores stale loopback in secrets. See @eve/dna#resolveSynapUrl.
-  const synapUrl = (opts.synapUrl ?? resolveSynapUrl(secrets)).trim();
+  // On-host: prefer Eve's loopback port (sub-ms, no DNS, no cert).
+  // Off-host: falls back to the public Traefik URL via `domain.primary`.
+  // The caller can still force a specific URL via `opts.synapUrl`.
+  const synapUrl = (opts.synapUrl ?? (await resolveSynapUrlOnHost(secrets))).trim();
   if (!synapUrl) {
     return {
       provisioned: false,

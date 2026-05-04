@@ -2,6 +2,10 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execSync, spawnSync } from 'node:child_process';
+import {
+  ensureSynapLoopbackOverride,
+  pruneOldImagesForRepo,
+} from '@eve/dna';
 
 export interface SynapImageInstallOptions {
   deployDir?: string;
@@ -973,6 +977,23 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
   writeFileSync(join(pgInitDir, 'init-databases.sh'), POSTGRES_INIT_SCRIPT_CONTENT, { encoding: 'utf-8', mode: 0o755 });
   console.log(`  Written deploy files to ${deployDir}`);
 
+  // 2b. Publish a loopback-only host port (127.0.0.1:14000 → backend:4000)
+  // via Compose's official extension hook. The on-host CLI then talks
+  // to the API without going through Traefik / public DNS / TLS — same
+  // protocol, just a different (faster, no-cert-needed) base URL. The
+  // helper preserves user-owned override files via marker detection;
+  // failures are non-fatal (CLI just falls back to the public URL).
+  try {
+    const r = ensureSynapLoopbackOverride(deployDir);
+    if (r.outcome === 'wrote') {
+      console.log(`  Wrote loopback compose override at ${r.path}`);
+    } else {
+      console.log(`  Kept existing ${r.path} (${r.reason ?? 'user-owned'})`);
+    }
+  } catch (err) {
+    console.warn(`  Could not write loopback override: ${err instanceof Error ? err.message : String(err)} (continuing — CLI will use public URL)`);
+  }
+
   // 3. Generate or update .env
   const envPath = join(deployDir, '.env');
   let bootstrapToken: string;
@@ -1068,6 +1089,22 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
   if (containerName) {
     connectToEveNetwork(containerName);
     console.log(`  Connected ${containerName} → eve-network`);
+  }
+
+  // 10. Reclaim disk by pruning old image versions. The new container
+  // is up by now, so its image is protected (rmi refuses in-use). Older
+  // tags are removed; the latest 3 are kept for rollback. Failures are
+  // non-fatal — disk reclamation is opportunistic, never blocks install.
+  for (const repo of ['ghcr.io/synap-core/backend', 'ghcr.io/synap-core/pod-agent']) {
+    try {
+      const r = pruneOldImagesForRepo(repo, 3);
+      if (r.removed.length > 0) {
+        console.log(`  Pruned ${r.removed.length} old ${repo} image(s) (kept latest 3).`);
+      }
+    } catch {
+      // Ignore — `docker images` may not be available in some sandbox
+      // environments; the next `eve update` will retry.
+    }
   }
 
   return { bootstrapToken, deployDir, containerName };

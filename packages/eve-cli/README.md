@@ -115,6 +115,53 @@ If a renew fails with `PROVISIONING_TOKEN unavailable`, set
 | `eve domain repair` | Re-render Traefik config from secrets and reload the proxy. |
 | `eve domain status` | Show domain, SSL state, exposed services. |
 
+### How the CLI reaches the pod
+
+Every Eve command that touches Synap (`auth provision`, `doctor`, the
+update post-hooks, the builder workspace seeder) needs an HTTP base URL
+for the pod. There are two of them, picked automatically:
+
+| Where you run `eve` | URL the CLI hits | Why |
+|---|---|---|
+| **On the pod host** (synap-backend container detected, port 14000 reachable) | `http://127.0.0.1:14000` — the loopback published by Eve's `docker-compose.override.yml` | Same-host, sub-millisecond, doesn't depend on DNS or TLS. Works during install before any cert is minted. |
+| **Off the pod host** (laptop, remote management) | `https://pod.<domain>` — the public Traefik route from `domain.primary` in `secrets.json` | Only path that traverses the network. Requires DNS + cert + Traefik routing to be healthy. |
+
+The transport is plain `fetch` in both cases — same HTTP semantics,
+same retry/timeout knobs. The choice is purely a URL question; there
+is no separate "docker-exec" code path in the happy flow. (The
+`DockerExecRunner` is still exported as a `eve doctor` break-glass
+diagnostic for the rare "the host port is bound but the public URL
+fails" case.)
+
+The 14000 port mapping is loopback-only (`127.0.0.1:14000:4000` in
+Compose terms) — the host firewall, the Docker bridge, and the public
+network see nothing on that port. Anyone with access to the host
+already has root-equivalent on `/opt/synap-backend`, so this isn't a
+new attack surface.
+
+If you have your own `docker-compose.override.yml` for the synap
+deploy, Eve's `ensureSynapLoopbackOverride` won't clobber it (it looks
+for a magic marker comment) — the CLI silently falls back to the
+public URL. Drop the marker line in if you want both your overrides
+and Eve's loopback port. Full design:
+[`team/devops/eve-cli-transports.mdx`](https://github.com/synap-app/synap-team-docs/blob/main/content/team/devops/eve-cli-transports.mdx).
+
+### Image pruning on update
+
+`eve update synap` and the from-image install path keep the **last 3
+versions** of every image they pull (`ghcr.io/synap-core/backend`,
+`ghcr.io/synap-core/pod-agent`, etc.) and remove older tags. The
+in-flight image is always protected — Docker refuses `rmi` on an
+image that has a running container, and the prune step runs *after*
+the new container is up. Skipped images (still in use by another
+container) are reported but never abort the update.
+
+This solves the "pod host runs out of disk after a year of weekly
+updates" failure mode without anyone needing to run `docker rmi`
+manually. The keep-count is fixed at 3 (giving you 2 rollback steps
+plus the live image); change it via the `pruneImages.keep` field on a
+component's `UpdatePlan` in `@eve/lifecycle/src/index.ts`.
+
 ### Debug & repair
 
 | Command | What it does |

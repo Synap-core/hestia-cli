@@ -696,49 +696,75 @@ export class FallbackRunner implements IDoctorRunner {
 export { FetchRunner, isFetchTransportError };
 
 // ---------------------------------------------------------------------------
-// Single decision: on-host = docker-exec, off-host = fetch
+// Pod transport — always FetchRunner, URL chooses the path
 // ---------------------------------------------------------------------------
 
 /**
- * Pick the right transport for talking to THIS pod's API.
+ * The runner the CLI uses to talk to this pod's API.
  *
- * - **On the pod host** (synap-backend container is running locally):
- *   `DockerExecRunner`. Direct exec with `127.0.0.1:4000`. No DNS, no
- *   Traefik, no TLS — the fastest, most reliable path. Works regardless
- *   of public domain config, cert state, or firewall.
+ * # One transport, two URLs
  *
- * - **Off the pod host** (managing remotely): `FetchRunner` against the
- *   public URL. The only option, requires DNS + cert + traefik to be
- *   healthy. The caller is responsible for resolving the public URL via
- *   `resolveSynapUrl(secrets)`.
+ * Earlier versions of this file picked between `DockerExecRunner` and
+ * `FetchRunner` based on whether the synap container was running
+ * locally. That bought us nothing: the docker-exec path needed its own
+ * BusyBox/Node-script gymnastics, and we already had to support
+ * FetchRunner for the off-host case. So we collapsed it.
  *
- * No automatic fallback between the two. The choice is a property of
- * WHERE we run, not a transient state to recover from. If we're on the
- * pod host and exec fails (rare), we surface a clear error instead of
- * silently retrying via the public URL — which on a pod host often
- * doesn't work either (split-DNS, firewall, cert pending).
+ * Now the on-host vs off-host distinction lives entirely in the URL:
  *
- * `onTransportNote` is an optional one-time hook so callers can surface
- * which path was chosen — the doctor uses it to print a one-liner so
- * users know whether they're on the local fast path or the remote path.
+ *   - **On the pod host** — `resolveSynapUrlOnHost(secrets)` returns
+ *     `http://127.0.0.1:14000` (the loopback port published by Eve's
+ *     `docker-compose.override.yml`). Plain HTTP via FetchRunner; no
+ *     DNS, no TLS, no Traefik, no firewall to traverse.
+ *
+ *   - **Off the pod host** — `resolveSynapUrlOnHost(secrets)` falls
+ *     back to the public Traefik URL. Same FetchRunner, same code path.
+ *
+ * The transport is the same in both cases — that's the whole point.
+ * Bytes go through Node's native `fetch`, status codes are real HTTP
+ * status codes, the request/response cycle is observable, and there's
+ * no `docker exec` cold-start cost on every call.
+ *
+ * `DockerExecRunner` stays exported — `eve doctor` uses it as a
+ * break-glass diagnostic ("can the synap container respond on its own
+ * loopback even when host loopback fails?"). Don't wire it back into
+ * the happy path. See
+ * `synap-team-docs/content/team/devops/eve-cli-transports.mdx` for the
+ * full transport-selection design.
+ *
+ * `onTransportNote` is an optional hook so callers can surface which
+ * URL was picked — the doctor uses it to print "using loopback" or
+ * "using public URL" alongside its summary. The note is computed by
+ * resolving the URL ourselves; callers who don't pass a sink get the
+ * note on stderr (one line, never spammy).
  */
 export function buildPodRunner(
   onTransportNote?: (note: string) => void,
 ): IDoctorRunner {
-  const synap = findRunningSynapContainer();
-  const note = synap
-    ? `using docker-exec into ${synap} (on-host CLI)`
-    : "no synap container detected → using fetch against public URL";
-
-  // If the caller supplied a sink (the doctor does), use it. Otherwise
-  // print to stderr so EVERY command surfaces its transport choice —
-  // this is critical diagnostic info when probes fail mysteriously and
-  // costs nothing when they succeed. One line, never spammy.
-  if (onTransportNote) {
-    onTransportNote(note);
-  } else {
-    process.stderr.write(`ℹ️  ${note}\n`);
+  // Note synthesis is best-effort — we don't want a transport-note
+  // failure to abort the actual API call. The note is informational.
+  if (onTransportNote || !process.env.EVE_QUIET_TRANSPORT) {
+    const note = synthesizeTransportNote();
+    if (onTransportNote) {
+      onTransportNote(note);
+    } else {
+      process.stderr.write(`ℹ️  ${note}\n`);
+    }
   }
+  return new FetchRunner();
+}
 
-  return synap ? new DockerExecRunner() : new FetchRunner();
+/**
+ * Build a one-line description of which URL the CLI is most likely
+ * about to use. Pure heuristic — actual URL selection happens in
+ * `resolveSynapUrlOnHost(secrets)`, so this is just for the user-facing
+ * note. We check the synap container detection (cheap) without
+ * actually doing the loopback probe (also cheap, but async — and the
+ * note is fire-and-forget so we don't want to make callers await).
+ */
+function synthesizeTransportNote(): string {
+  const synap = findRunningSynapContainer();
+  return synap
+    ? `synap container ${synap} detected — CLI will prefer loopback if reachable`
+    : "no synap container detected — CLI will use public URL via Traefik";
 }

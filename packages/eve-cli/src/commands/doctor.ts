@@ -7,7 +7,7 @@ import {
   COMPONENTS,
   readAgentKey,
   readEveSecrets,
-  resolveSynapUrl,
+  resolveSynapUrlOnHost,
   getAccessUrls,
   hasAnyProvider,
 } from '@eve/dna';
@@ -230,7 +230,7 @@ async function runDiagnostics(opts: DoctorOptions = { verbose: false, skipProbes
   const synapInstalled = installed.includes('synap');
 
   if (synapInstalled && !skipProbes) {
-    const synapApiUrl = resolveSynapUrl(secrets);
+    const synapApiUrl = await resolveSynapUrlOnHost(secrets);
     // Doctor probes use the "eve" agent's key — that agent is reserved
     // for our own diagnostics + dashboard probes, so failures here
     // never tell us whether OpenClaw or Hermes are healthy. Fall back
@@ -303,7 +303,7 @@ async function runDiagnostics(opts: DoctorOptions = { verbose: false, skipProbes
   //   - skip:  not enough info (no synap, no eve key, no pod URL).
   if (synapInstalled) {
     const builderId = secrets?.builder?.workspaceId?.trim();
-    const synapApiUrl = resolveSynapUrl(secrets);
+    const synapApiUrl = await resolveSynapUrlOnHost(secrets);
     const eveAgent = await readAgentKey('eve', process.cwd());
     const synapApiKey = eveAgent?.hubApiKey ?? secrets?.synap?.apiKey ?? '';
 

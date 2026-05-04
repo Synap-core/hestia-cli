@@ -391,11 +391,41 @@ export function isLoopbackUrl(url: string | undefined | null): boolean {
 export const SYNAP_BACKEND_INTERNAL_URL = 'http://synap-backend-backend-1:4000';
 
 /**
- * Single source of truth for the Synap pod URL. Every CLI command, every
- * lifecycle hook, every doctor probe goes through here — there is no
- * other correct way to read the pod URL. Replaces direct reads of
- * `secrets.synap.apiUrl`, which drift the moment the user changes their
- * domain config.
+ * TCP port on the host's loopback that maps to synap-backend:4000 when
+ * Eve's `docker-compose.override.yml` is in place. The on-host CLI
+ * prefers this URL over the public Traefik route — same protocol, no
+ * DNS, no TLS, no firewall traversal. Mirrored in
+ * `@eve/lifecycle/src/synap-overrides.ts` (the file that publishes the
+ * port). Keep the two constants in lockstep if either ever changes.
+ *
+ * 14000 not 4000 because the synap-app dev server binds 4000 in
+ * development; the loopback port is an admin/CLI implementation detail
+ * and just needs to be stable + uncommon.
+ */
+export const SYNAP_HOST_LOOPBACK_PORT = 14000;
+
+/**
+ * Pure derivation of the Synap pod URL — no I/O, no probing, just
+ * reads from the secrets shape. Used in two contexts:
+ *
+ *   - **Container env files** (openwebui-pipelines `.env`, sandbox
+ *     env, etc.): the value baked here is what other containers will
+ *     resolve when they call `fetch(SYNAP_API_URL)`. They reach the
+ *     backend via Docker DNS on `eve-network`, not via host loopback,
+ *     so this function returns the public URL — that's what bridges
+ *     non-eve-network callers AND the off-host case.
+ *
+ *   - **Off-host CLI** (`eve` invoked from a laptop): no loopback to
+ *     probe, the public URL is the only correct answer.
+ *
+ * For **on-host CLI runtime**, prefer `resolveSynapUrlOnHost(secrets)`
+ * (in `./loopback-probe.ts`). That helper probes the loopback port
+ * Eve publishes via its `docker-compose.override.yml` and returns
+ * `http://127.0.0.1:14000` when reachable — same-host, sub-millisecond,
+ * doesn't depend on DNS or certs. It falls back to this function when
+ * the loopback isn't there. See
+ * `synap-team-docs/content/team/devops/eve-cli-transports.mdx` for the
+ * full transport-selection design.
  *
  * Resolution order (first match wins):
  *
@@ -403,10 +433,9 @@ export const SYNAP_BACKEND_INTERNAL_URL = 'http://synap-backend-backend-1:4000';
  *      at a remote pod (`apiUrl: "https://pod.acme.com"`). We trust them.
  *
  *   2. **Derived from `domain.primary`** — when a public domain is
- *      configured we ALWAYS prefer the Traefik route. synap-backend has
- *      no host port mapping; the public route is the actual designed
- *      path. SSL defaults to `true` because every standard install runs
- *      Let's Encrypt — only an explicit `domain.ssl: false` opts out.
+ *      configured we ALWAYS prefer the Traefik route. SSL defaults to
+ *      `true` because every standard install runs Let's Encrypt — only
+ *      an explicit `domain.ssl: false` opts out.
  *
  *   3. **Stored loopback** — pure local dev. Use whatever was stored
  *      (typically `http://127.0.0.1:4000`).
@@ -416,8 +445,8 @@ export const SYNAP_BACKEND_INTERNAL_URL = 'http://synap-backend-backend-1:4000';
  *
  * Why a function and not a stored field: storing the URL means rewriting
  * it on every domain change, every install, every reconcile. We tried
- * that — it created the loopback drift bug that's been wasting our time.
- * Pure derivation is simpler AND impossible to drift.
+ * that — it created the loopback drift bug that wasted days. Pure
+ * derivation is simpler AND impossible to drift.
  */
 export function resolveSynapUrl(
   secrets: { synap?: { apiUrl?: string }; domain?: { primary?: string; ssl?: boolean } } | null | undefined,

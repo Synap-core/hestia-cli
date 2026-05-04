@@ -154,7 +154,32 @@ export {
   isLoopbackUrl,
   resolveSynapUrl,
   SYNAP_BACKEND_INTERNAL_URL,
+  SYNAP_HOST_LOOPBACK_PORT,
 } from './components.js';
+
+// On-host HTTP transport — probes the loopback port published by Eve's
+// docker-compose.override.yml (see synap-overrides.ts) and prefers it
+// over the public Traefik URL when reachable. Use these from CLI
+// runtime code, NOT for embedding URLs into other containers' env files
+// (which want the pure `resolveSynapUrl` or `SYNAP_BACKEND_INTERNAL_URL`).
+export {
+  isSynapLoopbackReachable,
+  resolveSynapUrlOnHost,
+  resetSynapLoopbackProbeCache,
+} from './loopback-probe.js';
+
+// Compose-override + image-prune helpers. Both the install recipe
+// (@eve/brain `installSynapFromImage`) and the update flow
+// (@eve/lifecycle `runUpdatePlan`) call these — pulling them up to
+// @eve/dna sidesteps the @eve/brain ↔ @eve/lifecycle circular dep.
+export {
+  ensureSynapLoopbackOverride,
+  type EnsureOverrideResult,
+} from './synap-overrides.js';
+export {
+  pruneOldImagesForRepo,
+  type PruneResult,
+} from './image-prune.js';
 
 // Centralized AI provider wiring
 export {

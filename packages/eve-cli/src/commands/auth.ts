@@ -44,7 +44,7 @@ import {
   readAgentKey,
   readEveSecrets,
   resolveAgent,
-  resolveSynapUrl,
+  resolveSynapUrlOnHost,
   type AgentInfo,
 } from '@eve/dna';
 import { buildPodRunner } from '../lib/doctor-runners.js';
@@ -83,7 +83,9 @@ async function resolveAgentConfig(
   if (!agent) return null;
 
   const secrets = await readEveSecrets(process.cwd());
-  const synapUrl = resolveSynapUrl(secrets);
+  // On-host: prefer the loopback published by Eve's compose override.
+  // Off-host: this transparently falls back to the public URL.
+  const synapUrl = await resolveSynapUrlOnHost(secrets);
   if (!synapUrl) return null;
 
   // Per-agent key first, then fall back to the legacy single-key field
@@ -139,7 +141,7 @@ async function runStatus(opts: StatusOptions): Promise<void> {
   // No `--agent` → table of every registered agent's status.
   const cwd = process.cwd();
   const secrets = await readEveSecrets(cwd);
-  const synapUrl = resolveSynapUrl(secrets);
+  const synapUrl = await resolveSynapUrlOnHost(secrets);
   if (!synapUrl) {
     printWarning('skipped — synap not configured.');
     printInfo('Fix: re-run `eve install` or set domain.primary in secrets.json.');

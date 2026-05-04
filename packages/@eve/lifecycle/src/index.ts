@@ -28,10 +28,14 @@ import {
   pickPrimaryProvider,
   wireComponentAi,
   resolveSynapUrl,
+  resolveSynapUrlOnHost,
   SYNAP_BACKEND_INTERNAL_URL,
   AI_CONSUMERS,
   AI_CONSUMERS_NEEDING_RECREATE,
+  ensureSynapLoopbackOverride,
+  pruneOldImagesForRepo,
   type ComponentInfo,
+  type EnsureOverrideResult,
 } from "@eve/dna";
 import {
   refreshTraefikRoutes,
@@ -155,6 +159,23 @@ interface UpdatePlan {
      * `compose up -d` happily restarts with the wrong creds.
      */
     reconcileEnv?: () => Promise<void> | void;
+    /**
+     * Idempotently write a sibling `docker-compose.override.yml` Eve
+     * owns (currently only synap, for the loopback host port mapping).
+     * Returns a result object so the runner can log "wrote" vs "kept
+     * user-owned file" without needing to know what the override is for.
+     */
+    ensureOverride?: () => EnsureOverrideResult;
+    /**
+     * Image-pruning policy applied AFTER a successful `compose up -d`.
+     * For each repository in the list, all but the most-recent N image
+     * tags are removed. In-use tags (those mapping to running containers)
+     * are skipped automatically by `docker rmi`. Default `keep` is 3.
+     *
+     * Scoped to repository prefix so we never accidentally prune images
+     * belonging to a different compose project on the same host.
+     */
+    pruneImages?: { repositories: string[]; keep?: number };
   };
 }
 
@@ -183,7 +204,23 @@ const UPDATE_PLAN: Record<string, UpdatePlan> = {
       reconcileEnv: () => reconcilePipelinesEnv("/opt/openwebui-pipelines"),
     },
   },
-  synap: { compose: { cwd: "/opt/synap-backend/deploy", services: ["backend", "realtime"] } },
+  synap: {
+    compose: {
+      cwd: "/opt/synap-backend/deploy",
+      services: ["backend", "realtime"],
+      // Self-heal the loopback override on every update so a missing or
+      // stale override gets recreated automatically.
+      ensureOverride: () => ensureSynapLoopbackOverride("/opt/synap-backend/deploy"),
+      // synap-backend, backend-canary, backend-migrate, realtime — all
+      // share the same `ghcr.io/synap-core/backend` image. pod-agent
+      // ships separately. Keep three so the user can still roll back
+      // one or two versions if a deploy regresses.
+      pruneImages: {
+        repositories: ["ghcr.io/synap-core/backend", "ghcr.io/synap-core/pod-agent"],
+        keep: 3,
+      },
+    },
+  },
 };
 
 interface RemovePlan {
@@ -316,6 +353,26 @@ async function* runUpdatePlan(
       }
     }
 
+    // Self-heal Eve-managed compose overrides (currently: synap loopback
+    // port). Failures here are NOT fatal — the CLI works without the
+    // loopback override, just slower (public URL fallback).
+    if (plan.compose.ensureOverride) {
+      try {
+        const r = plan.compose.ensureOverride();
+        yield {
+          type: "log",
+          line: r.outcome === "wrote"
+            ? `Refreshed ${r.path}`
+            : `Left ${r.path} alone — ${r.reason ?? "user-owned"}`,
+        };
+      } catch (err) {
+        yield {
+          type: "log",
+          line: `Could not ensure compose override: ${err instanceof Error ? err.message : String(err)} (continuing)`,
+        };
+      }
+    }
+
     if (!existsSync(plan.compose.cwd)) {
       yield { type: "error", message: `Compose dir not found: ${plan.compose.cwd}.` };
       return;
@@ -352,6 +409,37 @@ async function* runUpdatePlan(
       : ["compose", "up", "-d"];
     code = yield* runCommand("docker", upArgs, { cwd: plan.compose.cwd });
     if (code !== 0) { yield { type: "error", message: `compose up exited ${code}` }; return; }
+
+    // Reclaim disk by removing old image versions. We deliberately run
+    // this AFTER the new container is up — Docker's rmi refuses to drop
+    // images backing live containers, so the in-flight version stays
+    // safe even if `keep=1`. Failures (image still in use, network
+    // glitch) are logged but never abort the update.
+    if (plan.compose.pruneImages) {
+      const keep = plan.compose.pruneImages.keep ?? 3;
+      for (const repo of plan.compose.pruneImages.repositories) {
+        try {
+          const result = pruneOldImagesForRepo(repo, keep);
+          if (result.removed.length > 0) {
+            yield {
+              type: "log",
+              line: `Pruned ${result.removed.length} old ${repo} image(s) — kept latest ${keep} (${result.kept.length} remain).`,
+            };
+          }
+          if (result.skipped.length > 0) {
+            yield {
+              type: "log",
+              line: `Skipped ${result.skipped.length} ${repo} image(s) still in use by other containers.`,
+            };
+          }
+        } catch (err) {
+          yield {
+            type: "log",
+            line: `Image prune for ${repo} skipped: ${err instanceof Error ? err.message : String(err)}`,
+          };
+        }
+      }
+    }
 
     yield { type: "done", summary: `${comp.label} updated` };
     return;
@@ -445,10 +533,10 @@ async function* postUpdateReconcileAuth(): AsyncGenerator<LifecycleEvent> {
   const { readAgentKey } = await import("@eve/dna");
 
   const secrets = await readEveSecrets();
-  // Single resolver: derives public Traefik URL from domain when set,
-  // ignores stale loopback in secrets. Replaces the previous
-  // detect-and-rewrite reconcile dance — pure derivation can't drift.
-  const synapUrl = resolveSynapUrl(secrets);
+  // On-host resolver: prefers the loopback port published by Eve's
+  // compose override (sub-ms, no DNS, no cert), falls back to the
+  // public Traefik URL for off-host invocations.
+  const synapUrl = await resolveSynapUrlOnHost(secrets);
   if (!synapUrl) {
     // Should never happen — resolver always returns *something* — but
     // guard so an unexpected null doesn't 500 the whole update.
@@ -635,7 +723,7 @@ async function* postInstallProvisionAgents(componentId: string): AsyncGenerator<
  */
 async function* postInstallSeedBuilderWorkspace(): AsyncGenerator<LifecycleEvent> {
   const secrets = await readEveSecrets();
-  const podUrl = resolveSynapUrl(secrets);
+  const podUrl = await resolveSynapUrlOnHost(secrets);
   if (!podUrl) {
     yield {
       type: "log",
@@ -1726,3 +1814,4 @@ export {
   type EnsureBuilderWorkspaceOptions,
   type EnsureBuilderWorkspaceResult,
 } from "./builder-workspace.js";
+
