@@ -39,29 +39,105 @@ import {
 // ---------------------------------------------------------------------------
 
 /**
- * Rewrite a host-side URL to its in-network form for `docker exec wget`.
+ * Plan a `docker exec wget` invocation: pick the right container to
+ * exec INTO, plus the URL form that container should fetch.
  *
- * Eve's compose places synap-backend on `eve-network` as
- * `synap-backend-backend-1:4000`. When the configured URL is loopback
- * (`http://127.0.0.1:4000` or `http://localhost:4000`), swap the host. For
- * any other URL (including the public domain) we use it as-is — Traefik
- * inside the container can resolve external hosts through its own DNS,
- * and a public HTTPS URL is the right thing to probe anyway.
+ * Why this matters: Eve's `eve-legs-traefik` lives on `eve-network`. The
+ * synap-backend pod sometimes lives on its own compose network (e.g.
+ * `synap-backend_default`) and is NOT reachable from traefik by hostname.
+ * Routing every probe through traefik then fails DNS for `synap-backend-*`.
+ *
+ * The robust play is: for synap-backend probes (URL points at loopback
+ * or at the synap container hostname), exec STRAIGHT INTO synap-backend
+ * itself and call `localhost:4000`. No cross-network DNS, no traefik in
+ * the path. For public/external URLs, traefik is fine — it has internet
+ * egress. For other internal hostnames (`intelligence-hub`, etc.) we
+ * still try traefik first.
+ *
+ * Returns `null` if nothing usable is on this host (no docker, neither
+ * candidate container running). Callers should surface a clear error.
+ */
+const SYNAP_BACKEND_CONTAINER_CANDIDATES: ReadonlyArray<string> = [
+  "synap-backend-backend-1",
+  "synap-backend",
+  "synap-backend-1",
+];
+
+const TRAEFIK_CONTAINER = "eve-legs-traefik";
+
+let cachedSynapContainer: string | null | undefined;
+
+function findRunningSynapContainer(): string | null {
+  if (cachedSynapContainer !== undefined) return cachedSynapContainer;
+  for (const name of SYNAP_BACKEND_CONTAINER_CANDIDATES) {
+    try {
+      // `docker inspect` exits non-zero if the container doesn't exist;
+      // `--format` is noise-free and won't paginate. Ignore stdout/stderr
+      // — we only care about the exit code.
+      const { execSync } = require("node:child_process") as typeof import("node:child_process");
+      execSync(`docker inspect --format='{{.State.Running}}' ${name}`, {
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 3000,
+      });
+      cachedSynapContainer = name;
+      return name;
+    } catch {
+      // try next
+    }
+  }
+  cachedSynapContainer = null;
+  return null;
+}
+
+export interface ExecPlan {
+  container: string;
+  url: string;
+}
+
+export function planExecRequest(url: string): ExecPlan {
+  let parsed: URL | null = null;
+  try {
+    parsed = new URL(url);
+  } catch {
+    // Unparseable — let wget surface the error from inside traefik.
+    return { container: TRAEFIK_CONTAINER, url };
+  }
+
+  const host = parsed.hostname;
+  const targetsSynap =
+    host === "127.0.0.1" ||
+    host === "localhost" ||
+    host === "synap-backend-backend-1" ||
+    host === "synap-backend" ||
+    host === "synap-backend-1";
+
+  if (targetsSynap) {
+    // First choice: exec into synap-backend itself with localhost. This
+    // works regardless of network topology. If the container isn't on
+    // this host, fall back to traefik with the in-network hostname.
+    const synap = findRunningSynapContainer();
+    if (synap) {
+      const u = new URL(url);
+      u.hostname = "localhost";
+      return { container: synap, url: u.toString() };
+    }
+    // No live synap container — let traefik try in case it's on a
+    // network we share. Rewrite to the canonical hostname.
+    const u = new URL(url);
+    u.hostname = "synap-backend-backend-1";
+    return { container: TRAEFIK_CONTAINER, url: u.toString() };
+  }
+
+  // Anything else (public domain, eve-* hostname) → traefik.
+  return { container: TRAEFIK_CONTAINER, url };
+}
+
+/**
+ * Back-compat wrapper retained for existing callers and tests. Returns
+ * just the rewritten URL — newer callers should use `planExecRequest`.
  */
 export function rewriteUrlForDockerExec(url: string): string {
-  try {
-    const u = new URL(url);
-    if (u.hostname === "127.0.0.1" || u.hostname === "localhost") {
-      u.hostname = "synap-backend-backend-1";
-      // Keep the existing port — synap-backend listens on 4000 inside the
-      // container, which is what the configured URL also points at.
-      return u.toString();
-    }
-    return url;
-  } catch {
-    // Not a parseable URL — let the underlying wget surface the error.
-    return url;
-  }
+  return planExecRequest(url).url;
 }
 
 // ---------------------------------------------------------------------------
@@ -104,6 +180,7 @@ export function buildWgetArgs(
   headers: Record<string, string>,
   body: string | undefined,
   timeoutSec: number,
+  container: string = TRAEFIK_CONTAINER,
 ): WgetArgs {
   if (method === "DELETE") {
     // BusyBox wget can't issue arbitrary HTTP methods. Cleanup callers
@@ -116,7 +193,7 @@ export function buildWgetArgs(
 
   const argv: string[] = [
     "exec",
-    "eve-legs-traefik",
+    container,
     "wget",
     "-q",
     "-S",
@@ -134,7 +211,7 @@ export function buildWgetArgs(
     argv.push("--post-data", body ?? "");
   }
   argv.push(url);
-  return { container: "eve-legs-traefik", argv, supported: true };
+  return { container, argv, supported: true };
 }
 
 /** Parse the `HTTP/1.1 NNN ...` status line out of wget's stderr. */
@@ -200,7 +277,7 @@ export class DockerExecRunner implements IDoctorRunner {
     body: string | undefined,
     opts: { signal?: AbortSignal; timeoutMs?: number },
   ): Promise<DoctorRunnerResponse> {
-    const innerUrl = rewriteUrlForDockerExec(url);
+    const plan = planExecRequest(url);
     const timeoutSec = Math.max(1, Math.round((opts.timeoutMs ?? 6_000) / 1000));
     // Hard wall-clock cap on the docker exec itself — wget's -T is its
     // OWN socket timeout, not the total exec time. We allow a small
@@ -208,7 +285,7 @@ export class DockerExecRunner implements IDoctorRunner {
     // first when the upstream is slow.
     const execTimeoutMs = timeoutSec * 1000 + 2_000;
 
-    const built = buildWgetArgs(method, innerUrl, headers, body, timeoutSec);
+    const built = buildWgetArgs(method, plan.url, headers, body, timeoutSec, plan.container);
     if (!built.supported) {
       // DELETE on BusyBox — return a soft failure. Callers use this for
       // best-effort cleanup and ignore the result via .catch(() => undefined).
@@ -290,9 +367,9 @@ export class DockerExecRunner implements IDoctorRunner {
     headers: Record<string, string>,
     opts: { signal?: AbortSignal; timeoutMs?: number } = {},
   ): Promise<DoctorRunnerStream> {
-    const innerUrl = rewriteUrlForDockerExec(url);
+    const plan = planExecRequest(url);
     const timeoutSec = Math.max(1, Math.round((opts.timeoutMs ?? 35_000) / 1000));
-    const built = buildWgetArgs("GET", innerUrl, headers, undefined, timeoutSec);
+    const built = buildWgetArgs("GET", plan.url, headers, undefined, timeoutSec, plan.container);
     if (!built.supported) {
       // GET should always be supported by buildWgetArgs; this is an
       // exhaustiveness guard so the type narrows correctly below.
