@@ -7,6 +7,7 @@ import { Button, Spinner, Chip, addToast } from "@heroui/react";
 import {
   RefreshCw, RotateCcw, ArrowRight, ExternalLink, Check,
   Brain, Wrench, Hammer, Eye, Footprints,
+  Boxes, ListChecks, Activity,
   type LucideIcon,
 } from "lucide-react";
 
@@ -57,6 +58,13 @@ interface AccessData {
   }>;
   domain: { primary?: string; ssl?: boolean } | null;
   serverIp?: string | null;
+}
+
+interface BuilderSummary {
+  seeded: boolean;
+  workspaceId?: string;
+  counts: { apps: number; tasks: number; intents: number } | null;
+  error?: string;
 }
 
 interface ComponentRow {
@@ -143,6 +151,8 @@ export default function DashboardPage() {
   const [secrets, setSecrets] = useState<SecretsSummary | null>(null);
   const [access, setAccess] = useState<AccessData | null>(null);
   const [components, setComponents] = useState<ComponentRow[] | null>(null);
+  const [builder, setBuilder] = useState<BuilderSummary | null>(null);
+  const [builderStale, setBuilderStale] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [restarting, setRestarting] = useState<string | null>(null);
@@ -191,6 +201,30 @@ export default function DashboardPage() {
     const interval = setInterval(() => void fetchData(true), 15_000);
     return () => clearInterval(interval);
   }, [fetchData]);
+
+  // Builder summary lives on its own pipe — failure here must not affect
+  // any other section of the page. Refresh on mount + every 60s.
+  const fetchBuilder = useCallback(async () => {
+    try {
+      const res = await fetch("/api/builder/summary", { credentials: "include" });
+      if (res.status === 401) { router.push("/login"); return; }
+      if (res.ok) {
+        const data = await res.json() as BuilderSummary;
+        setBuilder(data);
+        setBuilderStale(false);
+      } else {
+        setBuilderStale(true);
+      }
+    } catch {
+      setBuilderStale(true);
+    }
+  }, [router]);
+
+  useEffect(() => {
+    void fetchBuilder();
+    const interval = setInterval(() => void fetchBuilder(), 60_000);
+    return () => clearInterval(interval);
+  }, [fetchBuilder]);
 
   async function restartOrgan(organ: string) {
     setRestarting(organ);
@@ -374,6 +408,20 @@ export default function DashboardPage() {
       </Section>
 
       {/* -----------------------------------------------------------------
+       * Builder workspace — seeded dev workspace probe
+       * -------------------------------------------------------------- */}
+      <Section
+        title="Builder workspace"
+        description="The canonical dev workspace Eve seeds on install — your apps, tasks, and active intents."
+      >
+        <BuilderCard
+          summary={builder}
+          stale={builderStale}
+          devplaneUrl={process.env.NEXT_PUBLIC_DEVPLANE_URL ?? null}
+        />
+      </Section>
+
+      {/* -----------------------------------------------------------------
        * Service launcher — every running service the user can open
        * -------------------------------------------------------------- */}
       <Section
@@ -442,6 +490,171 @@ function LaunchCard({ comp }: { comp: ComponentRow }) {
       </div>
       <ExternalLink className="h-4 w-4 shrink-0 text-default-400 transition-transform group-hover:-translate-y-0.5 group-hover:text-primary" />
     </a>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Builder workspace card — surfaces seeded counts + deep links
+// ---------------------------------------------------------------------------
+
+function BuilderCard({
+  summary, stale, devplaneUrl,
+}: {
+  summary: BuilderSummary | null;
+  stale: boolean;
+  devplaneUrl: string | null;
+}) {
+  // Loading shimmer — no data fetched yet.
+  if (summary === null) {
+    return (
+      <Surface className="p-4">
+        <div className="flex items-center gap-3 text-sm text-default-500">
+          <Spinner size="sm" color="default" />
+          <span>Probing builder workspace…</span>
+        </div>
+      </Surface>
+    );
+  }
+
+  // Not seeded — direct the operator to install/update.
+  if (!summary.seeded) {
+    return (
+      <Surface className="p-5">
+        <div className="flex flex-col gap-1">
+          <p className="text-sm font-medium text-foreground">
+            Builder workspace not seeded yet
+          </p>
+          <p className="text-xs text-default-500">
+            Run{" "}
+            <code className="rounded bg-default-100 px-1.5 py-0.5 font-mono text-[11px] text-foreground">
+              eve install
+            </code>{" "}
+            or{" "}
+            <code className="rounded bg-default-100 px-1.5 py-0.5 font-mono text-[11px] text-foreground">
+              eve update
+            </code>{" "}
+            to provision it on your pod.
+          </p>
+        </div>
+      </Surface>
+    );
+  }
+
+  const counts = summary.counts;
+  const c = counts ?? { apps: 0, tasks: 0, intents: 0 };
+  const reachIssue = stale || summary.error || counts === null;
+
+  return (
+    <Surface className="p-5">
+      {/* Header row: status + open button */}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span
+              className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-success/15 text-success"
+              aria-hidden
+            >
+              <Check className="h-3 w-3" />
+            </span>
+            <p className="text-sm font-medium text-foreground">Seeded</p>
+            {summary.workspaceId && (
+              <span
+                className="truncate font-mono text-[11px] text-default-400"
+                title={summary.workspaceId}
+              >
+                {summary.workspaceId.slice(0, 8)}…
+              </span>
+            )}
+          </div>
+          {reachIssue && (
+            <p className="mt-1 text-xs text-warning">
+              Couldn&apos;t reach pod — counts may be stale
+              {summary.error ? ` (${summary.error})` : ""}.
+            </p>
+          )}
+        </div>
+        {devplaneUrl && (
+          <a
+            href={devplaneUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-divider bg-content1 px-2.5 py-1.5 text-xs text-default-700 transition-colors hover:border-primary/50 hover:text-primary"
+          >
+            Open
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        )}
+      </div>
+
+      {/* Counts row */}
+      <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <BuilderCountTile
+          icon={Boxes}
+          label="apps"
+          count={c.apps}
+          href="/apps"
+        />
+        <BuilderCountTile
+          icon={ListChecks}
+          label="tasks"
+          count={c.tasks}
+          // No dedicated DevPlane task view yet — fall back to /apps per spec.
+          href={devplaneUrl ? `${devplaneUrl}/tasks` : "/apps"}
+          external={Boolean(devplaneUrl)}
+        />
+        <BuilderCountTile
+          icon={Activity}
+          label="active intents"
+          count={c.intents}
+          href="/intents?status=active"
+        />
+      </div>
+    </Surface>
+  );
+}
+
+function BuilderCountTile({
+  icon: Icon, label, count, href, external = false,
+}: {
+  icon: LucideIcon;
+  label: string;
+  count: number;
+  href: string;
+  external?: boolean;
+}) {
+  const content = (
+    <>
+      <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+        <Icon className="h-4 w-4" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="font-heading text-lg font-medium leading-none text-foreground">
+          {count}
+        </p>
+        <p className="mt-1 text-xs text-default-500">{label}</p>
+      </div>
+      {external ? (
+        <ExternalLink className="h-3.5 w-3.5 shrink-0 text-default-400 transition-colors group-hover:text-primary" />
+      ) : (
+        <ArrowRight className="h-3.5 w-3.5 shrink-0 text-default-400 transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
+      )}
+    </>
+  );
+
+  const className =
+    "group flex items-center gap-3 rounded-lg border border-divider bg-content1 px-3 py-2.5 transition-colors hover:border-primary/40";
+
+  if (external) {
+    return (
+      <a href={href} target="_blank" rel="noreferrer" className={className}>
+        {content}
+      </a>
+    );
+  }
+  return (
+    <Link href={href} className={className}>
+      {content}
+    </Link>
   );
 }
 

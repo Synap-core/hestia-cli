@@ -391,6 +391,15 @@ async function printInstallationRecap(installedComponents: string[]): Promise<vo
     console.log(colors.warning(`    ! Domain set but SSL not enabled — re-run "eve domain set ${domain} --ssl" to provision certs`));
   }
 
+  // Builder workspace — surfaced when `ensureBuilderWorkspace` has
+  // already run (post-install or post-update hook). Silent when absent
+  // so a fresh install that hasn't reached `eve auth provision` yet
+  // doesn't show a misleading half-state.
+  const builderWorkspaceId = secrets?.builder?.workspaceId;
+  if (builderWorkspaceId) {
+    console.log(`    ${colors.muted('Builder workspace:')} ${colors.primary(builderWorkspaceId)}`);
+  }
+
   // What's left to do — only show what's actually missing
   const todos: Array<{ label: string; cmd: string; severity: 'must' | 'recommended' }> = [];
 

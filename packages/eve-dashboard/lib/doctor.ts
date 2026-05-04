@@ -9,7 +9,11 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import {
-  COMPONENTS, entityStateManager, readEveSecrets, hasAnyProvider,
+  COMPONENTS,
+  entityStateManager,
+  hasAnyProvider,
+  readAgentKeyOrLegacy,
+  readEveSecrets,
 } from "@eve/dna";
 import { verifyComponent } from "@eve/legs";
 import {
@@ -299,9 +303,12 @@ export async function runDoctor(): Promise<CheckResult[]> {
   // single failing capability surfaces as one red row, not a cascading
   // failure that hides which feature is broken.
   if (installed.includes("synap") && running.has("synap-backend-backend-1")) {
+    // Doctor probes use the eve agent's key — same identity as the CLI's
+    // `eve doctor`. Falls back to legacy for pre-migration installs.
+    const eveAgentKey = await readAgentKeyOrLegacy("eve");
     const diagnostics = await runHubProtocolProbes({
       synapUrl: secrets?.synap?.apiUrl ?? "",
-      apiKey: secrets?.synap?.apiKey ?? "",
+      apiKey: eveAgentKey,
     });
     // Backwards-compatibility: the dashboard used to emit only the OpenAPI
     // probe when it failed. The shared aggregator always returns 4 rows
@@ -381,15 +388,23 @@ async function checkHermesSynapIntegration(
     integrationId,
   });
 
-  const hasSynapKey = Boolean(secrets?.synap?.apiKey);
+  // Hermes uses its own per-agent Hub key (`agents.hermes.hubApiKey`),
+  // minted by the post-install hook. Legacy single-key counts as a
+  // pass too — installs that haven't migrated yet still work via
+  // back-compat fallback.
+  const hermesHubKey =
+    Boolean(secrets?.agents?.hermes?.hubApiKey) ||
+    Boolean(secrets?.synap?.apiKey);
   out.push({
     group: "integrations",
     name: "Hermes can reach Synap",
-    status: hasSynapKey ? "pass" : "fail",
-    message: hasSynapKey
-      ? "Synap API key is set; daemon will use Hub Protocol"
-      : "Synap API key missing — daemon can't pull tasks",
-    fix: hasSynapKey ? undefined : "Reinstall Synap (eve add synap) to provision an API key",
+    status: hermesHubKey ? "pass" : "fail",
+    message: hermesHubKey
+      ? "Hermes agent key is set; daemon will use Hub Protocol"
+      : "Hermes agent key missing — daemon can't pull tasks",
+    fix: hermesHubKey
+      ? undefined
+      : "Run `eve auth provision --agent hermes` to mint the key",
     componentId: "synap",
     integrationId,
   });
@@ -435,13 +450,18 @@ function checkOpenclawSynapIntegration(
     repair: ocRunning ? undefined : { kind: "start-container", label: "Start" },
   });
 
+  // OpenClaw uses `agents.openclaw.hubApiKey` (legacy `synap.apiKey`
+  // counts as a pass for un-migrated installs).
+  const openclawHubKey =
+    Boolean(secrets?.agents?.openclaw?.hubApiKey) ||
+    Boolean(secrets?.synap?.apiKey);
   out.push({
     group: "integrations",
     name: "OpenClaw has Synap pod credentials",
-    status: secrets?.synap?.apiKey ? "pass" : "fail",
-    message: secrets?.synap?.apiKey
-      ? "API key present — wiring will pick it up"
-      : "Missing Synap API key — re-install Synap or wire it",
+    status: openclawHubKey ? "pass" : "fail",
+    message: openclawHubKey
+      ? "OpenClaw agent key present — wiring will pick it up"
+      : "Missing OpenClaw agent key — run `eve auth provision --agent openclaw`",
     componentId: "synap",
     integrationId,
   });
@@ -579,16 +599,25 @@ async function checkOpenwebuiSynapIntegration(
     }
   }
 
-  // Use secrets.synap.apiKey too — when set, the wiring action propagates
-  // it to /opt/openwebui/.env. Surface mismatch as a warn.
-  if (envCheck.found && secrets?.synap?.apiKey
-      && envCheck.env.SYNAP_API_KEY
-      && envCheck.env.SYNAP_API_KEY !== secrets.synap.apiKey) {
+  // Compare Open WebUI's bound SYNAP_API_KEY against the canonical
+  // openwebui-pipelines agent key (legacy synap.apiKey is the fallback
+  // for un-migrated installs). When wiring drifts (manual edit, stale
+  // .env from a pre-rotation install), surface a warn — the apply path
+  // re-runs writeOpenwebuiCompose + .env regen with the fresh value.
+  const expectedOwuiKey =
+    secrets?.agents?.["openwebui-pipelines"]?.hubApiKey ?? secrets?.synap?.apiKey;
+  if (
+    envCheck.found &&
+    expectedOwuiKey &&
+    envCheck.env.SYNAP_API_KEY &&
+    envCheck.env.SYNAP_API_KEY !== expectedOwuiKey
+  ) {
     out.push({
       group: "integrations",
       name: "Open WebUI key matches secrets",
       status: "warn",
-      message: "Open WebUI's SYNAP_API_KEY differs from secrets.json — re-wire to sync",
+      message:
+        "Open WebUI's SYNAP_API_KEY differs from the openwebui-pipelines agent key — re-wire to sync",
       fix: "Open AI page → Save (re-runs wiring)",
       integrationId,
     });

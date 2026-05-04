@@ -312,16 +312,21 @@ function buildAddStep(
         async fn() {
           const { mkdirSync, writeFileSync, existsSync } = await import('node:fs');
           const { join: pathJoin } = await import('node:path');
-          const { readEveSecrets } = await import('@eve/dna');
+          const { readAgentKeyOrLegacy, readEveSecrets } = await import('@eve/dna');
           const { randomBytes } = await import('node:crypto');
           const { execa } = await import('execa');
 
           const deployDir = '/opt/openwebui';
           mkdirSync(deployDir, { recursive: true });
 
-          // Read secrets for IS wiring
+          // Read secrets for IS wiring. OpenWebUI calls Synap IS using the
+          // openwebui-pipelines agent identity (its canonical pod identity),
+          // falling back to legacy for un-migrated installs.
           const secrets = await readEveSecrets(process.cwd());
-          const synapApiKey = secrets?.synap?.apiKey ?? process.env.SYNAP_API_KEY ?? '';
+          const synapApiKey =
+            (await readAgentKeyOrLegacy('openwebui-pipelines', process.cwd())) ||
+            process.env.SYNAP_API_KEY ||
+            '';
           const isUrl = process.env.SYNAP_IS_URL ?? 'http://intelligence-hub:3001';
 
           // Write a clean, self-contained compose file. We declare eve-network

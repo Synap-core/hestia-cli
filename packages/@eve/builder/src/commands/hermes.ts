@@ -1,13 +1,16 @@
 import { HermesDaemon, type HermesConfig } from '../lib/hermes-daemon';
-import { readEveSecrets } from '@eve/dna';
+import { readAgentKeyOrLegacySync, readEveSecrets } from '@eve/dna';
 
 let daemon: HermesDaemon | null = null;
 
 /**
  * Load Hermes defaults from `~/.eve/secrets.json` so the dashboard's
- * saved settings (`builder.hermes.*`, `synap.apiUrl`, `synap.apiKey`)
+ * saved settings (`builder.hermes.*`, `synap.apiUrl`, `agents.hermes`)
  * are picked up by `eve builder hermes start` without the user having
  * to pass every value as a CLI flag.
+ *
+ * Hermes is its own agent on the pod (`agents.hermes.hubApiKey`); we
+ * fall back to the legacy single key for un-migrated installs.
  *
  * CLI args override file-based defaults (most specific wins).
  */
@@ -20,7 +23,8 @@ async function loadDefaultsFromSecrets(): Promise<Partial<HermesConfig>> {
   if (h.pollIntervalMs !== undefined) out.pollIntervalMs = h.pollIntervalMs;
   if (h.maxConcurrentTasks !== undefined) out.maxConcurrentTasks = h.maxConcurrentTasks;
   if (s.synap?.apiUrl) out.apiUrl = s.synap.apiUrl;
-  if (s.synap?.apiKey) out.apiKey = s.synap.apiKey;
+  const hermesKey = readAgentKeyOrLegacySync('hermes', s);
+  if (hermesKey) out.apiKey = hermesKey;
   if (s.builder?.workspaceDir) out.workspaceDir = s.builder.workspaceDir;
   return out;
 }

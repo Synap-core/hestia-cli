@@ -322,12 +322,17 @@ export function aiCommandGroup(program: Command): void {
       try {
         const secrets = await readEveSecrets(process.cwd());
         const hubBaseUrl = resolveHubBaseUrlFromSecrets(secrets);
-        const apiKey = secrets?.synap?.apiKey?.trim();
+        // `eve ai sync` writes workspace settings on the pod — admin-style
+        // call. Use the eve agent's key (Doctor's identity) so the audit
+        // trail attributes back to Eve, not to a specific consumer agent.
+        const apiKey =
+          secrets?.agents?.eve?.hubApiKey?.trim() ??
+          secrets?.synap?.apiKey?.trim();
         if (!hubBaseUrl) {
           throw new Error('Missing synap.apiUrl/synap.hubBaseUrl in .eve/secrets/secrets.json');
         }
         if (!apiKey) {
-          throw new Error('Missing synap.apiKey in .eve/secrets/secrets.json');
+          throw new Error('Missing eve agent key — run `eve auth provision`');
         }
 
         const payload = buildNonSecretProviderRouting(secrets);

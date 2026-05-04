@@ -55,6 +55,58 @@ The dashboard is a separate package: see [`@eve/dashboard`](../eve-dashboard/REA
 | `eve ai wire` | Push the provider policy to wired components (e.g. OpenClaw `auth-profiles.json`). |
 | `eve ai sync --workspace <uuid>` | Push provider policy to a Synap workspace. |
 
+### Synap auth — per-agent Hub Protocol keys
+
+Eve provisions a **separate** Hub Protocol API key for each consumer
+that talks to Synap (Eve itself, OpenClaw, Hermes, OpenWebUI Pipelines).
+Each one has its own pod-side user, audit trail, and revocation handle.
+Keys are minted via `POST /api/hub/setup/agent` using the pod's
+`PROVISIONING_TOKEN` (read from the pod's `deploy/.env`).
+
+| Command | What it does |
+|---|---|
+| `eve auth status` | Table of every agent: key prefix, pod user, scopes, age, failure reason if any. |
+| `eve auth status --agent <slug>` | Detail view for one agent (eve, openclaw, hermes, openwebui-pipelines). |
+| `eve auth whoami [--agent <slug>]` | Tight one-liner. Defaults to the `eve` agent. |
+| `eve auth provision` | Mint missing agent keys. Idempotent — skips agents that already have one. |
+| `eve auth provision --agent <slug>` | Mint just one. |
+| `eve auth renew --agent <slug>` | Rotate a single agent's key. |
+| `eve auth renew --all` | Rotate every registered agent's key in one pass. |
+
+How it's stored:
+
+```json
+{
+  "synap": { "apiUrl": "https://pod.example.com", "apiKey": "<eve-key, mirrored>" },
+  "agents": {
+    "eve":                 { "hubApiKey": "...", "agentUserId": "...", "workspaceId": "..." },
+    "openclaw":            { "hubApiKey": "...", "agentUserId": "...", "workspaceId": "..." },
+    "hermes":              { "hubApiKey": "...", "agentUserId": "...", "workspaceId": "..." },
+    "openwebui-pipelines": { "hubApiKey": "...", "agentUserId": "...", "workspaceId": "..." }
+  }
+}
+```
+
+The legacy `synap.apiKey` field is mirrored from the `eve` agent's key
+for one-release back-compat — older readers keep working until they
+move to `secrets.agents[<slug>]`.
+
+When does Eve mint keys?
+
+- **Fresh install** — every component install runs a post-hook that
+  mints its agent's key (e.g. `eve add openclaw` mints
+  `agents.openclaw`). Synap install also mints the always-on `eve`
+  agent.
+- **Post-update reconcile** — `eve update synap` checks the eve agent
+  key and auto-renews on `key_revoked`/`expired`. Detects un-migrated
+  installs and runs the legacy migration automatically.
+- **Manual** — `eve auth provision` / `renew` whenever you want.
+
+If a renew fails with `PROVISIONING_TOKEN unavailable`, set
+`EVE_PROVISIONING_TOKEN=<token>` (the value from your pod's
+`deploy/.env`) and retry, or run from the pod host so Eve can read
+`deploy/.env` directly.
+
 ### Domain & networking
 
 | Command | What it does |

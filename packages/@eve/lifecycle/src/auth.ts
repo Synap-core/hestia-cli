@@ -24,10 +24,21 @@
  * `node:fs/promises` for atomic file writes; nothing else.
  */
 
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { readEveSecrets, secretsPath } from "@eve/dna";
+import { join } from "node:path";
+import {
+  LEGACY_CODER_ENGINE_SLUGS,
+  agentsToProvision,
+  readAgentKey,
+  readEveSecrets,
+  writeAgentKey,
+  writeCodeEngine,
+  writeEveSecrets,
+  type AgentInfo,
+  type AgentKeyRecord,
+  type CodeEngine,
+  type EveSecrets,
+} from "@eve/dna";
 import {
   FetchRunner,
   type IDoctorRunner,
@@ -249,6 +260,12 @@ export async function isKeyValid(opts: {
 export interface RenewAgentKeyOptions {
   /** Where `.eve/secrets/secrets.json` lives. Defaults to the @eve/dna default. */
   deployDir?: string;
+  /**
+   * Which agent slug to renew. Defaults to `"eve"` — the one used by
+   * Doctor and any back-compat reader of `secrets.synap.apiKey`. Pass
+   * an explicit slug (e.g. "openclaw") to renew a specific consumer.
+   */
+  agentType?: string;
   /** Free-form reason logged when the renew fires (e.g. "key_revoked during update"). */
   reason?: string;
   /** Override the runner — same abstraction the diagnostics use. */
@@ -258,45 +275,147 @@ export interface RenewAgentKeyOptions {
 }
 
 export type RenewResult =
-  | { renewed: true; apiKey: string; keyIdPrefix: string }
-  | { renewed: false; reason: string };
+  | { renewed: true; apiKey: string; keyIdPrefix: string; agentType: string }
+  | { renewed: false; reason: string; agentType: string };
 
 const RENEW_TIMEOUT_MS = 10_000;
 
+/**
+ * Re-mint one agent's Hub Protocol key.
+ *
+ * Thin wrapper over `provisionAgent` for the renew use case — same
+ * code path, but the public name signals intent (you're rotating an
+ * existing key, not minting one for a brand-new agent). Idempotent:
+ * the pod's `/setup/agent` reuses the agent user and revokes the old
+ * key, so calling renew on an unprovisioned agent works the same as
+ * the first install-time mint.
+ */
 export async function renewAgentKey(opts: RenewAgentKeyOptions = {}): Promise<RenewResult> {
+  const agentType = opts.agentType ?? "eve";
+  const result = await provisionAgent({
+    agentType,
+    deployDir: opts.deployDir,
+    reason: opts.reason ?? "renew",
+    runner: opts.runner,
+    timeoutMs: opts.timeoutMs,
+  });
+  if (result.provisioned) {
+    return {
+      renewed: true,
+      apiKey: result.record.hubApiKey,
+      keyIdPrefix: result.keyIdPrefix,
+      agentType,
+    };
+  }
+  return { renewed: false, reason: result.reason, agentType };
+}
+
+// ---------------------------------------------------------------------------
+// provisionAgent — the canonical agent-key mint path. Used by install,
+// renew, and the legacy-key migration. Wraps the /setup/agent contract
+// in one place so every caller benefits from the same error envelope,
+// timeout policy, and atomic write path.
+// ---------------------------------------------------------------------------
+
+export interface ProvisionAgentOptions {
+  /** Required — the agentType slug to mint a key for. */
+  agentType: string;
+  /** Where `.eve/secrets/secrets.json` lives. Defaults to EVE_HOME / cwd. */
+  deployDir?: string;
+  /** Free-form reason ("install", "renew", "migrate") — logged on the wire. */
+  reason?: string;
+  /** Override the runner. Defaults to FetchRunner (same abstraction as diagnostics). */
+  runner?: IDoctorRunner;
+  /** Hard wall-clock cap on the mint call. Default 10s. */
+  timeoutMs?: number;
+  /**
+   * Override the synap pod URL. When unset we read it from
+   * `secrets.synap.apiUrl` (the install-time value). Useful for tests
+   * and one-shot CLI flows that target a non-default pod.
+   */
+  synapUrl?: string;
+  /**
+   * Override PROVISIONING_TOKEN. When unset we resolve it from env
+   * (EVE_PROVISIONING_TOKEN, then PROVISIONING_TOKEN) and finally
+   * the synap deploy `.env` file. Tests pass it directly.
+   */
+  provisioningToken?: string;
+}
+
+export type ProvisionResult =
+  | {
+      provisioned: true;
+      agentType: string;
+      record: AgentKeyRecord;
+      /** First 8 chars of the keyId (or apiKey if backend doesn't return one). */
+      keyIdPrefix: string;
+    }
+  | {
+      provisioned: false;
+      agentType: string;
+      reason: string;
+    };
+
+/**
+ * Mint one agent's Hub Protocol key via `POST /api/hub/setup/agent`.
+ *
+ * Authoritative flow — every install / renew / migrate path goes
+ * through here:
+ *
+ *   1. Resolve pod URL (option > secrets.synap.apiUrl).
+ *   2. Resolve PROVISIONING_TOKEN (option > env > deploy/.env).
+ *   3. POST /setup/agent with `{ agentType }`.
+ *   4. Persist the returned `{ hubApiKey, agentUserId, workspaceId }`
+ *      under `secrets.agents[agentType]`.
+ *   5. When `agentType === "eve"`, mirror the key into the legacy
+ *      `secrets.synap.apiKey` field (handled in `writeAgentKey`) so
+ *      back-compat readers keep working through one release.
+ *
+ * Never throws. Every error mode (no URL, no token, network, 401, 5xx,
+ * malformed body, write failure) becomes a `{ provisioned: false }`
+ * result with a human-readable `reason`.
+ */
+export async function provisionAgent(opts: ProvisionAgentOptions): Promise<ProvisionResult> {
+  const agentType = opts.agentType;
+  if (!agentType || agentType.trim().length === 0) {
+    return { provisioned: false, agentType: "", reason: "agentType is required" };
+  }
+
   const cwd = opts.deployDir ?? process.env.EVE_HOME ?? process.cwd();
   const secrets = await readEveSecrets(cwd);
-  const synapUrl = secrets?.synap?.apiUrl?.trim();
+  const synapUrl = (opts.synapUrl ?? secrets?.synap?.apiUrl ?? "").trim();
   if (!synapUrl) {
     return {
-      renewed: false,
+      provisioned: false,
+      agentType,
       reason: "synap.apiUrl not set in secrets.json — run `eve install` first",
     };
   }
 
-  // Bootstrap secret: env first, then synap deploy `.env` as a fallback.
-  // PROVISIONING_TOKEN is a one-shot install-time secret; we don't currently
-  // persist it in the Eve secrets file, so post-install renewal needs it
-  // to be provided explicitly.
-  const provisioningToken = resolveProvisioningToken();
+  const provisioningToken = opts.provisioningToken ?? resolveProvisioningToken();
   if (!provisioningToken) {
     return {
-      renewed: false,
+      provisioned: false,
+      agentType,
       reason:
-        "PROVISIONING_TOKEN no longer available — re-run eve install or set EVE_PROVISIONING_TOKEN=...",
+        "PROVISIONING_TOKEN unavailable. Set EVE_PROVISIONING_TOKEN, or ensure the pod's deploy/.env is readable. " +
+        "PROVISIONING_TOKEN was generated when synap-backend was first installed and lives in deploy/.env on the pod host.",
     };
   }
 
   const runner = opts.runner ?? new FetchRunner();
   const url = `${synapUrl.replace(/\/+$/, "")}/api/hub/setup/agent`;
+  const previousPrefix = (secrets?.agents?.[agentType]?.hubApiKey ?? secrets?.synap?.apiKey ?? "").slice(0, 8);
 
-  const previousPrefix = (secrets?.synap?.apiKey ?? "").slice(0, 8);
   const body = JSON.stringify({
-    name: "eve-cli",
-    // Hint the backend we're a renewal so it can attribute the new key
-    // back to the previous one if it tracks parentKeyId.
+    agentType,
+    // Diagnostic hints — backend ignores unknown fields. Useful in pod
+    // logs to attribute key churn ("renew", "migrate", "install") and
+    // to chain new keys back to the previous one if the backend tracks
+    // parentKeyId.
+    name: `eve-${agentType}`,
     parentKeyIdPrefix: previousPrefix || undefined,
-    reason: opts.reason ?? "renew",
+    reason: opts.reason ?? "provision",
   });
   const headers: Record<string, string> = {
     Authorization: `Bearer ${provisioningToken}`,
@@ -310,25 +429,46 @@ export async function renewAgentKey(opts: RenewAgentKeyOptions = {}): Promise<Re
 
   if (res.status === 0) {
     return {
-      renewed: false,
+      provisioned: false,
+      agentType,
       reason: `Cannot reach ${url} (${res.error ?? "network error"})`,
+    };
+  }
+  if (res.status === 202) {
+    // ISSUER_PENDING_APPROVAL — only fires when /setup/agent rejects the
+    // PROVISIONING_TOKEN as a JWT and falls into the trusted-issuers
+    // pending flow. In practice this means the token was malformed or
+    // the operator pasted a CP JWT here by mistake. Surface the reason
+    // verbatim so they can route to the admin panel if needed.
+    const parsed = tryJson(res.body);
+    const adminUrl =
+      typeof parsed === "object" && parsed && typeof (parsed as Record<string, unknown>).adminUrl === "string"
+        ? (parsed as Record<string, unknown>).adminUrl
+        : null;
+    return {
+      provisioned: false,
+      agentType,
+      reason: `Backend deferred the request (issuer pending approval). Visit ${adminUrl ?? `${synapUrl}/admin/trusted-issuers`} to approve, then retry.`,
     };
   }
   if (res.status === 401 || res.status === 403) {
     return {
-      renewed: false,
-      reason: `PROVISIONING_TOKEN rejected (${res.status}) — token expired or wrong, re-run eve install`,
+      provisioned: false,
+      agentType,
+      reason: `PROVISIONING_TOKEN rejected (${res.status}) — token expired, wrong, or backend doesn't accept it. Re-check deploy/.env or run \`eve install\`.`,
     };
   }
   if (res.status === 404) {
     return {
-      renewed: false,
-      reason: "POST /api/hub/setup/agent not available — backend version too old (update synap)",
+      provisioned: false,
+      agentType,
+      reason: "POST /api/hub/setup/agent not available — backend version too old. Run `eve update synap`.",
     };
   }
   if (res.status < 200 || res.status >= 300) {
     return {
-      renewed: false,
+      provisioned: false,
+      agentType,
       reason: `Backend returned ${res.status}: ${res.body.slice(0, 160)}`,
     };
   }
@@ -336,41 +476,247 @@ export async function renewAgentKey(opts: RenewAgentKeyOptions = {}): Promise<Re
   const parsed = tryJson(res.body);
   if (!parsed || typeof parsed !== "object") {
     return {
-      renewed: false,
+      provisioned: false,
+      agentType,
       reason: "Mint response was not JSON",
     };
   }
   const obj = parsed as Record<string, unknown>;
-  // Accept either `hubApiKey` (per spec) or `apiKey` (alternate name).
   const hubApiKey = stringOr(obj.hubApiKey, stringOr(obj.apiKey, ""));
   if (!hubApiKey) {
     return {
-      renewed: false,
+      provisioned: false,
+      agentType,
       reason: "Mint response did not include hubApiKey",
     };
   }
+  const agentUserId = stringOr(obj.agentUserId, "");
+  const workspaceId = stringOr(obj.workspaceId, "");
+  const keyId = stringOr(obj.keyId, "");
   const keyIdPrefix = stringOr(
     obj.keyIdPrefix,
-    stringOr(obj.keyId, "").slice(0, 8) || hubApiKey.slice(0, 8),
+    keyId.slice(0, 8) || hubApiKey.slice(0, 8),
   );
 
-  // Atomic swap: rewrite secrets.json with the new apiKey, preserving every
-  // other field. We bypass `writeEveSecrets` here because we need a write
-  // path that survives a partial failure — readEveSecrets() returns the
-  // schema-coerced shape and we only mutate `synap.apiKey`. The existing
-  // helper merges nested objects, but writing through it doubles the risk
-  // surface (parse the merged shape, re-parse). The minimum-viable approach
-  // is to read-modify-write the JSON blob.
+  if (!agentUserId || !workspaceId) {
+    return {
+      provisioned: false,
+      agentType,
+      reason: "Mint response missing required fields (agentUserId/workspaceId)",
+    };
+  }
+
+  const record: AgentKeyRecord = {
+    hubApiKey,
+    agentUserId,
+    workspaceId,
+    keyId: keyId || undefined,
+    createdAt: new Date().toISOString(),
+  };
+
   try {
-    await atomicReplaceApiKey(cwd, hubApiKey);
+    await writeAgentKey(agentType, record, cwd);
   } catch (err) {
     return {
-      renewed: false,
+      provisioned: false,
+      agentType,
       reason: `Mint succeeded but secrets.json write failed: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
 
-  return { renewed: true, apiKey: hubApiKey, keyIdPrefix };
+  return { provisioned: true, agentType, record, keyIdPrefix };
+}
+
+/**
+ * Provision every agent in the registry whose backing component is
+ * installed (plus the always-on "eve" agent).
+ *
+ * Used by the lifecycle layer at the end of an `eve install` run to
+ * make sure every consumer has its own key, not the legacy shared one.
+ *
+ * Failures are partial — one agent failing to mint doesn't block the
+ * others. Returns the per-agent results so the caller can render a
+ * summary table.
+ */
+export async function provisionAllAgents(opts: {
+  installedComponentIds: readonly string[];
+  deployDir?: string;
+  reason?: string;
+  runner?: IDoctorRunner;
+  /** Skip an agent if its key already exists. Defaults to true. */
+  skipIfPresent?: boolean;
+}): Promise<ProvisionResult[]> {
+  const cwd = opts.deployDir ?? process.env.EVE_HOME ?? process.cwd();
+  const skipIfPresent = opts.skipIfPresent ?? true;
+  const agents: AgentInfo[] = agentsToProvision(opts.installedComponentIds);
+  const results: ProvisionResult[] = [];
+
+  for (const agent of agents) {
+    if (skipIfPresent) {
+      const existing = await readAgentKey(agent.agentType, cwd);
+      if (existing && existing.hubApiKey) {
+        results.push({
+          provisioned: true,
+          agentType: agent.agentType,
+          record: existing,
+          keyIdPrefix: (existing.keyId ?? existing.hubApiKey).slice(0, 8),
+        });
+        continue;
+      }
+    }
+    const result = await provisionAgent({
+      agentType: agent.agentType,
+      deployDir: cwd,
+      reason: opts.reason ?? "provision-all",
+      runner: opts.runner,
+    });
+    results.push(result);
+  }
+
+  return results;
+}
+
+/**
+ * Migrate a legacy install to the current per-agent layout.
+ *
+ * Two distinct legacy shapes are handled:
+ *
+ *  1. Single-key world: only `secrets.synap.apiKey` is set. Mint a fresh
+ *     key for every registered agent (including eve), which atomically
+ *     replaces the legacy blob. The legacy field stays populated as the
+ *     eve agent's key alias (mirrored by `writeAgentKey`).
+ *
+ *  2. Three-coder-agents world: `secrets.agents.claudecode` and/or
+ *     `secrets.agents.opencode` and/or `secrets.agents.openclaude` exist
+ *     from a pre-consolidation install. We collapse those into a single
+ *     `coder` agent + a `secrets.builder.codeEngine` config field. The
+ *     old per-engine entries are stripped from `secrets.agents` so
+ *     downstream readers can't accidentally reach for them. (The
+ *     corresponding agent users / keys remain on the pod; operators can
+ *     clean them up via the dashboard. There is no Hub Protocol bulk
+ *     revoke endpoint to call here — the existing `/setup/agent` path
+ *     only revokes when re-minting under the SAME slug, and we're moving
+ *     to a different slug.)
+ *
+ * Why mint fresh keys instead of reusing the legacy one: the legacy
+ * key was minted with `agentType: "openclaw"` (the only slug install
+ * ever supported). It can't legitimately represent eve / hermes /
+ * pipelines on the pod side — those agents need their own audit trail.
+ * Re-minting under the right slug is the only correct path.
+ *
+ * Idempotent on both axes: re-running after a successful migration is
+ * a no-op once the eve agent key is present and there are no legacy
+ * coder slugs left.
+ */
+export async function migrateLegacyToAgents(opts: {
+  installedComponentIds: readonly string[];
+  deployDir?: string;
+  runner?: IDoctorRunner;
+}): Promise<{
+  migrated: boolean;
+  results: ProvisionResult[];
+  reason?: string;
+  /** Engine picked from legacy per-engine keys, when that path triggered. */
+  collapsedToEngine?: CodeEngine;
+  /** Legacy slugs that were stripped from secrets.agents during migration. */
+  strippedLegacySlugs?: string[];
+}> {
+  const cwd = opts.deployDir ?? process.env.EVE_HOME ?? process.cwd();
+  const secretsBefore = await readEveSecrets(cwd);
+
+  // ---- Phase A: collapse legacy per-engine coder agents (if any) ------
+  const collapse = await collapseLegacyCoderAgents(secretsBefore, cwd);
+
+  // ---- Phase B: per-agent migration (single-key → registry) -----------
+  const eveExisting = await readAgentKey("eve", cwd);
+  const needsPerAgent = !eveExisting || !eveExisting.hubApiKey;
+
+  if (!needsPerAgent && !collapse.collapsed) {
+    return {
+      migrated: false,
+      results: [],
+      reason: "already migrated — eve agent key present and no legacy coder slugs",
+    };
+  }
+
+  // Same flow as provisionAllAgents but with skipIfPresent=false when we
+  // need to mint the eve agent. When ONLY the coder collapse fired (eve
+  // already present), we still call provisionAllAgents but with
+  // skipIfPresent=true so we don't churn already-good keys — the only
+  // new mint should be the `coder` slot.
+  const results = await provisionAllAgents({
+    installedComponentIds: opts.installedComponentIds,
+    deployDir: cwd,
+    reason: collapse.collapsed ? "migrate-legacy-coder-collapse" : "migrate-legacy",
+    runner: opts.runner,
+    skipIfPresent: !needsPerAgent,
+  });
+  const anyOk = results.some((r) => r.provisioned);
+  return {
+    migrated: anyOk || collapse.collapsed,
+    results,
+    reason: anyOk
+      ? undefined
+      : collapse.collapsed
+        ? "coder collapse applied; new agent provisioning failed — see per-agent reasons"
+        : "no agent could be provisioned — see per-agent reasons",
+    collapsedToEngine: collapse.engine,
+    strippedLegacySlugs: collapse.stripped,
+  };
+}
+
+/**
+ * Detect and rewrite legacy per-engine coder agent slots.
+ *
+ * Legacy installs may have minted separate Hub keys under
+ * `secrets.agents.{claudecode, opencode, openclaude}`. The new model
+ * collapses those into ONE `coder` Hub identity plus a
+ * `secrets.builder.codeEngine` config field that picks the local CLI.
+ *
+ * Strategy:
+ *   1. Find which legacy slugs are present in secrets.agents.
+ *   2. If `secrets.builder.codeEngine` is unset, pick one from the
+ *      legacy slugs — preferring claudecode > opencode > openclaude.
+ *   3. Strip the legacy entries from `secrets.agents` (keep workspace,
+ *      agent, etc. — only delete the three per-engine records).
+ *   4. Persist `secrets.builder.codeEngine`.
+ *
+ * Returns `collapsed: false` when there's nothing to do.
+ */
+async function collapseLegacyCoderAgents(
+  secrets: EveSecrets | null,
+  cwd: string,
+): Promise<{ collapsed: boolean; engine?: CodeEngine; stripped: string[] }> {
+  if (!secrets) return { collapsed: false, stripped: [] };
+  const agents = secrets.agents ?? {};
+
+  const presentLegacy: CodeEngine[] = LEGACY_CODER_ENGINE_SLUGS.filter(
+    (slug) => agents[slug] !== undefined,
+  );
+  if (presentLegacy.length === 0) {
+    return { collapsed: false, stripped: [] };
+  }
+
+  // Pick winning engine: existing config wins; otherwise prefer claudecode,
+  // then opencode, then openclaude (matching LEGACY_CODER_ENGINE_SLUGS order).
+  const existingChoice = secrets.builder?.codeEngine;
+  const pickedEngine: CodeEngine =
+    existingChoice && LEGACY_CODER_ENGINE_SLUGS.includes(existingChoice)
+      ? existingChoice
+      : presentLegacy[0];
+
+  // Persist engine choice.
+  await writeCodeEngine(pickedEngine, cwd);
+
+  // Strip legacy slots from secrets.agents.
+  const nextAgents: Record<string, AgentKeyRecord> = {};
+  for (const [slug, rec] of Object.entries(agents)) {
+    if ((LEGACY_CODER_ENGINE_SLUGS as readonly string[]).includes(slug)) continue;
+    nextAgents[slug] = rec as AgentKeyRecord;
+  }
+  await writeEveSecrets({ agents: nextAgents }, cwd);
+
+  return { collapsed: true, engine: pickedEngine, stripped: presentLegacy };
 }
 
 /**
@@ -413,58 +759,6 @@ function resolveProvisioningToken(): string | null {
     }
   }
   return null;
-}
-
-/**
- * Atomic in-place rewrite of `synap.apiKey` in secrets.json.
- *
- * - Reads the existing JSON (if any) and mutates only the targeted field.
- * - Writes a sibling temp file with mode 0600, then `rename()` over the
- *   target. On crash mid-write the original file is untouched; on
- *   `rename()` failure the temp file is removed.
- * - When `secrets.json` doesn't exist yet, writes a minimal valid blob
- *   that satisfies `EveSecretsSchema` (version + updatedAt + synap.apiKey).
- */
-async function atomicReplaceApiKey(cwd: string, newKey: string): Promise<void> {
-  const path = secretsPath(cwd);
-  const dir = dirname(path);
-  await mkdir(dir, { recursive: true });
-
-  let parsed: Record<string, unknown> = {};
-  if (existsSync(path)) {
-    const raw = await readFile(path, "utf-8");
-    try {
-      parsed = JSON.parse(raw) as Record<string, unknown>;
-    } catch {
-      // File is corrupt — start over with a minimal shape rather than
-      // silently rewriting a non-JSON file (which would hide the corruption
-      // from the operator). We still preserve the broken file by writing
-      // alongside, so a user can recover manually if needed.
-      await writeFile(`${path}.broken-${Date.now()}`, raw, { mode: 0o600 });
-      parsed = {};
-    }
-  }
-
-  const synap = (parsed.synap as Record<string, unknown> | undefined) ?? {};
-  synap.apiKey = newKey;
-  parsed.synap = synap;
-  parsed.version = "1";
-  parsed.updatedAt = new Date().toISOString();
-
-  const tmp = `${path}.tmp.${process.pid}.${Date.now()}`;
-  await writeFile(tmp, JSON.stringify(parsed, null, 2), { mode: 0o600 });
-  try {
-    await rename(tmp, path);
-  } catch (err) {
-    // Best-effort cleanup of the temp file if rename failed.
-    try {
-      const { unlink } = await import("node:fs/promises");
-      await unlink(tmp);
-    } catch {
-      // ignore
-    }
-    throw err;
-  }
 }
 
 // ---------------------------------------------------------------------------

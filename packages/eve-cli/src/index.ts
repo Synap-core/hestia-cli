@@ -28,6 +28,7 @@ import { authCommand } from './commands/auth.js';
 import { aiCommandGroup } from './commands/ai.js';
 import { uiCommand } from './commands/ui.js';
 import { domainCommand } from './commands/domain.js';
+import { intentCommand } from './commands/intent.js';
 import { colors, emojis } from './lib/ui.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -133,6 +134,9 @@ uiCommand(program);
 
 // --- Domain ---
 domainCommand(program);
+
+// --- Intent (background_tasks) ---
+intentCommand(program);
 
 // --- Organs ---
 const brain = program.command('brain').description('Intelligence & memory (Synap, Ollama)');

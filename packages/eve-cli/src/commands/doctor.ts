@@ -5,6 +5,7 @@ import {
   entityStateManager,
   type Organ,
   COMPONENTS,
+  readAgentKey,
   readEveSecrets,
   getAccessUrls,
   hasAnyProvider,
@@ -228,7 +229,13 @@ async function runDiagnostics(opts: DoctorOptions = { verbose: false, skipProbes
   const synapInstalled = installed.includes('synap');
   if (synapInstalled && !skipProbes) {
     const synapApiUrl = secrets?.synap?.apiUrl ?? '';
-    const synapApiKey = secrets?.synap?.apiKey ?? '';
+    // Doctor probes use the "eve" agent's key — that agent is reserved
+    // for our own diagnostics + dashboard probes, so failures here
+    // never tell us whether OpenClaw or Hermes are healthy. Fall back
+    // to the legacy `synap.apiKey` only if the per-agent record is
+    // missing (e.g. fresh install hasn't migrated yet).
+    const eveAgent = await readAgentKey('eve', process.cwd());
+    const synapApiKey = eveAgent?.hubApiKey ?? secrets?.synap?.apiKey ?? '';
 
     if (!synapApiUrl || !synapApiKey) {
       // Skipped — synap not configured locally. NOT a failure: the user
@@ -237,8 +244,8 @@ async function runDiagnostics(opts: DoctorOptions = { verbose: false, skipProbes
       checks.push({
         name: 'Synap Hub Protocol probes',
         status: 'skip',
-        message: 'skipped — synap not configured locally (no apiUrl/apiKey in secrets.json)',
-        fix: 'Run `eve add synap` to provision an API key, or set them manually in ~/.eve/secrets.json',
+        message: 'skipped — no eve agent key in secrets.json (or pod URL missing)',
+        fix: 'Run `eve auth provision` to mint missing agent keys, or `eve add synap` for a fresh install.',
       });
     } else {
       const probeSpinner = createSpinner('Running Hub Protocol probes (≤35s)...');
@@ -291,6 +298,72 @@ async function runDiagnostics(opts: DoctorOptions = { verbose: false, skipProbes
       status: 'skip',
       message: 'skipped (--skip-probes)',
     });
+  }
+
+  // Check 4b-ter: Builder workspace seed. Compares the locally-recorded
+  // workspaceId against what the pod returns for the Builder template's
+  // proposalId. One probe — three possible outcomes:
+  //   - pass:  secrets has a workspaceId AND it matches the pod's row.
+  //   - warn:  secrets is empty OR the pod row drifted — fixable by `eve update`.
+  //   - skip:  not enough info (no synap, no eve key, no pod URL).
+  if (synapInstalled) {
+    const builderId = secrets?.builder?.workspaceId?.trim();
+    const synapApiUrl = secrets?.synap?.apiUrl ?? '';
+    const eveAgent = await readAgentKey('eve', process.cwd());
+    const synapApiKey = eveAgent?.hubApiKey ?? secrets?.synap?.apiKey ?? '';
+
+    if (!synapApiUrl || !synapApiKey) {
+      checks.push({
+        name: 'Builder workspace',
+        status: 'skip',
+        message: 'skipped — no eve agent key or pod URL configured',
+      });
+    } else if (!builderId) {
+      checks.push({
+        name: 'Builder workspace',
+        status: 'warn',
+        message: 'No workspaceId recorded in secrets.builder.workspaceId',
+        fix: 'eve update synap   # re-runs ensureBuilderWorkspace()',
+      });
+    } else {
+      try {
+        const probeUrl = `${synapApiUrl.replace(/\/+$/, '')}/api/hub/workspaces/${encodeURIComponent(builderId)}`;
+        const res = await fetch(probeUrl, {
+          headers: {
+            Authorization: `Bearer ${synapApiKey}`,
+            Accept: 'application/json',
+          },
+          signal: AbortSignal.timeout(5_000),
+        });
+        if (res.ok) {
+          checks.push({
+            name: 'Builder workspace',
+            status: 'pass',
+            message: `Pod confirms workspaceId ${builderId.slice(0, 8)}…`,
+          });
+        } else if (res.status === 404) {
+          checks.push({
+            name: 'Builder workspace',
+            status: 'warn',
+            message: `Pod has no workspace ${builderId.slice(0, 8)}… (drift)`,
+            fix: 'eve update synap   # reseeds the Builder workspace',
+          });
+        } else {
+          checks.push({
+            name: 'Builder workspace',
+            status: 'warn',
+            message: `Pod returned ${res.status} when probing ${builderId.slice(0, 8)}…`,
+            fix: 'eve auth status && eve update synap',
+          });
+        }
+      } catch (err) {
+        checks.push({
+          name: 'Builder workspace',
+          status: 'warn',
+          message: `Could not probe pod (${err instanceof Error ? err.message : String(err)})`,
+        });
+      }
+    }
   }
 
   // Check 4c: Domain & route health (only if a domain is configured)

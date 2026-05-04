@@ -93,11 +93,48 @@ export { type HardwareFacts, probeHardware, formatHardwareReport } from './hw-pr
 
 export {
   type EveSecrets,
+  type AgentKeyRecord,
+  type CodeEngine,
+  DEFAULT_CODE_ENGINE,
   readEveSecrets,
   writeEveSecrets,
+  readAgentKey,
+  readAgentKeyOrLegacy,
+  readAgentKeyOrLegacySync,
+  writeAgentKey,
+  readCodeEngine,
+  writeCodeEngine,
   secretsPath,
   ensureSecretValue,
 } from './secrets-contract.js';
+
+// Agent registry — single source of truth for which Synap agents Eve
+// provisions on the pod (eve, openclaw, hermes, openwebui-pipelines, coder).
+export {
+  type AgentInfo,
+  type LegacyCoderEngineSlug,
+  AGENTS,
+  LEGACY_CODER_ENGINE_SLUGS,
+  resolveAgent,
+  allAgentTypes,
+  agentsToProvision,
+} from './agents.js';
+
+// Background-task action registry mirror (canonical source: synap-backend)
+export {
+  type EveBackgroundTaskAction,
+  EVE_BACKGROUND_ACTIONS,
+  isValidEveBackgroundAction,
+  listEveBackgroundActions,
+  assigneeForAction,
+} from './background-task-actions.js';
+
+// Background-task wire shape (mirror of synap-backend's `background_tasks` schema).
+export type {
+  BackgroundTask,
+  BackgroundTaskType,
+  BackgroundTaskStatus,
+} from './background-tasks-types.js';
 
 export { getServerIp } from './server-ip.js';
 export { type ServiceAccess, getAccessUrls } from './access-urls.js';

@@ -22,6 +22,7 @@ import {
   COMPONENTS,
   resolveComponent,
   entityStateManager,
+  readAgentKey,
   readEveSecrets,
   writeEveSecrets,
   pickPrimaryProvider,
@@ -39,6 +40,7 @@ import {
   reconcileOpenclawConfig,
   type OpenclawReconcileResult,
 } from "./components/openclaw/reconcile.js";
+import { ensureBuilderWorkspace } from "./builder-workspace.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -410,27 +412,80 @@ async function* runPostUpdateHooks(comp: ComponentInfo): AsyncGenerator<Lifecycl
  * up the new key — surfaced as a hint, not enforced here.
  */
 async function* postUpdateReconcileAuth(): AsyncGenerator<LifecycleEvent> {
-  const { getAuthStatus, renewAgentKey } = await import("./auth.js");
+  const { getAuthStatus, renewAgentKey, migrateLegacyToAgents } = await import("./auth.js");
+  const { readAgentKey } = await import("@eve/dna");
   const secrets = await readEveSecrets();
   const synapUrl = secrets?.synap?.apiUrl?.trim() ?? "";
-  const apiKey = secrets?.synap?.apiKey?.trim() ?? "";
-  if (!synapUrl || !apiKey) {
-    // No configured key — nothing to validate. Stay quiet.
+  if (!synapUrl) {
+    // No pod URL — nothing to validate. Stay quiet.
     return;
   }
 
-  const status = await getAuthStatus({ synapUrl, apiKey });
+  // Auto-migrate from legacy single-key world to per-agent. Trigger
+  // condition: legacy `synap.apiKey` exists but no `agents.eve` record.
+  // Idempotent — `migrateLegacyToAgents` is itself a no-op when the eve
+  // agent key is already present.
+  const legacyKey = secrets?.synap?.apiKey?.trim() ?? "";
+  const eveAgentKey = await readAgentKey("eve");
+  if (legacyKey && !eveAgentKey) {
+    yield {
+      type: "log",
+      line: "↳ legacy single-key install detected — migrating to per-agent keys",
+    };
+    let installedSet: string[];
+    try {
+      installedSet = await entityStateManager.getInstalledComponents();
+    } catch {
+      installedSet = [];
+    }
+    const migration = await migrateLegacyToAgents({
+      installedComponentIds: installedSet,
+    });
+    if (migration.migrated) {
+      const ok = migration.results.filter((r) => r.provisioned).length;
+      const failed = migration.results.length - ok;
+      yield {
+        type: "log",
+        line: `↳ migrated ${ok}/${migration.results.length} agent${migration.results.length === 1 ? "" : "s"} to per-agent keys${failed > 0 ? ` (${failed} failed — run \`eve auth status\`)` : ""}`,
+      };
+      // The eve agent key now exists in its own slot — seed the Builder
+      // workspace so upgraded installs catch up to fresh-install state.
+      // Failures are non-fatal: they yield a log, never break the migration.
+      yield* postInstallSeedBuilderWorkspace();
+    } else {
+      yield {
+        type: "log",
+        line: `↳ legacy migration deferred: ${migration.reason ?? "unknown"} — run \`eve auth provision\` manually`,
+      };
+    }
+    // After migration the legacy field has been overwritten by the eve
+    // agent's fresh key, so the rest of this hook can keep running on
+    // the new state without re-reading.
+    return;
+  }
+
+  // Already on per-agent. Health-check the eve agent key (our canary —
+  // it's the one Doctor probes use, so an eve key failure is the most
+  // visible breakage).
+  const eveKeyValue = eveAgentKey?.hubApiKey?.trim() ?? legacyKey;
+  if (!eveKeyValue) {
+    // No eve key at all — quiet, the operator hasn't provisioned yet.
+    return;
+  }
+
+  const status = await getAuthStatus({ synapUrl, apiKey: eveKeyValue });
   if (status.ok) {
-    // Healthy — quiet on the happy path, matching the openclaw hook.
+    // Healthy auth on a non-legacy install — reconcile the Builder
+    // workspace too, so every `eve update synap` brings the seeded
+    // schema back in sync with the bundled template (idempotent via
+    // proposalId). Errors yield a log only — never break update.
+    yield* postInstallSeedBuilderWorkspace();
     return;
   }
 
   const reason = status.failure.reason;
   const recoverable = reason === "key_revoked" || reason === "expired";
   if (!recoverable) {
-    // Non-recoverable failure (transport / backend_unhealthy / unknown):
-    // surface it but don't break the update. The user runs `eve auth
-    // status` for details, `eve auth renew` if they want to force.
     yield {
       type: "log",
       line: `↳ post-update auth check returned ${reason} (${status.failure.message}) — run \`eve auth status\` for details`,
@@ -440,22 +495,126 @@ async function* postUpdateReconcileAuth(): AsyncGenerator<LifecycleEvent> {
 
   yield {
     type: "log",
-    line: `↳ agent key invalid (${reason}) — auto-renewing`,
+    line: `↳ eve agent key invalid (${reason}) — auto-renewing`,
   };
-  const renewed = await renewAgentKey({ reason: `${reason} during update` });
+  const renewed = await renewAgentKey({
+    agentType: "eve",
+    reason: `${reason} during update`,
+  });
   if (renewed.renewed) {
     yield {
       type: "log",
-      line: `↳ refreshed agent key (was ${reason} during update) — new prefix ${renewed.keyIdPrefix}`,
+      line: `↳ refreshed eve agent key (was ${reason} during update) — new prefix ${renewed.keyIdPrefix}`,
     };
     yield {
       type: "log",
       line: "↳ downstream clients (openwebui-pipelines, openclaw) may need restart to pick up the new key",
     };
+    // Fresh key in place — make sure the Builder workspace exists.
+    yield* postInstallSeedBuilderWorkspace();
   } else {
     yield {
       type: "log",
       line: `↳ auto-renew failed: ${renewed.reason} — run \`eve auth renew\` manually`,
+    };
+  }
+}
+
+/**
+ * Mint per-agent Hub keys for whichever agentTypes correspond to
+ * `componentId`.
+ *
+ * Walks the AGENTS registry, picks the entries whose `componentId`
+ * matches (plus the always-on "eve" agent when synap itself was just
+ * installed), and calls `/api/hub/setup/agent` for each. Skips any
+ * agent that already has a key in `secrets.agents[…]` so re-running
+ * install doesn't churn keys.
+ *
+ * Failures are logged as `log` events, never `error` — a Hub Protocol
+ * mint failure should never block a successful component install. The
+ * operator can recover with `eve auth provision`.
+ */
+async function* postInstallProvisionAgents(componentId: string): AsyncGenerator<LifecycleEvent> {
+  const { provisionAgent } = await import("./auth.js");
+  const { AGENTS, readAgentKey } = await import("@eve/dna");
+
+  // Decide which agentTypes this install should mint.
+  const matches = AGENTS.filter((a) => a.componentId === componentId);
+  if (componentId === "synap") {
+    const eveEntry = AGENTS.find((a) => a.agentType === "eve");
+    if (eveEntry && !matches.includes(eveEntry)) matches.push(eveEntry);
+  }
+  if (matches.length === 0) return;
+
+  for (const agent of matches) {
+    const existing = await readAgentKey(agent.agentType);
+    if (existing && existing.hubApiKey) {
+      // Already minted — leave it alone. Renew is the explicit path for rotation.
+      yield {
+        type: "log",
+        line: `${agent.label} agent key already provisioned (prefix ${(existing.keyId ?? existing.hubApiKey).slice(0, 8)}…) — skipping`,
+      };
+      continue;
+    }
+    const result = await provisionAgent({
+      agentType: agent.agentType,
+      reason: `install:${componentId}`,
+    });
+    if (result.provisioned) {
+      yield {
+        type: "log",
+        line: `Minted ${agent.label} agent key (prefix ${result.keyIdPrefix}…)`,
+      };
+    } else {
+      yield {
+        type: "log",
+        line: `warning: could not mint ${agent.label} agent key — ${result.reason}. Run \`eve auth provision\` once the pod is reachable.`,
+      };
+    }
+  }
+}
+
+/**
+ * Seed the Builder workspace on the pod once the eve agent key is
+ * provisioned. Wraps `ensureBuilderWorkspace` so install/update hooks
+ * can fire-and-forget — failures are downgraded to a `log` event with
+ * a clear retry hint, never bubbled as `error` (a workspace seed
+ * failure should NEVER roll back the agent provisioning above; the
+ * worst-case state is "everything works except the Builder lens, run
+ * `eve update` to retry").
+ *
+ * Quiet exit when synap.apiUrl isn't set yet — that's the legitimate
+ * case for an `install --dry-run` or a CLI flow that hasn't reached
+ * the URL-write step. The caller is responsible for ordering.
+ */
+async function* postInstallSeedBuilderWorkspace(): AsyncGenerator<LifecycleEvent> {
+  const secrets = await readEveSecrets();
+  const podUrl = secrets?.synap?.apiUrl?.trim() ?? "";
+  if (!podUrl) {
+    yield {
+      type: "log",
+      line: "Skipping Builder workspace seed — synap.apiUrl not set yet (run `eve update` after configuring the pod URL).",
+    };
+    return;
+  }
+  try {
+    const result = await ensureBuilderWorkspace({ secrets, podUrl });
+    if (result.created) {
+      yield {
+        type: "log",
+        line: `Seeded Builder workspace on pod (id: ${result.workspaceId})`,
+      };
+    } else {
+      yield {
+        type: "log",
+        line: `Builder workspace already present on pod (id: ${result.workspaceId})`,
+      };
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    yield {
+      type: "log",
+      line: `warning: could not seed Builder workspace — ${message}. Retry with \`eve update\`.`,
     };
   }
 }
@@ -702,6 +861,27 @@ async function* installOne(
     };
   }
 
+  // Auto-mint per-agent Hub API keys. Each Synap-aware component
+  // (openclaw, hermes, openwebui-pipelines) has its own `agentType` on
+  // the pod side; Synap's `/setup/agent` mints a separate user + key
+  // per slug so audit / scope / revocation stays per-agent. We mint
+  // them right after install so the freshly-running container can
+  // auth on first request without a manual `eve auth provision`.
+  //
+  // For Synap itself we ALSO provision the always-on `eve` agent
+  // (Doctor + dashboard probe identity). That gives a brand-new
+  // install a working Hub key before any add-on is touched.
+  yield* postInstallProvisionAgents(comp.id);
+
+  // Once the eve agent key is in place (synap install only), seed the
+  // Builder workspace so a fresh pod arrives with the developer schema
+  // already wired (apps, packages, deployments, tasks, …). Idempotent
+  // via `proposalId: "builder-workspace-v1"` — re-running install
+  // resolves to the same workspace row instead of creating duplicates.
+  if (comp.id === "synap") {
+    yield* postInstallSeedBuilderWorkspace();
+  }
+
   // Auto-seed AI provider config for components that consume AI. Without
   // this, a freshly installed openclaw / openwebui / synap sits there
   // until the user clicks "Apply" on the AI page. The wire path writes
@@ -930,7 +1110,17 @@ async function* installOpenWebUi(): AsyncGenerator<LifecycleEvent> {
   const deployDir = "/opt/openwebui";
 
   const secrets = await readEveSecrets();
-  const synapApiKey = secrets?.synap?.apiKey ?? process.env.SYNAP_API_KEY ?? "";
+  // OpenWebUI's SYNAP_API_KEY is the bearer it uses to call Synap IS
+  // when the Pipelines sidecar isn't sitting in front. Use the
+  // openwebui-pipelines agent key when available — that's the
+  // identity that should appear in IS's audit trail. Fall back to
+  // the legacy single key for installs that haven't migrated yet.
+  const pipelinesAgent = await readAgentKey("openwebui-pipelines");
+  const synapApiKey =
+    pipelinesAgent?.hubApiKey ??
+    secrets?.synap?.apiKey ??
+    process.env.SYNAP_API_KEY ??
+    "";
   const isUrl = process.env.SYNAP_IS_URL ?? "http://intelligence-hub:3001";
 
   writeOpenwebuiCompose(deployDir);
@@ -1024,7 +1214,12 @@ async function* installPipelinesSidecar(): AsyncGenerator<LifecycleEvent> {
   yield* copyReferencePipelines(pipelinesDir);
 
   const secrets = await readEveSecrets();
-  const synapApiKey = secrets?.synap?.apiKey ?? "";
+  // The pipelines sidecar calls Hub Protocol (memory injection, channel
+  // sync, Hermes dispatch) under its own agent identity — use the
+  // openwebui-pipelines agent key, not the legacy shared key. Fall back
+  // to legacy only when migration hasn't run yet.
+  const pipelinesAgent = await readAgentKey("openwebui-pipelines");
+  const synapApiKey = pipelinesAgent?.hubApiKey ?? secrets?.synap?.apiKey ?? "";
   const synapApiUrl = secrets?.synap?.apiUrl ?? "http://synap-backend-backend-1:4000";
   const isUrl = process.env.SYNAP_IS_URL ?? "http://intelligence-hub:3001";
 
@@ -1150,7 +1345,11 @@ async function* installOpenclaw(): AsyncGenerator<LifecycleEvent> {
 
   const ollamaUrl = process.env.OLLAMA_URL ?? "http://eve-brain-ollama:11434";
   const synapApiUrl = secrets?.synap?.apiUrl ?? "";
-  const synapApiKey = secrets?.synap?.apiKey ?? "";
+  // OpenClaw uses the openclaw agent's key for Hub Protocol — its own
+  // user, scopes, and audit trail on the pod. Fall back to the legacy
+  // shared key only for pre-migration installs.
+  const openclawAgent = await readAgentKey("openclaw");
+  const synapApiKey = openclawAgent?.hubApiKey ?? secrets?.synap?.apiKey ?? "";
   const dokployApiUrl = secrets?.builder?.dokployApiUrl ?? "";
 
   // Pick the AI provider that drives OpenClaw — honors per-service
@@ -1405,12 +1604,17 @@ export {
   type DoctorRunnerStream,
 } from "./diagnostics.js";
 
-// Auth — introspectable, renewable agent key. Replaces the older
-// "mint random secret on install, never check it again" model.
+// Auth — introspectable, renewable per-agent keys. Replaces the older
+// "mint random secret on install, never check it again" model. The
+// `provisionAgent` / `provisionAllAgents` / `migrateLegacyToAgents`
+// surface drives the per-agent key model end-to-end.
 export {
   getAuthStatus,
   isKeyValid,
   renewAgentKey,
+  provisionAgent,
+  provisionAllAgents,
+  migrateLegacyToAgents,
   type AuthStatus,
   type AuthFailure,
   type AuthFailReason,
@@ -1418,6 +1622,8 @@ export {
   type GetAuthStatusOptions,
   type RenewAgentKeyOptions,
   type RenewResult,
+  type ProvisionAgentOptions,
+  type ProvisionResult,
 } from "./auth.js";
 
 // OpenClaw reconciliation — re-applies Eve's expected `allowedOrigins`
@@ -1431,3 +1637,14 @@ export {
   type OpenclawReconcileBefore,
   type OpenclawReconcileAfter,
 } from "./components/openclaw/reconcile.js";
+
+// Builder workspace seeder — posts the bundled `builder-workspace.json`
+// template to the user's pod via `POST /api/hub/workspaces/from-definition`.
+// Idempotent via `proposalId: "builder-workspace-v1"`. Wired into both the
+// install and update post-hooks so every Eve install (fresh or upgraded)
+// arrives with the developer schema already seeded.
+export {
+  ensureBuilderWorkspace,
+  type EnsureBuilderWorkspaceOptions,
+  type EnsureBuilderWorkspaceResult,
+} from "./builder-workspace.js";

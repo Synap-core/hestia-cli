@@ -1,5 +1,12 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import type { Task } from '@eve/dna';
+import {
+  readCodeEngine,
+  readEveSecrets,
+  type CodeEngine,
+  type Task,
+} from '@eve/dna';
+import { resolveCoderSpawn, isCoderTask } from './coder-router.js';
+import type { AgentConfigOverrides } from './task-poll.js';
 
 export interface TaskExecutionResult {
   taskId: string;
@@ -17,13 +24,41 @@ export interface TaskExecutorConfig {
   timeoutMs?: number;
   /** Workspace directory for task artifacts */
   workspaceDir: string;
+  /**
+   * Override the engine used for coder-role tasks. When unset we read
+   * `secrets.builder.codeEngine` from the workspace's `.eve/secrets.json`
+   * once per `execute()` call. Useful for tests + one-off invocations.
+   */
+  codeEngineOverride?: CodeEngine;
+}
+
+/**
+ * Resolved personality runtime config — what Hermes hands to TaskExecutor
+ * before spawning the subprocess. Sourced from `agent_configs` (Hub REST).
+ */
+export interface ResolvedPersonality {
+  /** The personality user ID (== users.id, userType='agent'). */
+  userId: string;
+  /** Free-form agent type slug (matches agent_configs.agent_type). */
+  agentType: string;
+  /** Display name for logs. */
+  displayName?: string;
+  /** Per-personality overrides. Optional — undefined = engine defaults. */
+  overrides?: AgentConfigOverrides | null;
 }
 
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
 /**
- * Executes tasks by spawning subprocesses (opencode, claude, custom commands).
- * Uses child_process.spawn — never execSync — so the daemon stays responsive.
+ * Executes tasks by spawning subprocesses (claude / opencode / openclaude /
+ * custom commands). Uses child_process.spawn — never execSync — so the
+ * daemon stays responsive.
+ *
+ * Coder routing: when a task implies the coder role (assignee = "coder",
+ * type = "code-gen", or context.role = "coder"), we read
+ * `secrets.builder.codeEngine` and pick the matching adapter. The Hub
+ * Protocol identity is always the single `coder` agent slug — three
+ * spawn implementations, one identity.
  */
 export class TaskExecutor {
   private config: TaskExecutorConfig;
@@ -37,15 +72,20 @@ export class TaskExecutor {
   /**
    * Execute a task by spawning the appropriate subprocess.
    * Returns immediately with a ProcessHandle — use waitForCompletion() to await.
+   *
+   * Async because resolving the coder engine reads `secrets.json`. Tests
+   * that don't care about the file can pass `codeEngineOverride` in the
+   * executor config.
    */
-  execute(task: Task): ProcessHandle {
+  async execute(task: Task, personality?: ResolvedPersonality): Promise<ProcessHandle> {
     if (this.activeProcesses.size >= this.config.maxConcurrent) {
       throw new Error(
         `Max concurrency reached (${this.config.maxConcurrent}). Queue the task.`,
       );
     }
 
-    const handle = new ProcessHandle(task.id, task, this.config);
+    const engine = await this.resolveEngine();
+    const handle = new ProcessHandle(task.id, task, this.config, engine, personality);
     handle.start();
     this.activeProcesses.set(task.id, handle);
     const cleanup = () => this.activeProcesses.delete(task.id);
@@ -57,9 +97,23 @@ export class TaskExecutor {
    * Execute a task and wait for completion (convenience wrapper).
    * For daemon use, prefer execute() + onDone for non-blocking behavior.
    */
-  async executeAndWait(task: Task): Promise<TaskExecutionResult> {
-    const handle = this.execute(task);
+  async executeAndWait(
+    task: Task,
+    personality?: ResolvedPersonality,
+  ): Promise<TaskExecutionResult> {
+    const handle = await this.execute(task, personality);
     return handle.waitForCompletion();
+  }
+
+  /**
+   * Resolve the engine used by coder-role tasks. Override > secrets.json >
+   * default. Reads once per `execute()` call so engine swaps via the
+   * dashboard take effect on the next task without restarting the daemon.
+   */
+  private async resolveEngine(): Promise<CodeEngine> {
+    if (this.config.codeEngineOverride) return this.config.codeEngineOverride;
+    const secrets = await readEveSecrets(this.config.workspaceDir);
+    return readCodeEngine(secrets);
   }
 
   /** Get count of currently active processes. */
@@ -83,6 +137,10 @@ export class ProcessHandle {
   private taskId: string;
   private task: Task;
   private config: TaskExecutorConfig;
+  /** Engine resolved at execute() time — frozen for the life of the handle. */
+  private engine: CodeEngine;
+  /** Personality config — undefined for default Hermes runs. */
+  private personality?: ResolvedPersonality;
   private childProc: ChildProcess | null = null;
   private stdout = '';
   private stderr = '';
@@ -92,10 +150,18 @@ export class ProcessHandle {
   private resolveWait: (() => void) | null = null;
   private waitPromise: Promise<void> | null = null;
 
-  constructor(taskId: string, task: Task, config: TaskExecutorConfig) {
+  constructor(
+    taskId: string,
+    task: Task,
+    config: TaskExecutorConfig,
+    engine: CodeEngine,
+    personality?: ResolvedPersonality,
+  ) {
     this.taskId = taskId;
     this.task = task;
     this.config = config;
+    this.engine = engine;
+    this.personality = personality;
     this.startTime = Date.now();
   }
 
@@ -116,6 +182,7 @@ export class ProcessHandle {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: {
         ...process.env,
+        ...this.buildPersonalityEnv(),
         ...(this.task.context?.env as Record<string, string> | undefined),
       },
     });
@@ -191,48 +258,109 @@ export class ProcessHandle {
     }
   }
 
-  /** Resolve which command to spawn based on task context. */
+  /**
+   * Resolve which command to spawn based on the task + the configured
+   * code engine.
+   *
+   * Routing rules:
+   *   - context.customCommand → spawn it verbatim with the prompt appended.
+   *   - coder-role task (assignee=coder, type=code-gen, or context.role=coder)
+   *     → resolveCoderSpawn(engine) — picks the right CLI binary for the
+   *     selected `secrets.builder.codeEngine`.
+   *   - everything else → fall back to the configured engine's CLI. (For
+   *     non-coder tasks this is a soft default; the daemon mostly emits
+   *     coder tasks, so this branch is rarely hit in practice.)
+   *
+   * `context.engine` (the legacy per-task override) is ALSO honored when
+   * present — keeps Hermes daemon tests / one-off operator invocations
+   * working without a secrets.json file.
+   */
   private resolveSpawnCommand(): { command: string; args: string[] } {
     const context = this.task.context || {};
-    const engine = (context.engine as string) || 'opencode';
 
     // Build prompt from task title + description
     const taskPrompt = this.task.description
       ? `${this.task.title}\n\n${this.task.description}`
       : this.task.title;
 
-    switch (engine) {
-      case 'opencode':
-        return {
-          command: 'opencode',
-          args: ['generate', taskPrompt],
-        };
-
-      case 'claudecode':
-        return {
-          command: 'claude',
-          args: ['-p', taskPrompt],
-        };
-
-      case 'custom': {
-        const cmd = context.customCommand as string | undefined;
-        if (cmd) {
-          const parts = cmd.split(/\s+/);
-          return { command: parts[0], args: [...parts.slice(1), taskPrompt] };
-        }
-        // Fall back to opencode
-        return {
-          command: 'opencode',
-          args: ['generate', taskPrompt],
-        };
-      }
-
-      default:
-        return {
-          command: 'opencode',
-          args: ['generate', taskPrompt],
-        };
+    // 1. Custom command always wins. Personality overrides are surfaced via env
+    // vars only for custom commands — translating to flags would be ambiguous.
+    const custom = context.customCommand as string | undefined;
+    if (typeof custom === 'string' && custom.trim().length > 0) {
+      const parts = custom.trim().split(/\s+/);
+      return { command: parts[0], args: [...parts.slice(1), taskPrompt] };
     }
+
+    // 2. Per-task engine override (legacy escape hatch).
+    const taskEngine = context.engine as string | undefined;
+    const effectiveEngine: CodeEngine =
+      taskEngine === 'claudecode' || taskEngine === 'opencode' || taskEngine === 'openclaude'
+        ? taskEngine
+        : this.engine;
+
+    // 3. Translate personality overrides into engine-specific flags. Tool
+    // restrictions are NOT translatable to argv on these CLIs — they go
+    // through env (see buildPersonalityEnv) for skill-loader-side filtering.
+    const overrides = this.personality?.overrides;
+    const supportsToolFlags = false; // none of our 3 engines accept --tools today
+    if (
+      overrides &&
+      !supportsToolFlags &&
+      ((overrides.extraToolIds?.length ?? 0) > 0 ||
+        (overrides.disabledToolIds?.length ?? 0) > 0)
+    ) {
+      console.warn(
+        `[Hermes] engine '${effectiveEngine}' has no tool-restriction CLI flags; ` +
+          `extraToolIds/disabledToolIds passed via env only`,
+      );
+    }
+
+    // 4. Coder-role tasks → engine-specific adapter (with overrides).
+    if (isCoderTask(this.task)) {
+      return resolveCoderSpawn(effectiveEngine, taskPrompt, {
+        model: overrides?.modelOverride ?? undefined,
+        promptAppend: overrides?.promptAppend ?? undefined,
+      });
+    }
+
+    // 5. Non-coder fallback — same engine binaries, same args. The daemon
+    // hardly ever routes here, but keep behaviour stable for callers that
+    // pass a generic Task with no role hint.
+    return resolveCoderSpawn(effectiveEngine, taskPrompt, {
+      model: overrides?.modelOverride ?? undefined,
+      promptAppend: overrides?.promptAppend ?? undefined,
+    });
+  }
+
+  /**
+   * Build env vars exposing the personality + its overrides to the spawned
+   * subprocess. Engine adapters (skill loader, openclaude config, etc.) read
+   * these on the OTHER side of the spawn boundary to enforce tool restrictions
+   * and step caps. Empty for default Hermes runs.
+   */
+  private buildPersonalityEnv(): Record<string, string> {
+    if (!this.personality) return {};
+    const env: Record<string, string> = {
+      HERMES_PERSONALITY_USER_ID: this.personality.userId,
+      HERMES_PERSONALITY_AGENT_TYPE: this.personality.agentType,
+    };
+    if (this.personality.displayName) {
+      env.HERMES_PERSONALITY_NAME = this.personality.displayName;
+    }
+    const o = this.personality.overrides;
+    if (!o) return env;
+    if (o.modelOverride) env.HERMES_MODEL_OVERRIDE = o.modelOverride;
+    if (o.promptAppend) env.HERMES_PROMPT_APPEND = o.promptAppend;
+    if (o.extraToolIds?.length > 0) {
+      env.HERMES_EXTRA_TOOLS = o.extraToolIds.join(',');
+    }
+    if (o.disabledToolIds?.length > 0) {
+      env.HERMES_DISABLED_TOOLS = o.disabledToolIds.join(',');
+    }
+    if (typeof o.maxStepsOverride === 'number') {
+      env.HERMES_MAX_STEPS = String(o.maxStepsOverride);
+    }
+    return env;
   }
 
   private _triggerDone(): void {

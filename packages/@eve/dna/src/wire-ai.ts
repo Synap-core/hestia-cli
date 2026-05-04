@@ -21,6 +21,7 @@ import { execSync } from 'node:child_process';
 import { writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import type { EveSecrets } from './secrets-contract.js';
+import { readAgentKeyOrLegacySync } from './secrets-contract.js';
 import { COMPONENTS } from './components.js';
 
 export interface WireAiResult {
@@ -188,7 +189,10 @@ function wireSynapIs(secrets: EveSecrets | null): WireAiResult {
  * upstream provider configured above.
  */
 function wireOpenclaw(secrets: EveSecrets | null): WireAiResult {
-  const synapApiKey = secrets?.synap?.apiKey?.trim();
+  // OpenClaw authenticates to Synap IS as the `openclaw` agent — its own
+  // user, scopes, and audit trail. Falls back to the legacy single key
+  // for installs that haven't yet been migrated to per-agent.
+  const synapApiKey = readAgentKeyOrLegacySync('openclaw', secrets);
   if (!synapApiKey) {
     return { id: 'openclaw', outcome: 'skipped', summary: 'no Synap pod API key — install Synap first' };
   }
@@ -254,7 +258,13 @@ function wireOpenclaw(secrets: EveSecrets | null): WireAiResult {
  * point it at Synap IS so all chats route through the IS hub.
  */
 function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
-  const synapApiKey = secrets?.synap?.apiKey?.trim();
+  // OpenWebUI's OPENAI_API_KEY is what the chat UI uses to call Synap IS.
+  // When Pipelines is installed, its agent identity is the right one
+  // (channels sync + memory inject originate there). With no pipelines,
+  // we still use the openwebui-pipelines slot — its key is the
+  // canonical "OpenWebUI talking to Synap" identity. Falls back to
+  // legacy if the per-agent record isn't there yet.
+  const synapApiKey = readAgentKeyOrLegacySync('openwebui-pipelines', secrets);
   if (!synapApiKey) {
     return { id: 'openwebui', outcome: 'skipped', summary: 'no Synap pod API key — install Synap first' };
   }

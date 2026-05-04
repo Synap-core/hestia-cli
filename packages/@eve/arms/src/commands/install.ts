@@ -1,5 +1,10 @@
 import { Command } from 'commander';
-import { EntityStateManager, entityStateManager, readEveSecrets } from '@eve/dna';
+import {
+  EntityStateManager,
+  entityStateManager,
+  readAgentKeyOrLegacy,
+  readEveSecrets,
+} from '@eve/dna';
 import { execa, resolveSynapDelegate } from '@eve/brain';
 import { OpenClawService } from '../lib/openclaw.js';
 
@@ -61,9 +66,15 @@ export function installCommand(program: Command): void {
           secrets?.inference?.ollamaUrl ??
           'http://eve-brain-ollama:11434';
         await openclaw.configure(ollamaUrl);
+        // OpenClaw uses its own per-agent Hub key (see @eve/dna/agents.ts).
+        // Honor the explicit override in secrets.arms.openclaw.synapApiKey,
+        // otherwise read agents.openclaw.hubApiKey, otherwise legacy.
+        const openclawSynapKey =
+          secrets?.arms?.openclaw?.synapApiKey ??
+          (await readAgentKeyOrLegacy('openclaw', process.cwd()));
         openclaw.setIntegration({
           synapApiUrl: secrets?.synap?.apiUrl,
-          synapApiKey: secrets?.arms?.openclaw?.synapApiKey ?? secrets?.synap?.apiKey,
+          synapApiKey: openclawSynapKey,
           dokployApiUrl: secrets?.builder?.dokployApiUrl,
         });
         await openclaw.start();

@@ -80,8 +80,25 @@ Reference repositories:
 | ------------------------------ | ----------------------------------------------------------------------- |
 | `.eve/setup-profile.json`      | Last chosen profile + AI / tunnel hints                                 |
 | `~/.local/share/eve/state.json`| v2 entity state: organ status + installed components (managedBy)        |
-| `.eve/secrets/secrets.json`    | Merged secrets: `synap.*`, `ai.*`, `inference.*`, `builder.*`, `arms.*` |
+| `.eve/secrets/secrets.json`    | Merged secrets: `synap.*`, `agents.*` (per-agent Hub keys), `ai.*`, `inference.*`, `builder.*`, `arms.*` |
 | `~/.eve/skills/synap/SKILL.md` | Stub skill path for Hub usage                                           |
+
+**Synap auth — per-agent Hub keys.** Eve provisions a separate Hub
+Protocol API key for each consumer that talks to Synap (Eve itself,
+OpenClaw, Hermes, OpenWebUI Pipelines). Each one has its own pod-side
+user, audit trail, scopes, and revocation handle. Keys are minted
+automatically on `eve install`/`eve add` via `POST /api/hub/setup/agent`
+using the pod's `PROVISIONING_TOKEN`. Day-to-day commands:
+
+```bash
+eve auth status                   # table of every agent
+eve auth status --agent openclaw  # detail view
+eve auth provision                # mint missing keys
+eve auth renew --agent eve        # rotate one
+eve auth renew --all              # rotate everything
+```
+
+Storage layout in `secrets.json`: `agents[<slug>] = { hubApiKey, agentUserId, workspaceId, keyId, createdAt }`. The legacy `synap.apiKey` field is kept as a mirror of the `eve` agent's key for one-release back-compat.
 
 ---
 
@@ -444,6 +461,16 @@ Then every **`git push`** runs [`.githooks/pre-push`](.githooks/pre-push) (same 
 | `eve ai models list`                                 | List available models                              |
 | `eve ai pull <model>`                                | Pull an Ollama model                               |
 | `eve ai chat`                                        | Interactive chat with configured AI provider       |
+
+### Synap auth (per-agent Hub keys)
+
+| Command                                | Description                                                              |
+| -------------------------------------- | ------------------------------------------------------------------------ |
+| `eve auth status [--agent <slug>]`     | Per-agent table or detail (eve, openclaw, hermes, openwebui-pipelines).  |
+| `eve auth whoami [--agent <slug>]`     | Tight one-liner. Defaults to the eve agent.                              |
+| `eve auth provision [--agent <slug>]`  | Mint missing keys via `POST /api/hub/setup/agent`. Idempotent.           |
+| `eve auth renew --agent <slug>`        | Rotate a single agent's key.                                             |
+| `eve auth renew --all`                 | Rotate every registered agent's key.                                     |
 
 ### Builder & organ commands
 

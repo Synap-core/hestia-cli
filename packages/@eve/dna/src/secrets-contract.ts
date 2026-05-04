@@ -42,10 +42,42 @@ const SecretsSchema = z.object({
   synap: z
     .object({
       apiUrl: z.string().optional(),
+      /**
+       * Legacy single-key field. Kept as the back-compat alias for the
+       * "eve" agent's key (mirrored on every renew) so older consumers
+       * that read `secrets.synap.apiKey` keep working through one
+       * release. New code should read `secrets.agents.eve.hubApiKey`.
+       */
       apiKey: z.string().optional(),
       /** Full Hub base URL; if unset, Eve derives `${apiUrl}/api/hub` */
       hubBaseUrl: z.string().optional(),
     })
+    .optional(),
+  /**
+   * Per-agent Hub Protocol keys minted via `POST /api/hub/setup/agent`.
+   * Keys are agentType slugs from `@eve/dna/agents` (eve, openclaw,
+   * hermes, openwebui-pipelines, ...). Each entry is the result of one
+   * setup/agent call and is rotated independently by `eve auth renew
+   * --agent <slug>`.
+   *
+   * Why a free-form record instead of fixed keys: the registry can grow
+   * without forcing a schema migration. Unknown slugs are tolerated by
+   * the schema (`z.record`) — readers gate on `resolveAgent()` from the
+   * registry instead.
+   */
+  agents: z
+    .record(
+      z.string(),
+      z.object({
+        hubApiKey: z.string(),
+        agentUserId: z.string(),
+        workspaceId: z.string(),
+        /** keyId returned from /setup/agent — useful for audit/dashboards. */
+        keyId: z.string().optional(),
+        /** Local-clock timestamp of the last successful mint. ISO-8601. */
+        createdAt: z.string().optional(),
+      }),
+    )
     .optional(),
   inference: z
     .object({
@@ -57,8 +89,29 @@ const SecretsSchema = z.object({
     .optional(),
   builder: z
     .object({
-      /** Selected code engine (defaults to 'openclaude') */
-      codeEngine: z.enum(['opencode', 'openclaude', 'claudecode']).optional(),
+      /**
+       * Selected code engine for the local `coder` agent. Defaults to
+       * 'claudecode'. The Hub Protocol identity is always `coder` (one
+       * agent slug, one Hub key); this field selects which CLI binary
+       * Eve spawns when a coder task runs.
+       *
+       * Engine binaries handle their OWN auth — `claude` reads
+       * ANTHROPIC_API_KEY from env, `opencode` has its own config dir,
+       * `openclaude` reads its config from .eve/openclaude.json. We do
+       * NOT keep per-engine API keys in this schema.
+       */
+      codeEngine: z.enum(['claudecode', 'opencode', 'openclaude']).optional(),
+      /**
+       * Workspace ID of the seeded Builder workspace on the user's pod.
+       * Persisted by `ensureBuilderWorkspace()` after a successful
+       * `POST /api/hub/workspaces/from-definition` so subsequent runs
+       * (and Doctor probes) can introspect the seeded state.
+       *
+       * Idempotency on the pod side is keyed by the template's
+       * `proposalId: "builder-workspace-v1"`, so even if this field is
+       * lost the next ensure call will resolve back to the same row.
+       */
+      workspaceId: z.string().optional(),
       /** Legacy flat fields — may be deprecated when nested subsections are used */
       openclaudeUrl: z.string().optional(),
       dokployApiUrl: z.string().optional(),
@@ -222,3 +275,170 @@ export function ensureSecretValue(existing?: string): string {
     ? existing
     : randomBytes(24).toString('base64url');
 }
+
+/**
+ * Per-agent record shape, narrower than the schema's `unknown` value type.
+ * Returned by `readAgentKey` and accepted by `writeAgentKey`.
+ */
+export interface AgentKeyRecord {
+  hubApiKey: string;
+  agentUserId: string;
+  workspaceId: string;
+  keyId?: string;
+  createdAt?: string;
+}
+
+/** Read one agent's key from secrets.json. Returns null when absent. */
+export async function readAgentKey(
+  agentType: string,
+  cwd: string = defaultEveCwd(),
+): Promise<AgentKeyRecord | null> {
+  const secrets = await readEveSecrets(cwd);
+  const entry = secrets?.agents?.[agentType];
+  if (!entry || !entry.hubApiKey) return null;
+  return entry as AgentKeyRecord;
+}
+
+/**
+ * Read an agent's `hubApiKey`, falling back to the legacy single-key
+ * field when the per-agent record doesn't exist yet.
+ *
+ * This is the helper every Synap consumer (Hermes, OpenClaw,
+ * OpenWebUI Pipelines, Doctor) should use to get its bearer token.
+ * Behavior:
+ *   1. If `secrets.agents[agentType].hubApiKey` exists → return it.
+ *   2. Else fall back to `secrets.synap.apiKey` (legacy single-key
+ *      world). This keeps fresh installs and pre-migration installs
+ *      working seamlessly.
+ *
+ * Returns an empty string when neither is set, so callers can pass
+ * the result straight into env files / headers.
+ */
+export async function readAgentKeyOrLegacy(
+  agentType: string,
+  cwd: string = defaultEveCwd(),
+): Promise<string> {
+  const secrets = await readEveSecrets(cwd);
+  const perAgent = secrets?.agents?.[agentType]?.hubApiKey?.trim();
+  if (perAgent) return perAgent;
+  return secrets?.synap?.apiKey?.trim() ?? '';
+}
+
+/**
+ * Synchronous variant of `readAgentKeyOrLegacy` that takes an already-loaded
+ * secrets blob. Useful for callers that have already paid the file read
+ * cost and don't want to re-read inside a tight loop.
+ */
+export function readAgentKeyOrLegacySync(
+  agentType: string,
+  secrets: EveSecrets | null,
+): string {
+  const perAgent = secrets?.agents?.[agentType]?.hubApiKey?.trim();
+  if (perAgent) return perAgent;
+  return secrets?.synap?.apiKey?.trim() ?? '';
+}
+
+/**
+ * Write one agent's key into secrets.json (merge-preserving).
+ *
+ * - Reads the current file (creates a baseline if missing).
+ * - Replaces only `agents[agentType]` — every other field passes through.
+ * - When `agentType === "eve"`, ALSO mirrors `hubApiKey` into the legacy
+ *   `synap.apiKey` field so back-compat consumers (older OpenWebUI
+ *   pipelines wiring, dashboard preview cards) keep working through the
+ *   one-release transition.
+ *
+ * Caller-side concurrency: this function does a read-modify-write but
+ * does NOT take a file lock. Eve's lifecycle path is single-threaded
+ * (one `eve` invocation at a time), so a true lock is overkill. If two
+ * provisioning runs ever overlap the LAST write wins — which is fine
+ * for keys (both writes are valid, both keys live in the api_keys
+ * table; only one is referenced from secrets.json afterwards).
+ */
+export async function writeAgentKey(
+  agentType: string,
+  record: AgentKeyRecord,
+  cwd: string = defaultEveCwd(),
+): Promise<EveSecrets> {
+  const current = (await readEveSecrets(cwd)) ?? {
+    version: '1' as const,
+    updatedAt: new Date().toISOString(),
+  };
+
+  const nextAgents: Record<string, AgentKeyRecord> = {
+    ...((current.agents ?? {}) as Record<string, AgentKeyRecord>),
+    [agentType]: {
+      ...record,
+      createdAt: record.createdAt ?? new Date().toISOString(),
+    },
+  };
+
+  const partial: Omit<EveSecrets, 'version' | 'updatedAt'> = {
+    agents: nextAgents,
+  };
+
+  // Mirror the eve agent's key into the legacy field so older code that
+  // reads `secrets.synap.apiKey` keeps working. We do this here (not in
+  // the auth layer) so any path that mints an eve key — install,
+  // renew, migrate — gets the back-compat alias for free.
+  if (agentType === 'eve') {
+    partial.synap = {
+      ...(current.synap as Record<string, unknown> | undefined),
+      apiKey: record.hubApiKey,
+    };
+  }
+
+  return writeEveSecrets(partial, cwd);
+}
+
+// ---------------------------------------------------------------------------
+// Code engine accessors (the `coder` agent's local CLI engine choice)
+// ---------------------------------------------------------------------------
+
+/**
+ * Allowed values for `secrets.builder.codeEngine`. The `coder` agent
+ * itself is a single Hub identity — this field only controls which
+ * local CLI binary Eve spawns when running a coder task.
+ */
+export type CodeEngine = 'claudecode' | 'opencode' | 'openclaude';
+
+/** Default engine when the operator hasn't picked one. */
+export const DEFAULT_CODE_ENGINE: CodeEngine = 'claudecode';
+
+/**
+ * Read the operator's selected code engine. Returns `DEFAULT_CODE_ENGINE`
+ * when nothing is configured. Pass `null` for "no secrets file yet" and
+ * any partial blob otherwise.
+ */
+export function readCodeEngine(secrets: EveSecrets | null | undefined): CodeEngine {
+  const e = secrets?.builder?.codeEngine;
+  if (e === 'claudecode' || e === 'opencode' || e === 'openclaude') return e;
+  return DEFAULT_CODE_ENGINE;
+}
+
+/**
+ * Persist the engine choice into `secrets.builder.codeEngine` (merge-preserving).
+ * Returns the resulting EveSecrets blob.
+ *
+ * Note: this only updates the *config*. The `coder` Hub key is minted
+ * separately via `provisionAgent({ agentType: 'coder' })` — the engine
+ * choice and the Hub identity are deliberately orthogonal.
+ */
+export async function writeCodeEngine(
+  engine: CodeEngine,
+  cwd: string = defaultEveCwd(),
+): Promise<EveSecrets> {
+  const current = (await readEveSecrets(cwd)) ?? {
+    version: '1' as const,
+    updatedAt: new Date().toISOString(),
+  };
+  const builder = {
+    ...((current.builder ?? {}) as Record<string, unknown>),
+    codeEngine: engine,
+  };
+  return writeEveSecrets(
+    { builder: builder as EveSecrets['builder'] },
+    cwd,
+  );
+}
+

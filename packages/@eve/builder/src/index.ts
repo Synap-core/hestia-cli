@@ -27,11 +27,54 @@ export {
 } from './lib/dokploy.js';
 
 // Re-export Hermes
-export { HermesDaemon } from './lib/hermes-daemon.js';
-export { TaskPoller } from './lib/task-poll.js';
-export { TaskExecutor } from './lib/task-executor.js';
+export {
+  HermesDaemon,
+  type PersonalityRecord,
+  type HermesConfig,
+} from './lib/hermes-daemon.js';
+export { TaskPoller, type AgentConfigOverrides } from './lib/task-poll.js';
+export { TaskExecutor, type ResolvedPersonality } from './lib/task-executor.js';
 export { TaskQueue } from './lib/task-queue.js';
 export { registerHermesCommands } from './commands/hermes.js';
+
+// Background-intent SDK — Hub Protocol REST wrapper used by the CLI's
+// `eve intent ...` commands and re-used by the Hermes daemon's
+// IntentPoller for after-run bookkeeping.
+export {
+  recordIntent,
+  listIntents,
+  getIntent,
+  updateIntent,
+  pauseIntent,
+  resumeIntent,
+  removeIntent,
+  BackgroundIntentError,
+  type BackgroundIntentAuth,
+  type BackgroundIntentSecretOpts,
+  type RecordIntentOptions,
+  type ListIntentsOptions,
+  type SingleIntentOptions,
+  type UpdateIntentOptions,
+  type BackgroundIntentPatch,
+  type BackgroundIntentErrorKind,
+} from './lib/background-intent.js';
+
+export {
+  IntentPoller,
+  computeNextRunAt,
+  parseDurationMs,
+  nextCronFire,
+  INTENT_FAILURE_THRESHOLD,
+  type IntentPollerConfig,
+  type IntentRunResult,
+} from './lib/intent-poll.js';
+
+// Coder routing — single agent slug, three engine spawn shapes
+export {
+  type SpawnSpec,
+  resolveCoderSpawn,
+  isCoderTask,
+} from './lib/coder-router.js';
 
 // Re-export commands
 export { initCommand } from './commands/init.js';

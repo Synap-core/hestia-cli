@@ -1,30 +1,50 @@
 /**
- * `eve auth` — introspect and renew the Synap agent API key.
+ * `eve auth` — introspect, validate, and renew per-agent Synap keys.
  *
- * Three subcommands:
- *   - `eve auth status`  → resolves the configured pod URL + key, calls
- *                          `GET /api/hub/auth/status`, prints concrete
- *                          state (key prefix, user, scopes, age).
- *   - `eve auth whoami`  → tighter version of status (just the user line),
- *                          handy for piping or eyeballing.
- *   - `eve auth renew`   → re-runs the install-time mint path against
- *                          `POST /api/hub/setup/agent` (needs PROVISIONING_TOKEN),
- *                          atomically swaps `secrets.json`, prints the new prefix.
+ * Synap mints a separate Hub Protocol key per `agentType` (eve, openclaw,
+ * hermes, openwebui-pipelines, …). Each one has its own user, audit
+ * trail, and scopes on the pod. Eve persists them under
+ * `secrets.agents[agentType]`.
  *
- * Pattern mirrors `eve mode` — every action is idempotent, errors are
- * yielded as concrete fix hints, and we use the same `colors` / `emojis`
- * / `printX` helpers as the rest of the CLI so the output blends in.
+ * Subcommands:
+ *   - `eve auth status [--agent <slug>]`
+ *       No flag → list every registered agent's status (one row per agent).
+ *       With flag → detailed view of that one agent (key prefix, user,
+ *       scopes, age, failure reason if any).
+ *   - `eve auth whoami [--agent <slug>]`
+ *       Tight one-liner. Defaults to the eve agent.
+ *   - `eve auth renew [--agent <slug>] [--all]`
+ *       Re-mint a key. `--all` walks the registry and renews each
+ *       provisioned agent. Default = eve.
+ *   - `eve auth provision`
+ *       Mint missing keys for every installed component's agent.
+ *       Useful after upgrading from a pre-per-agent install.
+ *
+ * Backwards compat: when no per-agent secrets exist yet but the legacy
+ * `secrets.synap.apiKey` does, the default subject is the "eve" agent
+ * — `writeAgentKey("eve", …)` mirrors back into `synap.apiKey`, so the
+ * single-key world stays seamless until first migration.
  */
 
 import { Command } from 'commander';
 import {
   getAuthStatus,
+  provisionAgent,
+  provisionAllAgents,
   renewAgentKey,
   runActionToCompletion,
   type AuthFailure,
   type AuthStatus,
+  type ProvisionResult,
 } from '@eve/lifecycle';
-import { readEveSecrets } from '@eve/dna';
+import {
+  AGENTS,
+  entityStateManager,
+  readAgentKey,
+  readEveSecrets,
+  resolveAgent,
+  type AgentInfo,
+} from '@eve/dna';
 import { FallbackRunner, FetchRunner, DockerExecRunner } from '../lib/doctor-runners.js';
 import {
   colors,
@@ -38,23 +58,50 @@ import {
 } from '../lib/ui.js';
 
 // ---------------------------------------------------------------------------
-// Resolve pod URL + key (shared by all subcommands)
+// Resolve pod URL + per-agent key
 // ---------------------------------------------------------------------------
 
-interface ResolvedConfig {
+interface ResolvedAgentConfig {
+  agentType: string;
+  agent: AgentInfo;
   synapUrl: string;
   apiKey: string;
   apiKeyPrefix: string;
 }
 
-async function resolveConfig(): Promise<ResolvedConfig | null> {
+/**
+ * Resolve config for one agent. Returns `null` when the pod URL is
+ * unconfigured or no key exists for this agent (and no legacy fallback
+ * applies).
+ */
+async function resolveAgentConfig(
+  agentType: string,
+): Promise<ResolvedAgentConfig | null> {
+  const agent = resolveAgent(agentType);
+  if (!agent) return null;
+
   const secrets = await readEveSecrets(process.cwd());
   const synapUrl = secrets?.synap?.apiUrl?.trim() ?? '';
-  const apiKey = secrets?.synap?.apiKey?.trim() ?? '';
-  if (!synapUrl || !apiKey) {
-    return null;
+  if (!synapUrl) return null;
+
+  // Per-agent key first, then fall back to the legacy single-key field
+  // ONLY for the eve agent (so older installs keep working until they
+  // migrate). Other agents have no legacy fallback — they need their
+  // own key minted via `eve auth provision`.
+  const perAgent = await readAgentKey(agentType, process.cwd());
+  let apiKey = perAgent?.hubApiKey?.trim() ?? '';
+  if (!apiKey && agentType === 'eve') {
+    apiKey = secrets?.synap?.apiKey?.trim() ?? '';
   }
-  return { synapUrl, apiKey, apiKeyPrefix: apiKey.slice(0, 8) };
+  if (!apiKey) return null;
+
+  return {
+    agentType,
+    agent,
+    synapUrl,
+    apiKey,
+    apiKeyPrefix: apiKey.slice(0, 8),
+  };
 }
 
 /**
@@ -76,22 +123,83 @@ function buildRunner(): FallbackRunner {
 }
 
 // ---------------------------------------------------------------------------
-// `eve auth status`
+// `eve auth status` — list-or-detail
 // ---------------------------------------------------------------------------
 
-async function runStatus(): Promise<void> {
+interface StatusOptions {
+  agent?: string;
+}
+
+async function runStatus(opts: StatusOptions): Promise<void> {
   console.log();
-  printHeader('Synap auth status');
+  printHeader(opts.agent ? `Synap auth status — ${opts.agent}` : 'Synap auth status');
   console.log();
 
-  const cfg = await resolveConfig();
+  if (opts.agent) {
+    const targeted = resolveAgent(opts.agent);
+    if (!targeted) {
+      printError(`Unknown agent: ${opts.agent}.`);
+      printInfo(`Available: ${AGENTS.map((a) => a.agentType).join(', ')}`);
+      process.exitCode = 1;
+      return;
+    }
+    await renderAgentDetail(targeted);
+    console.log();
+    return;
+  }
+
+  // No `--agent` → table of every registered agent's status.
+  const cwd = process.cwd();
+  const secrets = await readEveSecrets(cwd);
+  const synapUrl = secrets?.synap?.apiUrl?.trim() ?? '';
+  if (!synapUrl) {
+    printWarning('skipped — synap not configured (no apiUrl in secrets.json).');
+    printInfo('Fix: re-run `eve install` or set secrets.synap.apiUrl manually.');
+    console.log();
+    return;
+  }
+  printInfo(`Pod: ${colors.info(synapUrl)}`);
+  console.log();
+
+  const runner = buildRunner();
+  for (const agent of AGENTS) {
+    const cfg = await resolveAgentConfig(agent.agentType);
+    if (!cfg) {
+      console.log(
+        `  ${colors.muted(emojis.warning)} ${agent.label.padEnd(22)} ${colors.muted('(no key — run `eve auth provision`)')}`,
+      );
+      continue;
+    }
+    const result = await getAuthStatus({
+      synapUrl: cfg.synapUrl,
+      apiKey: cfg.apiKey,
+      runner,
+    });
+    if (result.ok) {
+      const s = result.status;
+      const userTag = s.userEmail ?? s.userId.slice(0, 8);
+      console.log(
+        `  ${colors.success(emojis.check)} ${agent.label.padEnd(22)} ${cfg.apiKeyPrefix}…  ${colors.muted(`${userTag}, ${s.scopes.length} scope${s.scopes.length === 1 ? '' : 's'}, ${s.ageDays}d old`)}`,
+      );
+    } else {
+      console.log(
+        `  ${colors.error(emojis.cross)} ${agent.label.padEnd(22)} ${cfg.apiKeyPrefix}…  ${colors.error(result.failure.reason)} — ${colors.muted(result.failure.message)}`,
+      );
+    }
+  }
+  console.log();
+  printInfo(`Run \`eve auth status --agent <slug>\` for details, or \`eve auth renew --agent <slug>\` to fix.`);
+  console.log();
+}
+
+async function renderAgentDetail(agent: AgentInfo): Promise<void> {
+  const cfg = await resolveAgentConfig(agent.agentType);
   if (!cfg) {
-    printInfo(`  Pod:       ${colors.muted('(not configured)')}`);
-    printInfo(`  Key:       ${colors.muted('(not configured)')}`);
+    printInfo(`  Pod:       ${colors.muted('(checked secrets.json)')}`);
+    printInfo(`  Key:       ${colors.muted('(none registered for this agent)')}`);
     console.log();
-    printWarning('skipped — no synap configured');
-    printInfo('Fix: re-run `eve install` (or set secrets.synap.{apiUrl,apiKey} manually).');
-    console.log();
+    printWarning(`No key for agent "${agent.agentType}".`);
+    printInfo('Fix: `eve auth provision` (mints any missing agent keys).');
     return;
   }
 
@@ -106,14 +214,14 @@ async function runStatus(): Promise<void> {
 
   console.log();
   console.log(`  ${colors.muted('Pod:'.padEnd(11))} ${colors.info(cfg.synapUrl)}  ${colors.muted('(resolved via secrets.synap.apiUrl)')}`);
+  console.log(`  ${colors.muted('Agent:'.padEnd(11))} ${cfg.agentType}  ${colors.muted(`(${agent.description})`)}`);
   console.log(`  ${colors.muted('Key:'.padEnd(11))} ${cfg.apiKeyPrefix}…  ${colors.muted('(prefix shown)')}`);
 
   if (result.ok) {
     renderActiveStatus(result.status);
   } else {
-    renderFailure(result.failure);
+    renderFailure(result.failure, agent.agentType);
   }
-  console.log();
 }
 
 function renderActiveStatus(s: AuthStatus): void {
@@ -134,7 +242,7 @@ function renderActiveStatus(s: AuthStatus): void {
   console.log(`  ${colors.muted('Status:'.padEnd(11))} ${colors.success(`${emojis.check} active`)}`);
 }
 
-function renderFailure(failure: AuthFailure): void {
+function renderFailure(failure: AuthFailure, agentType: string): void {
   const { reason, message, missingScope } = failure;
   console.log(
     `  ${colors.muted('Status:'.padEnd(11))} ${colors.error(`${emojis.cross} ${reason}`)} — ${message}`,
@@ -146,18 +254,18 @@ function renderFailure(failure: AuthFailure): void {
   switch (reason) {
     case 'key_revoked':
     case 'expired':
-      fix = 'eve auth renew';
+      fix = `eve auth renew --agent ${agentType}`;
       break;
     case 'invalid_format':
-      fix = 'Re-run `eve install` or `eve auth renew`';
+      fix = `Re-run \`eve install\` or \`eve auth renew --agent ${agentType}\``;
       break;
     case 'no_auth':
-      fix = 'Check ~/.eve/secrets/secrets.json has synap.apiKey set';
+      fix = `eve auth provision`;
       break;
     case 'missing_scope':
       fix = missingScope
-        ? `eve auth grant ${missingScope}`
-        : 'Re-mint with required scopes (eve auth renew)';
+        ? `Re-mint with required scopes (eve auth renew --agent ${agentType})`
+        : `Re-mint with required scopes (eve auth renew --agent ${agentType})`;
       break;
     case 'backend_unhealthy':
       fix = 'docker logs synap-backend-backend-1 --tail 50';
@@ -174,13 +282,16 @@ function renderFailure(failure: AuthFailure): void {
 }
 
 // ---------------------------------------------------------------------------
-// `eve auth whoami` — tight one-liner over the user
+// `eve auth whoami`
 // ---------------------------------------------------------------------------
 
-async function runWhoami(): Promise<void> {
-  const cfg = await resolveConfig();
+async function runWhoami(opts: { agent?: string }): Promise<void> {
+  const agentType = opts.agent ?? 'eve';
+  const cfg = await resolveAgentConfig(agentType);
   if (!cfg) {
-    printError('not configured — set secrets.synap.{apiUrl,apiKey} or re-run `eve install`');
+    printError(
+      `No key for agent "${agentType}". Run \`eve auth provision\` to mint missing keys.`,
+    );
     process.exitCode = 1;
     return;
   }
@@ -190,23 +301,25 @@ async function runWhoami(): Promise<void> {
     runner: buildRunner(),
   });
   if (!result.ok) {
-    printError(`auth failed (${result.failure.reason}): ${result.failure.message}`);
+    printError(`auth failed for ${agentType} (${result.failure.reason}): ${result.failure.message}`);
     process.exitCode = 1;
     return;
   }
   const s = result.status;
   const tag = s.userEmail ? `${s.userId.slice(0, 8)} <${s.userEmail}>` : s.userId.slice(0, 8);
   console.log(
-    `${colors.success(emojis.check)} ${tag}  ${colors.muted(`(${s.scopes.length} scope${s.scopes.length === 1 ? '' : 's'}, key age ${s.ageDays}d, prefix ${cfg.apiKeyPrefix}…)`)}`,
+    `${colors.success(emojis.check)} ${agentType} → ${tag}  ${colors.muted(`(${s.scopes.length} scope${s.scopes.length === 1 ? '' : 's'}, key age ${s.ageDays}d, prefix ${cfg.apiKeyPrefix}…)`)}`,
   );
 }
 
 // ---------------------------------------------------------------------------
-// `eve auth renew` — re-mint the agent key
+// `eve auth renew` — re-mint one or all agent keys
 // ---------------------------------------------------------------------------
 
 interface RenewOptions {
-  /** Skip the auto-restart of openwebui-pipelines after a successful renew. */
+  agent?: string;
+  all?: boolean;
+  /** Skip the auto-restart of openwebui-pipelines after a successful eve renew. */
   skipPipelinesRestart?: boolean;
 }
 
@@ -215,21 +328,37 @@ async function runRenew(opts: RenewOptions): Promise<void> {
   printHeader('Synap auth renew');
   console.log();
 
-  const cfg = await resolveConfig();
-  if (!cfg) {
-    printError('No synap configured — nothing to renew. Run `eve install` first.');
+  if (opts.all) {
+    await runRenewAll();
+    return;
+  }
+
+  const agentType = opts.agent ?? 'eve';
+  const targeted = resolveAgent(agentType);
+  if (!targeted) {
+    printError(`Unknown agent: ${agentType}.`);
+    printInfo(`Available: ${AGENTS.map((a) => a.agentType).join(', ')}`);
     process.exitCode = 1;
     return;
   }
 
-  printInfo(`Pod:           ${cfg.synapUrl}`);
-  printInfo(`Previous key:  ${cfg.apiKeyPrefix}…`);
+  const cfg = await resolveAgentConfig(agentType);
+  const previousPrefix = cfg?.apiKeyPrefix ?? '(none)';
+
+  printInfo(`Agent:         ${agentType} (${targeted.label})`);
+  if (cfg) {
+    printInfo(`Pod:           ${cfg.synapUrl}`);
+    printInfo(`Previous key:  ${previousPrefix}…`);
+  } else {
+    printInfo(`Pod:           ${colors.muted('(reading from secrets.synap.apiUrl…)')}`);
+  }
   console.log();
 
-  const spinner = createSpinner('Calling POST /api/hub/setup/agent…');
+  const spinner = createSpinner(`Calling POST /api/hub/setup/agent (agentType=${agentType})…`);
   spinner.start();
   const result = await renewAgentKey({
     deployDir: process.cwd(),
+    agentType,
     reason: 'manual',
   });
   if (!result.renewed) {
@@ -238,23 +367,27 @@ async function runRenew(opts: RenewOptions): Promise<void> {
     console.log();
     printInfo(
       'Common causes:\n' +
-        '  • PROVISIONING_TOKEN was not persisted post-install — set EVE_PROVISIONING_TOKEN=<token> and retry.\n' +
+        '  • PROVISIONING_TOKEN unavailable — set EVE_PROVISIONING_TOKEN=<token> and retry.\n' +
+        "    The token lives in your synap-backend's deploy/.env on the pod host.\n" +
         '  • Backend version too old — run `eve update synap`.\n' +
         '  • Network: pod unreachable from this host (`eve doctor`).',
     );
     process.exitCode = 1;
     return;
   }
-  spinner.succeed(`Renewed agent key — new prefix ${result.keyIdPrefix}…`);
+  spinner.succeed(`Renewed ${agentType} agent key — new prefix ${result.keyIdPrefix}…`);
 
   console.log();
-  printSuccess(`Renewed agent key (was ${cfg.apiKeyPrefix}…, now ${result.keyIdPrefix}…)`);
+  printSuccess(
+    `Renewed ${agentType} agent key (was ${previousPrefix}…, now ${result.keyIdPrefix}…)`,
+  );
   printInfo('  secrets.json updated atomically.');
 
-  // Downstream consumers cache the previous key in their .env files.
-  // Best-effort restart of openwebui-pipelines (the most common consumer)
-  // so the new key takes effect without operator action. Skip with --no-pipelines-restart.
-  if (!opts.skipPipelinesRestart) {
+  // Pipelines restart only matters when the eve agent was renewed —
+  // its key mirrors back into the legacy `synap.apiKey` field that
+  // older pipelines wiring reads. Renewing openclaw / hermes /
+  // pipelines-the-agent doesn't change that field, so no restart needed.
+  if (agentType === 'eve' && !opts.skipPipelinesRestart) {
     console.log();
     const rs = createSpinner('Restarting openwebui-pipelines to pick up the new key…');
     rs.start();
@@ -263,8 +396,6 @@ async function runRenew(opts: RenewOptions): Promise<void> {
       if (r.ok) {
         rs.succeed('openwebui-pipelines refreshed');
       } else {
-        // Not installed / not running — soft-fail. The user may not even
-        // have pipelines, in which case this is a no-op concern.
         rs.warn('openwebui-pipelines not refreshed (component may not be installed)');
         if (r.error && !r.error.includes('No update path')) {
           printInfo(`  ${colors.muted(r.error)}`);
@@ -274,11 +405,118 @@ async function runRenew(opts: RenewOptions): Promise<void> {
       rs.warn('openwebui-pipelines refresh threw — restart manually if needed');
       printInfo(`  ${colors.muted(err instanceof Error ? err.message : String(err))}`);
     }
-  } else {
+  } else if (agentType === 'eve' && opts.skipPipelinesRestart) {
     printInfo('Skipping pipelines restart (--no-pipelines-restart).');
     printInfo('  Run `eve update openwebui-pipelines` to apply the new key downstream.');
   }
   console.log();
+}
+
+async function runRenewAll(): Promise<void> {
+  printInfo('Renewing every provisioned agent key…');
+  console.log();
+
+  const installed = await entityStateManager
+    .getInstalledComponents()
+    .catch(() => [] as string[]);
+
+  const spinner = createSpinner(`Walking ${AGENTS.length} agents in registry order…`);
+  spinner.start();
+  const results = await provisionAllAgents({
+    installedComponentIds: installed,
+    deployDir: process.cwd(),
+    reason: 'renew-all',
+    skipIfPresent: false,
+  });
+  spinner.succeed(`Walked ${results.length} agents`);
+
+  console.log();
+  renderProvisionResults(results);
+  console.log();
+
+  const failures = results.filter((r) => !r.provisioned);
+  if (failures.length > 0) {
+    process.exitCode = 1;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// `eve auth provision` — mint missing agent keys
+// ---------------------------------------------------------------------------
+
+async function runProvision(opts: { agent?: string }): Promise<void> {
+  console.log();
+  printHeader('Synap auth provision');
+  console.log();
+
+  if (opts.agent) {
+    const targeted = resolveAgent(opts.agent);
+    if (!targeted) {
+      printError(`Unknown agent: ${opts.agent}.`);
+      printInfo(`Available: ${AGENTS.map((a) => a.agentType).join(', ')}`);
+      process.exitCode = 1;
+      return;
+    }
+    const spinner = createSpinner(`Provisioning ${opts.agent}…`);
+    spinner.start();
+    const result = await provisionAgent({
+      agentType: opts.agent,
+      deployDir: process.cwd(),
+      reason: 'manual-provision',
+    });
+    if (result.provisioned) {
+      spinner.succeed(`Provisioned ${opts.agent} (key prefix ${result.keyIdPrefix}…)`);
+    } else {
+      spinner.fail(`Provision failed: ${result.reason}`);
+      process.exitCode = 1;
+    }
+    console.log();
+    return;
+  }
+
+  const installed = await entityStateManager
+    .getInstalledComponents()
+    .catch(() => [] as string[]);
+
+  const spinner = createSpinner('Provisioning every installed agent…');
+  spinner.start();
+  const results = await provisionAllAgents({
+    installedComponentIds: installed,
+    deployDir: process.cwd(),
+    reason: 'manual-provision',
+    skipIfPresent: true,
+  });
+  spinner.succeed(`Walked ${results.length} agent${results.length === 1 ? '' : 's'}`);
+
+  console.log();
+  renderProvisionResults(results);
+  console.log();
+
+  const failures = results.filter((r) => !r.provisioned);
+  if (failures.length > 0) {
+    printWarning(
+      `${failures.length} agent${failures.length === 1 ? '' : 's'} failed to provision — see reasons above.`,
+    );
+    printInfo('Most common cause: PROVISIONING_TOKEN unavailable.');
+    printInfo('  Set EVE_PROVISIONING_TOKEN, or ensure the pod deploy/.env is readable.');
+    process.exitCode = 1;
+  } else {
+    printSuccess('All agents provisioned.');
+  }
+}
+
+function renderProvisionResults(results: ProvisionResult[]): void {
+  for (const r of results) {
+    if (r.provisioned) {
+      console.log(
+        `  ${colors.success(emojis.check)} ${r.agentType.padEnd(22)} ${r.keyIdPrefix}…  ${colors.muted(`(user ${r.record.agentUserId.slice(0, 8)}, ws ${r.record.workspaceId.slice(0, 8)})`)}`,
+      );
+    } else {
+      console.log(
+        `  ${colors.error(emojis.cross)} ${r.agentType.padEnd(22)} ${colors.error('failed')}  ${colors.muted(r.reason)}`,
+      );
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -288,14 +526,21 @@ async function runRenew(opts: RenewOptions): Promise<void> {
 export function authCommand(program: Command): void {
   const auth = program
     .command('auth')
-    .description(`${emojis.sparkles} Inspect, validate, and renew the Synap agent API key`);
+    .description(`${emojis.sparkles} Inspect, validate, and renew per-agent Synap API keys`);
 
   auth
     .command('status')
-    .description('Show the current key prefix, user, scopes, age, and any failure reason.')
-    .action(async () => {
+    .description(
+      'Show current key state for every agent (or one with --agent). ' +
+        'Lists prefix, user, scopes, age, and any failure reason.',
+    )
+    .option(
+      '--agent <slug>',
+      'Restrict to one agent (eve, openclaw, hermes, openwebui-pipelines, coder).',
+    )
+    .action(async (opts: StatusOptions) => {
       try {
-        await runStatus();
+        await runStatus(opts);
       } catch (err) {
         printError(err instanceof Error ? err.message : String(err));
         process.exitCode = 1;
@@ -305,9 +550,10 @@ export function authCommand(program: Command): void {
   auth
     .command('whoami')
     .description('Tight one-liner — user, scopes count, key prefix.')
-    .action(async () => {
+    .option('--agent <slug>', 'Which agent to introspect. Defaults to "eve".')
+    .action(async (opts: { agent?: string }) => {
       try {
-        await runWhoami();
+        await runWhoami(opts);
       } catch (err) {
         printError(err instanceof Error ? err.message : String(err));
         process.exitCode = 1;
@@ -316,13 +562,36 @@ export function authCommand(program: Command): void {
 
   auth
     .command('renew')
-    .description('Re-mint the agent API key via POST /api/hub/setup/agent and atomically update secrets.json.')
-    .option('--no-pipelines-restart', 'Skip the auto-restart of openwebui-pipelines after a successful renew.')
-    .action(async (opts: { pipelinesRestart?: boolean }) => {
+    .description(
+      'Re-mint an agent API key via POST /api/hub/setup/agent and atomically update secrets.json.',
+    )
+    .option('--agent <slug>', 'Which agent to renew. Defaults to "eve".')
+    .option('--all', 'Renew every registered agent key in registry order.')
+    .option(
+      '--no-pipelines-restart',
+      'Skip the auto-restart of openwebui-pipelines after a successful eve renew.',
+    )
+    .action(async (opts: { agent?: string; all?: boolean; pipelinesRestart?: boolean }) => {
       // Commander turns `--no-pipelines-restart` into `pipelinesRestart: false`.
       const skipPipelinesRestart = opts.pipelinesRestart === false;
       try {
-        await runRenew({ skipPipelinesRestart });
+        await runRenew({ agent: opts.agent, all: opts.all, skipPipelinesRestart });
+      } catch (err) {
+        printError(err instanceof Error ? err.message : String(err));
+        process.exitCode = 1;
+      }
+    });
+
+  auth
+    .command('provision')
+    .description(
+      'Mint missing agent keys for every installed component (and the always-on eve agent). ' +
+        'Idempotent — skips agents that already have a key.',
+    )
+    .option('--agent <slug>', 'Provision a specific agent only.')
+    .action(async (opts: { agent?: string }) => {
+      try {
+        await runProvision(opts);
       } catch (err) {
         printError(err instanceof Error ? err.message : String(err));
         process.exitCode = 1;

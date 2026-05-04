@@ -1,11 +1,30 @@
 import process from 'node:process';
-import { type Task } from '@eve/dna';
+import { type BackgroundTask, type Task } from '@eve/dna';
 import { DEFAULT_HERMES_CONFIG } from '@eve/dna';
-import { TaskPoller, type PollConfig, TransientError } from './task-poll.js';
-import { TaskExecutor, type TaskExecutorConfig } from './task-executor.js';
+import {
+  TaskPoller,
+  type PollConfig,
+  TransientError,
+} from './task-poll.js';
+import {
+  TaskExecutor,
+  type TaskExecutorConfig,
+  type ResolvedPersonality,
+} from './task-executor.js';
 import { TaskQueue } from './task-queue.js';
+import { IntentPoller } from './intent-poll.js';
 
 export type HermesStatus = 'idle' | 'polling' | 'running' | 'error' | 'stopping';
+
+/** A discovered personality — `users` rows whose parentAgentId == hermesUserId. */
+export interface PersonalityRecord {
+  userId: string;
+  agentType: string;
+  displayName: string;
+}
+
+/** TTL for the personality cache (5 minutes). */
+const PERSONALITY_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export interface HermesConfig {
   enabled: boolean;
@@ -17,6 +36,21 @@ export interface HermesConfig {
   apiKey: string;
   /** Workspace directory for task artifacts */
   workspaceDir: string;
+  /**
+   * Hermes' OWN user ID on the pod (the orchestrator user). Required for
+   * personality discovery — children of this user (parentAgentId == hermesUserId)
+   * are the personalities Hermes can dispatch to. When unset, multi-personality
+   * features are disabled and only the legacy `assignedAgentId='hermes'` slug
+   * polling runs.
+   */
+  hermesUserId?: string;
+  /**
+   * Default workspace ID for `agent_configs` lookups. Each task can override
+   * via `task.context.workspaceId`; this is the fallback. If both are absent
+   * the lookup returns the first row matching (userId, agentType) across all
+   * workspaces — fine for single-workspace deployments.
+   */
+  defaultWorkspaceId?: string;
 }
 
 export interface HermesStats {
@@ -38,8 +72,15 @@ export interface HermesStats {
 export class HermesDaemon {
   private config: HermesConfig;
   private poller: TaskPoller;
+  private intentPoller: IntentPoller;
   private executor: TaskExecutor;
   private queue = new TaskQueue();
+  /**
+   * Map from synthetic Task id (`intent:${row.id}`) → source background-
+   * task row. Populated when the daemon enqueues an intent-derived Task,
+   * consumed when that Task completes so we know which row to PATCH.
+   */
+  private intentSources = new Map<string, BackgroundTask>();
   private _status: HermesStatus = 'idle';
   private _stats: HermesStats = {
     tasksCompleted: 0,
@@ -50,6 +91,11 @@ export class HermesDaemon {
   private _stopRequested = false;
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private workingTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Personality cache. Refreshed on TTL expiry or `refreshPersonalities()`. */
+  private personalityCache: PersonalityRecord[] = [];
+  private personalityCacheLoadedAt = 0;
+  /** Map of personality userId → PersonalityRecord for O(1) dispatch lookup. */
+  private personalityById = new Map<string, PersonalityRecord>();
 
   constructor(config?: Partial<HermesConfig>) {
     const resolved = { ...DEFAULT_HERMES_CONFIG, ...config };
@@ -61,6 +107,10 @@ export class HermesDaemon {
       apiUrl: this.config.apiUrl,
       apiKey: this.config.apiKey,
     } as PollConfig);
+    this.intentPoller = new IntentPoller({
+      apiUrl: this.config.apiUrl,
+      apiKey: this.config.apiKey,
+    });
     this.executor = new TaskExecutor({
       maxConcurrent: this.config.maxConcurrentTasks,
       workspaceDir: this.config.workspaceDir,
@@ -151,25 +201,108 @@ export class HermesDaemon {
   }
 
   /**
+   * Discover the personalities this Hermes orchestrator owns.
+   *
+   * Implementation: GET /api/hub/agent-users?parentUserId=:hermesUserId.
+   * (Option B in the plan — extended the existing /agent-users endpoint
+   * with a parentUserId filter rather than adding a new route.)
+   *
+   * Auth: Hermes uses its own API key. The Hub guards `parentUserId` to
+   * match the authenticated user, so Hermes can only see its own children.
+   *
+   * Caches the result; refresh via `refreshPersonalities()` or wait for TTL.
+   */
+  async discoverPersonalities(): Promise<PersonalityRecord[]> {
+    const fresh =
+      this.personalityCacheLoadedAt > 0 &&
+      Date.now() - this.personalityCacheLoadedAt < PERSONALITY_CACHE_TTL_MS;
+    if (fresh) {
+      return this.personalityCache;
+    }
+    if (!this.config.hermesUserId) {
+      // No orchestrator userId configured — multi-personality mode disabled.
+      this.personalityCache = [];
+      this.personalityCacheLoadedAt = Date.now();
+      this.personalityById.clear();
+      return [];
+    }
+    try {
+      const rows = await this.poller.listChildAgents(this.config.hermesUserId);
+      const records: PersonalityRecord[] = rows.map((row) => ({
+        userId: row.id,
+        agentType: typeof row.agentType === 'string' ? row.agentType : 'meta',
+        displayName: row.name ?? row.id,
+      }));
+      this.personalityCache = records;
+      this.personalityCacheLoadedAt = Date.now();
+      this.personalityById = new Map(records.map((r) => [r.userId, r]));
+      return records;
+    } catch (err) {
+      console.error(
+        `[Hermes] discoverPersonalities failed: ${(err as Error).message}`,
+      );
+      // On failure, keep stale cache but DON'T reset the timestamp — we want a
+      // retry on the next poll cycle.
+      return this.personalityCache;
+    }
+  }
+
+  /** Force a personality cache refresh on the next call. */
+  refreshPersonalities(): void {
+    this.personalityCacheLoadedAt = 0;
+  }
+
+  /**
    * Trigger a single poll (for debugging/one-shot use).
+   *
+   * Polls tasks for Hermes itself + every discovered personality. Implementation:
+   * N+1 calls per cycle (one per assignee). Upgrade path: a single Hub
+   * endpoint accepting `assignedAgentIdIn=...` collapses this without
+   * touching the daemon-side API.
    */
   async pollOnce(): Promise<number> {
     this._stats.totalPolls++;
     this._stats.lastPoll = new Date().toISOString();
+
+    // Refresh personalities on TTL — cheap and keeps dispatch routing correct.
+    const personalities = await this.discoverPersonalities();
+    const assigneeIds: string[] = ['hermes'];
+    for (const p of personalities) assigneeIds.push(p.userId);
+
+    let entityCount = 0;
     try {
-      const response = await this.poller.pollTasks();
+      const response = await this.poller.pollTasksForMany(assigneeIds);
       for (const task of response.tasks) {
         this.queue.enqueue(task);
       }
-      return response.tasks.length;
+      entityCount = response.tasks.length;
     } catch (error) {
       if (error instanceof TransientError) {
         console.error(`[Hermes] Transient poll error: ${error.message}, backing off...`);
       } else {
         console.error(`[Hermes] Poll error: ${(error as Error).message}`);
       }
-      return 0;
     }
+
+    // Background-intent cycle — pulls due rows from /background-tasks and
+    // materialises each one into a synthetic Task. Failures are
+    // non-fatal and don't disturb the entity-task path above.
+    let intentCount = 0;
+    try {
+      const due = await this.intentPoller.pollDueIntents();
+      for (const row of due) {
+        const task = IntentPoller.toTask(row);
+        this.intentSources.set(task.id, row);
+        this.queue.enqueue(task);
+      }
+      intentCount = due.length;
+    } catch (err) {
+      console.error(
+        `[Hermes] Intent poll error: ${(err as Error).message}`,
+      );
+    }
+
+    return entityCount + intentCount;
   }
 
   /**
@@ -212,6 +345,10 @@ export class HermesDaemon {
 
   /**
    * Process all queued tasks sequentially (respecting maxConcurrent).
+   *
+   * Personality-aware dispatch: if `task.assignedAgentId` matches a known
+   * personality, fetch its `agent_configs` row via Hub REST and pass it to
+   * the executor so the spawned subprocess uses the right prompt/tools/model.
    */
   private async _processQueue(): Promise<void> {
     while (!this.queue.isEmpty && !this._stopRequested && this.executor.activeCount < this.config.maxConcurrentTasks) {
@@ -220,30 +357,130 @@ export class HermesDaemon {
 
       this._stats.lastTaskId = task.id;
 
-      // Update task status on Synap
-      await this.poller.updateTaskStatus(task.id, 'in-progress');
+      const intentSource = this.intentSources.get(task.id);
+      const isIntentTask = intentSource !== undefined;
+
+      // For real entity tasks: tell Synap we're starting. Intent-derived
+      // tasks have no entity row to update — bookkeeping happens via
+      // the IntentPoller after completion.
+      if (!isIntentTask) {
+        await this.poller.updateTaskStatus(task.id, 'in-progress');
+      }
 
       try {
-        const handle = this.executor.execute(task);
+        const personality = await this._resolvePersonalityForTask(task);
+        const handle = await this.executor.execute(task, personality);
         const result = await handle.waitForCompletion();
+        const succeeded = result.exitCode === 0;
 
-        if (result.exitCode === 0) {
+        if (succeeded) {
           this._stats.tasksCompleted++;
-          // Submit result to Synap
+        } else {
+          this._stats.tasksFailed++;
+        }
+
+        if (isIntentTask) {
+          await this.intentPoller.recordRunResult({
+            intentId: intentSource.id,
+            succeeded,
+            errorMessage: succeeded
+              ? undefined
+              : result.stderr.slice(-500) || `exit code ${result.exitCode ?? 'null'}`,
+            intent: intentSource,
+          });
+          this.intentSources.delete(task.id);
+        } else if (succeeded) {
           await this.poller.submitResult(task.id, {
             output: result.stdout,
             durationMs: result.durationMs,
           });
         } else {
-          this._stats.tasksFailed++;
           await this.poller.updateTaskStatus(task.id, 'failed');
         }
       } catch (error) {
         this._stats.tasksFailed++;
-        console.error(`[Hermes] Task ${task.id} failed: ${(error as Error).message}`);
-        await this.poller.updateTaskStatus(task.id, 'failed');
+        const message = (error as Error).message;
+        console.error(`[Hermes] Task ${task.id} failed: ${message}`);
+        if (isIntentTask) {
+          try {
+            await this.intentPoller.recordRunResult({
+              intentId: intentSource.id,
+              succeeded: false,
+              errorMessage: message,
+              intent: intentSource,
+            });
+          } catch (err) {
+            console.error(
+              `[Hermes] Failed to record intent failure for ${intentSource.id}: ${(err as Error).message}`,
+            );
+          }
+          this.intentSources.delete(task.id);
+        } else {
+          await this.poller.updateTaskStatus(task.id, 'failed');
+        }
       }
     }
+  }
+
+  /**
+   * If the task is assigned to a known personality, hydrate its `agent_configs`
+   * overrides via Hub REST. Returns undefined for the default Hermes path so
+   * the executor falls back to engine defaults.
+   *
+   * Workspace resolution order: task.context.workspaceId → defaultWorkspaceId
+   * → unscoped (Hub returns first match across workspaces).
+   */
+  private async _resolvePersonalityForTask(
+    task: Task,
+  ): Promise<ResolvedPersonality | undefined> {
+    const assigneeId = task.assignedAgentId;
+    if (!assigneeId || assigneeId === 'hermes') return undefined;
+
+    const record = this.personalityById.get(assigneeId);
+    if (!record) {
+      // Task is assigned to a userId we don't know — likely a stale cache.
+      // Force refresh once and retry the lookup.
+      this.refreshPersonalities();
+      await this.discoverPersonalities();
+      const retry = this.personalityById.get(assigneeId);
+      if (!retry) {
+        console.warn(
+          `[Hermes] Task ${task.id} assigned to unknown personality '${assigneeId}'; ` +
+            `running with engine defaults`,
+        );
+        return undefined;
+      }
+      return this._hydratePersonality(retry, task);
+    }
+
+    return this._hydratePersonality(record, task);
+  }
+
+  private async _hydratePersonality(
+    record: PersonalityRecord,
+    task: Task,
+  ): Promise<ResolvedPersonality> {
+    const ctx = (task.context ?? {}) as { workspaceId?: string };
+    const workspaceId = ctx.workspaceId ?? this.config.defaultWorkspaceId;
+    let overrides = null;
+    try {
+      overrides = await this.poller.getAgentConfig({
+        userId: record.userId,
+        workspaceId,
+        agentType: record.agentType,
+      });
+    } catch (err) {
+      console.warn(
+        `[Hermes] getAgentConfig failed for personality '${record.userId}': ` +
+          `${(err as Error).message}; running with engine defaults`,
+      );
+    }
+    return {
+      userId: record.userId,
+      agentType: record.agentType,
+      displayName: record.displayName,
+      overrides,
+    };
   }
 
   private _sleep(ms: number): Promise<void> {
