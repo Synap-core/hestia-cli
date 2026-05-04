@@ -51,10 +51,8 @@ export interface PruneResult {
 interface ImageEntry {
   /** `repo:tag` — the human-readable reference. */
   reference: string;
-  /** Image SHA, used as a fallback rmi target if the tag is ambiguous. */
+  /** Image SHA — used as the rmi target so identical SHAs across tags collapse cleanly. */
   id: string;
-  /** Unix milliseconds since epoch. Higher = newer. */
-  createdMs: number;
 }
 
 /**
@@ -65,30 +63,32 @@ interface ImageEntry {
  * Tag list is filtered with `--filter reference=<repo>:*` so we never
  * see images from other repos. The `:*` glob matches any tag including
  * `latest`.
+ *
+ * We rely on `docker images`' documented default ordering (newest-first
+ * by created timestamp) rather than re-parsing `CreatedAt` ourselves.
+ * `Date.parse` is brittle on the `"2026-04-15 14:32:01 -0700 PDT"`
+ * format Docker emits — the trailing TZ name doesn't parse reliably
+ * across Node versions, and any partial-parse failure would silently
+ * sort good images to the bottom of the kept-vs-prune list. Trusting
+ * Docker's order avoids that whole class of bug; the only failure mode
+ * is "Docker someday changes its default sort," at which point this
+ * fails closed (we'd keep N arbitrary images, not destroy good ones).
  */
 function listRepoImages(repository: string): ImageEntry[] {
   const out = execSync(
-    `docker images --filter "reference=${repository}:*" --format "{{.Repository}}:{{.Tag}}|{{.ID}}|{{.CreatedAt}}" --no-trunc`,
+    `docker images --filter "reference=${repository}:*" --format "{{.Repository}}:{{.Tag}}|{{.ID}}" --no-trunc`,
     { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] },
   ).trim();
   if (!out) return [];
 
   const entries: ImageEntry[] = [];
   for (const line of out.split("\n")) {
-    const [reference, id, createdAt] = line.split("|");
-    if (!reference || !id || !createdAt) continue;
+    const [reference, id] = line.split("|");
+    if (!reference || !id) continue;
     if (reference.endsWith(":<none>")) continue;
-    const ts = Date.parse(createdAt);
-    entries.push({
-      reference,
-      id,
-      createdMs: Number.isNaN(ts) ? 0 : ts,
-    });
+    entries.push({ reference, id });
   }
-  // Newest first. Stable sort so identical timestamps preserve listing
-  // order (Docker emits in newest-first order itself, but we don't
-  // rely on it).
-  return entries.sort((a, b) => b.createdMs - a.createdMs);
+  return entries;
 }
 
 /**

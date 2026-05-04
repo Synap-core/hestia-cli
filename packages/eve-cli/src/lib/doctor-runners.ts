@@ -738,20 +738,29 @@ export { FetchRunner, isFetchTransportError };
  * resolving the URL ourselves; callers who don't pass a sink get the
  * note on stderr (one line, never spammy).
  */
+/** Tracks whether we've already printed the transport note this process. */
+let stderrNoteEmitted = false;
+
 export function buildPodRunner(
   onTransportNote?: (note: string) => void,
 ): IDoctorRunner {
-  // Note synthesis is best-effort — we don't want a transport-note
-  // failure to abort the actual API call. The note is informational.
-  if (onTransportNote || !process.env.EVE_QUIET_TRANSPORT) {
-    const note = synthesizeTransportNote();
-    if (onTransportNote) {
-      onTransportNote(note);
-    } else {
-      process.stderr.write(`ℹ️  ${note}\n`);
-    }
+  if (onTransportNote) {
+    // Sink-based callers (the doctor) get the note every time. It's
+    // their responsibility to decide whether to print or aggregate.
+    onTransportNote(synthesizeTransportNote());
+  } else if (!stderrNoteEmitted && !process.env.EVE_QUIET_TRANSPORT) {
+    // Stderr-based fallback: print once per process. `eve auth provision`
+    // builds the runner once per agent (4 agents = 4 calls), and the
+    // note is identical every time — emitting four copies is just noise.
+    stderrNoteEmitted = true;
+    process.stderr.write(`ℹ️  ${synthesizeTransportNote()}\n`);
   }
   return new FetchRunner();
+}
+
+/** Test hook — reset the once-per-process gate. */
+export function resetTransportNoteGate(): void {
+  stderrNoteEmitted = false;
 }
 
 /**
