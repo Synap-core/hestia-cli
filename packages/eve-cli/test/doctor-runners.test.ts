@@ -31,15 +31,15 @@ describe('buildWgetArgs', () => {
     expect(argv.slice(argv.indexOf('-O'), argv.indexOf('-O') + 2)).toEqual(['-O', '-']);
     // -T <sec> — separate args, value as a string.
     expect(argv.slice(argv.indexOf('-T'), argv.indexOf('-T') + 2)).toEqual(['-T', '6']);
-    // Headers use the `=` form (single argv) — BusyBox wget treats
-    // `--post-data VAL` (space form) as if --post-data had no value,
-    // breaking POST. We pin every long opt to `=` form to avoid that
-    // class of bug.
-    const headerArgs = argv.filter(a => a.startsWith('--header='));
-    expect(headerArgs).toContain('--header=Authorization: Bearer key');
-    expect(headerArgs).toContain('--header=Accept: application/json');
-    // Bare --header with separate value MUST NOT be used.
-    expect(argv.find(a => a === '--header')).toBeUndefined();
+    // BusyBox needs SPACE form for --header (= form is silently dropped).
+    // See the long comment in buildWgetArgs for the empirical findings.
+    const headerValues = argv
+      .map((arg, i) => (arg === '--header' ? argv[i + 1] : null))
+      .filter((v): v is string => typeof v === 'string');
+    expect(headerValues).toContain('Authorization: Bearer key');
+    expect(headerValues).toContain('Accept: application/json');
+    // = form must NOT be used for headers.
+    expect(argv.find(a => a.startsWith('--header='))).toBeUndefined();
     // No other GNU-only flags should be present.
     expect(argv.find(a => a.startsWith('--method='))).toBeUndefined();
     expect(argv.find(a => a.startsWith('--timeout='))).toBeUndefined();

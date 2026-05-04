@@ -216,18 +216,27 @@ export function buildWgetArgs(
     "-T",
     String(timeoutSec),
   ];
+  // BusyBox wget arg-form quirks (verified empirically against the
+  // wget shipped in the synap-backend container):
+  //
+  //   --header VALUE  (separate args)  → WORKS
+  //   --header=VALUE  (= form)         → BROKEN (silently dropped /
+  //                                      treated as positional URL)
+  //   --post-data VALUE (separate args) → BROKEN (treated as if
+  //                                       --post-data had no value;
+  //                                       falls through to GET)
+  //   --post-data=VALUE (= form)       → WORKS
+  //
+  // So the only safe combination is mixed: space form for `--header`,
+  // `=` form for `--post-data`. This matches the manual `docker exec`
+  // commands that returned real HTTP responses (400/401) during
+  // debugging — anything else returned a misleading 404 from a GET
+  // on a POST-only route. Don't "simplify" this without re-testing
+  // both flags against BusyBox.
   for (const [k, v] of Object.entries(headers)) {
-    // `=` form, single argv — works in both BusyBox and GNU wget.
-    argv.push(`--header=${k}: ${v}`);
+    argv.push("--header", `${k}: ${v}`);
   }
   if (method === "POST") {
-    // CRITICAL: `=` form, NOT space-separated. BusyBox wget silently
-    // treats `--post-data <value>` (space form) as if `--post-data` had
-    // no value — the body argument becomes a positional URL, wget tries
-    // to fetch it (failing), then falls through to a GET on the real
-    // URL. Hono routes are method-specific, so a GET on a POST-only
-    // route returns 404 — exactly the symptom that masqueraded as
-    // "backend version too old" for hours of debugging. Pin to `=`.
     argv.push(`--post-data=${body ?? ""}`);
   }
   argv.push(url);
