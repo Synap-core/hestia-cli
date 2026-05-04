@@ -206,11 +206,11 @@ const UPDATE_PLAN: Record<string, UpdatePlan> = {
   },
   synap: {
     compose: {
-      cwd: "/opt/synap-backend/deploy",
+      cwd: "/opt/synap-backend",
       services: ["backend", "realtime"],
       // Self-heal the loopback override on every update so a missing or
       // stale override gets recreated automatically.
-      ensureOverride: () => ensureSynapLoopbackOverride("/opt/synap-backend/deploy"),
+      ensureOverride: () => ensureSynapLoopbackOverride("/opt/synap-backend"),
       // synap-backend, backend-canary, backend-migrate, realtime — all
       // share the same `ghcr.io/synap-core/backend` image. pod-agent
       // ships separately. Keep three so the user can still roll back
@@ -232,7 +232,7 @@ function removePlanFor(comp: ComponentInfo): RemovePlan {
   const containerNames = comp.service?.containerName ? [comp.service.containerName] : [];
   switch (comp.id) {
     case "synap":
-      return { composeDir: "/opt/synap-backend/deploy", containerNames };
+      return { composeDir: "/opt/synap-backend", containerNames };
     case "openwebui":
       return { composeDir: "/opt/openwebui", containerNames };
     case "openwebui-pipelines":
