@@ -163,6 +163,28 @@ const SecretsSchema = z.object({
       port: z.number().optional(),
     })
     .optional(),
+  /**
+   * Synap Control Plane user-scoped OAuth token (Eve OS Vision Phase 2).
+   *
+   * Eve queries the CP marketplace AS THE USER, not as a service. The
+   * dashboard initiates an OAuth/PKCE handshake with the CP, receives
+   * a user-scoped JWT, and persists it here. The token has narrow
+   * scope (`marketplace:read marketplace:install`) and is used only
+   * by the dashboard's server-side route handlers — it is never
+   * exposed to client-side React state in plaintext.
+   *
+   * See: synap-team-docs/content/team/platform/eve-os-vision.mdx §6
+   */
+  cp: z
+    .object({
+      /** User-scoped JWT from the CP OAuth flow. */
+      userToken: z.string().optional(),
+      /** ISO-8601 timestamp the token was minted (for audit/debug). */
+      issuedAt: z.string().optional(),
+      /** Optional expiry hint (server-side decode of JWT exp). */
+      expiresAt: z.string().optional(),
+    })
+    .optional(),
   /** Primary domain + SSL config */
   domain: z
     .object({
@@ -249,6 +271,10 @@ export async function writeEveSecrets(
     current.domain as Record<string, unknown> | undefined,
     partial.domain as Record<string, unknown> | undefined,
   );
+  const mergedCp = mergeNested(
+    current.cp as Record<string, unknown> | undefined,
+    partial.cp as Record<string, unknown> | undefined,
+  );
 
   const next: EveSecrets = {
     ...current,
@@ -260,6 +286,7 @@ export async function writeEveSecrets(
     arms: mergedArms as EveSecrets['arms'],
     dashboard: mergedDashboard as EveSecrets['dashboard'],
     domain: mergedDomain as EveSecrets['domain'],
+    cp: mergedCp as EveSecrets['cp'],
     version: '1',
     updatedAt: new Date().toISOString(),
   };

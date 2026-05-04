@@ -9,6 +9,7 @@
     "build:sidecar": "tsc -p server/tsconfig.json",
     "start": "next start",
     "start:sidecar": "node dist-sidecar/terminal-sidecar.js",
+    "test": "vitest run",
     "type-check": "tsc --noEmit && tsc --noEmit -p server/tsconfig.json"
   },
   "dependencies": {
@@ -39,6 +40,7 @@
     "postcss": "^8.4.0",
     "tailwindcss": "^3.4.0",
     "tsx": "^4.7.0",
-    "typescript": "^5.5.0"
+    "typescript": "^5.5.0",
+    "vitest": "^1.5.0"
   }
 }
