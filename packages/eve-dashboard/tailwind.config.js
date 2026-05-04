@@ -34,6 +34,31 @@ module.exports = {
       backgroundImage: {
         "eve-glow":
           "radial-gradient(60% 60% at 50% 0%, rgba(16,185,129,0.08) 0%, transparent 70%)",
+        "ai-gradient":
+          "linear-gradient(135deg, #10B981 0%, #34D399 50%, #6EE7B7 100%)",
+      },
+      // ----------------------------------------------------------------------
+      // OS Home tokens (eve-os-home-design.mdx §6).
+      //
+      // HeroUI already exposes `primary.*` (emerald) as the AI accent — these
+      // additions give the OS Home page semantic aliases so status dots and
+      // tile tints use names that match the design spec.
+      // ----------------------------------------------------------------------
+      colors: {
+        ai: {
+          from: "#10B981",
+          via:  "#34D399",
+          to:   "#6EE7B7",
+        },
+        status: {
+          online:   "#34D399",
+          degraded: "#FBBF24",
+          offline:  "#94A3B8",
+        },
+      },
+      borderRadius: {
+        // App tile default — friendlier than 12-16px at 128px square.
+        tile: "20px",
       },
     },
   },

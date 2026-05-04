@@ -44,6 +44,36 @@ body {
 }
 
 /* ----------------------------------------------------------------------
+ * OS Home — AI tile accent + skeleton pulse
+ *
+ * AI-flavoured app tiles (OpenWebUI / Synap chat / future native chat)
+ * pick up a faint emerald wash so they read as "intelligence-aware"
+ * without screaming. See eve-os-home-design.mdx §3.4.
+ * ------------------------------------------------------------------- */
+.ai-tint {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.06) 0%, transparent 100%);
+  border-color: rgba(16, 185, 129, 0.12);
+}
+.ai-tint:hover {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.10) 0%, rgba(52, 211, 153, 0.02) 100%);
+  border-color: rgba(16, 185, 129, 0.20);
+}
+
+@keyframes eve-tile-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
+}
+.tile-pulse {
+  animation: eve-tile-pulse 1.6s ease-in-out infinite;
+}
+
+/* prefers-reduced-motion: kill the lift + pulse for users who asked
+   the OS to keep things still. */
+@media (prefers-reduced-motion: reduce) {
+  .tile-pulse { animation: none; }
+}
+
+/* ----------------------------------------------------------------------
  * Scrollbar — calm, not invisible
  * ------------------------------------------------------------------- */
 * {

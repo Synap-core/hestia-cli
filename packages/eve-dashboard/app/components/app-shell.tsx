@@ -26,7 +26,7 @@ interface NavGroup {
 const NAV_GROUPS: NavGroup[] = [
   {
     items: [
-      { href: "/dashboard", label: "Home",    icon: LayoutDashboard },
+      { href: "/",          label: "Home",    icon: LayoutDashboard },
       { href: "/agents",    label: "Agents",  icon: TermIcon },
       { href: "/intents",   label: "Intents", icon: CalendarClock },
       { href: "/apps",      label: "Apps",    icon: LayoutGrid },
@@ -66,7 +66,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // them in the same NAV group (e.g. /settings has /settings/components).
   // For those, we only want the parent active on its exact path, never on a
   // child path — otherwise both the parent and the child would highlight.
-  const EXACT_ONLY = new Set<string>(["/settings"]);
+  // "/" must be exact-match-only — `startsWith("/")` would match every
+  // path and light up the Home item permanently.
+  const EXACT_ONLY = new Set<string>(["/", "/settings"]);
   const isActive = (href: string) => {
     if (EXACT_ONLY.has(href)) return pathname === href;
     return pathname === href || (href !== "/" && pathname?.startsWith(href + "/"));
