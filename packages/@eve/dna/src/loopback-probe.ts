@@ -4,7 +4,7 @@
  * # The premise
  *
  * `@eve/lifecycle` writes a `docker-compose.override.yml` next to the
- * synap compose file that maps `127.0.0.1:14000 → backend:4000`. When
+ * synap compose file that maps `127.0.0.1:4000 → backend:4000`. When
  * present, the on-host CLI can talk to the backend with plain HTTP, no
  * Traefik, no TLS, no public DNS — the same fast path Vault, Consul,
  * Caddy admin and the K8s apiserver use locally. See
@@ -17,7 +17,7 @@
  *   - Whether the override file exists (Eve usually wrote it; user might
  *     have removed or replaced it)
  *   - Whether the backend container is running and bound to that port
- *   - Whether port 14000 is shadowed by something else on the host
+ *   - Whether port 4000 is shadowed by something else on the host
  *
  * A stored "use loopback: yes/no" flag would drift from reality on every
  * `compose down`, every host reboot, every override edit. Probing once
@@ -25,7 +25,7 @@
  *
  * # Cost
  *
- * One TCP `connect` to 127.0.0.1:14000 with a 200ms deadline, cached for
+ * One TCP `connect` to 127.0.0.1:4000 with a 200ms deadline, cached for
  * the life of the process. Loopback connect is ~sub-millisecond when the
  * port is open; the deadline only fires when nothing's listening, in
  * which case Linux returns ECONNREFUSED immediately anyway. Net cost:
@@ -38,7 +38,7 @@ import { isLoopbackUrl, resolveSynapUrl, SYNAP_HOST_LOOPBACK_PORT } from "./comp
 let cachedReachable: boolean | undefined;
 
 /**
- * Test whether `127.0.0.1:14000` accepts TCP connections right now.
+ * Test whether `127.0.0.1:4000` accepts TCP connections right now.
  *
  * Cached for the process lifetime — if the backend goes down between
  * the first call and a later one, we'll still report "reachable" until
@@ -70,7 +70,7 @@ export function resetSynapLoopbackProbeCache(): void {
  *   1. **Stored non-loopback `apiUrl`** — user explicitly opted into
  *      a specific URL. Honor it. (Same first-rule as `resolveSynapUrl`.)
  *
- *   2. **Loopback is reachable** → `http://127.0.0.1:14000`. Bypasses
+ *   2. **Loopback is reachable** → `http://127.0.0.1:4000`. Bypasses
  *      Traefik entirely. Works before any DNS or cert is configured.
  *      This is the common path for "Eve CLI on the pod host."
  *

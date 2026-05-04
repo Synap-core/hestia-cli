@@ -977,7 +977,7 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
   writeFileSync(join(pgInitDir, 'init-databases.sh'), POSTGRES_INIT_SCRIPT_CONTENT, { encoding: 'utf-8', mode: 0o755 });
   console.log(`  Written deploy files to ${deployDir}`);
 
-  // 2b. Publish a loopback-only host port (127.0.0.1:14000 → backend:4000)
+  // 2b. Publish a loopback-only host port (127.0.0.1:4000 → backend:4000)
   // via Compose's official extension hook. The on-host CLI then talks
   // to the API without going through Traefik / public DNS / TLS — same
   // protocol, just a different (faster, no-cert-needed) base URL. The
