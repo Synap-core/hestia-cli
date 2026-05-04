@@ -28,6 +28,7 @@
 
 import { Command } from 'commander';
 import {
+  ensurePodProvisioningToken,
   getAuthStatus,
   provisionAgent,
   provisionAllAgents,
@@ -599,5 +600,45 @@ export function authCommand(program: Command): void {
         printError(err instanceof Error ? err.message : String(err));
         process.exitCode = 1;
       }
+    });
+
+  auth
+    .command('bootstrap-token')
+    .description(
+      'Ensure the pod has a working PROVISIONING_TOKEN. Generates one if ' +
+        'missing/empty, writes it to the pod\'s deploy/.env, and restarts ' +
+        'the backend so it loads the new value. Idempotent — a no-op if a ' +
+        'real token already exists.',
+    )
+    .action(async () => {
+      console.log();
+      printHeader('Synap PROVISIONING_TOKEN bootstrap');
+      console.log();
+      const spinner = createSpinner('Resolving pod state…');
+      spinner.start();
+      try {
+        const result = await ensurePodProvisioningToken();
+        if (result.source === 'existing') {
+          spinner.succeed('PROVISIONING_TOKEN already set — no change');
+          printInfo(`Run \`eve auth provision\` to mint agent keys.`);
+        } else {
+          spinner.succeed(
+            `Generated PROVISIONING_TOKEN and wrote it to ${result.writtenTo ?? '<pod>/.env'}`,
+          );
+          if (result.backendRestarted) {
+            printInfo('Backend restarted — agent provisioning is now unblocked.');
+            printInfo('Next: `eve auth provision`');
+          } else {
+            printWarning(
+              'Backend was not restarted (compose unavailable). The token is on disk; ' +
+                'restart synap-backend manually then run `eve auth provision`.',
+            );
+          }
+        }
+      } catch (err) {
+        spinner.fail(err instanceof Error ? err.message : String(err));
+        process.exitCode = 1;
+      }
+      console.log();
     });
 }

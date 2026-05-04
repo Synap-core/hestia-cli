@@ -879,6 +879,11 @@ function generateEnv(opts: Required<SynapImageInstallOptions> & { bootstrapToken
     `ORY_HYDRA_SECRETS_SYSTEM=${gen()}`,
     `SYNAP_SERVICE_ENCRYPTION_KEY=${gen()}`,
     `HUB_JWT_SECRET=${gen()}`,
+    // PROVISIONING_TOKEN is the shared secret that lets the Eve CLI mint
+    // per-agent Hub keys against /api/hub/setup/agent. Without this Eve
+    // can't auto-provision agents on first run — agents page and intents
+    // page would 401 forever. Mint it here so first install just works.
+    `PROVISIONING_TOKEN=${gen()}`,
     '',
     'INTELLIGENCE_HUB_URL=',
     'INTELLIGENCE_HUB_API_KEY=',
@@ -987,13 +992,43 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
       console.log('  Updated BACKEND_VERSION → main');
     }
 
+    // Self-heal PROVISIONING_TOKEN. Old installs that ran before this var
+    // was generated will have either no line at all or a placeholder
+    // `PROVISIONING_TOKEN=` from copying .env.example. Either way Eve
+    // can't mint agent keys without it — fix in place, idempotently.
+    let provisioningTokenChanged = false;
+    const tokenMatch = existing.match(/^PROVISIONING_TOKEN=(.*)$/m);
+    if (!tokenMatch || tokenMatch[1].trim() === '') {
+      const newToken = gen();
+      if (tokenMatch) {
+        existing = existing.replace(/^PROVISIONING_TOKEN=.*$/m, `PROVISIONING_TOKEN=${newToken}`);
+      } else {
+        // Append; preserve trailing newline
+        const sep = existing.endsWith('\n') ? '' : '\n';
+        existing = `${existing}${sep}PROVISIONING_TOKEN=${newToken}\n`;
+      }
+      writeFileSync(envPath, existing, { encoding: 'utf-8', mode: 0o600 });
+      provisioningTokenChanged = true;
+      console.log('  Generated PROVISIONING_TOKEN (was missing/empty — Eve can now mint agent keys)');
+    }
+
     // Reuse the existing bootstrap token so it stays consistent with what's seeded in the DB
     const m = existing.match(/^ADMIN_BOOTSTRAP_TOKEN=(.+)$/m);
     bootstrapToken = m?.[1] ?? gen(16);
 
-    // If the backend is already running, nothing to do
+    // If the backend is already running, nothing to do — UNLESS we just
+    // self-healed PROVISIONING_TOKEN, in which case the running backend
+    // is holding the stale (empty) value. Recreate it so the new env
+    // lands. `compose up -d backend` is a no-op when nothing changed.
     const runningContainer = getSynapBackendContainer();
     if (runningContainer) {
+      if (provisioningTokenChanged) {
+        console.log('  Recreating backend so it picks up the new PROVISIONING_TOKEN…');
+        spawnSync('docker', ['compose', 'up', '-d', 'backend'], {
+          cwd: deployDir, stdio: 'inherit',
+          env: { ...process.env, COMPOSE_PROJECT_NAME: 'synap-backend' },
+        });
+      }
       return { bootstrapToken, deployDir, containerName: runningContainer };
     }
     // Container not running — fall through to pull + start (preserving the existing secrets)

@@ -25,8 +25,10 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { execSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { writeEnvVar } from "./env-files.js";
 import {
   LEGACY_CODER_ENGINE_SLUGS,
   agentsToProvision,
@@ -393,9 +395,45 @@ export async function provisionAgent(opts: ProvisionAgentOptions): Promise<Provi
     };
   }
 
-  const tokenLookup: TokenLookup = opts.provisioningToken
+  let tokenLookup: TokenLookup = opts.provisioningToken
     ? { token: opts.provisioningToken, source: "explicit", diagnosticReason: "" }
     : resolveProvisioningTokenWithDiagnostics();
+
+  // Self-heal: if no token is reachable (or the placeholder is empty),
+  // mint one and write it into the pod's deploy/.env, then restart the
+  // backend so it accepts the new value. This is what an operator would
+  // do manually — no reason Eve can't do it automatically.
+  //
+  // We only attempt this when the caller didn't pass an explicit token.
+  // If they passed one and it's bad, that's a different problem (the
+  // backend will reject it with a 401 envelope downstream).
+  if (!tokenLookup.token && !opts.provisioningToken) {
+    try {
+      const ensured = await ensurePodProvisioningToken();
+      tokenLookup = {
+        token: ensured.token,
+        source: ensured.source === "generated" ? "file" : "file",
+        diagnosticReason: "",
+      };
+      // If we just generated a token, the backend container needs a moment
+      // to accept it. `docker compose up -d backend` returns once the
+      // container is started but the HTTP listener may not be bound yet.
+      // Poll briefly so the very next /api/hub/setup/agent call doesn't
+      // race the boot.
+      if (ensured.source === "generated" && ensured.backendRestarted) {
+        await waitForBackend(synapUrl, opts.runner ?? new FetchRunner());
+      }
+    } catch (err) {
+      return {
+        provisioned: false,
+        agentType,
+        reason:
+          tokenLookup.diagnosticReason ||
+          `Could not auto-generate PROVISIONING_TOKEN: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
   if (!tokenLookup.token) {
     return {
       provisioned: false,
@@ -749,6 +787,173 @@ interface TokenLookup {
  */
 function resolveProvisioningToken(): string | null {
   return resolveProvisioningTokenWithDiagnostics().token;
+}
+
+/**
+ * Poll `${synapUrl}/api/hub/health` until it returns OK or we hit the
+ * timeout. Used after auto-generating a PROVISIONING_TOKEN to give the
+ * recreated backend container a moment to bind its HTTP listener before
+ * we hammer it with `/api/hub/setup/agent` calls.
+ *
+ * Quiet on every failure — the worst case is we proceed eagerly and the
+ * caller surfaces a transport error, which they would have anyway.
+ */
+async function waitForBackend(
+  synapUrl: string,
+  runner: IDoctorRunner,
+  opts: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<void> {
+  const timeoutMs = opts.timeoutMs ?? 20_000;
+  const intervalMs = opts.intervalMs ?? 500;
+  const url = `${synapUrl.replace(/\/+$/, "")}/api/hub/health`;
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const res = await runner.httpGet(url, {}, { timeoutMs: 1500 });
+      if (res.status >= 200 && res.status < 500) return;
+    } catch {
+      // transport error — backend still binding
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Self-healing — auto-generate PROVISIONING_TOKEN when missing/empty
+// ---------------------------------------------------------------------------
+
+/**
+ * Pod deploy directories we know how to write to. Same list used by
+ * `resolveProvisioningTokenWithDiagnostics`. Order matters — the first
+ * dir that contains a `docker-compose.yml` (or has parent compose
+ * artefacts) wins.
+ */
+const POD_DEPLOY_DIR_CANDIDATES: ReadonlyArray<string> = [
+  "/opt/synap-backend/deploy",
+  "/opt/synap-backend",
+  "/opt/synap/deploy",
+  "/opt/synap",
+  "/opt/synap-pod/deploy",
+  "/opt/synap-pod",
+  "/srv/synap-backend/deploy",
+  "/srv/synap/deploy",
+];
+
+/**
+ * Locate the pod's deploy directory — the one containing the .env we
+ * own. A directory qualifies if it has at least an .env file alongside
+ * a compose file we recognise. Returns the SYNAP_DEPLOY_DIR override
+ * unconditionally when set (even if compose files are absent — operators
+ * may scaffold via env), otherwise the first matching candidate.
+ */
+function findPodDeployDir(): string | null {
+  if (process.env.SYNAP_DEPLOY_DIR && existsSync(process.env.SYNAP_DEPLOY_DIR)) {
+    return process.env.SYNAP_DEPLOY_DIR;
+  }
+  for (const dir of POD_DEPLOY_DIR_CANDIDATES) {
+    if (!existsSync(dir)) continue;
+    const hasCompose =
+      existsSync(join(dir, "docker-compose.yml")) ||
+      existsSync(join(dir, "docker-compose.standalone.yml"));
+    if (hasCompose) return dir;
+  }
+  return null;
+}
+
+export interface EnsureProvisioningTokenResult {
+  token: string;
+  /** "existing": pod already had a non-empty token. "generated": we minted
+   *  a new one and wrote it back to the pod's .env (and tried to restart
+   *  the backend container so it picks it up). */
+  source: "existing" | "generated";
+  /** When `generated`, the .env path we wrote to (for log lines). */
+  writtenTo?: string;
+  /** True iff we successfully restarted the backend after writing. */
+  backendRestarted?: boolean;
+}
+
+/**
+ * Ensure the pod has a working PROVISIONING_TOKEN. Idempotent:
+ *   - If a non-empty token is already reachable (env var, deploy/.env,
+ *     running container), return it as-is.
+ *   - Otherwise, generate a fresh 64-char hex token, write it into the
+ *     pod's deploy/.env (creates the line if absent, replaces the empty
+ *     placeholder if present), and attempt `docker compose up -d backend`
+ *     so the backend reloads the env. Falls back to `docker restart` if
+ *     compose isn't usable.
+ *
+ * Throws only if no pod deploy dir is reachable (we don't know where to
+ * write). Restart failures are non-fatal — the token is still on disk and
+ * the next backend restart will pick it up.
+ */
+export async function ensurePodProvisioningToken(): Promise<EnsureProvisioningTokenResult> {
+  const probe = resolveProvisioningTokenWithDiagnostics();
+  if (probe.token) {
+    return { token: probe.token, source: "existing" };
+  }
+
+  const deployDir = findPodDeployDir();
+  if (!deployDir) {
+    throw new Error(
+      "No pod deploy directory found — set SYNAP_DEPLOY_DIR or install synap-backend first " +
+        "(checked: " +
+        POD_DEPLOY_DIR_CANDIDATES.join(", ") +
+        ").",
+    );
+  }
+
+  const token = randomBytes(32).toString("hex");
+  const result = writeEnvVar(deployDir, "PROVISIONING_TOKEN", token);
+  const envFilePath = join(deployDir, ".env");
+
+  // Best-effort restart so the running backend reloads its env. We try
+  // compose first (correct path — recreates only if config changed),
+  // then `docker restart` as a fallback for hosts without compose v2.
+  // Either failure is non-fatal: the token is on disk; the next manual
+  // restart will pick it up.
+  let backendRestarted = false;
+  try {
+    execSync(`docker compose -f ${join(deployDir, "docker-compose.yml")} up -d backend`, {
+      stdio: ["ignore", "ignore", "ignore"],
+      timeout: 30_000,
+    });
+    backendRestarted = true;
+  } catch {
+    // try the standalone compose file
+    try {
+      execSync(
+        `docker compose -f ${join(deployDir, "docker-compose.standalone.yml")} up -d backend`,
+        { stdio: ["ignore", "ignore", "ignore"], timeout: 30_000 },
+      );
+      backendRestarted = true;
+    } catch {
+      // last resort — plain restart
+      for (const container of SYNAP_BACKEND_CONTAINERS) {
+        try {
+          execSync(`docker restart ${container}`, {
+            stdio: ["ignore", "ignore", "ignore"],
+            timeout: 15_000,
+          });
+          backendRestarted = true;
+          break;
+        } catch {
+          // try next container name
+        }
+      }
+    }
+  }
+
+  // Touch reference to satisfy unused-var lint when WriteEnvVarResult.changed
+  // isn't otherwise used here. We log via the caller.
+  void result;
+  void dirname; // imported for future use if we ever want to walk up
+
+  return {
+    token,
+    source: "generated",
+    writtenTo: envFilePath,
+    backendRestarted,
+  };
 }
 
 /**
