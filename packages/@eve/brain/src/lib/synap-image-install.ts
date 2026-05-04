@@ -102,6 +102,8 @@ services:
         condition: service_healthy
       backend-migrate:
         condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:4000:4000"
     healthcheck:
       test:
         [

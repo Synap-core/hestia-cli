@@ -32,7 +32,6 @@ import {
   SYNAP_BACKEND_INTERNAL_URL,
   AI_CONSUMERS,
   AI_CONSUMERS_NEEDING_RECREATE,
-  ensureSynapLoopbackOverride,
   pruneOldImagesForRepo,
   type ComponentInfo,
   type EnsureOverrideResult,
@@ -208,9 +207,6 @@ const UPDATE_PLAN: Record<string, UpdatePlan> = {
     compose: {
       cwd: "/opt/synap-backend",
       services: ["backend", "realtime"],
-      // Self-heal the loopback override on every update so a missing or
-      // stale override gets recreated automatically.
-      ensureOverride: () => ensureSynapLoopbackOverride("/opt/synap-backend"),
       // synap-backend, backend-canary, backend-migrate, realtime — all
       // share the same `ghcr.io/synap-core/backend` image. pod-agent
       // ships separately. Keep three so the user can still roll back
