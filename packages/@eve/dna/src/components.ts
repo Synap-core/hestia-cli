@@ -394,15 +394,19 @@ export const SYNAP_BACKEND_INTERNAL_URL = 'http://synap-backend-backend-1:4000';
  * TCP port on the host's loopback that maps to synap-backend:4000 when
  * Eve's `docker-compose.override.yml` is in place. The on-host CLI
  * prefers this URL over the public Traefik route — same protocol, no
- * DNS, no TLS, no firewall traversal. Mirrored in
- * `@eve/lifecycle/src/synap-overrides.ts` (the file that publishes the
- * port). Keep the two constants in lockstep if either ever changes.
+ * DNS, no TLS, no firewall traversal.
  *
- * 14000 not 4000 because the synap-app dev server binds 4000 in
- * development; the loopback port is an admin/CLI implementation detail
- * and just needs to be stable + uncommon.
+ * 4000 matches the port inside the container — Eve's bundled
+ * `secrets.json.example` and most existing installs already store
+ * `apiUrl: "http://127.0.0.1:4000"`, so binding the same port to
+ * loopback means the URL the user already has is the URL that works.
+ * No new port to remember, no migration needed.
+ *
+ * On a production pod host nothing else is competing for :4000 — the
+ * synap-app dev server only collides on developer laptops, where Eve
+ * isn't installed anyway.
  */
-export const SYNAP_HOST_LOOPBACK_PORT = 14000;
+export const SYNAP_HOST_LOOPBACK_PORT = 4000;
 
 /**
  * Pure derivation of the Synap pod URL — no I/O, no probing, just

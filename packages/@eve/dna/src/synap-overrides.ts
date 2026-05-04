@@ -21,7 +21,7 @@
  * Consul, Caddy admin, K8s apiserver): bind the admin/API port on the
  * host's loopback interface so anyone WITH host access can reach it
  * directly, but no external client can. Compose makes this trivial:
- * `127.0.0.1:14000:4000` — the `127.0.0.1:` prefix is the magic, it
+ * `127.0.0.1:4000:4000` — the `127.0.0.1:` prefix is the magic, it
  * binds ONLY to loopback, not to all interfaces. The host firewall, the
  * docker bridge, the public network are all unaffected.
  *
@@ -51,11 +51,15 @@
  *
  * # Port choice
  *
- * `14000` not `4000`. Reasons: (a) the user might have a synap-app dev
- * server on `localhost:4000`, (b) `4000` is a common dev port across
- * the synap monorepo (backend dev mode), (c) the loopback port is an
- * implementation detail of the on-host CLI — the value just needs to be
- * stable and uncommon. 14000 fits both.
+ * `4000` — same port the backend listens on inside the container. Eve's
+ * bundled `secrets.json.example` and most existing installs already
+ * store `apiUrl: "http://127.0.0.1:4000"`, so binding the same port on
+ * host loopback means the URL the user already has is the URL that
+ * works. No new port to remember, no migration needed.
+ *
+ * On a production pod host nothing else competes for :4000 — the
+ * synap-app dev server only collides on developer laptops, where Eve
+ * isn't installed anyway.
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";

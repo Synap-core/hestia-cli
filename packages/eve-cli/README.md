@@ -123,7 +123,7 @@ for the pod. There are two of them, picked automatically:
 
 | Where you run `eve` | URL the CLI hits | Why |
 |---|---|---|
-| **On the pod host** (synap-backend container detected, port 14000 reachable) | `http://127.0.0.1:14000` — the loopback published by Eve's `docker-compose.override.yml` | Same-host, sub-millisecond, doesn't depend on DNS or TLS. Works during install before any cert is minted. |
+| **On the pod host** (synap-backend container detected, port 4000 reachable on host loopback) | `http://127.0.0.1:4000` — the loopback published by Eve's `docker-compose.override.yml` | Same-host, sub-millisecond, doesn't depend on DNS or TLS. Works during install before any cert is minted. |
 | **Off the pod host** (laptop, remote management) | `https://pod.<domain>` — the public Traefik route from `domain.primary` in `secrets.json` | Only path that traverses the network. Requires DNS + cert + Traefik routing to be healthy. |
 
 The transport is plain `fetch` in both cases — same HTTP semantics,
@@ -133,11 +133,13 @@ is no separate "docker-exec" code path in the happy flow. (The
 diagnostic for the rare "the host port is bound but the public URL
 fails" case.)
 
-The 14000 port mapping is loopback-only (`127.0.0.1:14000:4000` in
-Compose terms) — the host firewall, the Docker bridge, and the public
-network see nothing on that port. Anyone with access to the host
-already has root-equivalent on `/opt/synap-backend`, so this isn't a
-new attack surface.
+The port mapping is loopback-only (`127.0.0.1:4000:4000` in Compose
+terms) — the host firewall, the Docker bridge, and the public network
+see nothing on that port. Anyone with access to the host already has
+root-equivalent on `/opt/synap-backend`, so this isn't a new attack
+surface. Port 4000 (same as the backend listens on inside the
+container) means the URL already in your `secrets.json` —
+`apiUrl: "http://127.0.0.1:4000"` — is the URL that works.
 
 If you have your own `docker-compose.override.yml` for the synap
 deploy, Eve's `ensureSynapLoopbackOverride` won't clobber it (it looks
