@@ -393,16 +393,17 @@ export async function provisionAgent(opts: ProvisionAgentOptions): Promise<Provi
     };
   }
 
-  const provisioningToken = opts.provisioningToken ?? resolveProvisioningToken();
-  if (!provisioningToken) {
+  const tokenLookup: TokenLookup = opts.provisioningToken
+    ? { token: opts.provisioningToken, source: "explicit", diagnosticReason: "" }
+    : resolveProvisioningTokenWithDiagnostics();
+  if (!tokenLookup.token) {
     return {
       provisioned: false,
       agentType,
-      reason:
-        "PROVISIONING_TOKEN unavailable. Set EVE_PROVISIONING_TOKEN, or ensure the pod's deploy/.env is readable. " +
-        "PROVISIONING_TOKEN was generated when synap-backend was first installed and lives in deploy/.env on the pod host.",
+      reason: tokenLookup.diagnosticReason,
     };
   }
+  const provisioningToken = tokenLookup.token;
 
   const runner = opts.runner ?? new FetchRunner();
   const url = `${synapUrl.replace(/\/+$/, "")}/api/hub/setup/agent`;
@@ -735,11 +736,51 @@ async function collapseLegacyCoderAgents(
  * Returns the trimmed token or `null` when none is available. We never
  * throw on missing/unreadable sources — caller surfaces the friendly hint.
  */
-function resolveProvisioningToken(): string | null {
-  const envToken =
-    process.env.EVE_PROVISIONING_TOKEN ?? process.env.PROVISIONING_TOKEN;
-  if (envToken && envToken.trim().length > 0) return envToken.trim();
+interface TokenLookup {
+  token: string | null;
+  /** Where we found (or didn't find) the token. */
+  source: "env" | "file" | "docker" | "explicit" | "missing" | "empty";
+  /** Friendlier-than-default reason string, with a concrete remedy. */
+  diagnosticReason: string;
+}
 
+/**
+ * Public adapter — keeps the boolean shape some callers depend on.
+ */
+function resolveProvisioningToken(): string | null {
+  return resolveProvisioningTokenWithDiagnostics().token;
+}
+
+/**
+ * Same lookup as `resolveProvisioningToken`, but also reports WHY we
+ * failed (so callers can surface the actionable remedy):
+ *   - `missing`: nothing on disk or in the running pod's env at all.
+ *   - `empty`: found a placeholder line `PROVISIONING_TOKEN=` (typically
+ *     from copying `.env.example` without filling it in). This is the
+ *     SILENT footgun — the pod boots fine, but `/api/hub/setup/agent`
+ *     can never authenticate because the secret is the empty string.
+ */
+function resolveProvisioningTokenWithDiagnostics(): TokenLookup {
+  // 1. Env vars — operator override.
+  const envName = process.env.EVE_PROVISIONING_TOKEN !== undefined
+    ? "EVE_PROVISIONING_TOKEN"
+    : process.env.PROVISIONING_TOKEN !== undefined
+      ? "PROVISIONING_TOKEN"
+      : null;
+  const envValue =
+    process.env.EVE_PROVISIONING_TOKEN ?? process.env.PROVISIONING_TOKEN;
+  if (envName !== null && (envValue ?? "").trim().length === 0) {
+    return {
+      token: null,
+      source: "empty",
+      diagnosticReason: `${envName} is set but empty. Either unset it (so we can fall back to the pod's deploy/.env) or assign a real value (\`openssl rand -hex 32\`).`,
+    };
+  }
+  if (envValue && envValue.trim().length > 0) {
+    return { token: envValue.trim(), source: "env", diagnosticReason: "" };
+  }
+
+  // 2. Pod's deploy/.env — common install paths.
   const dirCandidates = [
     process.env.SYNAP_DEPLOY_DIR,
     "/opt/synap-backend/deploy",
@@ -752,27 +793,68 @@ function resolveProvisioningToken(): string | null {
     "/srv/synap/deploy",
   ].filter((d): d is string => typeof d === "string" && d.length > 0);
 
+  let fileFoundEmpty = false;
+  let fileFoundEmptyAt = "";
   for (const dir of dirCandidates) {
     const envPath = join(dir, ".env");
     if (!existsSync(envPath)) continue;
-    const value = readEnvFileVar(envPath, "PROVISIONING_TOKEN");
-    if (value) return value;
+    const probe = readEnvFileVarWithStatus(envPath, "PROVISIONING_TOKEN");
+    if (probe.value) {
+      return { token: probe.value, source: "file", diagnosticReason: "" };
+    }
+    if (probe.status === "found-empty" && !fileFoundEmpty) {
+      fileFoundEmpty = true;
+      fileFoundEmptyAt = envPath;
+    }
   }
 
-  // Last resort: read it straight from the running container's env. The
-  // synap-backend image was started with PROVISIONING_TOKEN in its env, so
-  // `docker inspect --format` returns it even when the original .env lives
-  // somewhere we can't see. Quiet on failure (no docker, container down,
-  // permission denied) — caller falls through to the friendly error.
-  const fromDocker = readProvisioningTokenFromDocker();
-  if (fromDocker) return fromDocker;
+  // 3. Running container's env — works when files aren't readable.
+  const dockerProbe = readProvisioningTokenFromDockerWithStatus();
+  if (dockerProbe.value) {
+    return { token: dockerProbe.value, source: "docker", diagnosticReason: "" };
+  }
 
-  return null;
+  // 4. No token anywhere — emit the most actionable diagnostic we can.
+  if (fileFoundEmpty || dockerProbe.status === "found-empty") {
+    const where = fileFoundEmpty
+      ? fileFoundEmptyAt
+      : "the running synap-backend container's env";
+    return {
+      token: null,
+      source: "empty",
+      diagnosticReason:
+        `PROVISIONING_TOKEN is empty in ${where}. The pod was deployed without filling it in. ` +
+        `Fix: \`openssl rand -hex 32\` and write the value into the pod's deploy/.env, then ` +
+        `\`docker compose up -d backend\` (or \`docker restart synap-backend-backend-1\`) and retry. ` +
+        `See \`eve auth bootstrap-token\` for an automated path once supported.`,
+    };
+  }
+
+  return {
+    token: null,
+    source: "missing",
+    diagnosticReason:
+      "PROVISIONING_TOKEN unavailable. Set EVE_PROVISIONING_TOKEN, or ensure the pod's deploy/.env is readable. " +
+      "PROVISIONING_TOKEN was generated when synap-backend was first installed and lives in deploy/.env on the pod host.",
+  };
 }
 
 function readEnvFileVar(envPath: string, key: string): string | null {
+  return readEnvFileVarWithStatus(envPath, key).value;
+}
+
+interface EnvProbe {
+  value: string | null;
+  /** "found": present + non-empty. "found-empty": placeholder line with empty
+   *  value (operator copied .env.example without filling in). "absent":
+   *  no line for that key, or file unreadable. */
+  status: "found" | "found-empty" | "absent";
+}
+
+function readEnvFileVarWithStatus(envPath: string, key: string): EnvProbe {
   try {
     const text = readFileSync(envPath, "utf-8");
+    let sawEmpty = false;
     for (const raw of text.split(/\r?\n/)) {
       const line = raw.trim();
       if (!line || line.startsWith("#")) continue;
@@ -780,13 +862,14 @@ function readEnvFileVar(envPath: string, key: string): string | null {
       if (eq < 0) continue;
       if (line.slice(0, eq).trim() === key) {
         const value = line.slice(eq + 1).trim();
-        if (value.length > 0) return value;
+        if (value.length > 0) return { value, status: "found" };
+        sawEmpty = true;
       }
     }
+    return { value: null, status: sawEmpty ? "found-empty" : "absent" };
   } catch {
-    // unreadable — skip
+    return { value: null, status: "absent" };
   }
-  return null;
 }
 
 const SYNAP_BACKEND_CONTAINERS: ReadonlyArray<string> = [
@@ -796,10 +879,13 @@ const SYNAP_BACKEND_CONTAINERS: ReadonlyArray<string> = [
 ];
 
 function readProvisioningTokenFromDocker(): string | null {
+  return readProvisioningTokenFromDockerWithStatus().value;
+}
+
+function readProvisioningTokenFromDockerWithStatus(): EnvProbe {
+  let sawEmpty = false;
   for (const container of SYNAP_BACKEND_CONTAINERS) {
     try {
-      // `--format` returns one env var per line. Stays cheap (no full JSON
-      // payload) and we never even start a shell — execSync uses execve.
       const out = execSync(
         `docker inspect --format='{{range .Config.Env}}{{println .}}{{end}}' ${container}`,
         { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], timeout: 4000 },
@@ -811,14 +897,15 @@ function readProvisioningTokenFromDocker(): string | null {
         if (eq < 0) continue;
         if (line.slice(0, eq) === "PROVISIONING_TOKEN") {
           const value = line.slice(eq + 1).trim();
-          if (value.length > 0) return value;
+          if (value.length > 0) return { value, status: "found" };
+          sawEmpty = true;
         }
       }
     } catch {
       // container missing, docker not on PATH, no permission — try next
     }
   }
-  return null;
+  return { value: null, status: sawEmpty ? "found-empty" : "absent" };
 }
 
 // ---------------------------------------------------------------------------

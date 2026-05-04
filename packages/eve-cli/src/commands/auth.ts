@@ -427,6 +427,7 @@ async function runRenewAll(): Promise<void> {
     deployDir: process.cwd(),
     reason: 'renew-all',
     skipIfPresent: false,
+    runner: buildRunner(),
   });
   spinner.succeed(`Walked ${results.length} agents`);
 
@@ -463,6 +464,7 @@ async function runProvision(opts: { agent?: string }): Promise<void> {
       agentType: opts.agent,
       deployDir: process.cwd(),
       reason: 'manual-provision',
+      runner: buildRunner(),
     });
     if (result.provisioned) {
       spinner.succeed(`Provisioned ${opts.agent} (key prefix ${result.keyIdPrefix}…)`);
@@ -485,6 +487,7 @@ async function runProvision(opts: { agent?: string }): Promise<void> {
     deployDir: process.cwd(),
     reason: 'manual-provision',
     skipIfPresent: true,
+    runner: buildRunner(),
   });
   spinner.succeed(`Walked ${results.length} agent${results.length === 1 ? '' : 's'}`);
 
