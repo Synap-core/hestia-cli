@@ -1,5 +1,5 @@
 import { execSync, spawnSync } from 'child_process';
-import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
+import { writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { COMPONENTS } from '@eve/dna';
 
@@ -314,8 +314,11 @@ export class TraefikService {
 }
 
 function readdirSafe(dir: string): string[] {
+  // `readdirSync` is imported at module top — using `require()` here was
+  // a silent ESM/CJS bug: in the bundled ESM output, `require` is undefined,
+  // every call threw ReferenceError, and the catch returned `[]` for what
+  // was supposed to be a real directory listing.
   try {
-    const { readdirSync } = require('fs') as typeof import('fs');
     return readdirSync(dir) as string[];
   } catch {
     return [];

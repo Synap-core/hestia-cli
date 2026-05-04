@@ -38,6 +38,7 @@
  * later. Never wire it into the CLI's happy path.
  */
 
+import { execSync } from "node:child_process";
 import { execa, type ResultPromise } from "execa";
 import {
   FetchRunner,
@@ -77,7 +78,15 @@ export function findRunningSynapContainer(): string | null {
   if (cachedSynapContainer !== undefined) return cachedSynapContainer;
   for (const name of SYNAP_BACKEND_CONTAINER_CANDIDATES) {
     try {
-      const { execSync } = require("node:child_process") as typeof import("node:child_process");
+      // `execSync` is imported at module top — using `require()` here was
+      // a long-standing bug: this file is bundled as ESM, where `require`
+      // is undefined, so every iteration silently threw ReferenceError,
+      // the catch swallowed it, and the function ALWAYS returned null on
+      // the pod host. That cascaded into `buildPodRunner` always picking
+      // `FetchRunner`, which hit the public URL through Traefik (or
+      // whatever http/https mismatch existed) and got 404 — the famous
+      // "POST /api/hub/setup/agent not available — backend version too
+      // old" red herring that wasn't a backend issue at all.
       execSync(`docker inspect --format='{{.State.Running}}' ${name}`, {
         stdio: ["ignore", "pipe", "ignore"],
         timeout: 3000,
@@ -306,13 +315,6 @@ export class DockerExecRunner implements IDoctorRunner {
     }
     const { argv } = built;
 
-    // TEMP DEBUG — print the exact docker command + response. Remove after diagnosis.
-    const debug = process.env.EVE_DEBUG_RUNNER === "1";
-    if (debug) {
-      // eslint-disable-next-line no-console
-      console.error(`[debug-runner] exec: docker ${argv.map(a => /[\s'"]/.test(a) ? JSON.stringify(a) : a).join(" ")}`);
-    }
-
     try {
       const res = await execa("docker", argv, {
         timeout: execTimeoutMs,
@@ -324,17 +326,7 @@ export class DockerExecRunner implements IDoctorRunner {
 
       const stdout = typeof res.stdout === "string" ? res.stdout : "";
       const stderr = typeof res.stderr === "string" ? res.stderr : "";
-
-      if (debug) {
-        // eslint-disable-next-line no-console
-        console.error(`[debug-runner] exitCode=${res.exitCode} stdout(${stdout.length}b)="${stdout.slice(0,200)}" stderr(${stderr.length}b)="${stderr.slice(0,500)}"`);
-      }
-
       const parsed = parseStatusFromStderr(stderr);
-      if (debug) {
-        // eslint-disable-next-line no-console
-        console.error(`[debug-runner] parsedStatus=${parsed.status} parsedHeaders=${JSON.stringify(parsed.headers)}`);
-      }
 
       // wget exit codes:
       //   0 = OK

@@ -18,7 +18,7 @@
  */
 
 import { execSync } from 'node:child_process';
-import { writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { writeFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import type { EveSecrets } from './secrets-contract.js';
 import { readAgentKeyOrLegacySync } from './secrets-contract.js';
@@ -143,7 +143,7 @@ function wireSynapIs(secrets: EveSecrets | null): WireAiResult {
   const envPath = join(deployDir, '.env');
   let existing = '';
   try {
-    existing = require('node:fs').readFileSync(envPath, 'utf-8') as string;
+    existing = readFileSync(envPath, 'utf-8');
   } catch { /* missing — start fresh */ }
 
   // Strip any previous eve-managed block (everything from our marker to the end of that section)
@@ -278,7 +278,7 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
   // Read existing, replace eve-managed block
   let existing = '';
   try {
-    existing = require('node:fs').readFileSync(envPath, 'utf-8') as string;
+    existing = readFileSync(envPath, 'utf-8');
   } catch { /* missing */ }
 
   const marker = '# AI wiring — managed by eve ai apply';
