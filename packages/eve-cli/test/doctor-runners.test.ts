@@ -31,17 +31,17 @@ describe('buildWgetArgs', () => {
     expect(argv.slice(argv.indexOf('-O'), argv.indexOf('-O') + 2)).toEqual(['-O', '-']);
     // -T <sec> — separate args, value as a string.
     expect(argv.slice(argv.indexOf('-T'), argv.indexOf('-T') + 2)).toEqual(['-T', '6']);
-    // --header HDR uses the separate-arg form (BusyBox accepts only this).
-    const hdrIdx = argv.indexOf('--header');
-    expect(hdrIdx).toBeGreaterThan(-1);
-    const headerValues = argv
-      .map((arg, i) => (arg === '--header' ? argv[i + 1] : null))
-      .filter((v): v is string => typeof v === 'string');
-    expect(headerValues).toContain('Authorization: Bearer key');
-    expect(headerValues).toContain('Accept: application/json');
-    // No GNU-only flags should be present.
+    // Headers use the `=` form (single argv) — BusyBox wget treats
+    // `--post-data VAL` (space form) as if --post-data had no value,
+    // breaking POST. We pin every long opt to `=` form to avoid that
+    // class of bug.
+    const headerArgs = argv.filter(a => a.startsWith('--header='));
+    expect(headerArgs).toContain('--header=Authorization: Bearer key');
+    expect(headerArgs).toContain('--header=Accept: application/json');
+    // Bare --header with separate value MUST NOT be used.
+    expect(argv.find(a => a === '--header')).toBeUndefined();
+    // No other GNU-only flags should be present.
     expect(argv.find(a => a.startsWith('--method='))).toBeUndefined();
-    expect(argv.find(a => a.startsWith('--header='))).toBeUndefined();
     expect(argv.find(a => a.startsWith('--timeout='))).toBeUndefined();
     expect(argv.find(a => a.startsWith('--quiet'))).toBeUndefined();
     expect(argv.find(a => a.startsWith('--server-response'))).toBeUndefined();
@@ -49,12 +49,12 @@ describe('buildWgetArgs', () => {
     expect(argv[argv.length - 1]).toBe('http://127.0.0.1:4000/api/hub/openapi.json');
   });
 
-  it('uses --post-data for POST bodies (BusyBox does not support --body-data=)', () => {
+  it('uses --post-data=VALUE single-argv form (BusyBox space form drops the body)', () => {
     const built = buildWgetArgs('POST', 'http://x/y', {}, '{"foo":1}', 6, 'some-container');
     if (!built.supported) throw new Error('POST should be supported');
-    const idx = built.argv.indexOf('--post-data');
-    expect(idx).toBeGreaterThan(-1);
-    expect(built.argv[idx + 1]).toBe('{"foo":1}');
+    // `=` form: single argv element. NOT the space form (`--post-data` then value).
+    expect(built.argv).toContain('--post-data={"foo":1}');
+    expect(built.argv.find(a => a === '--post-data')).toBeUndefined();
   });
 
   it('reports DELETE as unsupported (BusyBox cannot issue DELETE)', () => {

@@ -217,12 +217,18 @@ export function buildWgetArgs(
     String(timeoutSec),
   ];
   for (const [k, v] of Object.entries(headers)) {
-    // Separate args (no `=`) — BusyBox accepts only this form, GNU
-    // accepts both, so this is the safe intersection.
-    argv.push("--header", `${k}: ${v}`);
+    // `=` form, single argv — works in both BusyBox and GNU wget.
+    argv.push(`--header=${k}: ${v}`);
   }
   if (method === "POST") {
-    argv.push("--post-data", body ?? "");
+    // CRITICAL: `=` form, NOT space-separated. BusyBox wget silently
+    // treats `--post-data <value>` (space form) as if `--post-data` had
+    // no value — the body argument becomes a positional URL, wget tries
+    // to fetch it (failing), then falls through to a GET on the real
+    // URL. Hono routes are method-specific, so a GET on a POST-only
+    // route returns 404 — exactly the symptom that masqueraded as
+    // "backend version too old" for hours of debugging. Pin to `=`.
+    argv.push(`--post-data=${body ?? ""}`);
   }
   argv.push(url);
   return { container, argv, supported: true };
