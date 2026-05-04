@@ -315,6 +315,17 @@ export class DockerExecRunner implements IDoctorRunner {
     }
     const { argv } = built;
 
+    // Optional verbose mode — `EVE_DEBUG_RUNNER=1 eve <cmd>` prints the
+    // exact docker invocation + wget response. Off by default; never
+    // touches happy-path performance. Critical when a probe fails and
+    // we need to see what the runner actually did.
+    const debug = process.env.EVE_DEBUG_RUNNER === "1";
+    if (debug) {
+      process.stderr.write(
+        `[debug-runner] exec: docker ${argv.map(a => /[\s'"]/.test(a) ? JSON.stringify(a) : a).join(" ")}\n`,
+      );
+    }
+
     try {
       const res = await execa("docker", argv, {
         timeout: execTimeoutMs,
@@ -326,7 +337,19 @@ export class DockerExecRunner implements IDoctorRunner {
 
       const stdout = typeof res.stdout === "string" ? res.stdout : "";
       const stderr = typeof res.stderr === "string" ? res.stderr : "";
+
+      if (debug) {
+        process.stderr.write(
+          `[debug-runner] exitCode=${res.exitCode} stdout(${stdout.length}b)=${JSON.stringify(stdout.slice(0, 200))} stderr(${stderr.length}b)=${JSON.stringify(stderr.slice(0, 500))}\n`,
+        );
+      }
+
       const parsed = parseStatusFromStderr(stderr);
+      if (debug) {
+        process.stderr.write(
+          `[debug-runner] parsedStatus=${parsed.status} parsedHeaders=${JSON.stringify(parsed.headers)}\n`,
+        );
+      }
 
       // wget exit codes:
       //   0 = OK
@@ -678,10 +701,19 @@ export function buildPodRunner(
   onTransportNote?: (note: string) => void,
 ): IDoctorRunner {
   const synap = findRunningSynapContainer();
-  if (synap) {
-    onTransportNote?.(`using docker-exec into ${synap} (on-host CLI)`);
-    return new DockerExecRunner();
+  const note = synap
+    ? `using docker-exec into ${synap} (on-host CLI)`
+    : "no synap container detected → using fetch against public URL";
+
+  // If the caller supplied a sink (the doctor does), use it. Otherwise
+  // print to stderr so EVERY command surfaces its transport choice —
+  // this is critical diagnostic info when probes fail mysteriously and
+  // costs nothing when they succeed. One line, never spammy.
+  if (onTransportNote) {
+    onTransportNote(note);
+  } else {
+    process.stderr.write(`ℹ️  ${note}\n`);
   }
-  onTransportNote?.("using fetch against public pod URL (off-host CLI)");
-  return new FetchRunner();
+
+  return synap ? new DockerExecRunner() : new FetchRunner();
 }
