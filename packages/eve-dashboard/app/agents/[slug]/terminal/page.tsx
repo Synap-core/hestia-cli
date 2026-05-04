@@ -3,8 +3,7 @@
 import { use, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Terminal as TermIcon, FileText, Workflow } from "lucide-react";
-import { resolveAgent } from "@eve/dna";
-import { agentTerminalKinds, type TerminalKind } from "../../lib/agent-terminal-map";
+import { agentDisplay, agentTerminalKinds, type TerminalKind } from "../../lib/agent-terminal-map";
 import { ReplPanel } from "../../components/repl-panel";
 import { LogTailPanel } from "../../components/log-tail-panel";
 import { RecipeRunnerPanel } from "../../components/recipe-runner-panel";
@@ -33,7 +32,7 @@ const KIND_META: Record<TerminalKind, { label: string; icon: typeof TermIcon; de
 
 export default function AgentTerminalPage(props: { params: Promise<PageParams> }) {
   const { slug } = use(props.params);
-  const agent = resolveAgent(slug);
+  const agent = agentDisplay(slug);
   const kinds = agentTerminalKinds(slug);
   const [activeKind, setActiveKind] = useState<TerminalKind | null>(kinds[0] ?? null);
 

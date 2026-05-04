@@ -16,10 +16,10 @@ import {
   Radio,
 } from "@heroui/react";
 import {
-  EVE_BACKGROUND_ACTIONS,
+  DASHBOARD_BACKGROUND_ACTIONS as EVE_BACKGROUND_ACTIONS,
   type BackgroundTask,
   type BackgroundTaskType,
-} from "@eve/dna";
+} from "../lib/background-task-actions.client";
 
 /**
  * Add / Edit intent modal.

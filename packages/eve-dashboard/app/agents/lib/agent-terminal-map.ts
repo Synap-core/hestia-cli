@@ -1,20 +1,56 @@
 /**
  * Single source of truth for which terminal kinds each agent supports.
  * Mirrored on the sidecar in `server/terminal-sidecar.ts`. Keep them in sync.
+ *
+ * Also carries the display metadata (label/description) for the client UI.
+ * Mirrored from `@eve/dna`'s AGENT_REGISTRY — duplicating it keeps the client
+ * bundle free of node-only deps (`fs`, `child_process`) that the DNA package
+ * pulls in via secrets I/O.
  */
 
 export type TerminalKind = "repl" | "logs" | "recipe";
 
-const MAP: Record<string, ReadonlyArray<TerminalKind>> = {
-  eve: ["repl", "recipe"],
-  openclaw: ["repl", "recipe"],
-  coder: ["repl", "recipe"],
-  hermes: ["logs", "recipe"],
-  "openwebui-pipelines": ["logs", "recipe"],
+interface AgentDisplay {
+  label: string;
+  description: string;
+  kinds: ReadonlyArray<TerminalKind>;
+}
+
+const AGENTS: Record<string, AgentDisplay> = {
+  eve: {
+    label: "Eve",
+    description: "The orchestrator CLI itself. Spawns an interactive shell with `eve` on PATH.",
+    kinds: ["repl", "recipe"],
+  },
+  openclaw: {
+    label: "OpenClaw",
+    description: "Action / messaging agent. Open a REPL on the host or run recipes via docker exec.",
+    kinds: ["repl", "recipe"],
+  },
+  coder: {
+    label: "Coder",
+    description: "Local AI coder — claudecode / opencode / openclaude based on secrets.builder.codeEngine.",
+    kinds: ["repl", "recipe"],
+  },
+  hermes: {
+    label: "Hermes",
+    description: "Multi-personality task daemon. Read its log stream or run recipes.",
+    kinds: ["logs", "recipe"],
+  },
+  "openwebui-pipelines": {
+    label: "OpenWebUI Pipelines",
+    description: "Pipeline sidecar for OpenWebUI. Read its log stream or run recipes.",
+    kinds: ["logs", "recipe"],
+  },
 };
 
 export function agentTerminalKinds(slug: string): ReadonlyArray<TerminalKind> {
-  return MAP[slug] ?? [];
+  return AGENTS[slug]?.kinds ?? [];
+}
+
+export function agentDisplay(slug: string): { label: string; description: string } | null {
+  const a = AGENTS[slug];
+  return a ? { label: a.label, description: a.description } : null;
 }
 
 /**

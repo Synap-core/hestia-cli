@@ -24,7 +24,7 @@ import {
   Trash2,
   AlertCircle,
 } from "lucide-react";
-import type { BackgroundTask, BackgroundTaskStatus } from "@eve/dna";
+import type { BackgroundTask, BackgroundTaskStatus } from "../lib/background-task-actions.client";
 import { IntentFormModal } from "./intent-form-modal";
 
 // ---------------------------------------------------------------------------
