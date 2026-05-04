@@ -306,6 +306,13 @@ export class DockerExecRunner implements IDoctorRunner {
     }
     const { argv } = built;
 
+    // TEMP DEBUG — print the exact docker command + response. Remove after diagnosis.
+    const debug = process.env.EVE_DEBUG_RUNNER === "1";
+    if (debug) {
+      // eslint-disable-next-line no-console
+      console.error(`[debug-runner] exec: docker ${argv.map(a => /[\s'"]/.test(a) ? JSON.stringify(a) : a).join(" ")}`);
+    }
+
     try {
       const res = await execa("docker", argv, {
         timeout: execTimeoutMs,
@@ -317,7 +324,17 @@ export class DockerExecRunner implements IDoctorRunner {
 
       const stdout = typeof res.stdout === "string" ? res.stdout : "";
       const stderr = typeof res.stderr === "string" ? res.stderr : "";
+
+      if (debug) {
+        // eslint-disable-next-line no-console
+        console.error(`[debug-runner] exitCode=${res.exitCode} stdout(${stdout.length}b)="${stdout.slice(0,200)}" stderr(${stderr.length}b)="${stderr.slice(0,500)}"`);
+      }
+
       const parsed = parseStatusFromStderr(stderr);
+      if (debug) {
+        // eslint-disable-next-line no-console
+        console.error(`[debug-runner] parsedStatus=${parsed.status} parsedHeaders=${JSON.stringify(parsed.headers)}`);
+      }
 
       // wget exit codes:
       //   0 = OK
