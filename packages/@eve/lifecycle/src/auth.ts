@@ -26,6 +26,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { execSync } from "node:child_process";
 import {
   LEGACY_CODER_ENGINE_SLUGS,
   agentsToProvision,
@@ -721,41 +722,100 @@ async function collapseLegacyCoderAgents(
 
 /**
  * Pull the install-time PROVISIONING_TOKEN from any of the places the
- * install path may have left it:
- *   1. `EVE_PROVISIONING_TOKEN` env var (operator-supplied for renew)
- *   2. `PROVISIONING_TOKEN` env var (matches the docker-compose convention)
+ * install path may have left it. Order matters — first hit wins:
+ *   1. `EVE_PROVISIONING_TOKEN` env var (operator-supplied)
+ *   2. `PROVISIONING_TOKEN` env var (matches docker-compose convention)
  *   3. `<SYNAP_DEPLOY_DIR>/.env` line `PROVISIONING_TOKEN=...`
+ *   4. Common pod install paths' `.env` (synap-backend / synap / synap-pod)
+ *   5. `docker inspect` on the running synap-backend container — the most
+ *      robust path because it works regardless of where the pod was
+ *      installed, as long as the container is alive (which it must be
+ *      for any provisioning call to succeed anyway).
  *
  * Returns the trimmed token or `null` when none is available. We never
- * throw on missing/unreadable .env — that's the dominant case post-install.
+ * throw on missing/unreadable sources — caller surfaces the friendly hint.
  */
 function resolveProvisioningToken(): string | null {
   const envToken =
     process.env.EVE_PROVISIONING_TOKEN ?? process.env.PROVISIONING_TOKEN;
   if (envToken && envToken.trim().length > 0) return envToken.trim();
 
-  const candidates = [
+  const dirCandidates = [
     process.env.SYNAP_DEPLOY_DIR,
     "/opt/synap-backend/deploy",
+    "/opt/synap-backend",
+    "/opt/synap/deploy",
+    "/opt/synap",
+    "/opt/synap-pod/deploy",
+    "/opt/synap-pod",
+    "/srv/synap-backend/deploy",
+    "/srv/synap/deploy",
   ].filter((d): d is string => typeof d === "string" && d.length > 0);
 
-  for (const dir of candidates) {
+  for (const dir of dirCandidates) {
     const envPath = join(dir, ".env");
     if (!existsSync(envPath)) continue;
+    const value = readEnvFileVar(envPath, "PROVISIONING_TOKEN");
+    if (value) return value;
+  }
+
+  // Last resort: read it straight from the running container's env. The
+  // synap-backend image was started with PROVISIONING_TOKEN in its env, so
+  // `docker inspect --format` returns it even when the original .env lives
+  // somewhere we can't see. Quiet on failure (no docker, container down,
+  // permission denied) — caller falls through to the friendly error.
+  const fromDocker = readProvisioningTokenFromDocker();
+  if (fromDocker) return fromDocker;
+
+  return null;
+}
+
+function readEnvFileVar(envPath: string, key: string): string | null {
+  try {
+    const text = readFileSync(envPath, "utf-8");
+    for (const raw of text.split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line || line.startsWith("#")) continue;
+      const eq = line.indexOf("=");
+      if (eq < 0) continue;
+      if (line.slice(0, eq).trim() === key) {
+        const value = line.slice(eq + 1).trim();
+        if (value.length > 0) return value;
+      }
+    }
+  } catch {
+    // unreadable — skip
+  }
+  return null;
+}
+
+const SYNAP_BACKEND_CONTAINERS: ReadonlyArray<string> = [
+  "synap-backend-backend-1",
+  "synap-backend",
+  "synap-backend-1",
+];
+
+function readProvisioningTokenFromDocker(): string | null {
+  for (const container of SYNAP_BACKEND_CONTAINERS) {
     try {
-      const text = readFileSync(envPath, "utf-8");
-      for (const raw of text.split(/\r?\n/)) {
+      // `--format` returns one env var per line. Stays cheap (no full JSON
+      // payload) and we never even start a shell — execSync uses execve.
+      const out = execSync(
+        `docker inspect --format='{{range .Config.Env}}{{println .}}{{end}}' ${container}`,
+        { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], timeout: 4000 },
+      );
+      for (const raw of out.split(/\r?\n/)) {
         const line = raw.trim();
-        if (!line || line.startsWith("#")) continue;
+        if (!line) continue;
         const eq = line.indexOf("=");
         if (eq < 0) continue;
-        if (line.slice(0, eq).trim() === "PROVISIONING_TOKEN") {
+        if (line.slice(0, eq) === "PROVISIONING_TOKEN") {
           const value = line.slice(eq + 1).trim();
           if (value.length > 0) return value;
         }
       }
     } catch {
-      // unreadable — skip
+      // container missing, docker not on PATH, no permission — try next
     }
   }
   return null;
