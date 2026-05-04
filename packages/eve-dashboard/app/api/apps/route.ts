@@ -16,7 +16,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { readEveSecrets, readAgentKeyOrLegacy } from "@eve/dna";
+import { readEveSecrets, readAgentKeyOrLegacy, resolveSynapUrl } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
 
 export interface AppEntity {
@@ -44,10 +44,10 @@ export async function GET() {
     );
   }
 
-  const podUrl = secrets?.synap?.apiUrl?.trim();
+  const podUrl = resolveSynapUrl(secrets);
   if (!podUrl) {
     return NextResponse.json(
-      { error: "Synap pod URL not configured (secrets.synap.apiUrl is empty)." },
+      { error: "Synap pod URL unresolved — set domain.primary in secrets.json." },
       { status: 500 },
     );
   }

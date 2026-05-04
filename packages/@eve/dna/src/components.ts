@@ -374,3 +374,62 @@ export function isLoopbackUrl(url: string | undefined | null): boolean {
     return false;
   }
 }
+
+/**
+ * In-network URL for the synap-backend container, addressable from any
+ * other container on `eve-network`. NOT for host-side use — the host has
+ * no DNS for this name (synap-backend's compose project is separate).
+ *
+ * Use this when WRITING SYNAP_API_URL into a sidecar container's env
+ * (openwebui-pipelines, openclaw, sandbox). The container resolves the
+ * hostname via Docker DNS and connects directly on the bridge — no
+ * round-trip out to the public internet, no Traefik in the path.
+ *
+ * For host-side reads (CLI, doctor, dashboard), use `resolveSynapUrl`
+ * which returns the public Traefik URL.
+ */
+export const SYNAP_BACKEND_INTERNAL_URL = 'http://synap-backend-backend-1:4000';
+
+/**
+ * Single source of truth for the Synap pod URL. Every CLI command, every
+ * lifecycle hook, every doctor probe goes through here — there is no
+ * other correct way to read the pod URL. Replaces direct reads of
+ * `secrets.synap.apiUrl`, which drift the moment the user changes their
+ * domain config.
+ *
+ * Resolution order (first match wins):
+ *
+ *   1. **Stored non-loopback `apiUrl`** — someone explicitly pointed Eve
+ *      at a remote pod (`apiUrl: "https://pod.acme.com"`). We trust them.
+ *
+ *   2. **Derived from `domain.primary`** — when a public domain is
+ *      configured we ALWAYS prefer the Traefik route. synap-backend has
+ *      no host port mapping; the public route is the actual designed
+ *      path. SSL defaults to `true` because every standard install runs
+ *      Let's Encrypt — only an explicit `domain.ssl: false` opts out.
+ *
+ *   3. **Stored loopback** — pure local dev. Use whatever was stored
+ *      (typically `http://127.0.0.1:4000`).
+ *
+ *   4. **Hardcoded loopback** — never-installed-yet fallback so callers
+ *      don't have to special-case `null`.
+ *
+ * Why a function and not a stored field: storing the URL means rewriting
+ * it on every domain change, every install, every reconcile. We tried
+ * that — it created the loopback drift bug that's been wasting our time.
+ * Pure derivation is simpler AND impossible to drift.
+ */
+export function resolveSynapUrl(
+  secrets: { synap?: { apiUrl?: string }; domain?: { primary?: string; ssl?: boolean } } | null | undefined,
+): string {
+  const stored = secrets?.synap?.apiUrl?.trim();
+  if (stored && !isLoopbackUrl(stored)) return stored;
+
+  const domain = secrets?.domain?.primary?.trim();
+  if (domain && domain !== 'localhost') {
+    const ssl = secrets?.domain?.ssl !== false; // default true
+    return `${ssl ? 'https' : 'http'}://pod.${domain}`;
+  }
+
+  return stored || 'http://127.0.0.1:4000';
+}

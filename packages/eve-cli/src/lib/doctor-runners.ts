@@ -1,28 +1,27 @@
 /**
- * CLI-side IDoctorRunner implementations for `eve doctor`.
+ * CLI-side IDoctorRunner implementations for `eve doctor` and `eve auth`.
  *
  * Why this lives in the CLI and not in `@eve/lifecycle`:
  *   - The lifecycle module is framework-agnostic and uses only Node built-ins.
  *     Adding `execa` / `child_process` there would force the dashboard's
  *     bundle to ship a Docker shell-out path it would never call.
  *   - `DockerExecRunner` only makes sense on a host where `docker` is on
- *     PATH and the `eve-legs-traefik` container exists — that's the CLI
- *     context, not the dashboard.
+ *     PATH and a synap-backend container exists — CLI context only.
  *
  * Composition:
- *   - `DockerExecRunner` — wraps `docker exec eve-legs-traefik wget`.
+ *   - `DockerExecRunner` — wraps `docker exec` into either synap-backend
+ *     directly (when reachable) or eve-legs-traefik. See `planExecRequest`
+ *     for the routing logic.
  *   - `FallbackRunner` — tries `FetchRunner` first, swaps to
- *     `DockerExecRunner` when fetch hits a transport-level error
- *     (ECONNREFUSED / EHOSTUNREACH / ENOTFOUND). The swap is sticky for
- *     the rest of the run so probe 2/3/4 don't each re-pay the failed
- *     fetch latency.
+ *     `DockerExecRunner` on transport-level errors. Sticky for the run.
+ *   - `buildDoctorRunner()` — single canonical builder used by every
+ *     CLI command. Don't instantiate `FallbackRunner` directly elsewhere.
  *
- * Real-world bug this fixes: on an Eve deployment behind Traefik,
- * synap-backend has NO host port mapping. The CLI's `secrets.synap.apiUrl`
- * is `http://127.0.0.1:4000`, which fails immediately. The doctor reports
- * "Cannot reach Synap backend" and the user thinks the pod is broken.
- * `FallbackRunner` makes the probes still work via container DNS so the
- * user gets real signal (idempotency / SSE / sub-tokens actually run).
+ * Defensive net, not the happy path. With `resolveSynapUrl` (in `@eve/dna`)
+ * returning the public Traefik URL whenever a domain is configured, native
+ * fetch reaches the pod fine on every standard install — the swap to
+ * docker-exec only fires for true bootstrap edge cases (cert pending,
+ * DNS not propagated, no domain).
  */
 
 import { execa, type ResultPromise } from "execa";
@@ -619,3 +618,30 @@ export class FallbackRunner implements IDoctorRunner {
 
 // Re-export the parts the CLI's doctor command consumes.
 export { FetchRunner, isFetchTransportError };
+
+// ---------------------------------------------------------------------------
+// Shared builder — single way to construct the CLI's defensive runner
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the canonical CLI runner: native fetch first, docker-exec fallback
+ * on transport errors. Used by `eve doctor`, `eve auth provision/renew/status`,
+ * and any future commands that need to talk to the pod.
+ *
+ * With the new resolveSynapUrl architecture this should rarely fall back —
+ * the resolver returns the public Traefik URL whenever a domain is set, and
+ * fetch reaches that fine. Fallback exists for the bootstrap moment (cert
+ * pending, DNS not yet propagated) and pure local installs without a domain.
+ *
+ * `onSwapNote` is optional; pass a recorder if the caller wants to surface
+ * the swap reason in its UI (the doctor does), or omit for silent fallback.
+ */
+export function buildDoctorRunner(
+  onSwapNote?: (note: string) => void,
+): FallbackRunner {
+  return new FallbackRunner(
+    new FetchRunner(),
+    new DockerExecRunner(),
+    onSwapNote,
+  );
+}

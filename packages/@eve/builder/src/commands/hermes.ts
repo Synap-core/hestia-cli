@@ -1,5 +1,5 @@
 import { HermesDaemon, type HermesConfig } from '../lib/hermes-daemon';
-import { readAgentKeyOrLegacySync, readEveSecrets } from '@eve/dna';
+import { readAgentKeyOrLegacySync, readEveSecrets, resolveSynapUrl } from '@eve/dna';
 
 let daemon: HermesDaemon | null = null;
 
@@ -22,7 +22,8 @@ async function loadDefaultsFromSecrets(): Promise<Partial<HermesConfig>> {
   if (h.enabled !== undefined) out.enabled = h.enabled;
   if (h.pollIntervalMs !== undefined) out.pollIntervalMs = h.pollIntervalMs;
   if (h.maxConcurrentTasks !== undefined) out.maxConcurrentTasks = h.maxConcurrentTasks;
-  if (s.synap?.apiUrl) out.apiUrl = s.synap.apiUrl;
+  const apiUrl = resolveSynapUrl(s);
+  if (apiUrl) out.apiUrl = apiUrl;
   const hermesKey = readAgentKeyOrLegacySync('hermes', s);
   if (hermesKey) out.apiKey = hermesKey;
   if (s.builder?.workspaceDir) out.workspaceDir = s.builder.workspaceDir;

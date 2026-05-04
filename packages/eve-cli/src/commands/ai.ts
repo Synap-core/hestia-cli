@@ -7,6 +7,7 @@ import {
   writeEveSecrets,
   entityStateManager,
   wireAllInstalledComponents,
+  resolveHubBaseUrl,
   AI_CONSUMERS_NEEDING_RECREATE,
   type WireAiResult,
 } from '@eve/dna';
@@ -14,14 +15,6 @@ import { runActionToCompletion } from '@eve/lifecycle';
 import { colors, printError, printInfo, printSuccess, printWarning } from '../lib/ui.js';
 
 type ProviderId = 'ollama' | 'openrouter' | 'anthropic' | 'openai';
-
-function resolveHubBaseUrlFromSecrets(secrets: Awaited<ReturnType<typeof readEveSecrets>>): string | null {
-  const explicit = secrets?.synap?.hubBaseUrl?.trim();
-  if (explicit) return explicit.replace(/\/$/, '');
-  const api = secrets?.synap?.apiUrl?.trim();
-  if (!api) return null;
-  return `${api.replace(/\/$/, '')}/api/hub`;
-}
 
 function buildNonSecretProviderRouting(
   secrets: Awaited<ReturnType<typeof readEveSecrets>>,
@@ -321,7 +314,7 @@ export function aiCommandGroup(program: Command): void {
     .action(async (opts: { workspace: string; check?: boolean }) => {
       try {
         const secrets = await readEveSecrets(process.cwd());
-        const hubBaseUrl = resolveHubBaseUrlFromSecrets(secrets);
+        const hubBaseUrl = resolveHubBaseUrl(secrets ?? null);
         // `eve ai sync` writes workspace settings on the pod — admin-style
         // call. Use the eve agent's key (Doctor's identity) so the audit
         // trail attributes back to Eve, not to a specific consumer agent.
@@ -329,7 +322,7 @@ export function aiCommandGroup(program: Command): void {
           secrets?.agents?.eve?.hubApiKey?.trim() ??
           secrets?.synap?.apiKey?.trim();
         if (!hubBaseUrl) {
-          throw new Error('Missing synap.apiUrl/synap.hubBaseUrl in .eve/secrets/secrets.json');
+          throw new Error('Cannot resolve Synap pod URL — set domain.primary or synap.apiUrl in .eve/secrets/secrets.json');
         }
         if (!apiKey) {
           throw new Error('Missing eve agent key — run `eve auth provision`');

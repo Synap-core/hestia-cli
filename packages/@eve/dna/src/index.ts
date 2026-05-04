@@ -152,6 +152,8 @@ export {
   serviceComponents,
   publicComponentUrl,
   isLoopbackUrl,
+  resolveSynapUrl,
+  SYNAP_BACKEND_INTERNAL_URL,
 } from './components.js';
 
 // Centralized AI provider wiring

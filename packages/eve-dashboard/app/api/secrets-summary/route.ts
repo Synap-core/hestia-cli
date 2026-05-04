@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { readEveSecrets } from "@eve/dna";
+import { readEveSecrets, resolveSynapUrl } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
 
 export async function GET() {
@@ -22,9 +22,9 @@ export async function GET() {
         providers,
       },
       synap: {
-        configured: !!(secrets?.synap?.apiUrl),
+        configured: !!resolveSynapUrl(secrets),
         hasApiKey: !!(secrets?.synap?.apiKey && secrets.synap.apiKey.trim().length > 0),
-        apiUrl: secrets?.synap?.apiUrl,
+        apiUrl: resolveSynapUrl(secrets),
       },
       arms: {
         openclaw: {

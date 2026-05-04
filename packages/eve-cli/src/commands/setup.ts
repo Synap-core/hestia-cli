@@ -17,7 +17,6 @@ import {
   ensureSecretValue,
   defaultSkillsDir,
   ensureEveSkillsLayout,
-  publicComponentUrl,
   type SetupProfileKind,
   type EveSecrets,
 } from '@eve/dna';
@@ -996,22 +995,18 @@ export function setupCommand(program: Command): void {
         const podKey = ensureSecretValue(
           prevSecrets?.synap?.apiKey ?? process.env.SYNAP_API_KEY ?? process.env.OPENCLAW_SYNAP_API_KEY,
         );
-        // Prefer the public Traefik URL when a real domain is configured.
-        // synap-backend has no host port mapping (`hostPort: null`), so a
-        // loopback apiUrl points at nothing — every CLI call then has to
-        // fall back to docker-exec. Public URL via Traefik is the design.
-        // Only when no domain is set (pure local install) do we fall back
-        // to loopback, which is correct for that case (port-forward dev
-        // setups). Existing apiUrl is preserved unless it's the dead
-        // loopback default and we now have a public route to use.
-        const publicPodUrl = publicComponentUrl('synap', installDomain, Boolean(installEmail));
-        const previousApiUrl = prevSecrets?.synap?.apiUrl;
-        const apiUrl = (() => {
-          if (publicPodUrl) return publicPodUrl;
-          return previousApiUrl ?? 'http://127.0.0.1:4000';
-        })();
+        // We deliberately do NOT write `apiUrl` here. The pod URL is
+        // derived at read time from `domain.primary` via
+        // `resolveSynapUrl(secrets)` (see @eve/dna/components.ts). Storing
+        // it would re-introduce the drift bug that wasted hours of
+        // debugging: change domain → stored apiUrl goes stale → every
+        // CLI call hits the wrong URL. Pure derivation can't drift.
+        //
+        // Existing `apiUrl` from previous installs is preserved by
+        // writeEveSecrets' merge — that's intentional, since some users
+        // explicitly point Eve at a remote pod (different from their
+        // domain.primary). The resolver honors that override.
         merge.synap = {
-          apiUrl,
           apiKey: podKey,
           hubBaseUrl: prevSecrets?.synap?.hubBaseUrl ?? process.env.SYNAP_HUB_BASE_URL ?? undefined,
         };

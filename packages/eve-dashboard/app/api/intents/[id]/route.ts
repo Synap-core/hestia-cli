@@ -3,6 +3,7 @@ import {
   isValidEveBackgroundAction,
   listEveBackgroundActions,
   readEveSecrets,
+  resolveSynapUrl,
 } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
 
@@ -11,12 +12,12 @@ async function resolveAuth(): Promise<
   | { ok: true; podUrl: string; apiKey: string }
 > {
   const secrets = await readEveSecrets();
-  const podUrl = secrets?.synap?.apiUrl?.trim();
+  const podUrl = resolveSynapUrl(secrets);
   const apiKey = secrets?.agents?.eve?.hubApiKey?.trim();
   if (!podUrl) {
     return {
       error: NextResponse.json(
-        { error: "Eve is not configured (no synap.apiUrl in secrets)" },
+        { error: "Eve pod URL unresolved — set domain.primary in secrets.json" },
         { status: 503 },
       ),
     };

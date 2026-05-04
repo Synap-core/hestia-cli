@@ -7,14 +7,15 @@ import {
   COMPONENTS,
   readAgentKey,
   readEveSecrets,
+  resolveSynapUrl,
   getAccessUrls,
   hasAnyProvider,
 } from '@eve/dna';
 import { verifyComponent } from '@eve/legs';
-import { runHubProtocolProbes, detectLoopbackApiUrl, type HubProtocolDiagnostic } from '@eve/lifecycle';
+import { runHubProtocolProbes, type HubProtocolDiagnostic } from '@eve/lifecycle';
 import { probeRoutes, probeVerdict, type RouteProbe } from '../lib/probe-routes.js';
 import { diagnoseFailedRoute, type DeepDiagnostic } from '../lib/diagnose-route.js';
-import { DockerExecRunner, FallbackRunner, FetchRunner } from '../lib/doctor-runners.js';
+import { buildDoctorRunner } from '../lib/doctor-runners.js';
 import {
   colors,
   emojis,
@@ -228,31 +229,8 @@ async function runDiagnostics(opts: DoctorOptions = { verbose: false, skipProbes
   const secrets = await readEveSecrets(process.cwd());
   const synapInstalled = installed.includes('synap');
 
-  // Check 4b-pre: Pod URL sanity. synap-backend has `hostPort: null` (it's
-  // routed via Traefik, never exposed to the host). When secrets.synap.apiUrl
-  // is loopback BUT a public domain is configured, every CLI call ends up
-  // chasing fallback paths (FetchRunner ECONNREFUSED → docker-exec workaround
-  // → IPv6 quirks → 401-without-envelope misclassifications). Surface this
-  // BEFORE the Hub Protocol probes so the operator sees the upstream cause
-  // instead of debugging downstream symptoms one at a time.
-  if (synapInstalled) {
-    try {
-      const suggestion = await detectLoopbackApiUrl();
-      if (suggestion) {
-        checks.push({
-          name: 'Synap pod URL',
-          status: 'warn',
-          message: `apiUrl is loopback (${suggestion.current}) but pod is behind Traefik on ${suggestion.domain}. synap-backend has no host port; loopback resolves to nothing.`,
-          fix: `eve update synap   # rewrites apiUrl → ${suggestion.suggested}`,
-        });
-      }
-    } catch {
-      // Detection is best-effort — never block the rest of doctor on it.
-    }
-  }
-
   if (synapInstalled && !skipProbes) {
-    const synapApiUrl = secrets?.synap?.apiUrl ?? '';
+    const synapApiUrl = resolveSynapUrl(secrets);
     // Doctor probes use the "eve" agent's key — that agent is reserved
     // for our own diagnostics + dashboard probes, so failures here
     // never tell us whether OpenClaw or Hermes are healthy. Fall back
@@ -275,18 +253,12 @@ async function runDiagnostics(opts: DoctorOptions = { verbose: false, skipProbes
       const probeSpinner = createSpinner('Running Hub Protocol probes (≤35s)...');
       probeSpinner.start();
       let diagnostics: HubProtocolDiagnostic[] = [];
-      // Build a runner that tries native fetch first and swaps to
-      // `docker exec eve-legs-traefik wget` when the host loopback isn't
-      // reachable. On Eve deployments behind Traefik, synap-backend has
-      // no host port mapping — the configured `apiUrl` of
-      // `http://127.0.0.1:4000` will hit ECONNREFUSED and the probes
-      // would be useless without this fallback.
+      // Defensive runner: native fetch first, docker-exec fallback on
+      // transport errors. With resolveSynapUrl now returning the public
+      // Traefik URL, the swap should rarely fire — it remains a safety
+      // net for the bootstrap moment (cert pending, DNS not propagated).
       const swapNotes: string[] = [];
-      const runner = new FallbackRunner(
-        new FetchRunner(),
-        new DockerExecRunner(),
-        (note) => swapNotes.push(note),
-      );
+      const runner = buildDoctorRunner((note) => swapNotes.push(note));
       try {
         diagnostics = await runHubProtocolProbes({
           synapUrl: synapApiUrl,
@@ -332,7 +304,7 @@ async function runDiagnostics(opts: DoctorOptions = { verbose: false, skipProbes
   //   - skip:  not enough info (no synap, no eve key, no pod URL).
   if (synapInstalled) {
     const builderId = secrets?.builder?.workspaceId?.trim();
-    const synapApiUrl = secrets?.synap?.apiUrl ?? '';
+    const synapApiUrl = resolveSynapUrl(secrets);
     const eveAgent = await readAgentKey('eve', process.cwd());
     const synapApiKey = eveAgent?.hubApiKey ?? secrets?.synap?.apiKey ?? '';
 

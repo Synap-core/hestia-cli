@@ -3,27 +3,29 @@ import {
   isValidEveBackgroundAction,
   listEveBackgroundActions,
   readEveSecrets,
+  resolveSynapUrl,
 } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
 
 /**
  * Resolve the pod URL + Eve agent Hub key from disk.
  *
- * The dashboard mirrors the SDK's auth model: read `secrets.synap.apiUrl`
- * and `secrets.agents.eve.hubApiKey`. When either is missing we surface a
- * 503 — the dashboard is misconfigured, not the user's request.
+ * The dashboard mirrors the SDK's auth model: derive pod URL via
+ * `resolveSynapUrl(secrets)` (public Traefik route from domain config)
+ * and read `secrets.agents.eve.hubApiKey`. When either is missing we
+ * surface a 503 — the dashboard is misconfigured, not the user's request.
  */
 async function resolveAuth(): Promise<
   | { error: NextResponse }
   | { ok: true; podUrl: string; apiKey: string }
 > {
   const secrets = await readEveSecrets();
-  const podUrl = secrets?.synap?.apiUrl?.trim();
+  const podUrl = resolveSynapUrl(secrets);
   const apiKey = secrets?.agents?.eve?.hubApiKey?.trim();
   if (!podUrl) {
     return {
       error: NextResponse.json(
-        { error: "Eve is not configured (no synap.apiUrl in secrets)" },
+        { error: "Eve pod URL unresolved — set domain.primary in secrets.json" },
         { status: 503 },
       ),
     };

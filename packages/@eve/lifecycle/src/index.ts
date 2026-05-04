@@ -27,8 +27,8 @@ import {
   writeEveSecrets,
   pickPrimaryProvider,
   wireComponentAi,
-  publicComponentUrl,
-  isLoopbackUrl,
+  resolveSynapUrl,
+  SYNAP_BACKEND_INTERNAL_URL,
   AI_CONSUMERS,
   AI_CONSUMERS_NEEDING_RECREATE,
   type ComponentInfo,
@@ -440,91 +440,18 @@ async function* runPostUpdateHooks(comp: ComponentInfo): AsyncGenerator<Lifecycl
  * synap-backend restart. Downstream consumers may need a restart to pick
  * up the new key — surfaced as a hint, not enforced here.
  */
-// ---------------------------------------------------------------------------
-// apiUrl reconcile — loopback → public Traefik URL
-// ---------------------------------------------------------------------------
-
-export interface ApiUrlReconcileSuggestion {
-  /** Current secrets.synap.apiUrl (or empty string if unset). */
-  current: string;
-  /** Public URL that should be used (https://pod.<domain>). */
-  suggested: string;
-  /** Configured primary domain that drove the suggestion. */
-  domain: string;
-}
-
-/**
- * Returns a suggestion when secrets.synap.apiUrl is loopback AND a public
- * domain is configured (so a Traefik route exists). Used by both the
- * lifecycle reconcile (rewrites in place) and the doctor (surfaces a
- * structured warning so the operator sees WHY the docker-exec fallback
- * is firing on every probe). Returns `null` when nothing needs changing.
- */
-export async function detectLoopbackApiUrl(): Promise<ApiUrlReconcileSuggestion | null> {
-  const secrets = await readEveSecrets();
-  const current = secrets?.synap?.apiUrl?.trim() ?? "";
-  if (!isLoopbackUrl(current)) return null;
-  const domain = secrets?.domain?.primary?.trim() ?? "";
-  if (!domain || domain === "localhost") return null;
-  const ssl = Boolean(secrets?.domain?.ssl);
-  const suggested = publicComponentUrl("synap", domain, ssl);
-  if (!suggested) return null;
-  return { current, suggested, domain };
-}
-
-/**
- * In-place self-heal: detect + rewrite + log. Yields zero or one log
- * event. Idempotent — a no-op when apiUrl already matches the public
- * URL or when no domain is configured. Failures (write errors, etc.)
- * yield a log line but never throw — the rest of the update should
- * still complete.
- */
-async function* reconcileLoopbackApiUrl(): AsyncGenerator<LifecycleEvent> {
-  let suggestion: ApiUrlReconcileSuggestion | null;
-  try {
-    suggestion = await detectLoopbackApiUrl();
-  } catch (err) {
-    yield {
-      type: "log",
-      line: `↳ apiUrl reconcile skipped: ${err instanceof Error ? err.message : String(err)}`,
-    };
-    return;
-  }
-  if (!suggestion) return;
-  try {
-    await writeEveSecrets({ synap: { apiUrl: suggestion.suggested } });
-    yield {
-      type: "log",
-      line: `↳ apiUrl rewritten ${suggestion.current} → ${suggestion.suggested} (loopback unreachable behind Traefik; using public route)`,
-    };
-  } catch (err) {
-    yield {
-      type: "log",
-      line: `↳ apiUrl reconcile failed (${err instanceof Error ? err.message : String(err)}) — fix manually: edit .eve/secrets/secrets.json synap.apiUrl=${suggestion.suggested}`,
-    };
-  }
-}
-
 async function* postUpdateReconcileAuth(): AsyncGenerator<LifecycleEvent> {
   const { getAuthStatus, renewAgentKey, migrateLegacyToAgents } = await import("./auth.js");
   const { readAgentKey } = await import("@eve/dna");
 
-  // Step 0 — Reconcile apiUrl FIRST, before any auth probe runs. Older
-  // installs (and the previous setup.ts default) wrote a loopback URL
-  // (http://127.0.0.1:4000) into secrets.synap.apiUrl. synap-backend has
-  // no host port mapping (`hostPort: null` in COMPONENTS), so loopback
-  // points at nothing — every probe then fails with a transport error,
-  // FallbackRunner swaps to docker-exec, and a chain of misleading
-  // symptoms ensues (DNS issues, IPv6 ::1 resolution, 401-without-envelope,
-  // 404-on-setup/agent). Rewriting the URL once means the rest of this
-  // hook — and every subsequent CLI/doctor call — uses the public Traefik
-  // route, which is the actual designed path.
-  yield* reconcileLoopbackApiUrl();
-
   const secrets = await readEveSecrets();
-  const synapUrl = secrets?.synap?.apiUrl?.trim() ?? "";
+  // Single resolver: derives public Traefik URL from domain when set,
+  // ignores stale loopback in secrets. Replaces the previous
+  // detect-and-rewrite reconcile dance — pure derivation can't drift.
+  const synapUrl = resolveSynapUrl(secrets);
   if (!synapUrl) {
-    // No pod URL — nothing to validate. Stay quiet.
+    // Should never happen — resolver always returns *something* — but
+    // guard so an unexpected null doesn't 500 the whole update.
     return;
   }
 
@@ -708,11 +635,11 @@ async function* postInstallProvisionAgents(componentId: string): AsyncGenerator<
  */
 async function* postInstallSeedBuilderWorkspace(): AsyncGenerator<LifecycleEvent> {
   const secrets = await readEveSecrets();
-  const podUrl = secrets?.synap?.apiUrl?.trim() ?? "";
+  const podUrl = resolveSynapUrl(secrets);
   if (!podUrl) {
     yield {
       type: "log",
-      line: "Skipping Builder workspace seed — synap.apiUrl not set yet (run `eve update` after configuring the pod URL).",
+      line: "Skipping Builder workspace seed — pod URL unresolved (configure domain.primary or synap.apiUrl).",
     };
     return;
   }
@@ -1333,8 +1260,10 @@ async function reconcilePipelinesEnv(deployDir: string): Promise<void> {
   const secrets = await readEveSecrets();
   const pipelinesAgent = await readAgentKey("openwebui-pipelines");
   const synapApiKey = pipelinesAgent?.hubApiKey ?? secrets?.synap?.apiKey ?? "";
-  const synapApiUrl =
-    secrets?.synap?.apiUrl ?? "http://synap-backend-backend-1:4000";
+  // Pipelines runs on eve-network; use the in-network hostname so it
+  // bypasses Traefik. resolveSynapUrl() would also work but adds a
+  // useless round-trip out and back through public DNS.
+  const synapApiUrl = SYNAP_BACKEND_INTERNAL_URL;
   const isUrl = process.env.SYNAP_IS_URL ?? "http://intelligence-hub:3001";
 
   const envPath = join(deployDir, ".env");
@@ -1489,7 +1418,9 @@ async function* installOpenclaw(): AsyncGenerator<LifecycleEvent> {
   const secrets = await readEveSecrets();
 
   const ollamaUrl = process.env.OLLAMA_URL ?? "http://eve-brain-ollama:11434";
-  const synapApiUrl = secrets?.synap?.apiUrl ?? "";
+  // OpenClaw runs on eve-network; in-network hostname avoids the public
+  // Traefik round-trip. See SYNAP_BACKEND_INTERNAL_URL doc.
+  const synapApiUrl = SYNAP_BACKEND_INTERNAL_URL;
   // OpenClaw uses the openclaw agent's key for Hub Protocol — its own
   // user, scopes, and audit trail on the pod. Fall back to the legacy
   // shared key only for pre-migration installs.

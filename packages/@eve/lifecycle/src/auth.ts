@@ -34,6 +34,7 @@ import {
   agentsToProvision,
   readAgentKey,
   readEveSecrets,
+  resolveSynapUrl,
   writeAgentKey,
   writeCodeEngine,
   writeEveSecrets,
@@ -332,9 +333,10 @@ export interface ProvisionAgentOptions {
   /** Hard wall-clock cap on the mint call. Default 10s. */
   timeoutMs?: number;
   /**
-   * Override the synap pod URL. When unset we read it from
-   * `secrets.synap.apiUrl` (the install-time value). Useful for tests
-   * and one-shot CLI flows that target a non-default pod.
+   * Override the synap pod URL. When unset we derive it via
+   * `resolveSynapUrl(secrets)` — public Traefik URL from `domain.primary`
+   * when configured, otherwise stored override or loopback. Useful for
+   * tests and one-shot CLI flows that target a non-default pod.
    */
   synapUrl?: string;
   /**
@@ -365,7 +367,7 @@ export type ProvisionResult =
  * Authoritative flow — every install / renew / migrate path goes
  * through here:
  *
- *   1. Resolve pod URL (option > secrets.synap.apiUrl).
+ *   1. Resolve pod URL (option > resolveSynapUrl(secrets)).
  *   2. Resolve PROVISIONING_TOKEN (option > env > deploy/.env).
  *   3. POST /setup/agent with `{ agentType }`.
  *   4. Persist the returned `{ hubApiKey, agentUserId, workspaceId }`
@@ -386,12 +388,14 @@ export async function provisionAgent(opts: ProvisionAgentOptions): Promise<Provi
 
   const cwd = opts.deployDir ?? process.env.EVE_HOME ?? process.cwd();
   const secrets = await readEveSecrets(cwd);
-  const synapUrl = (opts.synapUrl ?? secrets?.synap?.apiUrl ?? "").trim();
+  // Single resolver — derives public Traefik URL from domain when set,
+  // ignores stale loopback in secrets. See @eve/dna#resolveSynapUrl.
+  const synapUrl = (opts.synapUrl ?? resolveSynapUrl(secrets)).trim();
   if (!synapUrl) {
     return {
       provisioned: false,
       agentType,
-      reason: "synap.apiUrl not set in secrets.json — run `eve install` first",
+      reason: "synap pod URL unresolved — run `eve install` or set domain.primary in secrets.json",
     };
   }
 

@@ -44,9 +44,10 @@ import {
   readAgentKey,
   readEveSecrets,
   resolveAgent,
+  resolveSynapUrl,
   type AgentInfo,
 } from '@eve/dna';
-import { FallbackRunner, FetchRunner, DockerExecRunner } from '../lib/doctor-runners.js';
+import { buildDoctorRunner } from '../lib/doctor-runners.js';
 import {
   colors,
   emojis,
@@ -82,7 +83,7 @@ async function resolveAgentConfig(
   if (!agent) return null;
 
   const secrets = await readEveSecrets(process.cwd());
-  const synapUrl = secrets?.synap?.apiUrl?.trim() ?? '';
+  const synapUrl = resolveSynapUrl(secrets);
   if (!synapUrl) return null;
 
   // Per-agent key first, then fall back to the legacy single-key field
@@ -105,23 +106,9 @@ async function resolveAgentConfig(
   };
 }
 
-/**
- * Build a runner that tries native fetch first and swaps to docker-exec
- * when the host loopback isn't reachable. Same pattern `eve doctor` uses
- * — Eve deployments behind Traefik have no host port mapping, so a probe
- * to `http://127.0.0.1:4000` would otherwise just fail.
- */
-function buildRunner(): FallbackRunner {
-  return new FallbackRunner(
-    new FetchRunner(),
-    new DockerExecRunner(),
-    () => {
-      // Discard the swap note here — the auth UI is concise and doesn't
-      // need to surface the transport detail. `eve doctor` is the place
-      // for verbose runner reporting.
-    },
-  );
-}
+// Auth UI is concise — discard the runner swap note. `eve doctor` is the
+// place for verbose runner reporting.
+const buildRunner = () => buildDoctorRunner();
 
 // ---------------------------------------------------------------------------
 // `eve auth status` — list-or-detail
@@ -152,10 +139,10 @@ async function runStatus(opts: StatusOptions): Promise<void> {
   // No `--agent` → table of every registered agent's status.
   const cwd = process.cwd();
   const secrets = await readEveSecrets(cwd);
-  const synapUrl = secrets?.synap?.apiUrl?.trim() ?? '';
+  const synapUrl = resolveSynapUrl(secrets);
   if (!synapUrl) {
-    printWarning('skipped — synap not configured (no apiUrl in secrets.json).');
-    printInfo('Fix: re-run `eve install` or set secrets.synap.apiUrl manually.');
+    printWarning('skipped — synap not configured.');
+    printInfo('Fix: re-run `eve install` or set domain.primary in secrets.json.');
     console.log();
     return;
   }
@@ -214,7 +201,7 @@ async function renderAgentDetail(agent: AgentInfo): Promise<void> {
   spinner.succeed('Auth check complete');
 
   console.log();
-  console.log(`  ${colors.muted('Pod:'.padEnd(11))} ${colors.info(cfg.synapUrl)}  ${colors.muted('(resolved via secrets.synap.apiUrl)')}`);
+  console.log(`  ${colors.muted('Pod:'.padEnd(11))} ${colors.info(cfg.synapUrl)}  ${colors.muted('(resolved via domain config)')}`);
   console.log(`  ${colors.muted('Agent:'.padEnd(11))} ${cfg.agentType}  ${colors.muted(`(${agent.description})`)}`);
   console.log(`  ${colors.muted('Key:'.padEnd(11))} ${cfg.apiKeyPrefix}…  ${colors.muted('(prefix shown)')}`);
 
@@ -351,7 +338,7 @@ async function runRenew(opts: RenewOptions): Promise<void> {
     printInfo(`Pod:           ${cfg.synapUrl}`);
     printInfo(`Previous key:  ${previousPrefix}…`);
   } else {
-    printInfo(`Pod:           ${colors.muted('(reading from secrets.synap.apiUrl…)')}`);
+    printInfo(`Pod:           ${colors.muted('(resolving from secrets…)')}`);
   }
   console.log();
 
@@ -361,6 +348,7 @@ async function runRenew(opts: RenewOptions): Promise<void> {
     deployDir: process.cwd(),
     agentType,
     reason: 'manual',
+    runner: buildRunner(),
   });
   if (!result.renewed) {
     spinner.fail('Renew failed');

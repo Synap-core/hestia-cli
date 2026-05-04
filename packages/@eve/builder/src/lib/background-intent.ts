@@ -33,6 +33,7 @@ import {
   listEveBackgroundActions,
   readAgentKeyOrLegacy,
   readEveSecrets,
+  resolveSynapUrl,
 } from '@eve/dna';
 
 // ---------------------------------------------------------------------------
@@ -166,12 +167,12 @@ async function resolveAuth(
   }
   const cwd = opts.cwd ?? process.env.EVE_HOME ?? process.cwd();
   const secrets = await readEveSecrets(cwd);
-  const podUrl = secrets?.synap?.apiUrl?.trim() ?? '';
+  const podUrl = resolveSynapUrl(secrets);
   if (!podUrl) {
     throw new BackgroundIntentError({
       kind: 'no_auth',
       message:
-        'synap.apiUrl not set in secrets.json — run `eve install` first',
+        'Cannot resolve Synap pod URL — run `eve install` or set domain.primary in secrets.json',
       httpStatus: 0,
     });
   }

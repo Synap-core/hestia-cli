@@ -9,7 +9,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { NextResponse } from "next/server";
-import { readEveSecrets, entityStateManager, readSetupProfile } from "@eve/dna";
+import { readEveSecrets, entityStateManager, readSetupProfile, resolveSynapUrl } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
 
 const execFileAsync = promisify(execFile);
@@ -60,7 +60,7 @@ export async function GET() {
   const volumes = await listSynapVolumes();
 
   return NextResponse.json({
-    podUrl: secrets?.synap?.apiUrl ?? null,
+    podUrl: resolveSynapUrl(secrets),
     hubBaseUrl: secrets?.synap?.hubBaseUrl ?? null,
     apiKeyPresent: Boolean(secrets?.synap?.apiKey),
     domain: secrets?.domain?.primary ?? null,

@@ -4,6 +4,7 @@ import {
   entityStateManager,
   readAgentKeyOrLegacy,
   readEveSecrets,
+  resolveSynapUrl,
 } from '@eve/dna';
 import { execa, resolveSynapDelegate } from '@eve/brain';
 import { OpenClawService } from '../lib/openclaw.js';
@@ -73,7 +74,7 @@ export function installCommand(program: Command): void {
           secrets?.arms?.openclaw?.synapApiKey ??
           (await readAgentKeyOrLegacy('openclaw', process.cwd()));
         openclaw.setIntegration({
-          synapApiUrl: secrets?.synap?.apiUrl,
+          synapApiUrl: resolveSynapUrl(secrets),
           synapApiKey: openclawSynapKey,
           dokployApiUrl: secrets?.builder?.dokployApiUrl,
         });

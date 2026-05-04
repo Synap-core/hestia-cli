@@ -110,7 +110,7 @@ function renderIntentError(err: unknown, contextHint?: string): void {
   printError(err.message);
   switch (err.kind) {
     case 'no_auth':
-      printInfo('Fix: run `eve install` (sets synap.apiUrl) or `eve auth provision --agent eve`.');
+      printInfo('Fix: run `eve install` (configures pod URL) or `eve auth provision --agent eve`.');
       break;
     case 'invalid_action': {
       printInfo('Use one of:');
