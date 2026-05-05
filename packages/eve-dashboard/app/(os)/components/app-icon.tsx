@@ -25,7 +25,7 @@
 import {
   Box, MessageSquare, Brain, Sparkles, Code2, Wrench, Users,
   LayoutGrid, Paperclip, Home, Settings as SettingsIcon, Cpu, Rss,
-  Lock,
+  Lock, Inbox, Activity, Store,
   type LucideIcon, type LucideProps,
 } from "lucide-react";
 import { brandColorFor } from "../lib/brand-colors";
@@ -34,6 +34,7 @@ import type { HomeApp } from "../hooks/use-home-apps";
 const GLYPHS: Record<string, LucideIcon> = {
   Box, MessageSquare, Brain, Sparkles, Code2, Wrench, Users,
   LayoutGrid, Paperclip, Home, Settings: SettingsIcon, Cpu, Rss,
+  Inbox, Activity, Store,
 };
 
 function GlyphFor({ glyph, ...props }: { glyph: string | null } & LucideProps) {

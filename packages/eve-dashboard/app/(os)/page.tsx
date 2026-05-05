@@ -45,6 +45,7 @@ import { AppGrid } from "./components/app-grid";
 import { SearchBar } from "./components/search-bar";
 import { EmptyState } from "./components/empty-state";
 import { useHomeApps } from "./hooks/use-home-apps";
+import { useStats } from "./hooks/use-stats";
 import { resolveAuthMethod } from "./lib/cp-auth";
 import { initiateCpOAuth } from "./lib/cp-oauth";
 import { DeviceFlowModal } from "./components/device-flow-modal";
@@ -55,6 +56,7 @@ export default function HomePage() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [isDeviceFlowOpen, setIsDeviceFlowOpen] = useState(false);
   const { apps, isLoading, bannerState, refetch } = useHomeApps();
+  const { stats } = useStats();
 
   // Filter is name + description + category — case-insensitive contains.
   const filtered = useMemo(() => {
@@ -179,6 +181,7 @@ export default function HomePage() {
                 apps={filtered}
                 isLoading={isLoading}
                 marketplaceUrl="/marketplace"
+                coreCounts={{ proposals: stats.inboxPending }}
               />
             )}
           </div>

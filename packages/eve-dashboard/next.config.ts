@@ -17,30 +17,26 @@ const nextConfig: NextConfig = {
   // resolve cleanly without a flash.
   async redirects() {
     return [
-      // Stack Pulse — formerly the dashboard home — is now a Settings tab.
-      { source: "/dashboard",                destination: "/settings/stack-pulse", permanent: true },
+      // Stack Pulse — formerly the dashboard home, briefly a Settings
+      // tab — is now the top-level Pulse app at `/pulse` (2026-05-05).
+      { source: "/dashboard",                destination: "/pulse",                    permanent: true },
+      { source: "/settings/stack-pulse",     destination: "/pulse",                    permanent: true },
 
       // Pre-Phase-2 dashboard sub-pages were already migrated under /settings.
-      // Keep these in case anyone deep-linked one.
+      // Keep these in case anyone deep-linked one. Settings consolidation
+      // (2026-05-05) removed agents/apps/channels/intents from /settings —
+      // those redirects were dropped along with the destination folders.
       { source: "/dashboard/settings",       destination: "/settings",                 permanent: true },
       { source: "/dashboard/components",     destination: "/settings/components",      permanent: true },
       { source: "/dashboard/components/:id", destination: "/settings/components/:id",  permanent: true },
-      { source: "/dashboard/channels",       destination: "/settings/channels",        permanent: true },
       { source: "/dashboard/ai",             destination: "/settings/ai",              permanent: true },
       { source: "/dashboard/networking",     destination: "/settings/networking",      permanent: true },
       { source: "/dashboard/doctor",         destination: "/settings/doctor",          permanent: true },
 
-      // Top-level surfaces that used to live on the legacy AppShell
-      // sidebar — now Settings tabs.
-      { source: "/intents",                  destination: "/settings/intents",         permanent: true },
-      { source: "/intents/:path*",           destination: "/settings/intents/:path*",  permanent: true },
-      { source: "/apps",                     destination: "/settings/apps",            permanent: true },
-      { source: "/apps/:path*",              destination: "/settings/apps/:path*",     permanent: true },
-
-      // /agents at the top level is now the live Agents app stub.
-      // Deep-linked terminals (which used to live there) are now under
-      // /settings/agents/<slug>/terminal.
-      { source: "/agents/:slug/terminal",    destination: "/settings/agents/:slug/terminal", permanent: true },
+      // /apps used to live as a Settings tab; now the dedicated Marketplace
+      // app owns every "browse / install / manage apps" surface.
+      { source: "/apps",                     destination: "/marketplace",              permanent: true },
+      { source: "/apps/:path*",              destination: "/marketplace",              permanent: true },
     ];
   },
 };

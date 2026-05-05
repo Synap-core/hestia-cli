@@ -480,7 +480,7 @@ async function runProvision(opts: { agent?: string; email?: string }): Promise<v
   // Check if the pod has a first admin yet. If not, run setup-admin
   // inline so provision has a workspace to associate agents with.
   // ------------------------------------------------------------------
-  const needsSetup = await checkNeedsAdmin(synapUrl);
+  const needsSetup = await checkNeedsAdmin(synapUrl, provisioningToken);
   if (needsSetup) {
     printWarning('No admin account found on this pod.');
     printInfo('Running first-admin setup before provisioning agent keys…');

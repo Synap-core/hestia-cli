@@ -513,14 +513,41 @@ export async function provisionAgent(opts: ProvisionAgentOptions): Promise<Provi
     };
   }
   if (res.status === 404) {
+    // Distinguish backend 404 from a routing/Traefik 404.
+    //
+    // Backend 404 → {"error":"Not found"} JSON: the route exists but the
+    // handler couldn't find the resource it needs — almost always means no
+    // admin user has been created on this pod yet (no workspace to associate
+    // the agent with). The fix is to visit /setup and create an admin, then
+    // retry provision.
+    //
+    // Routing 404 (Traefik / Hono default) → plain-text "404 page not found"
+    // or HTML: the request never reached the handler. Causes: wrong URL,
+    // Traefik rule not matching, or image too old to have this endpoint.
+    const parsed404 = tryJson(res.body);
+    const isBackend404 =
+      parsed404 !== null &&
+      typeof parsed404 === "object" &&
+      ("error" in (parsed404 as object) || "message" in (parsed404 as object));
+
+    if (isBackend404) {
+      const setupUrl = synapUrl.replace(/127\.0\.0\.1:\d+/, "pod.<your-domain>").replace(/:\d+$/, "");
+      return {
+        provisioned: false,
+        agentType,
+        reason:
+          `No admin account on this pod — the backend returned 404 because there is no workspace to create the agent in. ` +
+          `Create your first admin at ${setupUrl}/setup (or run \`eve auth provision --email <you@example.com>\` to be prompted inline), then retry.`,
+      };
+    }
+
     return {
       provisioned: false,
       agentType,
       reason:
-        `POST ${url} returned 404. ` +
-        "Either the backend image is outdated (run `eve update synap`) or " +
-        "Traefik is returning 404 because the loopback port isn't bound. " +
-        "Check: `ss -tlnp | grep 4000` on the pod host, then `eve doctor`.",
+        `POST ${url} returned 404 (route not matched). ` +
+        `Check Traefik routes with \`eve domain check\` — or the backend image may be outdated (run \`eve update synap\`). ` +
+        `Raw: ${res.body.slice(0, 120)}`,
     };
   }
   if (res.status < 200 || res.status >= 300) {
@@ -1178,7 +1205,14 @@ export async function checkNeedsAdmin(
   const attempt = async (headers: Record<string, string>): Promise<boolean | null> => {
     try {
       const res = await runner.httpGet(url, { Accept: "application/json", ...headers }, { timeoutMs: 6_000 });
-      if (res.status === 404) return false; // endpoint absent — older backend
+      if (res.status === 404) {
+        // The /setup/status endpoint may not exist on this backend version.
+        // Returning false here ("no setup needed") is wrong if there genuinely
+        // is no admin — provision would then fail with a confusing 404.
+        // Return null so the caller falls through to the next attempt/default
+        // rather than silently skipping setup.
+        return null;
+      }
       if (res.status === 401 || res.status === 403) return null; // needs different auth
       if (res.status < 200 || res.status >= 300) return false;
       const parsed = tryJson(res.body);
@@ -1194,14 +1228,16 @@ export async function checkNeedsAdmin(
   const first = await attempt({});
   if (first !== null) return first;
 
-  // 2. Endpoint required auth — retry with provisioning token
+  // 2. Endpoint required auth or not found — retry with provisioning token
   if (provisioningToken) {
     const second = await attempt({ Authorization: `Bearer ${provisioningToken}` });
     if (second !== null) return second;
   }
 
-  // 3. Auth required but no token available — assume needs setup to be safe
-  return true;
+  // 3. Status endpoint not reachable / not found / auth required without a token.
+  // Fall back to false (don't block provision) — if there is genuinely no admin,
+  // the 404 from POST /setup/agent will surface a clear "create admin first" message.
+  return false;
 }
 
 /**

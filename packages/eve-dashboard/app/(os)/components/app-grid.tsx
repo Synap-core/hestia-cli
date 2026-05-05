@@ -3,17 +3,20 @@
 /**
  * `AppGrid` — Zone C of the Home pane.
  *
- * Two labelled sections, top → bottom:
+ * Three labelled sections, top → bottom:
  *
- *   1. **On your Eve**  — `app.isLocal === true`. Components running
+ *   1. **Core**         — pinned first-party Eve apps (Inbox, Pulse,
+ *                         Agents, Marketplace). Internal routes; the
+ *                         only place a count chip can show up.
+ *   2. **On your Eve**  — `app.isLocal === true`. Components running
  *                         on this machine (Chat, OpenClaw, Hermes…)
  *                         and marketplace `eve_component` entries.
- *   2. **Synap apps**   — `app.isLocal === false`. First-party apps
+ *   3. **Synap apps**   — `app.isLocal === false`. First-party apps
  *                         hosted on `.synap.live` (Studio, Hub, Canvas,
  *                         CRM, DevPlane, The Arch).
  *
  * The "+ Add" tile lives at the end of the Synap-apps row — opening the
- * marketplace is the natural follow-up to either section.
+ * marketplace is the natural follow-up to either external section.
  *
  * Skeleton state matches the count cached from the previous visit
  * (stored under `home.iconCount` in localStorage) so the grid feels
@@ -22,10 +25,11 @@
  * See: synap-team-docs/content/team/platform/eve-os-home-design.mdx §5
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { AppIcon } from "./app-icon";
 import { AddAppIcon } from "./add-app-icon";
 import { SkeletonIcon } from "./skeleton-icon";
+import { CoreTile, type CoreTileSpec } from "./core-tile";
 import type { HomeApp } from "../hooks/use-home-apps";
 
 export interface AppGridProps {
@@ -35,6 +39,14 @@ export interface AppGridProps {
   marketplaceUrl: string;
   /** Hide the "+ Add" terminator (used by the empty-state CTA). */
   hideAdd?: boolean;
+  /**
+   * Live counters for the Core section. Drives the unread-pip on the
+   * Inbox tile. `undefined` = render zero (chip hidden); never blocks
+   * render — Core tiles always show.
+   */
+  coreCounts?: {
+    proposals?: number;
+  };
 }
 
 const STORAGE_KEY = "home.iconCount";
@@ -48,10 +60,6 @@ function readCachedIconCount(): number {
   return Math.min(parsed, 24); // sanity cap
 }
 
-// Body gutter is 20px (per concentric radius rule), but the grid is
-// allowed to breathe further inside that — the icons themselves carry
-// the visual rhythm. justify-items-start so a short row hugs the left
-// edge instead of centring (cleaner with section headers above).
 const GRID = `
   grid grid-cols-3 gap-x-4 gap-y-6
   sm:grid-cols-4 sm:gap-x-5 sm:gap-y-7
@@ -67,6 +75,7 @@ export function AppGrid({
   isLoading,
   marketplaceUrl,
   hideAdd,
+  coreCounts,
 }: AppGridProps) {
   const cachedCountRef = useRef<number | null>(null);
 
@@ -80,15 +89,41 @@ export function AppGrid({
     cachedCountRef.current = readCachedIconCount();
   }
 
-  // ── Skeleton — single block, no section labels (we don't yet know
-  //    which side of the split each app lives on).
+  const coreSpecs = useMemo<CoreTileSpec[]>(
+    () => [
+      {
+        id: "inbox",
+        href: "/inbox",
+        name: "Inbox",
+        count: coreCounts?.proposals,
+      },
+      { id: "pulse", href: "/pulse", name: "Pulse" },
+      { id: "agents", href: "/agents", name: "Agents" },
+      { id: "marketplace", href: marketplaceUrl, name: "Marketplace" },
+    ],
+    [coreCounts?.proposals, marketplaceUrl],
+  );
+
+  // Skeleton — single block, no section labels (we don't yet know
+  // which side of the split each app lives on).
   if (isLoading && apps.length === 0) {
     return (
-      <div id="home-app-grid" className={`${GRID} pb-6 pt-2`}>
-        {Array.from({ length: cachedCountRef.current }).map((_, i) => (
-          <SkeletonIcon key={i} />
-        ))}
-        {!hideAdd && <AddAppIcon href={marketplaceUrl} />}
+      <div id="home-app-grid" className="flex flex-col gap-7 pt-2 pb-6">
+        <Section title="Core" hint="Pinned to this Eve.">
+          <div className={GRID} role="list">
+            {coreSpecs.map((s) => (
+              <div key={s.id} role="listitem">
+                <CoreTile spec={s} />
+              </div>
+            ))}
+          </div>
+        </Section>
+        <div className={GRID}>
+          {Array.from({ length: cachedCountRef.current }).map((_, i) => (
+            <SkeletonIcon key={i} />
+          ))}
+          {!hideAdd && <AddAppIcon href={marketplaceUrl} />}
+        </div>
       </div>
     );
   }
@@ -98,6 +133,16 @@ export function AppGrid({
 
   return (
     <div id="home-app-grid" className="flex flex-col gap-7 pt-2 pb-6">
+      <Section title="Core" hint="Pinned to this Eve.">
+        <div className={GRID} role="list">
+          {coreSpecs.map((s) => (
+            <div key={s.id} role="listitem">
+              <CoreTile spec={s} />
+            </div>
+          ))}
+        </div>
+      </Section>
+
       {localApps.length > 0 && (
         <Section title="On your Eve" hint="Running on this machine.">
           <div className={GRID} role="list">

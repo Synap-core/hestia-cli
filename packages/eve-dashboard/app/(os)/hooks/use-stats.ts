@@ -1,20 +1,23 @@
 "use client";
 
 /**
- * `useStats` — surfaces the three Home stat cards.
+ * `useStats` — surfaces the three Home stat pills.
  *
  * Three parallel signals. Each fails independently — a slow agent
  * registry doesn't gate the events count, etc.
  *
- *   • agentsRunning   — agents emitting heartbeats in the last 60s
- *   • eventsToday     — Hub Protocol events.since(startOfDay)
- *   • updatesAvailable — marketplace apps with newer version installed
+ *   • agentsRunning — agents whose `status` is "running" or "ready"
+ *                     (from `/api/agents`).
+ *   • eventsToday   — Hub Protocol events since startOfDay
+ *                     (`/api/hub/events?since=<ISO>`). Falls back to 0
+ *                     when the pod isn't paired or the route is missing.
+ *   • inboxPending  — pending proposals in the operator's Inbox
+ *                     (`/api/hub/proposals?status=pending`). Drives the
+ *                     "INBOX" pill and the Core-tile count chip.
  *
- * Phase 2A wires up best-effort fetches against existing Eve dashboard
- * routes. When a source is unavailable (route not yet implemented, pod
- * unreachable) the corresponding value falls back to 0 with a sublabel
- * that softens the meaning ("Hub unreachable" vs "All quiet"). The card
- * never disappears — calm is the point.
+ * When a source is unavailable (route not yet implemented, pod
+ * unreachable) the corresponding value falls back to 0 — the pill
+ * never disappears, calm is the point.
  *
  * See: synap-team-docs/content/team/platform/eve-os-home-design.mdx §4
  */
@@ -26,14 +29,15 @@ export interface StatCardData {
   agentsSubLabel?: string;
   eventsToday: number;
   eventsSubLabel?: string;
-  updatesAvailable: number;
-  updatesSubLabel?: string;
+  /** Pending governance items (proposals + similar). Drives the INBOX pill. */
+  inboxPending: number;
+  inboxSubLabel?: string;
 }
 
 const ZERO: StatCardData = {
   agentsRunning: 0,
   eventsToday: 0,
-  updatesAvailable: 0,
+  inboxPending: 0,
 };
 
 interface UseStatsResult {
@@ -52,16 +56,32 @@ async function safeFetchJson<T>(path: string): Promise<T | null> {
   }
 }
 
-interface AgentSummary {
-  count: number;
-  busy?: string | null;
+interface AgentRow {
+  status: "running" | "ready" | "stopped" | "missing" | "unknown";
 }
-interface EventCountSummary {
-  count: number;
-  scope?: string;
+interface AgentsResponse {
+  agents: AgentRow[];
 }
-interface UpdatesSummary {
-  count: number;
+
+interface WireEvent {
+  id?: string;
+}
+interface EventsResponse {
+  events?: WireEvent[];
+}
+
+interface WireProposal {
+  id?: string;
+  status?: string;
+}
+type ProposalsResponse =
+  | { proposals: WireProposal[] }
+  | WireProposal[];
+
+function startOfTodayIso(): string {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.toISOString();
 }
 
 export function useStats(): UseStatsResult {
@@ -71,28 +91,42 @@ export function useStats(): UseStatsResult {
   const load = useCallback(async () => {
     setIsLoading(true);
 
-    // Fire all three in parallel; surface whatever resolves.
-    const [agents, events, updates] = await Promise.all([
-      safeFetchJson<AgentSummary>("/api/stats/agents"),
-      safeFetchJson<EventCountSummary>("/api/stats/events-today"),
-      safeFetchJson<UpdatesSummary>("/api/stats/updates"),
+    const since = startOfTodayIso();
+    const [agentsResp, eventsResp, proposalsResp] = await Promise.all([
+      safeFetchJson<AgentsResponse>("/api/agents"),
+      safeFetchJson<EventsResponse>(`/api/hub/events?since=${encodeURIComponent(since)}`),
+      safeFetchJson<ProposalsResponse>("/api/hub/proposals?status=pending"),
     ]);
 
+    const runningStatuses = new Set(["running", "ready"]);
+    const agentsRunning =
+      agentsResp?.agents.filter((a) => runningStatuses.has(a.status)).length ?? 0;
+
+    const eventsToday = eventsResp?.events?.length ?? 0;
+
+    const proposalsList: WireProposal[] = Array.isArray(proposalsResp)
+      ? proposalsResp
+      : proposalsResp?.proposals ?? [];
+    // Belt-and-braces: if the pod ignored the status filter, count
+    // pending client-side. Status === "pending" is the open lifecycle
+    // bucket per the proposal codec.
+    const inboxPending = proposalsList.filter(
+      (p) => !p.status || p.status === "pending",
+    ).length;
+
     setStats({
-      agentsRunning: agents?.count ?? 0,
-      agentsSubLabel: agents
-        ? agents.count === 0
+      agentsRunning,
+      agentsSubLabel: agentsResp
+        ? agentsRunning === 0
           ? "All quiet"
-          : agents.busy ?? undefined
+          : undefined
         : undefined,
-      eventsToday: events?.count ?? 0,
-      eventsSubLabel: events
-        ? events.scope ?? "across all channels"
-        : undefined,
-      updatesAvailable: updates?.count ?? 0,
-      updatesSubLabel: updates
-        ? updates.count === 0
-          ? "All up to date"
+      eventsToday,
+      eventsSubLabel: eventsResp ? "across all channels" : undefined,
+      inboxPending,
+      inboxSubLabel: proposalsResp
+        ? inboxPending === 0
+          ? "Nothing pending"
           : "Tap to review"
         : undefined,
     });

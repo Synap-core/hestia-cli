@@ -88,7 +88,7 @@ export function HomeGreeting({ firstName }: HomeGreetingProps) {
 const ACCENT = {
   agents: "#34D399",
   events: "#A78BFA",
-  updates: "#FBBF24",
+  inbox: "#60A5FA",
 } as const;
 
 export function HomeStatPills() {
@@ -114,15 +114,15 @@ export function HomeStatPills() {
         label="today"
         value={stats.eventsToday}
         accent={ACCENT.events}
-        href="/agents?view=timeline"
+        href="/inbox?tab=activity"
         isLoading={isLoading}
       />
       <span className="h-3 w-px bg-foreground/[0.10]" aria-hidden />
       <StatPill
-        label="updates"
-        value={stats.updatesAvailable}
-        accent={ACCENT.updates}
-        href="/marketplace"
+        label="inbox"
+        value={stats.inboxPending}
+        accent={ACCENT.inbox}
+        href="/inbox"
         isLoading={isLoading}
       />
     </div>

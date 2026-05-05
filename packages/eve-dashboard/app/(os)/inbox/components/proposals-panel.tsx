@@ -1,0 +1,420 @@
+"use client";
+
+/**
+ * Inbox — Proposals panel.
+ *
+ * Lists pending proposals (`GET /api/hub/proposals?status=pending`) and
+ * resolves each via `PATCH /api/hub/proposals/:id` with body
+ * `{ action: "approve" | "reject", reason? }`. The proxy forwards
+ * verbatim to the pod's Hub Protocol REST surface.
+ *
+ * Optimistic flow:
+ *   1. Click Approve/Reject → row enters `working` state; buttons disable.
+ *   2. PATCH succeeds → row removed from local list + success toast.
+ *   3. PATCH fails  → row reverts to idle; danger toast; full refetch
+ *                     so the list re-syncs against pod truth.
+ *
+ * The expandable payload preview ("Details") is intentionally low-key —
+ * we render the JSON payload inside a small `<pre>` so power-users can
+ * audit before approving without committing screen real estate to it.
+ */
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Button, Card, Chip, addToast } from "@heroui/react";
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Inbox as InboxIcon,
+  Loader2,
+  X,
+} from "lucide-react";
+import { PanelEmpty, PanelError, PanelLoader } from "./panel-states";
+
+interface WireProposal {
+  id: string;
+  workspaceId: string | null;
+  targetType: string;
+  targetId: string;
+  proposalType: string;
+  data: Record<string, unknown>;
+  status: "pending" | "approved" | "rejected";
+  agentUserId?: string | null;
+  threadId?: string | null;
+  sourceMessageId?: string | null;
+  createdBy?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+type RowState = "idle" | "working";
+
+type LoadState =
+  | { kind: "loading" }
+  | { kind: "ready"; proposals: WireProposal[] }
+  | { kind: "error"; message: string };
+
+export function ProposalsPanel() {
+  const [load, setLoad] = useState<LoadState>({ kind: "loading" });
+  const [rowState, setRowState] = useState<Record<string, RowState>>({});
+
+  const fetchProposals = useCallback(async () => {
+    setLoad({ kind: "loading" });
+    try {
+      const r = await fetch("/api/hub/proposals?status=pending", {
+        credentials: "include",
+        cache: "no-store",
+      });
+      if (!r.ok) {
+        const txt = await r.text().catch(() => "");
+        throw new Error(
+          txt && txt.length < 200 ? txt : `Pod returned ${r.status}`,
+        );
+      }
+      const json = (await r.json().catch(() => null)) as
+        | { proposals?: WireProposal[] }
+        | WireProposal[]
+        | null;
+      // Pod returns either { proposals: [...] } (the documented shape)
+      // or a bare array — accept either defensively.
+      const list: WireProposal[] = Array.isArray(json)
+        ? json
+        : Array.isArray(json?.proposals)
+          ? json.proposals
+          : [];
+      setLoad({ kind: "ready", proposals: list });
+    } catch (err) {
+      setLoad({
+        kind: "error",
+        message: err instanceof Error ? err.message : "Network error",
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchProposals();
+  }, [fetchProposals]);
+
+  const handleResolve = useCallback(
+    async (id: string, action: "approve" | "reject") => {
+      setRowState((prev) => ({ ...prev, [id]: "working" }));
+      try {
+        const r = await fetch(`/api/hub/proposals/${encodeURIComponent(id)}`, {
+          method: "PATCH",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action }),
+          cache: "no-store",
+        });
+        if (!r.ok) {
+          const txt = await r.text().catch(() => "");
+          throw new Error(
+            txt && txt.length < 200
+              ? txt
+              : `Pod returned ${r.status} for ${action}`,
+          );
+        }
+        // Optimistic remove. We don't trust the upstream payload here —
+        // the panel only displays pending rows, so anything not-pending
+        // is gone from this view regardless of the precise response.
+        setLoad((prev) => {
+          if (prev.kind !== "ready") return prev;
+          return {
+            kind: "ready",
+            proposals: prev.proposals.filter((p) => p.id !== id),
+          };
+        });
+        addToast({
+          title: action === "approve" ? "Approved" : "Rejected",
+          color: action === "approve" ? "success" : "default",
+        });
+      } catch (err) {
+        addToast({
+          title: action === "approve" ? "Approve failed" : "Reject failed",
+          description: err instanceof Error ? err.message : undefined,
+          color: "danger",
+        });
+        // Re-sync — maybe someone else already resolved it.
+        void fetchProposals();
+      } finally {
+        setRowState((prev) => {
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+      }
+    },
+    [fetchProposals],
+  );
+
+  if (load.kind === "loading") return <PanelLoader />;
+  if (load.kind === "error") {
+    return <PanelError message={load.message} onRetry={fetchProposals} />;
+  }
+  if (load.proposals.length === 0) {
+    return (
+      <PanelEmpty
+        icon={InboxIcon}
+        title="No pending proposals"
+        hint="When AI agents or connectors propose changes, they’ll show up here for review."
+      />
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      {load.proposals.map((p) => (
+        <ProposalRow
+          key={p.id}
+          proposal={p}
+          state={rowState[p.id] ?? "idle"}
+          onResolve={handleResolve}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ─── Row ─────────────────────────────────────────────────────────────────────
+
+function ProposalRow({
+  proposal,
+  state,
+  onResolve,
+}: {
+  proposal: WireProposal;
+  state: RowState;
+  onResolve: (id: string, action: "approve" | "reject") => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  const summary = useMemo(() => proposalSummary(proposal), [proposal]);
+  const agentLabel = useMemo(() => agentLabelFor(proposal), [proposal]);
+  const time = useMemo(
+    () => relativeTime(proposal.createdAt ?? proposal.updatedAt),
+    [proposal],
+  );
+
+  const isWorking = state === "working";
+
+  return (
+    <Card
+      radius="md"
+      shadow="none"
+      className="
+        flex flex-col gap-3 p-4
+        bg-foreground/[0.04]
+        ring-1 ring-inset ring-foreground/10
+        transition-colors
+      "
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <Chip
+              size="sm"
+              variant="flat"
+              radius="sm"
+              className="h-5 px-1.5 text-[10.5px] font-medium uppercase tracking-[0.04em] text-foreground/65"
+            >
+              {proposal.proposalType}
+            </Chip>
+            <span className="text-[11px] text-foreground/45">
+              {proposal.targetType}
+            </span>
+            {time && (
+              <>
+                <span className="text-foreground/30">·</span>
+                <span className="text-[11px] text-foreground/45">{time}</span>
+              </>
+            )}
+          </div>
+          <h3 className="mt-1 truncate text-[14px] font-medium text-foreground">
+            {summary.title}
+          </h3>
+          <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-snug text-foreground/65">
+            {summary.body}
+          </p>
+          {agentLabel && (
+            <p className="mt-1 text-[11px] text-foreground/45">
+              Proposed by <span className="text-foreground/65">{agentLabel}</span>
+            </p>
+          )}
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between gap-3">
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="
+            inline-flex items-center gap-1
+            text-[11.5px] text-foreground/55 hover:text-foreground/85
+            transition-colors
+          "
+          aria-expanded={expanded}
+          aria-label={expanded ? "Hide payload" : "Show payload"}
+        >
+          {expanded ? (
+            <ChevronDown className="h-3 w-3" strokeWidth={2.2} />
+          ) : (
+            <ChevronRight className="h-3 w-3" strokeWidth={2.2} />
+          )}
+          {expanded ? "Hide details" : "Show details"}
+        </button>
+
+        <div className="flex items-center gap-1.5">
+          <Button
+            size="sm"
+            radius="full"
+            variant="flat"
+            color="danger"
+            isDisabled={isWorking}
+            startContent={
+              isWorking ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <X className="h-3.5 w-3.5" />
+              )
+            }
+            onPress={() => onResolve(proposal.id, "reject")}
+            aria-label={`Reject proposal ${proposal.id}`}
+          >
+            Reject
+          </Button>
+          <Button
+            size="sm"
+            radius="full"
+            variant="flat"
+            color="success"
+            isDisabled={isWorking}
+            startContent={
+              isWorking ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Check className="h-3.5 w-3.5" />
+              )
+            }
+            onPress={() => onResolve(proposal.id, "approve")}
+            aria-label={`Approve proposal ${proposal.id}`}
+          >
+            Approve
+          </Button>
+        </div>
+      </div>
+
+      {expanded && (
+        <pre
+          className="
+            max-h-64 overflow-auto rounded-lg
+            bg-foreground/[0.05]
+            ring-1 ring-inset ring-foreground/10
+            px-3 py-2
+            text-[11px] leading-snug text-foreground/75
+            font-mono
+          "
+        >
+          {safeStringify(proposal.data)}
+        </pre>
+      )}
+    </Card>
+  );
+}
+
+// ─── Summarisers ─────────────────────────────────────────────────────────────
+
+interface ProposalSummary {
+  title: string;
+  body: string;
+}
+
+/**
+ * Best-effort one-line summary derived from the proposal payload.
+ * The pod stores `_summary` when the agent supplied one (added by
+ * the create/update endpoints) — prefer that. Otherwise fall back to
+ * a description built from `targetType + proposalType`.
+ */
+function proposalSummary(p: WireProposal): ProposalSummary {
+  const data = p.data ?? {};
+  const explicit =
+    typeof data._summary === "string"
+      ? data._summary
+      : typeof data.summary === "string"
+        ? data.summary
+        : null;
+
+  if (explicit) {
+    return {
+      title: explicit,
+      body: `${p.proposalType} on ${p.targetType}`,
+    };
+  }
+
+  // Common shape: { name?, title?, description? } — use whichever is present.
+  const name =
+    (typeof data.name === "string" && data.name) ||
+    (typeof data.title === "string" && data.title) ||
+    null;
+  const description =
+    (typeof data.description === "string" && data.description) || null;
+
+  if (name) {
+    return {
+      title: `${prettyAction(p.proposalType)}: ${name}`,
+      body: description ?? `${p.targetType} mutation`,
+    };
+  }
+
+  return {
+    title: prettyAction(p.proposalType),
+    body: `${p.targetType} · ${p.targetId.slice(0, 8)}`,
+  };
+}
+
+function prettyAction(proposalType: string): string {
+  // entity.create → "Create entity"; view.update → "Update view".
+  // Falls back to the raw string when we don't recognise the shape.
+  const m = /^([a-z_]+)\.([a-z_]+)$/.exec(proposalType);
+  if (!m) return proposalType;
+  const target = m[1].replace(/_/g, " ");
+  const verb = m[2].replace(/_/g, " ");
+  return `${capitalize(verb)} ${target}`;
+}
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function agentLabelFor(p: WireProposal): string | null {
+  if (!p.agentUserId && !p.createdBy) return null;
+  // Show the short agent id; the inbox doesn't have a name resolver yet
+  // and we want to avoid an extra round-trip per row. Truncate so it
+  // doesn't dominate the metadata strip.
+  const id = p.agentUserId ?? p.createdBy ?? "";
+  return id.length > 16 ? `${id.slice(0, 8)}…${id.slice(-4)}` : id;
+}
+
+function relativeTime(ts: string | undefined): string | null {
+  if (!ts) return null;
+  const t = new Date(ts).getTime();
+  if (Number.isNaN(t)) return null;
+  const diff = Date.now() - t;
+  if (diff < 0) return "just now";
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d}d ago`;
+  return new Date(t).toLocaleDateString();
+}
+
+function safeStringify(v: unknown): string {
+  try {
+    return JSON.stringify(v, null, 2);
+  } catch {
+    return String(v);
+  }
+}

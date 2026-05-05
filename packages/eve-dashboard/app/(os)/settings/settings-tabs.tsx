@@ -18,8 +18,7 @@
 import { Tabs, Tab } from "@heroui/react";
 import { useRouter, usePathname } from "next/navigation";
 import {
-  Settings as SettingsIcon, Boxes, MessagesSquare, Sparkles, Globe,
-  Stethoscope, Activity, Terminal, CalendarClock, LayoutGrid,
+  UserCircle, Boxes, Sparkles, Globe, Stethoscope,
   type LucideIcon,
 } from "lucide-react";
 import { PaneHeader } from "../components/pane-header";
@@ -30,17 +29,19 @@ interface TabDef {
   Icon: LucideIcon;
 }
 
+// Settings owns ONLY host-machine concerns. Everything that has a
+// dedicated top-level app (Agents, Marketplace, Pulse, Channels-via-
+// Agents) was lifted out of here on 2026-05-05. The remaining axis:
+//   Account           — who's signed in, dashboard secret rotation
+//   System            — AI, Components, Networking, Doctor
+// HeroUI's flat <Tabs> doesn't render group headers, so we rely on
+// ordering: Account first, then the four System tabs.
 const TABS: TabDef[] = [
-  { href: "/settings",              label: "General",      Icon: SettingsIcon },
-  { href: "/settings/stack-pulse",  label: "Stack pulse",  Icon: Activity },
-  { href: "/settings/components",   label: "Components",   Icon: Boxes },
-  { href: "/settings/agents",       label: "Agents",       Icon: Terminal },
-  { href: "/settings/intents",      label: "Intents",      Icon: CalendarClock },
-  { href: "/settings/apps",         label: "Apps",         Icon: LayoutGrid },
-  { href: "/settings/channels",     label: "Channels",     Icon: MessagesSquare },
-  { href: "/settings/ai",           label: "AI",           Icon: Sparkles },
-  { href: "/settings/networking",   label: "Networking",   Icon: Globe },
-  { href: "/settings/doctor",       label: "Doctor",       Icon: Stethoscope },
+  { href: "/settings",            label: "Account",     Icon: UserCircle },
+  { href: "/settings/ai",         label: "AI",          Icon: Sparkles },
+  { href: "/settings/components", label: "Components",  Icon: Boxes },
+  { href: "/settings/networking", label: "Networking",  Icon: Globe },
+  { href: "/settings/doctor",     label: "Doctor",      Icon: Stethoscope },
 ];
 
 const EXACT_ONLY = new Set<string>(["/settings"]);
