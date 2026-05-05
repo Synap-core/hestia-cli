@@ -58,7 +58,7 @@ const NODE_POSITIONS: Record<Actor, { x: number; y: number }> = {
   hermes:   { x: 560, y: 80 },
 };
 
-interface LaneState {
+interface LaneState extends Record<string, unknown> {
   pulseKey: number;
   color: string;
   isError: boolean;

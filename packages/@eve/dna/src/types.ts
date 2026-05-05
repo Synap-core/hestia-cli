@@ -632,7 +632,7 @@ export const DEFAULT_HERMES_CONFIG = {
 // =============================================================================
 
 /** Supported messaging platforms */
-export type MessagingPlatform = 'telegram' | 'signal' | 'matrix';
+export type MessagingPlatform = 'telegram' | 'discord' | 'signal' | 'matrix';
 
 /** Messaging platform configuration */
 export interface MessagingConfig {

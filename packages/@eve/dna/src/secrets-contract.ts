@@ -141,7 +141,7 @@ const SecretsSchema = z.object({
       messaging: z
         .object({
           enabled: z.boolean().optional(),
-          platform: z.enum(['telegram', 'signal', 'matrix']).optional(),
+          platform: z.enum(['telegram', 'discord', 'signal', 'matrix']).optional(),
           botToken: z.string().optional(),
         })
         .optional(),
