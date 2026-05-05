@@ -44,8 +44,13 @@ import {
 import { AppGrid } from "./components/app-grid";
 import { SearchBar } from "./components/search-bar";
 import { EmptyState } from "./components/empty-state";
+import {
+  BootstrapAdminCard,
+  ConfigurePodCard,
+} from "./components/bootstrap-admin-card";
 import { useHomeApps } from "./hooks/use-home-apps";
 import { useStats } from "./hooks/use-stats";
+import { useSetupStatus } from "./hooks/use-setup-status";
 import { resolveAuthMethod } from "./lib/cp-auth";
 import { initiateCpOAuth } from "./lib/cp-oauth";
 import { DeviceFlowModal } from "./components/device-flow-modal";
@@ -57,6 +62,7 @@ export default function HomePage() {
   const [isDeviceFlowOpen, setIsDeviceFlowOpen] = useState(false);
   const { apps, isLoading, bannerState, refetch } = useHomeApps();
   const { stats } = useStats();
+  const { state: setupState } = useSetupStatus();
 
   // Filter is name + description + category — case-insensitive contains.
   const filtered = useMemo(() => {
@@ -163,7 +169,15 @@ export default function HomePage() {
           </div>
         )}
 
-        {showColdEmpty ? (
+        {setupState === "needsBootstrap" ? (
+          // Phase 5: pod has zero users — surface the first-admin claim
+          // card instead of the launcher. Keep the search bar hidden so
+          // the operator focuses on the single decision in front of them.
+          <BootstrapAdminCard />
+        ) : setupState === "unconfigured" ? (
+          // Eve doesn't know a pod URL yet — point at /settings.
+          <ConfigurePodCard />
+        ) : showColdEmpty ? (
           <EmptyState />
         ) : (
           <div className="min-h-0 flex-1">
@@ -187,7 +201,9 @@ export default function HomePage() {
           </div>
         )}
 
-        <SearchBar value={query} onChange={setQuery} />
+        {setupState !== "needsBootstrap" && setupState !== "unconfigured" && (
+          <SearchBar value={query} onChange={setQuery} />
+        )}
       </div>
 
       <DeviceFlowModal

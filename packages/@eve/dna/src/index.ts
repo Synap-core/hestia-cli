@@ -95,6 +95,8 @@ export {
   type EveSecrets,
   type AgentKeyRecord,
   type CodeEngine,
+  type PodIssuerKeyPair,
+  type PodUserTokenRecord,
   DEFAULT_CODE_ENGINE,
   readEveSecrets,
   writeEveSecrets,
@@ -106,6 +108,11 @@ export {
   writeCodeEngine,
   secretsPath,
   ensureSecretValue,
+  readPodIssuer,
+  ensurePodIssuer,
+  readPodUserToken,
+  writePodUserToken,
+  clearPodUserToken,
 } from './secrets-contract.js';
 
 // Agent registry — single source of truth for which Synap agents Eve

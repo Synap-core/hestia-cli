@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { exportJWK, generateKeyPair } from 'jose';
 import { z } from 'zod';
 
 const AiProviderSchema = z.enum(['ollama', 'openrouter', 'anthropic', 'openai']);
@@ -202,6 +203,62 @@ const SecretsSchema = z.object({
         .optional(),
     })
     .optional(),
+  /**
+   * Pod credentials slot (Eve auth Phase 4).
+   *
+   * Holds Eve's own JWT-issuer keypair (Eve identifies as `iss = eve URL`
+   * to the pod's `/api/hub/auth/exchange` endpoint, RFC 7523 JWT-Bearer
+   * grant) plus the cached pod user-session token returned by that
+   * exchange. The keypair is generated lazily on first need and the
+   * public half is published at `/.well-known/jwks.json`.
+   *
+   * The two-channel rule (see eve-credentials.mdx):
+   *   - `pod.userToken`     — user channel, fronts `/api/pod/*`.
+   *   - `agents.eve.hubApiKey` (legacy `synap.apiKey`) — service channel,
+   *                           fronts `/api/hub/*`. NEVER use it for user
+   *                           actions.
+   */
+  pod: z
+    .object({
+      /** Pod's external base URL (back-compat: also stored at synap.apiUrl). */
+      url: z.string().optional(),
+      /**
+       * Eve's issuer keypair. The private half NEVER leaves the host
+       * (we keep file mode 0600 and never log it). The public half is
+       * the only thing the pod ever fetches via JWKS.
+       */
+      issuer: z
+        .object({
+          /** JWK (private) — signing key. Kept here as `unknown` so
+           *  that the on-disk JSON shape stays whatever `jose.exportJWK`
+           *  produces today and tomorrow without a breaking schema bump. */
+          privateJwk: z.unknown(),
+          /** JWK (public) — published verbatim at `/.well-known/jwks.json`. */
+          publicJwk: z.unknown(),
+          /** Stable kid — used both as the JWT `kid` header and as the
+           *  lookup key when the pod fetches our JWKS. 16 random bytes
+           *  base64url-encoded so it survives URL embedding. */
+          kid: z.string(),
+          /** ISO-8601 — when this keypair was minted (audit trail). */
+          createdAt: z.string(),
+        })
+        .optional(),
+      /** Cached pod user-session token from the JWT-Bearer exchange. */
+      userToken: z.string().optional(),
+      /** ISO-8601 — when the userToken was minted. */
+      userTokenIssuedAt: z.string().optional(),
+      /** ISO-8601 — pod-asserted exp (or now+expires_in fallback). */
+      userTokenExpiresAt: z.string().optional(),
+      /** Email of the operator the userToken was minted for. */
+      userEmail: z.string().optional(),
+      /**
+       * Optional bootstrap token cached from `eve install` — feeds the
+       * Phase 5 "create first admin" UI without env-var fallback.
+       * Forward-compat: the bootstrap-claim route already reads this.
+       */
+      bootstrapToken: z.string().optional(),
+    })
+    .optional(),
   /** Primary domain + SSL config */
   domain: z
     .object({
@@ -294,6 +351,10 @@ export async function writeEveSecrets(
     current.cp as Record<string, unknown> | undefined,
     partial.cp as Record<string, unknown> | undefined,
   );
+  const mergedPod = mergeNested(
+    current.pod as Record<string, unknown> | undefined,
+    partial.pod as Record<string, unknown> | undefined,
+  );
 
   const next: EveSecrets = {
     ...current,
@@ -306,6 +367,7 @@ export async function writeEveSecrets(
     dashboard: mergedDashboard as EveSecrets['dashboard'],
     domain: mergedDomain as EveSecrets['domain'],
     cp: mergedCp as EveSecrets['cp'],
+    pod: mergedPod as EveSecrets['pod'],
     version: '1',
     updatedAt: new Date().toISOString(),
   };
@@ -488,3 +550,170 @@ export async function writeCodeEngine(
   );
 }
 
+// ---------------------------------------------------------------------------
+// Pod-side credential accessors (Eve auth Phase 4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Eve's JWT issuer keypair, in the JWK shape `jose` produces. Both the
+ * private and public halves live here; the public one is published at
+ * `/.well-known/jwks.json` and the private one signs assertions for the
+ * pod's `/api/hub/auth/exchange` endpoint.
+ */
+export interface PodIssuerKeyPair {
+  privateJwk: JsonWebKey;
+  publicJwk: JsonWebKey;
+  kid: string;
+}
+
+/** Cached pod user-session record returned by the JWT-Bearer exchange. */
+export interface PodUserTokenRecord {
+  token: string;
+  /** ISO-8601 expiry. May be in the past — callers MUST check before use. */
+  expiresAt: string;
+  /** Email the token was minted for. Used as a sanity check on next use. */
+  email: string;
+  /** ISO-8601 — when the token was minted (mostly for audit/debug). */
+  issuedAt?: string;
+}
+
+/**
+ * Read Eve's issuer keypair if one has been generated. Returns `null`
+ * when the slot is empty so callers can decide whether to mint or fail.
+ */
+export async function readPodIssuer(
+  cwd: string = defaultEveCwd(),
+): Promise<PodIssuerKeyPair | null> {
+  const secrets = await readEveSecrets(cwd);
+  const issuer = secrets?.pod?.issuer;
+  if (!issuer || !issuer.privateJwk || !issuer.publicJwk || !issuer.kid) {
+    return null;
+  }
+  return {
+    privateJwk: issuer.privateJwk as JsonWebKey,
+    publicJwk: issuer.publicJwk as JsonWebKey,
+    kid: issuer.kid,
+  };
+}
+
+/**
+ * Idempotent: returns the existing keypair if one is on disk, otherwise
+ * generates a fresh ES256 pair via `jose`, persists it, and returns the
+ * result.
+ *
+ * The kid is 16 random bytes base64url-encoded. We don't reuse the JWK
+ * thumbprint because it'd be a bigger hassle to roll the key — every
+ * verifier would have to refetch JWKS to learn the new thumbprint, and
+ * a stable opaque string lets us decouple key material from identity.
+ */
+export async function ensurePodIssuer(
+  cwd: string = defaultEveCwd(),
+): Promise<PodIssuerKeyPair> {
+  const existing = await readPodIssuer(cwd);
+  if (existing) return existing;
+
+  // `extractable: true` is required so we can `exportJWK` and persist
+  // the private half. The keypair never leaves this host.
+  const { privateKey, publicKey } = await generateKeyPair('ES256', {
+    extractable: true,
+  });
+  const privateJwk = (await exportJWK(privateKey)) as JsonWebKey;
+  const publicJwk = (await exportJWK(publicKey)) as JsonWebKey;
+  const kid = randomBytes(16).toString('base64url');
+
+  await writeEveSecrets(
+    {
+      pod: {
+        issuer: {
+          privateJwk,
+          publicJwk,
+          kid,
+          createdAt: new Date().toISOString(),
+        },
+      },
+    },
+    cwd,
+  );
+
+  return { privateJwk, publicJwk, kid };
+}
+
+/**
+ * Read the cached pod user-session token. Returns `null` when no token
+ * is stored. Does NOT check expiry — that's the caller's job (see
+ * `mintAndStorePodUserToken` in eve-dashboard).
+ */
+export async function readPodUserToken(
+  cwd: string = defaultEveCwd(),
+): Promise<PodUserTokenRecord | null> {
+  const secrets = await readEveSecrets(cwd);
+  const pod = secrets?.pod;
+  if (!pod?.userToken || !pod.userTokenExpiresAt || !pod.userEmail) {
+    return null;
+  }
+  return {
+    token: pod.userToken,
+    expiresAt: pod.userTokenExpiresAt,
+    email: pod.userEmail,
+    issuedAt: pod.userTokenIssuedAt,
+  };
+}
+
+/** Persist a freshly minted pod user-session token (merge-preserving). */
+export async function writePodUserToken(
+  token: string,
+  expiresAt: string,
+  email: string,
+  cwd: string = defaultEveCwd(),
+): Promise<EveSecrets> {
+  return writeEveSecrets(
+    {
+      pod: {
+        userToken: token,
+        userTokenExpiresAt: expiresAt,
+        userTokenIssuedAt: new Date().toISOString(),
+        userEmail: email,
+      },
+    },
+    cwd,
+  );
+}
+
+/**
+ * Clear the cached user-session token. Used when the pod returns 401
+ * — the next request will re-mint.
+ *
+ * `mergeNested` skips undefined values (so writing `userToken: undefined`
+ * via the merge path is a no-op). To actually delete the keys we round-
+ * trip the full file with the relevant keys removed.
+ */
+export async function clearPodUserToken(
+  cwd: string = defaultEveCwd(),
+): Promise<EveSecrets> {
+  const current = await readEveSecrets(cwd);
+  if (!current) {
+    // Nothing to clear; return a baseline blob so callers can chain.
+    return writeEveSecrets({}, cwd);
+  }
+  const pod = (current.pod ?? {}) as Record<string, unknown>;
+  const stripped: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(pod)) {
+    if (k === 'userToken' || k === 'userTokenExpiresAt' || k === 'userTokenIssuedAt') {
+      continue;
+    }
+    stripped[k] = v;
+  }
+
+  // Direct file rewrite — the merge helper would re-add the cleared
+  // keys on the next read otherwise.
+  const path = secretsPath(cwd);
+  const next: EveSecrets = {
+    ...current,
+    pod: stripped as EveSecrets['pod'],
+    version: '1',
+    updatedAt: new Date().toISOString(),
+  };
+  await mkdir(join(cwd, '.eve', 'secrets'), { recursive: true });
+  await writeFile(path, JSON.stringify(next, null, 2), { mode: 0o600 });
+  return next;
+}

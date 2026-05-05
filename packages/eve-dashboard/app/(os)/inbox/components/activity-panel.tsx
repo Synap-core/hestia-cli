@@ -3,8 +3,14 @@
 /**
  * Inbox — Activity panel.
  *
- * Reads the recent event log (`GET /api/hub/events?limit=50`) and
- * renders a vertical timeline grouped by day. Each row shows:
+ * USER channel — talks to the pod via tRPC over `/api/pod/*`. The
+ * `events.list` query is user-scoped on the pod side (the operator's
+ * own activity stream), so the user-channel credential is exactly what
+ * we need. See eve-credentials.mdx for the two-channel rule.
+ *
+ * Reads the recent event log via
+ *   GET /api/pod/trpc/events.list?input={"json":{"limit":50}}
+ * and renders a vertical timeline grouped by day. Each row shows:
  *
  *   • Tone dot (left rail) — derives a colour from the event family
  *     (entity / proposal / agent / system).
@@ -38,13 +44,30 @@ type LoadState =
   | { kind: "ready"; events: WireEvent[] }
   | { kind: "error"; message: string };
 
+interface TrpcEnvelope<T> {
+  result?: { data?: { json?: T } | T };
+  error?: { message?: string };
+}
+
+function unwrapTrpc<T>(env: TrpcEnvelope<T> | null): T | null {
+  if (!env) return null;
+  const data = env.result?.data;
+  if (data && typeof data === "object" && "json" in data) {
+    return (data as { json?: T }).json ?? null;
+  }
+  return (data as T) ?? null;
+}
+
 export function ActivityPanel() {
   const [load, setLoad] = useState<LoadState>({ kind: "loading" });
 
   const fetchEvents = useCallback(async () => {
     setLoad({ kind: "loading" });
     try {
-      const r = await fetch("/api/hub/events?limit=50", {
+      const input = encodeURIComponent(
+        JSON.stringify({ json: { limit: 50 } }),
+      );
+      const r = await fetch(`/api/pod/trpc/events.list?input=${input}`, {
         credentials: "include",
         cache: "no-store",
       });
@@ -54,14 +77,15 @@ export function ActivityPanel() {
           txt && txt.length < 200 ? txt : `Pod returned ${r.status}`,
         );
       }
-      const json = (await r.json().catch(() => null)) as
-        | { events?: WireEvent[] }
-        | WireEvent[]
-        | null;
-      const events: WireEvent[] = Array.isArray(json)
-        ? json
-        : Array.isArray(json?.events)
-          ? json.events
+      const json = (await r.json().catch(() => null)) as TrpcEnvelope<
+        WireEvent[] | { events?: WireEvent[] }
+      > | null;
+      // tRPC + superjson — `events.list` returns a bare array of events.
+      const data = unwrapTrpc<WireEvent[] | { events?: WireEvent[] }>(json);
+      const events: WireEvent[] = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.events)
+          ? data.events
           : [];
       setLoad({ kind: "ready", events });
     } catch (err) {

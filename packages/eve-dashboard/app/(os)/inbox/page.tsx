@@ -68,17 +68,29 @@ function InboxInner() {
     "unknown",
   );
 
-  // Probe pairing once on mount with a cheap proposals HEAD-equivalent
-  // (GET with `status=approved&limit=1` would also work; but a plain
-  // GET costs the same and lets the panel reuse the cache).
+  // Probe pairing once on mount via the user-channel `/api/pod/*` proxy.
+  // Two failure modes count as "unpaired":
+  //   - 503 no-pod-url        — the pod URL hasn't been configured yet.
+  //   - 401 no-pod-session    — no `pod.userToken` cached AND no email
+  //                             remembered, so the proxy can't auto-mint.
+  // Any other status (including upstream 401 after a successful mint
+  // path) means we're paired and the per-tab loader can take over.
   const checkPairing = useCallback(async () => {
     try {
-      const r = await fetch("/api/hub/proposals?status=pending", {
+      const input = encodeURIComponent(
+        JSON.stringify({ json: { status: "pending" } }),
+      );
+      const r = await fetch(`/api/pod/trpc/proposals.list?input=${input}`, {
         credentials: "include",
         cache: "no-store",
       });
       if (r.status === 503) setPairing("unpaired");
-      else setPairing("paired");
+      else if (r.status === 401) {
+        const body = (await r.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        setPairing(body?.error === "no-pod-session" ? "unpaired" : "paired");
+      } else setPairing("paired");
     } catch {
       setPairing("paired"); // network blip — let the per-tab loader retry
     }

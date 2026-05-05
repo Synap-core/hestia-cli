@@ -3,6 +3,15 @@
 /**
  * Inbox — Notifications panel.
  *
+ * TODO(Phase 4 step 6): Migrate from `/api/hub/notifications` to
+ * `/api/pod/trpc/notifCenter.list`. Blocker: `notifCenter.*` is a
+ * `workspaceProcedure` and requires the `x-workspace-id` header.
+ * Plumbing that through the catch-all proxy + the panel is its own
+ * change (we need a workspace selector / "active workspace" state on
+ * the dashboard, which we don't have yet). Until then this panel keeps
+ * using the service channel — it's the only inbox surface that hasn't
+ * moved yet.
+ *
  * Reads the unified notification stream from the pod via
  * `GET /api/hub/notifications`. Each row exposes:
  *

@@ -83,6 +83,9 @@ importers:
 
   packages/@eve/dna:
     dependencies:
+      jose:
+        specifier: ^5.0.0
+        version: 5.10.0
       js-yaml:
         specifier: ^4.1.0
         version: 4.1.1

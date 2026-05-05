@@ -3,16 +3,24 @@
 /**
  * Inbox — Proposals panel.
  *
- * Lists pending proposals (`GET /api/hub/proposals?status=pending`) and
- * resolves each via `PATCH /api/hub/proposals/:id` with body
- * `{ action: "approve" | "reject", reason? }`. The proxy forwards
- * verbatim to the pod's Hub Protocol REST surface.
+ * USER channel — talks to the pod via tRPC over `/api/pod/*`. The
+ * service-channel `/api/hub/*` proxies are NOT used here; this is an
+ * operator action (read inbox, approve / reject) so the user-channel
+ * is required (see eve-credentials.mdx for the two-channel rule).
+ *
+ *   List:    GET  /api/pod/trpc/proposals.list?input={"json":{...}}
+ *   Approve: POST /api/pod/trpc/proposals.approve  body {"json":{id}}
+ *   Reject:  POST /api/pod/trpc/proposals.reject   body {"json":{id}}
+ *
+ * tRPC envelope: superjson-wrapped — request `{ json: <data> }`,
+ * response `{ result: { data: { json: <data>, meta?: ... } } }`. We
+ * unwrap once on the way back.
  *
  * Optimistic flow:
  *   1. Click Approve/Reject → row enters `working` state; buttons disable.
- *   2. PATCH succeeds → row removed from local list + success toast.
- *   3. PATCH fails  → row reverts to idle; danger toast; full refetch
- *                     so the list re-syncs against pod truth.
+ *   2. RPC succeeds → row removed from local list + success toast.
+ *   3. RPC fails  → row reverts to idle; danger toast; full refetch
+ *                   so the list re-syncs against pod truth.
  *
  * The expandable payload preview ("Details") is intentionally low-key —
  * we render the JSON payload inside a small `<pre>` so power-users can
@@ -49,6 +57,28 @@ interface WireProposal {
 
 type RowState = "idle" | "working";
 
+// ─── tRPC envelope helpers ───────────────────────────────────────────────────
+
+/**
+ * Standard tRPC + superjson response envelope. The transformer wraps
+ * the actual data inside `result.data.json`. We accept the unwrapped
+ * shape too as a defensive fallback (some procedures emit raw payloads
+ * when superjson finds nothing to serialize).
+ */
+interface TrpcEnvelope<T> {
+  result?: { data?: { json?: T } | T };
+  error?: { message?: string };
+}
+
+function unwrapTrpc<T>(env: TrpcEnvelope<T> | null): T | null {
+  if (!env) return null;
+  const data = env.result?.data;
+  if (data && typeof data === "object" && "json" in data) {
+    return (data as { json?: T }).json ?? null;
+  }
+  return (data as T) ?? null;
+}
+
 type LoadState =
   | { kind: "loading" }
   | { kind: "ready"; proposals: WireProposal[] }
@@ -61,7 +91,10 @@ export function ProposalsPanel() {
   const fetchProposals = useCallback(async () => {
     setLoad({ kind: "loading" });
     try {
-      const r = await fetch("/api/hub/proposals?status=pending", {
+      const input = encodeURIComponent(
+        JSON.stringify({ json: { status: "pending" } }),
+      );
+      const r = await fetch(`/api/pod/trpc/proposals.list?input=${input}`, {
         credentials: "include",
         cache: "no-store",
       });
@@ -71,17 +104,23 @@ export function ProposalsPanel() {
           txt && txt.length < 200 ? txt : `Pod returned ${r.status}`,
         );
       }
-      const json = (await r.json().catch(() => null)) as
-        | { proposals?: WireProposal[] }
+      const json = (await r.json().catch(() => null)) as TrpcEnvelope<
+        | { proposals?: WireProposal[]; items?: WireProposal[] }
         | WireProposal[]
-        | null;
-      // Pod returns either { proposals: [...] } (the documented shape)
-      // or a bare array — accept either defensively.
-      const list: WireProposal[] = Array.isArray(json)
-        ? json
-        : Array.isArray(json?.proposals)
-          ? json.proposals
-          : [];
+      > | null;
+      // tRPC + superjson envelope: { result: { data: { json: <data> } } }
+      const data = unwrapTrpc<
+        { proposals?: WireProposal[]; items?: WireProposal[] } | WireProposal[]
+      >(json);
+      // The list procedure returns `{ proposals }` or `{ items }` — accept
+      // either, and a bare array as a defensive fallback.
+      const list: WireProposal[] = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.proposals)
+          ? data.proposals
+          : Array.isArray(data?.items)
+            ? data.items
+            : [];
       setLoad({ kind: "ready", proposals: list });
     } catch (err) {
       setLoad({
@@ -99,11 +138,15 @@ export function ProposalsPanel() {
     async (id: string, action: "approve" | "reject") => {
       setRowState((prev) => ({ ...prev, [id]: "working" }));
       try {
-        const r = await fetch(`/api/hub/proposals/${encodeURIComponent(id)}`, {
-          method: "PATCH",
+        // tRPC mutation: POST /trpc/proposals.{approve|reject}
+        // body { json: { id } } (superjson)
+        const procedure =
+          action === "approve" ? "proposals.approve" : "proposals.reject";
+        const r = await fetch(`/api/pod/trpc/${procedure}`, {
+          method: "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action }),
+          body: JSON.stringify({ json: { id } }),
           cache: "no-store",
         });
         if (!r.ok) {

@@ -1,5 +1,20 @@
 /**
- * Hub Protocol proxy — shared helpers.
+ * Hub Protocol proxy — shared helpers. THIS IS THE SERVICE CHANNEL.
+ *
+ * The two-channel rule (see `eve-credentials.mdx`):
+ *
+ *   - `/api/hub/*`  → service / agent identity. Uses the eve agent API
+ *                     key. ONLY for genuinely agentic actions: agents
+ *                     submitting proposals, OpenClaw skill round-trips,
+ *                     proactive nudges. NEVER for human inbox / approve
+ *                     / mark-read / settings actions.
+ *   - `/api/pod/*`  → user identity. Uses `pod.userToken` (Kratos
+ *                     session minted via JWT-Bearer exchange). The
+ *                     default for any operator-driven UI feature.
+ *
+ * If you're adding a new feature, ask: "if I were doing this manually
+ * in a terminal, would I authenticate as me-the-human or me-the-
+ * service?" When in doubt, the answer is `/api/pod/*`.
  *
  * Every `/api/hub/*` route is a thin server-side passthrough to the
  * paired Synap pod's `/api/hub/*` REST surface. The proxy exists for

@@ -8,16 +8,20 @@
  *
  *   • agentsRunning — agents whose `status` is "running" or "ready"
  *                     (from `/api/agents`).
- *   • eventsToday   — Hub Protocol events since startOfDay
- *                     (`/api/hub/events?since=<ISO>`). Falls back to 0
- *                     when the pod isn't paired or the route is missing.
- *   • inboxPending  — pending proposals in the operator's Inbox
- *                     (`/api/hub/proposals?status=pending`). Drives the
- *                     "INBOX" pill and the Core-tile count chip.
+ *   • eventsToday   — events since startOfDay via the user channel
+ *                     (`/api/pod/trpc/events.since`). Falls back to 0
+ *                     when no pod session is available yet.
+ *   • inboxPending  — pending proposals in the operator's Inbox via
+ *                     the user channel (`/api/pod/trpc/proposals.list`).
+ *                     Drives the "INBOX" pill and the Core-tile count chip.
  *
- * When a source is unavailable (route not yet implemented, pod
- * unreachable) the corresponding value falls back to 0 — the pill
- * never disappears, calm is the point.
+ * Both pod-backed signals go through the user channel (`/api/pod/*`)
+ * since they read the operator's own data — see eve-credentials.mdx
+ * for the two-channel rule.
+ *
+ * When a source is unavailable (no pod session yet, pod unreachable)
+ * the corresponding value falls back to 0 — the pill never disappears,
+ * calm is the point.
  *
  * See: synap-team-docs/content/team/platform/eve-os-home-design.mdx §4
  */
@@ -66,17 +70,29 @@ interface AgentsResponse {
 interface WireEvent {
   id?: string;
 }
-interface EventsResponse {
-  events?: WireEvent[];
-}
 
 interface WireProposal {
   id?: string;
   status?: string;
 }
-type ProposalsResponse =
-  | { proposals: WireProposal[] }
-  | WireProposal[];
+
+/**
+ * tRPC + superjson envelope. The transformer wraps payload as
+ * `result.data.json`. Some procedures return raw data when superjson
+ * has nothing to enrich — we accept either shape.
+ */
+interface TrpcEnvelope<T> {
+  result?: { data?: { json?: T } | T };
+}
+
+function unwrapTrpc<T>(env: TrpcEnvelope<T> | null): T | null {
+  if (!env) return null;
+  const data = env.result?.data;
+  if (data && typeof data === "object" && "json" in data) {
+    return (data as { json?: T }).json ?? null;
+  }
+  return (data as T) ?? null;
+}
 
 function startOfTodayIso(): string {
   const d = new Date();
@@ -92,21 +108,62 @@ export function useStats(): UseStatsResult {
     setIsLoading(true);
 
     const since = startOfTodayIso();
-    const [agentsResp, eventsResp, proposalsResp] = await Promise.all([
+    // tRPC: events.since takes `{ since: Date }`. Superjson encodes
+    // dates as `{ $type: "Date", value }` — easier here to use
+    // events.list (which doesn't take a date) and filter client-side.
+    // The list response is small enough (max 50) that this is fine.
+    const eventsListInput = encodeURIComponent(
+      JSON.stringify({ json: { limit: 50 } }),
+    );
+    const proposalsListInput = encodeURIComponent(
+      JSON.stringify({ json: { status: "pending" } }),
+    );
+
+    const [agentsResp, eventsEnv, proposalsEnv] = await Promise.all([
       safeFetchJson<AgentsResponse>("/api/agents"),
-      safeFetchJson<EventsResponse>(`/api/hub/events?since=${encodeURIComponent(since)}`),
-      safeFetchJson<ProposalsResponse>("/api/hub/proposals?status=pending"),
+      safeFetchJson<TrpcEnvelope<WireEvent[] | { events?: WireEvent[] }>>(
+        `/api/pod/trpc/events.list?input=${eventsListInput}`,
+      ),
+      safeFetchJson<
+        TrpcEnvelope<
+          WireProposal[] | { proposals?: WireProposal[]; items?: WireProposal[] }
+        >
+      >(`/api/pod/trpc/proposals.list?input=${proposalsListInput}`),
     ]);
 
     const runningStatuses = new Set(["running", "ready"]);
     const agentsRunning =
       agentsResp?.agents.filter((a) => runningStatuses.has(a.status)).length ?? 0;
 
-    const eventsToday = eventsResp?.events?.length ?? 0;
+    // events.list returns a bare array (per the router); accept the
+    // wrapped shape too just in case.
+    const eventsData = unwrapTrpc(eventsEnv);
+    const eventsArr: WireEvent[] = Array.isArray(eventsData)
+      ? eventsData
+      : Array.isArray(eventsData?.events)
+        ? eventsData.events
+        : [];
+    // Filter client-side to "today" since events.list doesn't take a
+    // since arg. The events array carries `timestamp`/`createdAt` — we
+    // accept either field name defensively.
+    const sinceMs = Date.parse(since);
+    const eventsToday = eventsArr.filter((e) => {
+      const ts =
+        (e as { timestamp?: string; createdAt?: string }).timestamp ??
+        (e as { timestamp?: string; createdAt?: string }).createdAt;
+      if (!ts) return false;
+      const t = Date.parse(ts);
+      return !Number.isNaN(t) && t >= sinceMs;
+    }).length;
 
-    const proposalsList: WireProposal[] = Array.isArray(proposalsResp)
-      ? proposalsResp
-      : proposalsResp?.proposals ?? [];
+    const proposalsData = unwrapTrpc(proposalsEnv);
+    const proposalsList: WireProposal[] = Array.isArray(proposalsData)
+      ? proposalsData
+      : Array.isArray(proposalsData?.proposals)
+        ? proposalsData.proposals
+        : Array.isArray(proposalsData?.items)
+          ? proposalsData.items
+          : [];
     // Belt-and-braces: if the pod ignored the status filter, count
     // pending client-side. Status === "pending" is the open lifecycle
     // bucket per the proposal codec.
@@ -122,9 +179,9 @@ export function useStats(): UseStatsResult {
           : undefined
         : undefined,
       eventsToday,
-      eventsSubLabel: eventsResp ? "across all channels" : undefined,
+      eventsSubLabel: eventsEnv ? "across all channels" : undefined,
       inboxPending,
-      inboxSubLabel: proposalsResp
+      inboxSubLabel: proposalsEnv
         ? inboxPending === 0
           ? "Nothing pending"
           : "Tap to review"
