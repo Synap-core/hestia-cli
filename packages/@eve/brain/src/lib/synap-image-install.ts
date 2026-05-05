@@ -1162,16 +1162,21 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
     env: { ...process.env, COMPOSE_PROJECT_NAME: 'synap-backend', BACKEND_VERSION: 'main' },
   });
 
-  // 5. Bring up backend, realtime, and kratos.
-  // Compose resolves the full dependency graph automatically:
-  //   postgres/redis/minio/typesense start first (healthcheck-gated)
-  //   backend-migrate + kratos-migrate run as one-shots (depends_on completed_successfully)
-  //   backend, realtime, kratos start after their migrations pass
-  // Caddy, Hydra, pod-agent, and profile-gated services are intentionally excluded.
-  console.log('  Starting services (compose handles dependency ordering)...');
-  run(['docker', 'compose', 'up', '-d', 'backend', 'realtime', 'kratos'], deployDir);
+  // 5. Bring up backend + realtime. Compose resolves infra dependencies
+  //    (postgres/redis/minio/typesense) and runs backend-migrate automatically.
+  //    Caddy, Hydra, pod-agent, and profile-gated services are excluded.
+  console.log('  Starting backend and realtime (compose handles infra + migrations)...');
+  run(['docker', 'compose', 'up', '-d', 'backend', 'realtime'], deployDir);
 
-  // 6. Connect to eve-network so Traefik can route to it
+  // 6. Start Kratos. Run the migration one-shot explicitly to avoid the
+  //    ambiguous condition:service_completed_successfully behaviour when
+  //    kratos-migrate has a deploy.restart_policy.
+  console.log('  Running Kratos DB migrations...');
+  run(['docker', 'compose', 'run', '--rm', 'kratos-migrate'], deployDir);
+  console.log('  Starting Kratos...');
+  run(['docker', 'compose', 'up', '-d', '--no-deps', 'kratos'], deployDir);
+
+  // 7. Connect to eve-network so Traefik can route to it
   let containerName: string | null = null;
   for (let i = 0; i < 10; i++) {
     containerName = getSynapBackendContainer();
@@ -1183,7 +1188,7 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
     console.log(`  Connected ${containerName} → eve-network`);
   }
 
-  // 7. Reclaim disk by pruning old image versions. The new container
+  // 8. Reclaim disk by pruning old image versions. The new container
   // is up by now, so its image is protected (rmi refuses in-use). Older
   // tags are removed; the latest 3 are kept for rollback. Failures are
   // non-fatal — disk reclamation is opportunistic, never blocks install.
