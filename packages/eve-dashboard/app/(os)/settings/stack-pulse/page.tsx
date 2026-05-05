@@ -592,21 +592,21 @@ function BuilderCard({
           icon={Boxes}
           label="apps"
           count={c.apps}
-          href="/apps"
+          href="/settings/apps"
         />
         <BuilderCountTile
           icon={ListChecks}
           label="tasks"
           count={c.tasks}
-          // No dedicated DevPlane task view yet — fall back to /apps per spec.
-          href={devplaneUrl ? `${devplaneUrl}/tasks` : "/apps"}
+          // No dedicated DevPlane task view yet — fall back to /settings/apps per spec.
+          href={devplaneUrl ? `${devplaneUrl}/tasks` : "/settings/apps"}
           external={Boolean(devplaneUrl)}
         />
         <BuilderCountTile
           icon={Activity}
           label="active intents"
           count={c.intents}
-          href="/intents?status=active"
+          href="/settings/intents?status=active"
         />
       </div>
     </Surface>

@@ -241,7 +241,7 @@ function AppCard({ app }: { app: AppEntity }) {
           </a>
         )}
         <Link
-          href={`/agents/coder/terminal?seed=${recipeSeed}`}
+          href={`/settings/agents/coder/terminal?seed=${recipeSeed}`}
           className="inline-flex items-center gap-1 rounded-lg border border-divider bg-content1 px-2.5 py-1 text-xs text-default-700 transition-colors hover:border-primary/50 hover:text-primary"
         >
           <Workflow className="h-3 w-3" />

@@ -27,9 +27,9 @@ const GLYPHS: Record<string, LucideIcon> = {
   LayoutGrid, Paperclip, Home, Settings: SettingsIcon,
 };
 
-function GlyphFor({ name, ...props }: { name: string | null } & LucideProps) {
-  if (!name) return <Box {...props} />;
-  const Icon = GLYPHS[name] ?? Box;
+function GlyphFor({ glyph, ...props }: { glyph: string | null } & LucideProps) {
+  if (!glyph) return <Box {...props} />;
+  const Icon = GLYPHS[glyph] ?? Box;
   return <Icon {...props} />;
 }
 
@@ -100,7 +100,7 @@ export function AppIcon({ app }: AppIconProps) {
           />
         ) : (
           <GlyphFor
-            name={palette.glyph}
+            glyph={palette.glyph}
             className="h-8 w-8 text-white/95 sm:h-10 sm:w-10"
             strokeWidth={1.6}
             aria-hidden

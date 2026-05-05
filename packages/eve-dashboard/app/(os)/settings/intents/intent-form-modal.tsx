@@ -19,7 +19,7 @@ import {
   DASHBOARD_BACKGROUND_ACTIONS as EVE_BACKGROUND_ACTIONS,
   type BackgroundTask,
   type BackgroundTaskType,
-} from "../lib/background-task-actions.client";
+} from "../../../lib/background-task-actions.client";
 
 /**
  * Add / Edit intent modal.

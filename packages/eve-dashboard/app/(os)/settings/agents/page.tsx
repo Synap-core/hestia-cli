@@ -163,7 +163,7 @@ export default function AgentsPage() {
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   <Link
-                    href={`/agents/${agent.agentType}/terminal`}
+                    href={`/settings/agents/${agent.agentType}/terminal`}
                     className={
                       "inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm transition-colors " +
                       (agent.kinds.length > 0

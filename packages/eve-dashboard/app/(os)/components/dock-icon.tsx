@@ -44,11 +44,11 @@ const GLYPHS: Record<string, LucideIcon> = {
 };
 
 function GlyphFor({
-  name,
+  glyph,
   ...props
-}: { name: string | null } & LucideProps) {
-  if (!name) return <Box {...props} />;
-  const Icon = GLYPHS[name] ?? Box;
+}: { glyph: string | null } & LucideProps) {
+  if (!glyph) return <Box {...props} />;
+  const Icon = GLYPHS[glyph] ?? Box;
   return <Icon {...props} />;
 }
 
@@ -108,7 +108,7 @@ export function DockIcon({ app, active, iconUrl }: DockIconProps) {
         />
       ) : (
         <GlyphFor
-          name={palette.glyph}
+          glyph={palette.glyph}
           className="h-6 w-6 text-white/95"
           aria-hidden
         />

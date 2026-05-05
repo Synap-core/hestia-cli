@@ -40,7 +40,7 @@ export default function AgentTerminalPage(props: { params: Promise<PageParams> }
     return (
       <div className="space-y-6">
         <Link
-          href="/agents"
+          href="/settings/agents"
           className="inline-flex items-center gap-1.5 text-sm text-default-500 hover:text-foreground"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
@@ -60,7 +60,7 @@ export default function AgentTerminalPage(props: { params: Promise<PageParams> }
     <div className="space-y-6">
       <header className="space-y-2">
         <Link
-          href="/agents"
+          href="/settings/agents"
           className="inline-flex items-center gap-1.5 text-sm text-default-500 hover:text-foreground"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
