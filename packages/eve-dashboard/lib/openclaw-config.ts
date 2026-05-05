@@ -160,7 +160,7 @@ export interface VoiceConfig {
   sipUri?: string;
 }
 
-export type MessagingPlatform = "telegram" | "signal" | "matrix";
+export type MessagingPlatform = "telegram" | "discord" | "signal" | "matrix";
 
 export interface MessagingConfig {
   enabled: boolean;

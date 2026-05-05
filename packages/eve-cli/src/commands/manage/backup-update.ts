@@ -1,10 +1,11 @@
 import { Command } from 'commander';
 import { execa } from 'execa';
-import { execSync } from 'node:child_process';
+import { execSync, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { getGlobalCliFlags } from '@eve/cli-kit';
 import { runActionToCompletion } from '@eve/lifecycle';
 import {
@@ -98,8 +99,49 @@ function extractOpenclawSubLines(id: string, logs: string[]): string[] {
   return [headline.replace(/^OpenClaw:\s*/, 'reconciled allowedOrigins: ')];
 }
 
+/**
+ * Locate the self-update script shipped alongside the CLI binary.
+ *
+ * Two cases:
+ *   - Installed via bootstrap.sh → binary is /opt/eve/packages/eve-cli/dist/index.js
+ *     → script at /opt/eve/scripts/self-update.sh
+ *   - Dev mode (pnpm dev) → __dirname is packages/eve-cli/dist/
+ *     → script at ../../scripts/self-update.sh (i.e. hestia-cli root)
+ */
+function findSelfUpdateScript(): string | null {
+  const binDir = dirname(fileURLToPath(import.meta.url));
+  // Walk up from the dist dir looking for scripts/self-update.sh
+  let dir = binDir;
+  for (let i = 0; i < 5; i++) {
+    const candidate = join(dir, 'scripts', 'self-update.sh');
+    if (existsSync(candidate)) return candidate;
+    dir = dirname(dir);
+  }
+  return null;
+}
+
 function buildUpdateTargets(deployDir: string | undefined): UpdateTarget[] {
   const targets: UpdateTarget[] = [];
+
+  // Eve CLI self-update — runs scripts/self-update.sh which does:
+  //   git pull + pnpm install + build + re-link /usr/local/bin/eve
+  targets.push({
+    id: 'eve',
+    label: '🌿 Eve CLI',
+    update: async () => {
+      const script = findSelfUpdateScript();
+      if (!script) {
+        throw new Error(
+          'self-update.sh not found — Eve may have been installed outside of git. ' +
+          'To update manually: cd /opt/eve && git pull && pnpm install && pnpm --filter @eve/cli... run build',
+        );
+      }
+      const result = spawnSync('bash', [script], { stdio: 'inherit' });
+      if (result.status !== 0) {
+        throw new Error(`self-update.sh exited ${result.status ?? 'unknown'}`);
+      }
+    },
+  });
 
   // Synap stays bespoke — its update path runs a `compose run --rm
   // backend-migrate` step before bringing the backend up so schema
@@ -318,5 +360,42 @@ export function backupUpdateCommands(program: Command): void {
         printError(e instanceof Error ? e.message : String(e));
         process.exit(1);
       }
+    });
+
+  program
+    .command('restart')
+    .argument('[components...]', 'Component ids to restart (omit to restart all). E.g. `eve restart synap openwebui`')
+    .description('Restart one or more Eve components without pulling new images.')
+    .action(async (components: string[]) => {
+      const knownIds = ['synap', 'ollama', 'openclaw', 'rsshub', 'traefik', 'openwebui', 'openwebui-pipelines'];
+
+      const toRestart = components.length > 0 ? components : knownIds;
+
+      const unknown = toRestart.filter(id => !knownIds.includes(id));
+      if (unknown.length > 0) {
+        printError(`Unknown component(s): ${unknown.join(', ')}`);
+        printInfo(`  Available: ${knownIds.join(', ')}`);
+        process.exit(1);
+      }
+
+      console.log();
+      console.log(colors.primary.bold('Eve Restart'));
+      console.log(colors.muted('─'.repeat(50)));
+
+      for (const id of toRestart) {
+        const spinner = createSpinner(`Restarting ${id}…`);
+        spinner.start();
+        try {
+          const result = await runActionToCompletion(id, 'restart');
+          if (result.ok) {
+            spinner.succeed(`${id} restarted`);
+          } else {
+            spinner.warn(`${id} — ${result.error ?? 'not running or not installed'}`);
+          }
+        } catch (e) {
+          spinner.warn(`${id} — ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      console.log();
     });
 }

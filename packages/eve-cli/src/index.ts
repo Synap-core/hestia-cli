@@ -186,7 +186,7 @@ type HelpCategory = { title: string; commands: string[] };
 const DEFAULT_CATEGORIES: HelpCategory[] = [
   { title: 'Lifecycle',     commands: ['install', 'update', 'add', 'remove'] },
   { title: 'Status',        commands: ['status', 'doctor'] },
-  { title: 'Operations',    commands: ['logs', 'recreate', 'backup'] },
+  { title: 'Operations',    commands: ['logs', 'restart', 'recreate', 'backup'] },
   { title: 'Configuration', commands: ['config', 'domain', 'mode', 'auth', 'ai'] },
   { title: 'UI',            commands: ['ui'] },
 ];
