@@ -42,6 +42,41 @@ const ENV_PATHS = [
 // Traefik dynamic config path written by `eve legs domain`.
 const TRAEFIK_DYNAMIC = "/opt/traefik/dynamic/eve-routes.yml";
 
+/**
+ * Domains that are install-time placeholders, not real hostnames.
+ * Returning these as "discovered" would overwrite a real configured domain
+ * in secrets.json with a useless default.
+ */
+const PLACEHOLDER_DOMAINS = new Set([
+  "localhost",
+  "127.0.0.1",
+  "::1",
+  "example.com",
+  "yourdomain.com",
+  "mydomain.com",
+  "your-domain.com",
+]);
+
+function isPlaceholderDomain(d: string): boolean {
+  if (!d) return true;
+  const lower = d.toLowerCase();
+  return (
+    PLACEHOLDER_DOMAINS.has(lower) ||
+    lower.startsWith("127.") ||
+    lower.startsWith("192.168.") ||
+    lower.startsWith("10.") ||
+    !lower.includes(".")  // bare hostname with no TLD is never a real public domain
+  );
+}
+
+function isPlaceholderUrl(url: string): boolean {
+  try {
+    return isPlaceholderDomain(new URL(url).hostname);
+  } catch {
+    return true;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -105,11 +140,16 @@ function probeEnvFiles(): {
       // to secrets.synap.apiUrl here caused persistent 404s: the stored URL
       // bypassed the loopback probe in `resolveSynapUrlOnHost` and then hit
       // Traefik on a path with no route.
-      const synapUrl = publicUrl ? publicUrl.replace(/\/$/, "") : undefined;
+      const synapUrl =
+        publicUrl && !isPlaceholderUrl(publicUrl)
+          ? publicUrl.replace(/\/$/, "")
+          : undefined;
+      const realDomain =
+        domain && !isPlaceholderDomain(domain) ? domain : undefined;
 
-      if (synapUrl || domain || token) {
+      if (synapUrl || realDomain || token) {
         return {
-          domain: domain || (synapUrl ? new URL(synapUrl).hostname : undefined),
+          domain: realDomain || (synapUrl ? new URL(synapUrl).hostname : undefined),
           synapUrl,
           provisioningToken: token || undefined,
           source: path,
@@ -174,10 +214,16 @@ function probeDockerInspect(): {
       const token = envMap["PROVISIONING_TOKEN"]?.trim();
       // Same rule as probeEnvFiles: only set synapUrl from PUBLIC_URL.
       // DOMAIN alone doesn't carry the "pod." prefix needed for routing.
-      const synapUrl = publicUrl?.replace(/\/$/, "");
-      if (synapUrl || domain || token) {
+      // Also filter placeholder values that are install-time defaults.
+      const synapUrl =
+        publicUrl && !isPlaceholderUrl(publicUrl)
+          ? publicUrl.replace(/\/$/, "")
+          : undefined;
+      const realDomain =
+        domain && !isPlaceholderDomain(domain) ? domain : undefined;
+      if (synapUrl || realDomain || token) {
         return {
-          domain: domain || (synapUrl ? new URL(synapUrl).hostname : undefined),
+          domain: realDomain || (synapUrl ? new URL(synapUrl).hostname : undefined),
           synapUrl,
           provisioningToken: token || undefined,
           source: `docker inspect ${name}`,

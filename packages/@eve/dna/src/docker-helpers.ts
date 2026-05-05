@@ -76,21 +76,40 @@ export const SYNAP_BACKEND_CONTAINERS: ReadonlyArray<string> = [
  * Never throws.
  */
 export function restartBackendContainer(deployDir: string): boolean {
-  const composeFiles = [
-    join(deployDir, "docker-compose.yml"),
-    join(deployDir, "docker-compose.standalone.yml"),
-  ];
+  const mainFile = join(deployDir, "docker-compose.yml");
+  const standaloneFile = join(deployDir, "docker-compose.standalone.yml");
+  const overrideFile = join(deployDir, "docker-compose.override.yml");
+  const hasOverride = existsSync(overrideFile);
 
-  for (const file of composeFiles) {
-    if (!existsSync(file)) continue;
+  // For docker-compose.yml: run WITHOUT -f so Docker Compose auto-discovers
+  // docker-compose.override.yml in the same directory. Specifying -f
+  // explicitly suppresses the override — the port mapping never gets applied.
+  if (existsSync(mainFile)) {
     try {
-      execSync(`docker compose -f ${file} up -d backend`, {
+      execSync("docker compose up -d backend", {
+        cwd: deployDir,
         stdio: ["ignore", "ignore", "ignore"],
         timeout: 30_000,
       });
       return true;
     } catch {
-      // try next
+      // fall through to standalone path
+    }
+  }
+
+  // For standalone (non-default filename): compose won't auto-discover it,
+  // so we must specify both files explicitly when the override exists.
+  if (existsSync(standaloneFile)) {
+    try {
+      const overrideArg = hasOverride ? ` -f ${overrideFile}` : "";
+      execSync(`docker compose -f ${standaloneFile}${overrideArg} up -d backend`, {
+        cwd: deployDir,
+        stdio: ["ignore", "ignore", "ignore"],
+        timeout: 30_000,
+      });
+      return true;
+    } catch {
+      // fall through to docker restart
     }
   }
 
