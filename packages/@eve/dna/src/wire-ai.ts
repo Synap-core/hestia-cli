@@ -212,7 +212,9 @@ function wireOpenclaw(secrets: EveSecrets | null): WireAiResult {
     providers: {
       openai: {
         apiKey: synapApiKey,
-        baseUrl: 'http://intelligence-hub:3001/v1',
+        // Synap backend (eve-brain-synap:4000) is the AI hub for self-hosted Eve.
+        // intelligence-hub:3001 is the proprietary IS — not available without managed pod.
+        baseUrl: 'http://eve-brain-synap:4000/v1',
         ...(preferredModel ? { defaultModel: preferredModel } : {}),
       },
     },

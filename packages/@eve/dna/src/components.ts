@@ -110,7 +110,7 @@ This is the brain of the brain organ — most of what makes your stack feel inte
     category: 'data',
     requires: ['traefik'],
     service: {
-      containerName: 'synap-backend-backend-1',
+      containerName: 'eve-brain-synap',
       internalPort: 4000,
       hostPort: null, // bound only inside docker network
       subdomain: 'pod',
@@ -388,7 +388,7 @@ export function isLoopbackUrl(url: string | undefined | null): boolean {
  * For host-side reads (CLI, doctor, dashboard), use `resolveSynapUrl`
  * which returns the public Traefik URL.
  */
-export const SYNAP_BACKEND_INTERNAL_URL = 'http://synap-backend-backend-1:4000';
+export const SYNAP_BACKEND_INTERNAL_URL = 'http://eve-brain-synap:4000';
 
 /**
  * TCP port on the host's loopback that maps to synap-backend:4000 when
