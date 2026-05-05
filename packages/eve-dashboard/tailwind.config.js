@@ -38,7 +38,7 @@ module.exports = {
           "linear-gradient(135deg, #10B981 0%, #34D399 50%, #6EE7B7 100%)",
       },
       // ----------------------------------------------------------------------
-      // OS Home tokens (eve-os-home-design.mdx §6).
+      // OS Home tokens (eve-os-home-design.mdx §6 + eve-os-shell.mdx §7).
       //
       // HeroUI already exposes `primary.*` (emerald) as the AI accent — these
       // additions give the OS Home page semantic aliases so status dots and
@@ -55,10 +55,79 @@ module.exports = {
           degraded: "#FBBF24",
           offline:  "#94A3B8",
         },
+        // OS shell — wallpaper base and translucent surface tints.
+        os: {
+          base:            "#0A0A14",                         // dark wallpaper base
+          baseLight:       "#F5F4FA",                         // light wallpaper base
+          paneBg:          "rgba(20, 20, 28, 0.55)",
+          paneBgLight:     "rgba(255, 255, 255, 0.65)",
+          paneBorder:      "rgba(255, 255, 255, 0.08)",
+          paneBorderLight: "rgba(0, 0, 0, 0.06)",
+          dockBg:          "rgba(20, 20, 28, 0.50)",
+          dockBgLight:     "rgba(255, 255, 255, 0.55)",
+        },
+        // Per-app brand colors used by dock icons + Home grid.
+        brand: {
+          home:     "#A78BFA",
+          agents:   "#34D399",
+          settings: "#94A3B8",
+          chat:     "#10B981",
+          synap:    "#34D399",
+        },
+      },
+      backdropBlur: {
+        pane: "40px",
+        dock: "48px",
       },
       borderRadius: {
-        // App tile default — friendlier than 12-16px at 128px square.
         tile: "20px",
+        pane: "24px",
+        dock: "32px",
+        icon: "12px",
+      },
+      keyframes: {
+        // Wallpaper drift — opposing slow loops on translate3d only, GPU-friendly.
+        "wallpaper-drift-a": {
+          "0%, 100%": { transform: "translate3d(-10%, -8%, 0) scale(1)" },
+          "50%":      { transform: "translate3d(8%, 6%, 0) scale(1.05)" },
+        },
+        "wallpaper-drift-b": {
+          "0%, 100%": { transform: "translate3d(8%, 10%, 0) scale(1.04)" },
+          "50%":      { transform: "translate3d(-6%, -8%, 0) scale(0.98)" },
+        },
+        "wallpaper-drift-c": {
+          "0%, 100%": { transform: "translate3d(0%, 0%, 0) rotate(0deg)" },
+          "50%":      { transform: "translate3d(-4%, 6%, 0) rotate(8deg)" },
+        },
+        // Pane content cross-fade on route swap.
+        "pane-content-in": {
+          "0%":   { opacity: "0", transform: "translateY(4px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+        // Newly resolved icon fade-in (Home).
+        "icon-fade-in": {
+          "0%":   { opacity: "0" },
+          "100%": { opacity: "1" },
+        },
+        // Newly installed icon — overshoot pop.
+        "icon-pop-in": {
+          "0%":   { opacity: "0", transform: "scale(0.85)" },
+          "100%": { opacity: "1", transform: "scale(1)" },
+        },
+        // Stat / icon skeleton shimmer.
+        "shimmer-pulse": {
+          "0%, 100%": { opacity: "0.6" },
+          "50%":      { opacity: "1" },
+        },
+      },
+      animation: {
+        "wallpaper-drift-a": "wallpaper-drift-a 72s cubic-bezier(0.4, 0, 0.6, 1) infinite",
+        "wallpaper-drift-b": "wallpaper-drift-b 90s cubic-bezier(0.4, 0, 0.6, 1) infinite",
+        "wallpaper-drift-c": "wallpaper-drift-c 60s cubic-bezier(0.4, 0, 0.6, 1) infinite",
+        "pane-content-in":   "pane-content-in 140ms ease-out",
+        "icon-fade-in":      "icon-fade-in 140ms ease-out",
+        "icon-pop-in":       "icon-pop-in 240ms cubic-bezier(0.16, 1, 0.3, 1)",
+        "shimmer-pulse":     "shimmer-pulse 1.6s ease-in-out infinite",
       },
     },
   },

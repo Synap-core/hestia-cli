@@ -10,8 +10,9 @@ html {
 }
 
 body {
-  /* Subtle radial bloom in the upper third — gives the page warmth without
-     committing to a hero background image. Picks up the emerald accent. */
+  /* Inside the OS shell route group the wallpaper component owns the
+     background. Outside (login, OAuth callback) we fall back to the
+     subtle bloom so legacy surfaces keep their original feel. */
   background-image: var(--eve-bloom);
   background-repeat: no-repeat;
   background-attachment: fixed;
@@ -23,6 +24,129 @@ body {
 
 .dark {
   --eve-bloom: radial-gradient(70% 55% at 50% -10%, rgba(52, 211, 153, 0.08) 0%, transparent 70%);
+}
+
+/* ----------------------------------------------------------------------
+ * OS shell — wallpaper, pane, dock primitives
+ *
+ * The shell layer renders inside the `(os)` route group. Three stacked
+ * elements: a fixed wallpaper, a centered popup pane, a bottom dock.
+ * Designed to match eve-os-shell.mdx §3–§5.
+ * ------------------------------------------------------------------- */
+.os-wallpaper {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  background: theme('colors.os.baseLight');
+}
+.dark .os-wallpaper {
+  background: theme('colors.os.base');
+}
+
+.os-blob {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(80px);
+  will-change: transform;
+  pointer-events: none;
+}
+.os-blob-a {
+  width: 120vw;
+  height: 120vw;
+  left: -20vw;
+  top: -30vw;
+  background: radial-gradient(closest-side, rgba(99, 102, 241, 0.40), transparent 70%);
+}
+.os-blob-b {
+  width: 100vw;
+  height: 100vw;
+  right: -20vw;
+  bottom: -30vw;
+  background: radial-gradient(closest-side, rgba(16, 185, 129, 0.28), transparent 70%);
+}
+.os-blob-c {
+  width: 80vw;
+  height: 80vw;
+  left: 10vw;
+  bottom: 10vw;
+  background: radial-gradient(closest-side, rgba(244, 114, 182, 0.18), transparent 70%);
+}
+:not(.dark) .os-blob-a {
+  background: radial-gradient(closest-side, rgba(129, 140, 248, 0.45), transparent 70%);
+}
+:not(.dark) .os-blob-b {
+  background: radial-gradient(closest-side, rgba(52, 211, 153, 0.30), transparent 70%);
+}
+:not(.dark) .os-blob-c {
+  background: radial-gradient(closest-side, rgba(244, 114, 182, 0.22), transparent 70%);
+}
+
+/* SVG-based grain — embedded as a data URI to avoid an extra request. */
+.os-grain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.03;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ----------------------------------------------------------------------
+ * Pane — frosted popup that holds the active app.
+ * The only place a drop shadow lives in the shell.
+ * ------------------------------------------------------------------- */
+.os-pane {
+  border-radius: theme('borderRadius.pane');
+  background: theme('colors.os.paneBgLight');
+  -webkit-backdrop-filter: blur(40px) saturate(140%);
+          backdrop-filter: blur(40px) saturate(140%);
+  border: 1px solid theme('colors.os.paneBorderLight');
+  box-shadow:
+    0 24px 64px -12px rgba(0, 0, 0, 0.15),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.02);
+}
+.dark .os-pane {
+  background: theme('colors.os.paneBg');
+  border-color: theme('colors.os.paneBorder');
+  box-shadow:
+    0 24px 64px -12px rgba(0, 0, 0, 0.5),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+/* ----------------------------------------------------------------------
+ * Dock — translucent rounded pill at the bottom.
+ * ------------------------------------------------------------------- */
+.os-dock {
+  border-radius: theme('borderRadius.dock');
+  background: theme('colors.os.dockBgLight');
+  -webkit-backdrop-filter: blur(48px) saturate(180%);
+          backdrop-filter: blur(48px) saturate(180%);
+  border: 1px solid theme('colors.os.paneBorderLight');
+}
+.dark .os-dock {
+  background: theme('colors.os.dockBg');
+  border-color: theme('colors.os.paneBorder');
+}
+
+/* ----------------------------------------------------------------------
+ * Reduced motion — wallpaper holds a static intentional position,
+ * pane swap collapses to a hard cut, no overshoot pops.
+ * ------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .os-blob {
+    animation: none !important;
+  }
+  .animate-pane-content-in,
+  .animate-icon-fade-in,
+  .animate-icon-pop-in,
+  .animate-shimmer-pulse {
+    animation: none !important;
+  }
+}
+
+/* Pause wallpaper animations when the document tab is hidden. */
+@media (hover: none) {
+  .os-blob { will-change: auto; }
 }
 
 /* ----------------------------------------------------------------------

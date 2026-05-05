@@ -33,6 +33,7 @@ import {
   AI_CONSUMERS,
   AI_CONSUMERS_NEEDING_RECREATE,
   pruneOldImagesForRepo,
+  ensureSynapLoopbackOverride,
   type ComponentInfo,
   type EnsureOverrideResult,
 } from "@eve/dna";
@@ -207,6 +208,11 @@ const UPDATE_PLAN: Record<string, UpdatePlan> = {
     compose: {
       cwd: "/opt/synap-backend",
       services: ["backend", "realtime"],
+      // Idempotently write the loopback host-port override so the on-host
+      // CLI can reach the backend at 127.0.0.1:4000 without going through
+      // Traefik. Runs before compose pull/up so the new container starts
+      // with the binding already in place.
+      ensureOverride: () => ensureSynapLoopbackOverride("/opt/synap-backend"),
       // synap-backend, backend-canary, backend-migrate, realtime — all
       // share the same `ghcr.io/synap-core/backend` image. pod-agent
       // ships separately. Keep three so the user can still roll back
