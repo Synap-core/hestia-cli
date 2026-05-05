@@ -137,20 +137,20 @@ function findSelfUpdateScript(): string | null {
  * Never throws — this is a best-effort post-update hook. Returns sub-lines
  * for the spinner row so the user can see what happened without noise.
  */
-async function tryPostUpdateProvision(deployDir: string): Promise<{ subLines: string[] }> {
+async function tryPostUpdateProvision(_deployDir: string): Promise<{ subLines: string[] }> {
   const subLines: string[] = [];
+  const eveCwd = process.cwd(); // Eve home — where secrets.json lives
   try {
-    const preflight = await runBackendPreflight({ cwd: deployDir });
+    const preflight = await runBackendPreflight({ cwd: eveCwd });
     const needsAdmin = await checkNeedsAdmin(preflight.synapUrl);
     if (needsAdmin) {
-      const setupUrl = `${preflight.synapUrl.replace('127.0.0.1:4000', preflight.synapUrl)}/setup`;
       subLines.push(`Admin setup required — run: eve auth provision`);
       return { subLines };
     }
     const installed = await entityStateManager.getInstalledComponents().catch(() => [] as string[]);
     const results = await provisionAllAgents({
       installedComponentIds: installed,
-      deployDir,
+      deployDir: eveCwd,
       reason: 'post-update',
       synapUrl: preflight.synapUrl,
       provisioningToken: preflight.provisioningToken,
