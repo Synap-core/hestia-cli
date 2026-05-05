@@ -26,8 +26,9 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { Button, Chip } from "@heroui/react";
-import { Plug, AlertTriangle, RefreshCw, Sparkles, Activity } from "lucide-react";
+import { Button, ButtonGroup, Chip, Tooltip } from "@heroui/react";
+import { Plug, AlertTriangle, RefreshCw, Activity, LayoutDashboard, ListOrdered, Beaker } from "lucide-react";
+import type { EventName } from "./lib/event-types";
 import { PaneHeader } from "../components/pane-header";
 import { CpAuthBanner } from "../../components/cp-auth-banner";
 import { AgentGraph } from "./components/agent-graph";
@@ -39,10 +40,27 @@ import { useRealtimeEvents } from "./hooks/use-realtime-events";
 import { useChannels } from "./hooks/use-channels";
 import type { AgentId, Lane } from "./lib/agent-registry";
 
+type ViewMode = "compact" | "timeline";
+const VIEW_MODE_PREF_KEY = "eve.agents.viewMode";
+
 export default function AgentsPage() {
   const [selectedAgent, setSelectedAgent] = useState<AgentId | null>(null);
   const [highlightedLane, setHighlightedLane] = useState<Lane | null>(null);
   const [isConnectOpen, setIsConnectOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>("compact");
+
+  // Hydrate persisted view mode once on mount.
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem(VIEW_MODE_PREF_KEY);
+      if (v === "timeline" || v === "compact") setViewMode(v);
+    } catch { /* localStorage disabled */ }
+  }, []);
+
+  const updateViewMode = useCallback((next: ViewMode) => {
+    setViewMode(next);
+    try { localStorage.setItem(VIEW_MODE_PREF_KEY, next); } catch { /* noop */ }
+  }, []);
 
   const {
     events,
@@ -52,7 +70,29 @@ export default function AgentsPage() {
     agentStatuses,
     eventsPerMinute,
     errors24h,
+    pushSynthetic,
   } = useRealtimeEvents({ bufferSize: 200 });
+
+  // Round-trip a synthetic event through the API so the same code path
+  // exercises auth + body parsing in addition to the local rendering.
+  const sendTestEvent = useCallback(
+    async (name?: EventName) => {
+      try {
+        const res = await fetch("/api/agents/test-event", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify(name ? { name } : {}),
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as { name: EventName; payload: unknown };
+        pushSynthetic(data.name, data.payload);
+      } catch {
+        // Network failure swallowed — UI surfaces nothing here on purpose.
+      }
+    },
+    [pushSynthetic],
+  );
 
   const {
     channels,
@@ -65,7 +105,6 @@ export default function AgentsPage() {
   const isConnecting = status.kind === "connecting";
   const isError = status.kind === "error";
   const isEmpty = events.length === 0;
-  const hasNoChannels = !isChannelsLoading && channels.length === 0;
 
   // Refresh the channel registry whenever a "connection state" event
   // lands — e.g. user just connected Telegram → next OpenClaw event
@@ -133,6 +172,58 @@ export default function AgentsPage() {
                 tone="error"
               />
             )}
+            <ButtonGroup
+              size="sm"
+              radius="full"
+              variant="flat"
+              className="ml-1"
+              aria-label="View mode"
+            >
+              <Button
+                isIconOnly
+                aria-label="Compact view (graph + feed)"
+                aria-pressed={viewMode === "compact"}
+                onPress={() => updateViewMode("compact")}
+                className={
+                  viewMode === "compact"
+                    ? "bg-foreground/[0.10] text-foreground"
+                    : "text-foreground/55 hover:text-foreground"
+                }
+              >
+                <LayoutDashboard className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                isIconOnly
+                aria-label="Timeline view (full feed)"
+                aria-pressed={viewMode === "timeline"}
+                onPress={() => updateViewMode("timeline")}
+                className={
+                  viewMode === "timeline"
+                    ? "bg-foreground/[0.10] text-foreground"
+                    : "text-foreground/55 hover:text-foreground"
+                }
+              >
+                <ListOrdered className="h-3.5 w-3.5" />
+              </Button>
+            </ButtonGroup>
+            <Tooltip
+              content="Inject a synthetic event to verify the pipeline"
+              placement="bottom"
+              delay={300}
+              size="sm"
+            >
+              <Button
+                isIconOnly
+                size="sm"
+                radius="full"
+                variant="light"
+                aria-label="Send a test event"
+                onPress={() => void sendTestEvent()}
+                className="text-foreground/55 hover:text-foreground"
+              >
+                <Beaker className="h-3.5 w-3.5" />
+              </Button>
+            </Tooltip>
             <Button
               size="sm"
               radius="full"
@@ -166,39 +257,36 @@ export default function AgentsPage() {
           </div>
         )}
 
-        {/* Graph — fixed-ish height, 320px on small screens, 380px on lg */}
-        <div className="relative shrink-0 mb-3 h-[320px] lg:h-[380px]">
-          <AgentGraph
-            events={events}
-            agentStatuses={agentStatuses}
-            selectedAgent={selectedAgent}
-            onSelectAgent={(id) =>
-              setSelectedAgent((prev) => (prev === id ? null : id))
-            }
-            channels={channels}
-            highlightedLane={highlightedLaneKey}
-          />
-
-          {/* Side panel slides in over the graph */}
-          {selectedAgent && (
-            <NodePanel
-              agentId={selectedAgent}
-              events={byAgent[selectedAgent] ?? []}
-              status={agentStatuses[selectedAgent]}
-              onClose={() => setSelectedAgent(null)}
-              onSelectAgent={(id) => setSelectedAgent(id)}
+        {/* Graph — only in compact mode. Fixed height: 320 on small, 380 on lg. */}
+        {viewMode === "compact" && (
+          <div className="relative shrink-0 mb-3 h-[320px] lg:h-[380px]">
+            <AgentGraph
+              events={events}
+              agentStatuses={agentStatuses}
+              selectedAgent={selectedAgent}
+              onSelectAgent={(id) =>
+                setSelectedAgent((prev) => (prev === id ? null : id))
+              }
+              channels={channels}
+              highlightedLane={highlightedLaneKey}
             />
-          )}
 
-          {/* First-run hint — only when graph would otherwise feel dead */}
-          {isEmpty &&
-            hasNoChannels &&
-            status.kind === "connected" && (
-              <FirstRunHint onOpenConnect={() => setIsConnectOpen(true)} />
+            {/* Side panel slides in over the graph */}
+            {selectedAgent && (
+              <NodePanel
+                agentId={selectedAgent}
+                events={byAgent[selectedAgent] ?? []}
+                status={agentStatuses[selectedAgent]}
+                onClose={() => setSelectedAgent(null)}
+                onSelectAgent={(id) => setSelectedAgent(id)}
+              />
             )}
-        </div>
+          </div>
+        )}
 
-        {/* Channel strip */}
+        {/* Channel strip — always visible. Doubles as the first-run CTA when
+            there are no channels yet (its empty state already says
+            "No channels connected yet · Connect a channel"). */}
         <div className="shrink-0 mb-3">
           <ChannelStrip
             channels={channels}
@@ -208,12 +296,16 @@ export default function AgentsPage() {
           />
         </div>
 
-        {/* Activity feed — fills remaining height */}
+        {/* Activity feed — fills remaining height. In timeline mode it
+            owns the whole pane below the channel strip; in compact mode
+            it shares space with the graph above. */}
         <div className="min-h-0 flex-1">
           <ActivityFeed
             events={events}
             isEmpty={isEmpty}
-            onHighlightLane={setHighlightedLane}
+            onHighlightLane={viewMode === "compact" ? setHighlightedLane : undefined}
+            density={viewMode === "timeline" ? "timeline" : "compact"}
+            onSendTestEvent={() => void sendTestEvent()}
           />
         </div>
       </div>
@@ -312,30 +404,3 @@ function ConnectingBanner() {
   );
 }
 
-function FirstRunHint({ onOpenConnect }: { onOpenConnect: () => void }) {
-  return (
-    <div className="absolute inset-x-0 bottom-3 flex justify-center pointer-events-none">
-      <div
-        className="
-          flex flex-row items-center gap-3 rounded-lg
-          bg-foreground/[0.06] px-4 py-2.5
-          border border-foreground/[0.10] pointer-events-auto
-        "
-      >
-        <Sparkles className="h-4 w-4 shrink-0 text-primary" strokeWidth={1.8} />
-        <p className="text-[12.5px] text-foreground/85">
-          Waiting for activity. Connect a channel to see your AI staff at work.
-        </p>
-        <Button
-          size="sm"
-          radius="full"
-          color="primary"
-          variant="flat"
-          onPress={onOpenConnect}
-        >
-          Connect a channel
-        </Button>
-      </div>
-    </div>
-  );
-}

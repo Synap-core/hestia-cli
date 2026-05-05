@@ -45,10 +45,11 @@ export function ConnectChannelsModal({ isOpen, onClose }: ConnectChannelsModalPr
       size="2xl"
       scrollBehavior="inside"
       backdrop="blur"
+      placement="center"
       classNames={{
-        base: "bg-content1/90 backdrop-blur-pane",
+        base: "bg-content1/95 backdrop-blur-pane max-h-[85vh]",
         header: "border-b border-foreground/[0.06]",
-        body: "py-5",
+        body: "py-0",
       }}
     >
       <ModalContent>
@@ -69,11 +70,14 @@ export function ConnectChannelsModal({ isOpen, onClose }: ConnectChannelsModalPr
                 color="primary"
                 radius="full"
                 size="sm"
+                fullWidth
                 classNames={{
+                  base: "pt-4 pb-2 sticky top-0 z-10 bg-content1/95 backdrop-blur-pane",
                   tabList: "bg-foreground/[0.05] gap-1",
                   cursor: "bg-foreground/[0.10]",
                   tabContent:
                     "text-foreground/55 group-data-[selected=true]:text-foreground",
+                  panel: "px-0 pt-2 pb-5",
                 }}
               >
                 <Tab
@@ -212,7 +216,7 @@ function MessagingTokenForm({
   }
 
   return (
-    <div className="space-y-4 pt-4">
+    <div className="space-y-4">
       <header>
         <h3 className="text-[14px] font-medium text-foreground">{help.title}</h3>
         <p className="mt-1 text-[12.5px] text-foreground/65">
@@ -415,7 +419,7 @@ function WhatsAppForm() {
   }
 
   return (
-    <div className="space-y-4 pt-4">
+    <div className="space-y-4">
       <header>
         <h3 className="text-[14px] font-medium text-foreground">Connect WhatsApp</h3>
         <p className="mt-1 text-[12.5px] text-foreground/65">

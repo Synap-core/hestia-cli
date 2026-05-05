@@ -36,12 +36,19 @@
  * Where the CP lives. Configurable so dev environments can point at a
  * staging CP or a local one. Default matches production.
  *
+ * Reads `NEXT_PUBLIC_CP_BASE_URL` first (the historical name), then falls
+ * back to `NEXT_PUBLIC_CP_API_URL` (the name used by the rest of the
+ * landing/dashboard repos). Final fallback is the production API host —
+ * `cp.synap.sh` was the original guess but it never deployed; the live
+ * CP lives at `api.synap.live`.
+ *
  * IMPORTANT: this value is baked at build time. Different deployments
  * use different `.env` files in their CI pipeline.
  */
 export const CP_BASE_URL: string =
   process.env.NEXT_PUBLIC_CP_BASE_URL?.replace(/\/+$/, "") ||
-  "https://cp.synap.sh";
+  process.env.NEXT_PUBLIC_CP_API_URL?.replace(/\/+$/, "") ||
+  "https://api.synap.live";
 
 /**
  * Eve dashboard's client_id, registered in the CP's OAuth client table.

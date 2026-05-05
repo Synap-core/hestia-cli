@@ -8,27 +8,31 @@
  * 2.5D recipe deliberately does NOT apply: we want this to feel like
  * empty real estate, not a pressed tile.
  *
- * Click target is configurable so the parent (Home) can wire it to the
- * external CP marketplace URL today and to an in-OS `/marketplace`
- * route once it ships.
+ * Click target is configurable so the parent (Home) can wire it to
+ * either the in-OS `/marketplace` route (default) or, occasionally,
+ * an external URL.
  *
  * See: synap-team-docs/content/team/platform/eve-os-home-design.mdx §5.6
  */
 
+import Link from "next/link";
 import { Plus } from "lucide-react";
 
 export interface AddAppIconProps {
   href: string;
-  /** Open in a new tab. Defaults to true (current marketplace lives off-host). */
+  /** Open in a new tab. Defaults to false — the marketplace is in-OS now. */
   external?: boolean;
 }
 
-export function AddAppIcon({ href, external = true }: AddAppIconProps) {
+export function AddAppIcon({ href, external = false }: AddAppIconProps) {
+  const Tag = external ? ("a" as const) : Link;
+  const externalAttrs = external
+    ? { target: "_blank", rel: "noreferrer" }
+    : {};
   return (
-    <a
+    <Tag
       href={href}
-      target={external ? "_blank" : undefined}
-      rel={external ? "noreferrer" : undefined}
+      {...externalAttrs}
       aria-label="Browse marketplace"
       className="
         group flex w-full max-w-[112px] flex-col items-center gap-2.5
@@ -53,6 +57,6 @@ export function AddAppIcon({ href, external = true }: AddAppIconProps) {
       <span className="text-[12.5px] font-medium text-default-500 group-hover:text-default-300 transition-colors">
         Add
       </span>
-    </a>
+    </Tag>
   );
 }

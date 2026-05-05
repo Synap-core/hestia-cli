@@ -31,7 +31,6 @@ import { AppGrid } from "./components/app-grid";
 import { SearchBar } from "./components/search-bar";
 import { EmptyState } from "./components/empty-state";
 import { useHomeApps } from "./hooks/use-home-apps";
-import { MARKETPLACE_URL } from "./lib/marketplace-url";
 
 export default function HomePage() {
   const router = useRouter();
@@ -97,7 +96,7 @@ export default function HomePage() {
               <AppGrid
                 apps={filtered}
                 isLoading={isLoading}
-                marketplaceUrl={MARKETPLACE_URL}
+                marketplaceUrl="/marketplace"
               />
             )}
           </div>

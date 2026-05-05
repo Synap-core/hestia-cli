@@ -73,6 +73,13 @@ export interface UseRealtimeEventsResult {
   eventsPerMinute: number;
   /** Derived: count of `*:failed` events in the last 24 hours. */
   errors24h: number;
+  /**
+   * Inject a synthetic event into the local buffer. Used by the
+   * "Send a test event" affordance to verify the rendering pipeline
+   * end-to-end without needing a real channel. The event is local to
+   * this client only — no broadcast.
+   */
+  pushSynthetic: (name: EventName, payload: unknown) => void;
 }
 
 const DEFAULT_BUFFER_SIZE = 200;
@@ -242,6 +249,11 @@ export function useRealtimeEvents(
     return n;
   }, [events]);
 
+  const pushSynthetic = useCallback(
+    (name: EventName, payload: unknown) => append(name, payload),
+    [append],
+  );
+
   return {
     events,
     status,
@@ -251,5 +263,6 @@ export function useRealtimeEvents(
     agentStatuses,
     eventsPerMinute,
     errors24h,
+    pushSynthetic,
   };
 }

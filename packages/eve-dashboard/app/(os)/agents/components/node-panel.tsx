@@ -56,7 +56,8 @@ export function NodePanel({
     <aside
       className="
         absolute inset-y-0 right-0 z-30 flex w-full max-w-[360px] flex-col
-        bg-foreground/[0.06] border-l border-foreground/[0.08]
+        bg-content1/95 border-l border-foreground/[0.10]
+        shadow-[-12px_0_24px_-12px_rgba(0,0,0,0.45)]
         backdrop-blur-pane
         animate-pane-content-in
       "

@@ -30,7 +30,6 @@ import { useEffect, useState } from "react";
 import { Card, CardBody } from "@heroui/react";
 import { Sparkles } from "lucide-react";
 import { useStats } from "../hooks/use-stats";
-import { MARKETPLACE_URL } from "../lib/marketplace-url";
 
 export interface GreetingRowProps {
   firstName?: string | null;
@@ -120,8 +119,7 @@ export function GreetingRow({ firstName }: GreetingRowProps) {
           label="Updates"
           value={stats.updatesAvailable}
           accent={ACCENT.updates}
-          href={MARKETPLACE_URL}
-          external
+          href="/marketplace"
           isLoading={isLoading}
         />
       </div>
