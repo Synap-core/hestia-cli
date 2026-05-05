@@ -294,7 +294,9 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
   const block = [
     marker,
     `SYNAP_API_KEY=${synapApiKey}`,
-    `SYNAP_IS_URL=http://intelligence-hub:3001`,
+    // synap-backend (eve-brain-synap:4000) hosts /v1/chat/completions + /v1/models.
+    // intelligence-hub (port 3001) is internal IS — it has no /v1 endpoints.
+    `SYNAP_IS_URL=http://eve-brain-synap:4000`,
     ...(preferredModel ? [`DEFAULT_MODELS=${preferredModel}`] : []),
   ].join('\n');
 
