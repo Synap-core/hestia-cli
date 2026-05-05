@@ -89,6 +89,7 @@ export function CpAuthBanner({
 function SignedOutBanner({ onSignIn }: { onSignIn?: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [isDeviceFlowOpen, setIsDeviceFlowOpen] = useState(false);
 
   const handleClick = async () => {
     setError(null);
@@ -98,9 +99,14 @@ function SignedOutBanner({ onSignIn }: { onSignIn?: () => void }) {
         onSignIn();
         return;
       }
+      // Pick PKCE for loopback Eve, device flow for everything else.
+      const method = resolveAuthMethod();
+      if (method === "device-flow") {
+        setIsDeviceFlowOpen(true);
+        setPending(false);
+        return;
+      }
       await initiateCpOAuth();
-      // If the redirect didn't fire within ~1.5s, something silently
-      // failed (DNS, CORS, etc.). Surface a hint so the user knows.
       window.setTimeout(() => {
         if (document.visibilityState !== "hidden") {
           setError("Couldn't reach Synap. Check your network or CP URL.");
@@ -114,6 +120,7 @@ function SignedOutBanner({ onSignIn }: { onSignIn?: () => void }) {
   };
 
   return (
+    <>
     <Card
       isBlurred
       shadow="none"
@@ -154,5 +161,16 @@ function SignedOutBanner({ onSignIn }: { onSignIn?: () => void }) {
         </Button>
       </CardBody>
     </Card>
+    <DeviceFlowModal
+      isOpen={isDeviceFlowOpen}
+      onClose={() => setIsDeviceFlowOpen(false)}
+      onApproved={() => {
+        // The token is on disk now; the parent component owns the
+        // refetch (it passes `onRetry`). We don't need to do anything
+        // here — the next mount cycle picks up the new token.
+        setIsDeviceFlowOpen(false);
+      }}
+    />
+    </>
   );
 }

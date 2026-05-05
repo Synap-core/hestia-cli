@@ -71,8 +71,8 @@ export async function POST() {
   const handle = crypto.randomBytes(16).toString("base64url");
   const expiresAt = Date.now() + body.expires_in * 1000;
 
-  const secrets = (await readEveSecrets()) ?? {};
-  const existing = secrets.cp?.deviceFlow ?? {};
+  const secrets = await readEveSecrets();
+  const existing = secrets?.cp?.deviceFlow ?? {};
   await writeEveSecrets({
     cp: {
       deviceFlow: {

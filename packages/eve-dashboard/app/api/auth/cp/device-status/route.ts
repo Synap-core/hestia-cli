@@ -54,8 +54,8 @@ export async function POST(req: Request) {
   }
 
   const handle = parsed.data.handle;
-  const secrets = (await readEveSecrets()) ?? {};
-  const flow = secrets.cp?.deviceFlow?.[handle];
+  const secrets = await readEveSecrets();
+  const flow = secrets?.cp?.deviceFlow?.[handle];
   if (!flow) {
     return NextResponse.json(
       { status: "expired", message: "Unknown handle — restart sign-in." },
@@ -155,8 +155,8 @@ export async function POST(req: Request) {
 }
 
 async function clearHandle(handle: string) {
-  const secrets = (await readEveSecrets()) ?? {};
-  const flows = { ...(secrets.cp?.deviceFlow ?? {}) };
+  const secrets = await readEveSecrets();
+  const flows = { ...(secrets?.cp?.deviceFlow ?? {}) };
   delete flows[handle];
   await writeEveSecrets({
     cp: { deviceFlow: flows },

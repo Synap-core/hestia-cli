@@ -216,27 +216,3 @@ export async function startDeviceFlow(
   return controller;
 }
 
-// ─── One-shot kick-off helper for the Sign-in button ─────────────────────────
-
-/**
- * High-level entry point. Returns whether to show a device-flow modal
- * (with the user_code) or whether the page is about to navigate away
- * (PKCE redirect). The caller decides what UI to render.
- */
-export async function initiateCpAuth(): Promise<
-  | { kind: "pkce-navigated" }
-  | { kind: "device-flow"; controller: DeviceFlowController }
-> {
-  const method = resolveAuthMethod();
-  if (method === "pkce-redirect") {
-    await initiateCpOAuth();
-    return { kind: "pkce-navigated" };
-  }
-
-  // Caller handles the modal; we return the controller so they can read
-  // state updates by passing in their own onState callback. We expose
-  // the convenience function below so callers can stay terse.
-  throw new Error(
-    "Use startDeviceFlow() directly when device-flow is the chosen method",
-  );
-}
