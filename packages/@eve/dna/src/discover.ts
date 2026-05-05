@@ -97,15 +97,17 @@ function probeEnvFiles(): {
       const publicUrl = env["PUBLIC_URL"]?.trim();
       const token = env["PROVISIONING_TOKEN"]?.trim();
 
-      let synapUrl: string | undefined;
-      if (publicUrl) {
-        synapUrl = publicUrl.replace(/\/$/, "");
-      } else if (domain) {
-        // Assume HTTPS (Traefik terminates TLS on all Eve deployments).
-        synapUrl = `https://${domain}`;
-      }
+      // Only set synapUrl from PUBLIC_URL (an explicit full URL). When only
+      // DOMAIN is known we do NOT build a synapUrl — the bare DOMAIN value
+      // lacks the "pod." subdomain prefix that Traefik uses for routing. The
+      // correct derived URL is `https://pod.${domain}`, which `resolveSynapUrl`
+      // already knows how to derive from `domain.primary`. Writing a wrong URL
+      // to secrets.synap.apiUrl here caused persistent 404s: the stored URL
+      // bypassed the loopback probe in `resolveSynapUrlOnHost` and then hit
+      // Traefik on a path with no route.
+      const synapUrl = publicUrl ? publicUrl.replace(/\/$/, "") : undefined;
 
-      if (synapUrl || token) {
+      if (synapUrl || domain || token) {
         return {
           domain: domain || (synapUrl ? new URL(synapUrl).hostname : undefined),
           synapUrl,
@@ -120,22 +122,18 @@ function probeEnvFiles(): {
   return {};
 }
 
-function probeTraefikConfig(): { domain?: string; synapUrl?: string; source?: string } {
+function probeTraefikConfig(): { domain?: string; source?: string } {
   if (!existsSync(TRAEFIK_DYNAMIC)) return {};
   try {
     const raw = readFileSync(TRAEFIK_DYNAMIC, "utf-8");
-    // Look for Host(`...`) patterns in the YAML text
+    // Look for Host(`pod.<domain>`) patterns — the backend service rule
     const matches = raw.match(/Host\(`[^`]+`\)/g) ?? [];
     for (const rule of matches) {
-      const domain = extractHostFromTraefikRule(rule);
-      // Skip wildcard or internal rules
-      if (domain && !domain.startsWith("*.") && domain.includes(".")) {
-        return {
-          domain,
-          synapUrl: `https://${domain}`,
-          source: TRAEFIK_DYNAMIC,
-        };
-      }
+      const host = extractHostFromTraefikRule(rule);
+      if (!host || host.startsWith("*.") || !host.includes(".")) continue;
+      // Strip leading "pod." to get the bare domain stored in secrets.domain.primary
+      const domain = host.startsWith("pod.") ? host.slice(4) : host;
+      return { domain, source: TRAEFIK_DYNAMIC };
     }
   } catch {
     // Ignore
@@ -174,9 +172,10 @@ function probeDockerInspect(): {
       const domain = envMap["DOMAIN"]?.trim();
       const publicUrl = envMap["PUBLIC_URL"]?.trim();
       const token = envMap["PROVISIONING_TOKEN"]?.trim();
-      let synapUrl = publicUrl?.replace(/\/$/, "") ||
-        (domain ? `https://${domain}` : undefined);
-      if (synapUrl || token) {
+      // Same rule as probeEnvFiles: only set synapUrl from PUBLIC_URL.
+      // DOMAIN alone doesn't carry the "pod." prefix needed for routing.
+      const synapUrl = publicUrl?.replace(/\/$/, "");
+      if (synapUrl || domain || token) {
         return {
           domain: domain || (synapUrl ? new URL(synapUrl).hostname : undefined),
           synapUrl,
@@ -212,32 +211,35 @@ export function discoverPodConfig(): DiscoveredPodConfig {
   let provisioningToken: string | undefined;
 
   const fromEnv = probeEnvFiles();
-  if (fromEnv.synapUrl || fromEnv.provisioningToken) {
+  if (fromEnv.synapUrl || fromEnv.domain || fromEnv.provisioningToken) {
     synapUrl = fromEnv.synapUrl;
     domain = fromEnv.domain;
     provisioningToken = fromEnv.provisioningToken;
-    sources.push(fromEnv.source!);
+    if (fromEnv.source) sources.push(fromEnv.source);
   }
 
-  if (!synapUrl) {
+  if (!domain) {
     const fromTraefik = probeTraefikConfig();
-    if (fromTraefik.synapUrl) {
-      synapUrl = fromTraefik.synapUrl;
-      domain = domain ?? fromTraefik.domain;
-      sources.push(fromTraefik.source!);
+    if (fromTraefik.domain) {
+      domain = fromTraefik.domain;
+      if (fromTraefik.source) sources.push(fromTraefik.source);
     }
   }
 
-  if (!synapUrl || !provisioningToken) {
+  if (!domain || !provisioningToken) {
     const fromDocker = probeDockerInspect();
     if (!synapUrl && fromDocker.synapUrl) {
       synapUrl = fromDocker.synapUrl;
-      domain = domain ?? fromDocker.domain;
-      sources.push(fromDocker.source!);
+    }
+    if (!domain && fromDocker.domain) {
+      domain = fromDocker.domain;
+    }
+    if (fromDocker.synapUrl || fromDocker.domain) {
+      if (fromDocker.source && !sources.includes(fromDocker.source)) sources.push(fromDocker.source);
     }
     if (!provisioningToken && fromDocker.provisioningToken) {
       provisioningToken = fromDocker.provisioningToken;
-      if (!sources.includes(fromDocker.source!)) sources.push(fromDocker.source!);
+      if (fromDocker.source && !sources.includes(fromDocker.source)) sources.push(fromDocker.source);
     }
   }
 

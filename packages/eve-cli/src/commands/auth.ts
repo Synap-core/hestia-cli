@@ -506,6 +506,8 @@ async function runProvision(opts: { agent?: string; email?: string }): Promise<v
       deployDir: process.cwd(),
       reason: 'manual-provision',
       runner: buildRunner(),
+      synapUrl,
+      provisioningToken,
     });
     if (result.provisioned) {
       spinner.succeed(`Provisioned ${opts.agent} (key prefix ${result.keyIdPrefix}…)`);
@@ -529,6 +531,8 @@ async function runProvision(opts: { agent?: string; email?: string }): Promise<v
     reason: 'manual-provision',
     skipIfPresent: true,
     runner: buildRunner(),
+    synapUrl,
+    provisioningToken,
   });
   spinner.succeed(`Walked ${results.length} agent${results.length === 1 ? '' : 's'}`);
 

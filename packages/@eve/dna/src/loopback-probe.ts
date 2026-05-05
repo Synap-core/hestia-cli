@@ -60,44 +60,48 @@ export function resetSynapLoopbackProbeCache(): void {
 /**
  * Resolve the URL the on-host CLI should hit for synap-backend.
  *
- * Decision order — note that an EXPLICIT non-loopback `apiUrl` wins
- * over the loopback probe, by design. If the user pointed Eve at a
- * specific remote pod (`apiUrl: "https://staging.pod.com"`), they
- * mean it. Probing loopback first would silently route the CLI to a
- * production-on-the-same-host instance and the user wouldn't know
- * until they noticed the wrong pod's data shifting underneath them.
+ * Decision order:
  *
- *   1. **Stored non-loopback `apiUrl`** — user explicitly opted into
- *      a specific URL. Honor it. (Same first-rule as `resolveSynapUrl`.)
+ *   1. **Loopback is reachable** → `http://127.0.0.1:4000`. This is the
+ *      common path for "Eve CLI running on the pod host." Bypasses Traefik
+ *      entirely — no DNS, no cert, sub-millisecond. Works before DNS is
+ *      configured, works when split-DNS is in play, immune to Traefik
+ *      routing mismatches that return phantom 404s.
  *
- *   2. **Loopback is reachable** → `http://127.0.0.1:4000`. Bypasses
- *      Traefik entirely. Works before any DNS or cert is configured.
- *      This is the common path for "Eve CLI on the pod host."
+ *   2. **Stored non-loopback `apiUrl`** — user explicitly pointed Eve at a
+ *      specific URL. Honor it only when loopback isn't available (off-host
+ *      laptop, loopback override not yet in place).
  *
  *   3. **Fall through to `resolveSynapUrl`** → public Traefik URL via
- *      `domain.primary`, then stored loopback, then hardcoded loopback.
+ *      `domain.primary` (`https://pod.<domain>`), then stored loopback.
+ *
+ * Why loopback wins: we had a long-standing bug where a stored non-loopback
+ * URL (auto-written by preflight discovery) caused all on-host CLI calls to
+ * go through Traefik, which returned 404 for routes it doesn't understand.
+ * The loopback port is always the correct transport on the pod host — nothing
+ * else listens on :4000 in a production install. See the big comment in
+ * `synap-overrides.ts` for the full history.
  *
  * This is the function CLI runtime callers should use. `resolveSynapUrl`
- * stays pure (no I/O) for embedding URLs into other containers' .env
- * files — those containers reach the backend via Docker DNS on
- * `eve-network`, not via host loopback, and don't want this probe.
+ * stays pure (no I/O) for embedding URLs into other containers' .env files.
  */
 export async function resolveSynapUrlOnHost(
   secrets: { synap?: { apiUrl?: string }; domain?: { primary?: string; ssl?: boolean } } | null | undefined,
 ): Promise<string> {
-  // Step 1: explicit non-loopback wins. Users with `apiUrl` set to a
-  // remote pod don't want us silently rerouting to the local one.
-  const stored = secrets?.synap?.apiUrl?.trim();
-  if (stored && !isLoopbackUrl(stored)) return stored;
-
-  // Step 2: probe the Eve-published loopback. Sub-millisecond when
-  // bound, immediate ECONNREFUSED when not — cost is negligible.
+  // Step 1: probe the Eve-published loopback. Sub-millisecond when bound,
+  // immediate ECONNREFUSED when not. On the pod host this is ALWAYS the
+  // preferred transport.
   if (await isSynapLoopbackReachable()) {
     return `http://127.0.0.1:${SYNAP_HOST_LOOPBACK_PORT}`;
   }
 
+  // Step 2: explicit non-loopback stored URL. Only reached when loopback
+  // isn't bound (override not yet applied, or running off-host).
+  const stored = secrets?.synap?.apiUrl?.trim();
+  if (stored && !isLoopbackUrl(stored)) return stored;
+
   // Step 3: fall through to the pure resolver (public URL via domain,
-  // or stored loopback, or hardcoded fallback).
+  // or stored loopback, or empty string).
   return resolveSynapUrl(secrets);
 }
 

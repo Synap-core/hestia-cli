@@ -516,7 +516,11 @@ export async function provisionAgent(opts: ProvisionAgentOptions): Promise<Provi
     return {
       provisioned: false,
       agentType,
-      reason: "POST /api/hub/setup/agent not available — backend version too old. Run `eve update synap`.",
+      reason:
+        `POST ${url} returned 404. ` +
+        "Either the backend image is outdated (run `eve update synap`) or " +
+        "Traefik is returning 404 because the loopback port isn't bound. " +
+        "Check: `ss -tlnp | grep 4000` on the pod host, then `eve doctor`.",
     };
   }
   if (res.status < 200 || res.status >= 300) {
@@ -597,6 +601,10 @@ export async function provisionAllAgents(opts: {
   deployDir?: string;
   reason?: string;
   runner?: IDoctorRunner;
+  /** Pre-resolved pod URL — pass the value from runBackendPreflight to avoid re-resolving. */
+  synapUrl?: string;
+  /** Pre-resolved PROVISIONING_TOKEN — pass the value from runBackendPreflight. */
+  provisioningToken?: string;
   /** Skip an agent if its key already exists. Defaults to true. */
   skipIfPresent?: boolean;
 }): Promise<ProvisionResult[]> {
@@ -623,6 +631,8 @@ export async function provisionAllAgents(opts: {
       deployDir: cwd,
       reason: opts.reason ?? "provision-all",
       runner: opts.runner,
+      synapUrl: opts.synapUrl,
+      provisioningToken: opts.provisioningToken,
     });
     results.push(result);
   }
