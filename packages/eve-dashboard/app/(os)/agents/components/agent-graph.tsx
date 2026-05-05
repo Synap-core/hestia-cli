@@ -128,8 +128,8 @@ function AgentGraphCanvas({
   }, [primaries, slots]);
 
   // ── Build nodes ────────────────────────────────────────────────────────────
-  const nodes = useMemo<RFNode<AgentNodeData>[]>(() => {
-    const out: RFNode<AgentNodeData>[] = [];
+  const nodes = useMemo<AgentRFNode[]>(() => {
+    const out: AgentRFNode[] = [];
 
     for (const agent of allList) {
       const size = nodeSizeFor(agent);
