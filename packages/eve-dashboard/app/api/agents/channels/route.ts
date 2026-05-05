@@ -211,12 +211,19 @@ export async function GET(): Promise<NextResponse<ChannelRegistryResponse>> {
   const channels: UnifiedChannel[] = [];
   const errors: Partial<Record<ChannelKind, string>> = {};
 
-  // OpenClaw messaging — local; no network.
+  // OpenClaw messaging — local; no network. Resolve the active platform
+  // first so the error map gets keyed correctly when the load throws
+  // mid-config-read (Discord-active config error → errors.discord, not
+  // a hard-coded `errors.telegram`).
   try {
     const ch = await loadOpenclawMessaging();
     if (ch) channels.push(ch);
   } catch (e) {
-    errors.telegram = e instanceof Error ? e.message : "Unknown error";
+    const platform =
+      (await getMessagingConfig().catch(() => null))?.platform ?? null;
+    const kind = platform ? mapMessagingKind(platform) : null;
+    const fallbackKind: ChannelKind = kind ?? "telegram";
+    errors[fallbackKind] = e instanceof Error ? e.message : "Unknown error";
   }
 
   // WhatsApp — local; no network.

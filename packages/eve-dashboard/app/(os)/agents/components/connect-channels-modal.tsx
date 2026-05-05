@@ -215,7 +215,7 @@ function MessagingTokenForm({
     <div className="space-y-4 pt-4">
       <header>
         <h3 className="text-[14px] font-medium text-foreground">{help.title}</h3>
-        <p className="mt-1 text-[12.5px] text-foreground/60">
+        <p className="mt-1 text-[12.5px] text-foreground/65">
           {help.body}{" "}
           <a
             href={helperLink}
@@ -418,7 +418,7 @@ function WhatsAppForm() {
     <div className="space-y-4 pt-4">
       <header>
         <h3 className="text-[14px] font-medium text-foreground">Connect WhatsApp</h3>
-        <p className="mt-1 text-[12.5px] text-foreground/60">
+        <p className="mt-1 text-[12.5px] text-foreground/65">
           Scan a QR code from your phone to link Eve to your personal WhatsApp via a Web session.
           Keep your phone online — the link breaks if it's offline more than 14 days.
         </p>

@@ -21,10 +21,11 @@
 
 import { Button, Chip, Spinner } from "@heroui/react";
 import {
-  AlertTriangle, Check, MessageSquare, Send, Smartphone, Plug,
-  Brain, Bot, Globe,
+  AlertTriangle, MessageSquare, Send, Smartphone, Plug,
+  Brain, Bot,
   type LucideIcon,
 } from "lucide-react";
+import { brandColorFor } from "../../lib/brand-colors";
 import type {
   ChannelKind,
   ChannelOpenTarget,
@@ -41,14 +42,19 @@ const KIND_GLYPH: Record<ChannelKind, LucideIcon> = {
   a2a:      Bot,
 };
 
+// Platform-brand identity colors. These are EXTERNALLY-DICTATED brand
+// tokens (Telegram blue, WhatsApp green, etc.) — they don't belong in
+// our brand-colors.ts which owns Synap-internal app palettes. Kept
+// inline here, with the synap + a2a entries delegating to the central
+// registry so OUR brand colors stay single-source.
 const KIND_ACCENT: Record<ChannelKind, string> = {
-  telegram: "#26A5E4", // Telegram brand
-  discord:  "#5865F2", // Discord blurple
-  whatsapp: "#25D366", // WhatsApp green
-  signal:   "#3A76F0", // Signal blue
-  matrix:   "#0DBD8B", // Matrix green
-  synap:    "#34D399", // Eve emerald
-  a2a:      "#A78BFA", // OpenClaw violet (A2A flows through OpenClaw too)
+  telegram: "#26A5E4",
+  discord:  "#5865F2",
+  whatsapp: "#25D366",
+  signal:   "#3A76F0",
+  matrix:   "#0DBD8B",
+  synap:    brandColorFor("synap").accent,
+  a2a:      brandColorFor("openclaw").accent, // A2A pipes route through OpenClaw
 };
 
 export interface ChannelStripProps {

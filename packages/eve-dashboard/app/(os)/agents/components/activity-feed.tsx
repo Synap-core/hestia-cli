@@ -43,6 +43,7 @@ import {
   originatorOfEvent,
   primaryAgents,
 } from "../lib/agent-registry";
+import { fallbackBrandColor } from "../../lib/brand-colors";
 
 // ─── Per-event presentation ─────────────────────────────────────────────────
 
@@ -249,7 +250,7 @@ function ActivityRow({
 }) {
   const id = originatorOfEvent(event.name);
   const agent = getAgent(id);
-  const accent = agent ? brandFor(agent).accent : "#9ca3af";
+  const accent = agent ? brandFor(agent).accent : fallbackBrandColor(id).accent;
   const Glyph = EVENT_GLYPH[event.name as EventName] ?? MessageSquare;
   const label = EVENT_LABEL[event.name as EventName] ?? event.name;
   const isFailure = event.name.endsWith(":failed");

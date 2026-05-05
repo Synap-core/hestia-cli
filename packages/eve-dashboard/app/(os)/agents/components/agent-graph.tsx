@@ -20,6 +20,7 @@ import {
   primaryAgents, slotToPoint, subagentsOf,
   type AgentId, type AgentMeta, type AgentStatusSnapshot, type Point,
 } from "../lib/agent-registry";
+import { fallbackBrandColor } from "../../lib/brand-colors";
 import type { AgentEvent } from "../lib/event-types";
 import type { UnifiedChannel } from "../lib/channel-types";
 
@@ -95,6 +96,7 @@ export function AgentGraph({
   // never replay old events. Cap concurrent pulses; drop oldest beyond cap.
   const lastSeenRef = useRef<string | null>(null);
   const pulseSeq = useRef(0);
+  const pulseTimers = useRef<Set<number>>(new Set());
   const [pulses, setPulses] = useState<Pulse[]>([]);
 
   useEffect(() => {
@@ -118,12 +120,23 @@ export function AgentGraph({
         const next = [...prev, { id, from: lane.from, to: lane.to, color }];
         return next.length > PULSE_CAP ? next.slice(next.length - PULSE_CAP) : next;
       });
-      window.setTimeout(
-        () => setPulses((prev) => prev.filter((p) => p.id !== id)),
-        PULSE_MS + 50,
-      );
+      const timer = window.setTimeout(() => {
+        pulseTimers.current.delete(timer);
+        setPulses((prev) => prev.filter((p) => p.id !== id));
+      }, PULSE_MS + 50);
+      pulseTimers.current.add(timer);
     }
   }, [events]);
+
+  // Clear any pending pulse-removal timers on unmount so we don't call
+  // setPulses on a torn-down component (React 19 still warns).
+  useEffect(() => {
+    const timers = pulseTimers.current;
+    return () => {
+      for (const t of timers) window.clearTimeout(t);
+      timers.clear();
+    };
+  }, []);
 
   // Ephemeral highlight (activity feed → graph). Decays after 1.5s.
   const [decayingHighlight, setDecayingHighlight] = useState<string | null>(null);
@@ -168,7 +181,9 @@ export function AgentGraph({
           out.push({
             id: `a2a--${key}`, from: a, to: b,
             d: `M ${pa.x} ${pa.y} Q ${cx} ${cy} ${pb.x} ${pb.y}`,
-            accent: fromAgent ? brandFor(fromAgent).accent : "#94A3B8",
+            accent: fromAgent
+              ? brandFor(fromAgent).accent
+              : fallbackBrandColor(a).accent,
           });
         }
       }
@@ -331,7 +346,12 @@ function NodeView({
   const recent = status?.recent60s ?? 0;
   const recentLabel = recent > 0 ? `${recent}/min` : "idle";
   const ringRadius = half + 4;
-  const ringColor = ringStatus === "error" ? "#F87171" : palette.accent;
+  // Theme-aware error color: HeroUI exposes `--heroui-danger` as HSL parts
+  // so dark/light flips just work. Active state uses the agent's brand accent.
+  const ringColor =
+    ringStatus === "error"
+      ? "hsl(var(--heroui-danger))"
+      : palette.accent;
   const showRing = ringStatus === "active" || ringStatus === "error";
 
   return (
@@ -348,6 +368,13 @@ function NodeView({
       onClick={onClick}
       onMouseEnter={onHoverStart}
       onMouseLeave={onHoverEnd}
+      onKeyDown={(e) => {
+        // SVG `<g role="button">` doesn't trigger click on Enter/Space natively.
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
       role="button"
       tabIndex={visible ? 0 : -1}
       aria-label={`${agent.label} — ${agent.description}`}

@@ -71,6 +71,10 @@ export default function AgentsPage() {
   // lands — e.g. user just connected Telegram → next OpenClaw event
   // tells us the channel is live. This keeps the strip honest without
   // a 1s poll.
+  //
+  // The hook intentionally watches `events.length` rather than `events`
+  // itself (no need to re-fire on every individual rerender of the same
+  // array). `refreshChannels` is stable from useCallback.
   useEffect(() => {
     if (events.length === 0) return;
     const newest = events[0];
@@ -80,8 +84,7 @@ export default function AgentsPage() {
     ) {
       refreshChannels();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [events.length]);
+  }, [events, refreshChannels]);
 
   // Auto-clear highlighted lane after 1.5s.
   useEffect(() => {
