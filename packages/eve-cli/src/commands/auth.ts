@@ -28,6 +28,7 @@
 
 import { Command } from 'commander';
 import {
+  checkNeedsAdmin,
   ensurePodProvisioningToken,
   getAuthStatus,
   provisionAgent,
@@ -58,6 +59,7 @@ import {
   printWarning,
   createSpinner,
 } from '../lib/ui.js';
+import { runSetupAdminInline } from './setup-admin.js';
 
 // ---------------------------------------------------------------------------
 // Resolve pod URL + per-agent key
@@ -436,10 +438,42 @@ async function runRenewAll(): Promise<void> {
 // `eve auth provision` — mint missing agent keys
 // ---------------------------------------------------------------------------
 
-async function runProvision(opts: { agent?: string }): Promise<void> {
+async function runProvision(opts: { agent?: string; email?: string }): Promise<void> {
   console.log();
   printHeader('Synap auth provision');
   console.log();
+
+  // Check if the pod has a first admin yet. If not, run setup-admin first
+  // so provision has a workspace to work with.
+  const secrets = await readEveSecrets(process.cwd());
+  const synapUrl = await resolveSynapUrlOnHost(secrets);
+
+  if (synapUrl) {
+    const needsSetup = await checkNeedsAdmin(synapUrl);
+    if (needsSetup) {
+      printWarning('No admin account found on this pod.');
+      printInfo('Running first-admin setup before provisioning agent keys…');
+      console.log();
+
+      const provisioningToken =
+        process.env.EVE_PROVISIONING_TOKEN?.trim() ||
+        process.env.PROVISIONING_TOKEN?.trim() ||
+        '';
+
+      if (!provisioningToken) {
+        printError('PROVISIONING_TOKEN not found — cannot create first admin automatically.');
+        printInfo(
+          '  Run `eve setup admin` manually, then retry `eve auth provision`.',
+        );
+        process.exitCode = 1;
+        return;
+      }
+
+      const mode = opts.email ? 'prompt' : 'magic-link';
+      await runSetupAdminInline({ synapUrl, provisioningToken, mode, email: opts.email });
+      console.log();
+    }
+  }
 
   if (opts.agent) {
     const targeted = resolveAgent(opts.agent);
@@ -580,10 +614,15 @@ export function authCommand(program: Command): void {
     .command('provision')
     .description(
       'Mint missing agent keys for every installed component (and the always-on eve agent). ' +
-        'Idempotent — skips agents that already have a key.',
+        'Idempotent — skips agents that already have a key. ' +
+        'If no admin account exists yet, runs first-admin setup automatically.',
     )
     .option('--agent <slug>', 'Provision a specific agent only.')
-    .action(async (opts: { agent?: string }) => {
+    .option(
+      '--email <email>',
+      'Admin email for first-admin setup (prompt mode). Omit to use magic-link mode.',
+    )
+    .action(async (opts: { agent?: string; email?: string }) => {
       try {
         await runProvision(opts);
       } catch (err) {

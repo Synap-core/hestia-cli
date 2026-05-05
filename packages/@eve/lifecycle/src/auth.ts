@@ -1197,3 +1197,132 @@ function computeAgeDays(createdAt: string): number {
   if (ms <= 0) return 0;
   return Math.floor(ms / (1000 * 60 * 60 * 24));
 }
+
+// ---------------------------------------------------------------------------
+// First-admin setup helpers
+// ---------------------------------------------------------------------------
+
+export interface FirstAdminOptions {
+  synapUrl: string;
+  provisioningToken: string;
+  mode: "prompt" | "magic-link";
+  /** For prompt mode — must be non-empty */
+  email?: string;
+  password?: string;
+  name?: string;
+}
+
+/**
+ * Check whether the pod still needs a first admin.
+ * Returns true when no human users exist (needsSetup === true).
+ * Returns false on any error so callers don't block on a temporarily
+ * unreachable backend.
+ */
+export async function checkNeedsAdmin(synapUrl: string): Promise<boolean> {
+  const url = `${synapUrl.replace(/\/+$/, "")}/api/hub/setup/status`;
+  try {
+    const runner = new FetchRunner();
+    const res = await runner.httpGet(url, { Accept: "application/json" }, { timeoutMs: 6_000 });
+    if (res.status < 200 || res.status >= 300) return false;
+    const parsed = tryJson(res.body);
+    if (!parsed || typeof parsed !== "object") return false;
+    const obj = parsed as Record<string, unknown>;
+    return obj.needsSetup === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Create the first admin on the pod.
+ *
+ * - "prompt" mode: POST /api/hub/setup/first-admin directly with email + password.
+ * - "magic-link" mode:
+ *   1. POST /api/hub/setup/magic-link → get { token, url }
+ *   2. Print the URL (caller should display it to the user)
+ *   3. Poll GET /api/hub/setup/status every 3 s for up to 5 minutes
+ *   4. When hasAdmin becomes true, resolve.
+ *
+ * Returns { userId, workspaceId } on success, or null on failure.
+ * For magic-link mode, userId/workspaceId are empty strings (unknown
+ * at poll time — caller resolves them from provision).
+ */
+export async function createFirstAdmin(
+  opts: FirstAdminOptions
+): Promise<{ userId: string; workspaceId: string } | null> {
+  const base = opts.synapUrl.replace(/\/+$/, "");
+  const runner = new FetchRunner();
+
+  if (opts.mode === "prompt") {
+    const email = opts.email?.trim() ?? "";
+    const password = opts.password ?? "";
+    if (!email || !password) return null;
+
+    const body = JSON.stringify({
+      email,
+      password,
+      name: opts.name?.trim() || undefined,
+    });
+    const res = await runner.httpPost(
+      `${base}/api/hub/setup/first-admin`,
+      {
+        Authorization: `Bearer ${opts.provisioningToken}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body,
+      { timeoutMs: 15_000 }
+    );
+
+    if (res.status < 200 || res.status >= 300) return null;
+    const parsed = tryJson(res.body);
+    if (!parsed || typeof parsed !== "object") return null;
+    const obj = parsed as Record<string, unknown>;
+    return {
+      userId: stringOr(obj.userId, ""),
+      workspaceId: stringOr(obj.workspaceId, ""),
+    };
+  }
+
+  // magic-link mode
+  const mlRes = await runner.httpPost(
+    `${base}/api/hub/setup/magic-link`,
+    {
+      Authorization: `Bearer ${opts.provisioningToken}`,
+      Accept: "application/json",
+    },
+    "",
+    { timeoutMs: 10_000 }
+  );
+
+  if (mlRes.status < 200 || mlRes.status >= 300) return null;
+  const mlParsed = tryJson(mlRes.body);
+  if (!mlParsed || typeof mlParsed !== "object") return null;
+  const mlObj = mlParsed as Record<string, unknown>;
+  const setupUrl = stringOr(mlObj.url, "");
+
+  // Caller uses the URL — we expose it via a callback or just return it.
+  // We print it here since this is the lifecycle layer.
+  if (setupUrl) {
+    console.log();
+    console.log(`  Setup URL: ${setupUrl}`);
+    console.log(`  Open this link in your browser to create the first admin account.`);
+    console.log(`  The link expires in 1 hour.`);
+    console.log();
+  }
+
+  // Poll for up to 5 minutes
+  const deadline = Date.now() + 5 * 60 * 1_000;
+  const pollInterval = 3_000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, pollInterval));
+    const needs = await checkNeedsAdmin(opts.synapUrl);
+    // needs === false means admin now exists (hasAdmin = true)
+    if (!needs) {
+      return { userId: "", workspaceId: "" };
+    }
+  }
+
+  // Timeout — user never completed
+  return null;
+}

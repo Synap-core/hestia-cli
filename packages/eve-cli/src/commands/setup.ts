@@ -1,4 +1,5 @@
 import type { Command } from 'commander';
+import { setupAdminCommand } from './setup-admin.js';
 import { select, confirm, isCancel, text } from '@clack/prompts';
 import { homedir, tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
@@ -280,7 +281,7 @@ async function ensureSynapRepoForProfile(
 }
 
 export function setupCommand(program: Command): void {
-  program
+  const setupCmd = program
     .command('setup')
     .description('Three-path guided setup: Ollama+gateway, Synap Data Pod, or both (logical prompts)')
     .option('--profile <p>', 'inference_only | data_pod | full')
@@ -1133,4 +1134,7 @@ export function setupCommand(program: Command): void {
         process.exit(1);
       }
     });
+
+  // Sub-command: `eve setup admin`
+  setupAdminCommand(setupCmd);
 }
