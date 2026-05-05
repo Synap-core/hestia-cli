@@ -33,7 +33,13 @@ export async function refreshTraefikRoutes(cwd?: string): Promise<RefreshResult>
 
   try {
     const traefik = new TraefikService();
-    await traefik.configureSubdomains(domain, !!secrets?.domain?.ssl, secrets?.domain?.email, installedComponents);
+    await traefik.configureSubdomains(
+      domain,
+      !!secrets?.domain?.ssl,
+      secrets?.domain?.email,
+      installedComponents,
+      !!secrets?.domain?.behindProxy,
+    );
     return { refreshed: true, domain };
   } catch (err) {
     return {

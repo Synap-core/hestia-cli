@@ -209,6 +209,8 @@ const SecretsSchema = z.object({
       ssl: z.boolean().optional(),
       email: z.string().optional(),
       subdomains: z.record(z.string()).optional(),
+      /** When true, Traefik runs HTTP-only and an external proxy handles SSL. */
+      behindProxy: z.boolean().optional(),
     })
     .optional(),
 });

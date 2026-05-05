@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { TraefikService } from '../lib/traefik.js';
+import { writeEveSecrets, entityStateManager } from '@eve/dna';
 
 /** Register `eve legs domain <subcommand>` (set | status | unset) */
 export function domainCommand(program: Command): void {
@@ -11,25 +12,44 @@ export function domainCommand(program: Command): void {
     .command('set <domain>')
     .description('Set primary domain for Traefik routes')
     .option('--ssl', 'Enable SSL with Let\'s Encrypt')
-    .action(async (domainName: string, options: { ssl?: boolean }) => {
+    .option('--email <email>', 'ACME email for SSL certificate')
+    .option('--behind-proxy', 'HTTP-only mode: external proxy handles SSL (no port 443, no redirects)')
+    .action(async (domainName: string, options: { ssl?: boolean; email?: string; behindProxy?: boolean }) => {
       try {
         const traefik = new TraefikService();
 
+        if (options.behindProxy && options.ssl) {
+          console.error('--behind-proxy and --ssl are mutually exclusive. The external proxy handles SSL.');
+          process.exit(1);
+        }
+
+        let installedComponents: string[] = [];
+        try { installedComponents = await entityStateManager.getInstalledComponents(); } catch {}
+
         console.log(`Configuring domain: ${domainName}`);
-        await traefik.configureDomain(domainName);
-        console.log(`Domain configured: ${domainName}`);
 
-        if (options.ssl) {
-          console.log('Enabling SSL with Let\'s Encrypt...');
-          await traefik.enableSSL();
-          console.log('SSL enabled');
+        if (options.behindProxy) {
+          await traefik.enableProxyMode(domainName, installedComponents);
+          await writeEveSecrets(
+            { domain: { primary: domainName, ssl: false, behindProxy: true } },
+            process.cwd(),
+          );
+          console.log(`Domain configured: ${domainName} (behind-proxy, HTTP only)`);
+          console.log('External proxy must forward port 80 and handle SSL termination.');
+        } else {
+          await traefik.configureSubdomains(domainName, !!options.ssl, options.email, installedComponents, false);
+          await writeEveSecrets(
+            { domain: { primary: domainName, ssl: !!options.ssl, email: options.email, behindProxy: false } },
+            process.cwd(),
+          );
+          const protocol = options.ssl ? 'https' : 'http';
+          console.log(`Domain configured: ${domainName}${options.ssl ? ' (SSL)' : ''}`);
+          console.log('\nExample endpoints:');
+          for (const sub of ['pod', 'dashboard']) {
+            console.log(`  ${protocol}://${sub}.${domainName}`);
+          }
         }
 
-        const protocol = options.ssl ? 'https' : 'http';
-        console.log('\nEndpoints (example paths):');
-        for (const path of ['/brain', '/api']) {
-          console.log(`  ${protocol}://${domainName}${path}`);
-        }
       } catch (error) {
         console.error('Domain configuration failed:', error instanceof Error ? error.message : error);
         process.exit(1);
