@@ -7,22 +7,19 @@
  * this to feel like empty real estate, not a launcher tile) — just a
  * frosted pill with a soft inner stroke and a centered `+` glyph.
  *
- * Phase 2: external CP marketplace URL in a new tab.
- * Phase 4: in-OS `/marketplace` route.
+ * Routes to the in-OS marketplace. The landing-page catalog is still
+ * accessible via the public synap.live/marketplace URL for SEO /
+ * sharing, but this button keeps the user inside Eve.
  */
 
+import Link from "next/link";
 import { Plus } from "lucide-react";
-import { MARKETPLACE_URL } from "../lib/marketplace-url";
 
 export function AddAppButton() {
-  const marketplaceUrl = MARKETPLACE_URL;
-
   return (
-    <a
-      href={marketplaceUrl}
-      target="_blank"
-      rel="noreferrer"
-      aria-label="Add app from marketplace"
+    <Link
+      href="/marketplace"
+      aria-label="Open marketplace"
       title="Marketplace"
       className="
         group inline-flex h-10 w-10 shrink-0 items-center justify-center
@@ -37,6 +34,6 @@ export function AddAppButton() {
       "
     >
       <Plus className="h-5 w-5" strokeWidth={2.2} aria-hidden />
-    </a>
+    </Link>
   );
 }
