@@ -1306,7 +1306,10 @@ export async function createFirstAdmin(
   const mlParsed = tryJson(mlRes.body);
   if (!mlParsed || typeof mlParsed !== "object") return null;
   const mlObj = mlParsed as Record<string, unknown>;
-  const setupUrl = stringOr(mlObj.url, "");
+  const mlToken = stringOr(mlObj.token, "");
+  // Build the URL from the CLI's known synapUrl rather than trusting the
+  // backend's PUBLIC_URL (which is often localhost:4000 on self-hosted installs).
+  const setupUrl = mlToken ? `${base}/setup?token=${mlToken}` : stringOr(mlObj.url, "");
 
   // Caller uses the URL — we expose it via a callback or just return it.
   // We print it here since this is the lifecycle layer.
