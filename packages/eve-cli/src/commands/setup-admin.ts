@@ -121,6 +121,8 @@ export interface SetupAdminInlineOptions {
   provisioningToken: string;
   mode: 'prompt' | 'magic-link';
   email?: string;
+  /** Public-facing URL for magic-link display (e.g. https://pod.example.com). */
+  publicUrl?: string;
 }
 
 /**
@@ -178,6 +180,7 @@ export async function runSetupAdminInline(opts: SetupAdminInlineOptions): Promis
       synapUrl: opts.synapUrl,
       provisioningToken: opts.provisioningToken,
       mode: 'magic-link',
+      publicUrl: opts.publicUrl,
     });
     pollSpinner.start();
     if (!result) {
@@ -197,6 +200,8 @@ async function runSetupAdmin(opts: SetupAdminOptions): Promise<void> {
 
   const secrets = await readEveSecrets(process.cwd());
   const synapUrl = await resolveSynapUrlOnHost(secrets);
+  const domain = secrets?.domain?.primary;
+  const publicUrl = domain ? `https://${domain}` : undefined;
 
   if (!synapUrl) {
     printError('Pod URL not configured. Run `eve install` first.');
@@ -322,6 +327,7 @@ async function runSetupAdmin(opts: SetupAdminOptions): Promise<void> {
       synapUrl,
       provisioningToken,
       mode: 'magic-link',
+      publicUrl,
     });
 
     // createFirstAdmin prints the URL before it starts polling

@@ -80,12 +80,13 @@ export class DockerComposeGenerator {
   }
 
   /**
-   * Add all brain services: synap, ollama, postgres, redis
+   * Add all brain services: postgres, redis, kratos-migrate, kratos, ollama, synap
    */
   addBrainServices(): void {
-    const brainServices: BrainService[] = ['postgres', 'redis', 'ollama', 'synap'];
-    
-    // Add in dependency order (databases first)
+    // Dependency order: databases → kratos-migrate → kratos → app
+    const brainServices: BrainService[] = [
+      'postgres', 'redis', 'kratos-migrate', 'kratos', 'ollama', 'synap',
+    ];
     for (const service of brainServices) {
       this.addService(service);
     }

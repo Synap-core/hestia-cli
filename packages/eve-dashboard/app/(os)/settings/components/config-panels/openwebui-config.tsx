@@ -223,10 +223,13 @@ export function OpenwebuiConfigPanel() {
                 rel="noopener noreferrer"
                 className="font-mono text-xs text-primary hover:underline"
               >
-                /api/hub/events/stream
+                {`${synapUrl}/api/hub/events/stream`}
               </a>
             ) : (
-              <code className="font-mono text-xs">/api/hub/events/stream</code>
+              <span className="text-default-500">
+                <code className="font-mono text-xs">{`<podUrl>/api/hub/events/stream`}</code>
+                {" "}(configure Synap pod URL to get a direct link).
+              </span>
             )}
             {" "}for SSE consumers (live entity / channel updates).
           </li>

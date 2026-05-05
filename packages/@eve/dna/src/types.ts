@@ -79,7 +79,7 @@ export interface OrganConfig {
 // =============================================================================
 
 /** Available services organized by organ */
-export type BrainService = 'synap' | 'ollama' | 'postgres' | 'redis';
+export type BrainService = 'synap' | 'ollama' | 'postgres' | 'redis' | 'kratos' | 'kratos-migrate';
 export type ArmsService = 'openclaw';
 export type BuilderService = 'opencode' | 'openclaude' | 'claudecode' | 'dokploy' | 'hermes';
 export type EyesService = 'rsshub';
@@ -93,6 +93,8 @@ export const SERVICE_TO_ORGAN: Record<Service, Organ> = {
   ollama: 'brain',
   postgres: 'brain',
   redis: 'brain',
+  kratos: 'brain',
+  'kratos-migrate': 'brain',
   openclaw: 'arms',
   opencode: 'builder',
   openclaude: 'builder',
@@ -194,6 +196,46 @@ export const SERVICE_REGISTRY: Record<Service, ServiceConfig> = {
       timeout: '5s',
       retries: 5,
     },
+  },
+  // Kratos — identity & session management (required for pod auth)
+  // Config dir is written by the install flow at $KRATOS_CONFIG_DIR.
+  'kratos-migrate': {
+    image: 'oryd/kratos:v1.3.1',
+    containerName: 'eve-brain-kratos-migrate',
+    environment: {
+      DSN: '${KRATOS_DSN}',
+    },
+    command: ['migrate', 'sql', '-e', '--yes'],
+    network: 'eve-network',
+    dependsOn: ['eve-brain-postgres'],
+  },
+  kratos: {
+    image: 'oryd/kratos:v1.3.1',
+    containerName: 'eve-brain-kratos',
+    environment: {
+      DSN: '${KRATOS_DSN}',
+      SECRETS_COOKIE: '${KRATOS_SECRETS_COOKIE}',
+      SECRETS_CIPHER: '${KRATOS_SECRETS_CIPHER}',
+      SERVE_PUBLIC_BASE_URL: 'https://${DOMAIN}/.ory/kratos/public/',
+      SERVE_ADMIN_BASE_URL: 'http://eve-brain-kratos:4434',
+      SELFSERVICE_DEFAULT_BROWSER_RETURN_URL: 'https://${DOMAIN}/admin/',
+      SELFSERVICE_ALLOWED_RETURN_URLS: 'https://${DOMAIN},https://${DOMAIN}/*',
+      IDENTITY_SCHEMAS_0_ID: 'default',
+      IDENTITY_SCHEMAS_0_URL: 'file:///etc/config/kratos/identity.schema.json',
+      KRATOS_WEBHOOK_SECRET: '${KRATOS_WEBHOOK_SECRET}',
+      COURIER_SMTP_CONNECTION_URI: '${SMTP_CONNECTION_URI:-smtp://localhost:1025/}',
+    },
+    volumes: ['${KRATOS_CONFIG_DIR}:/etc/config/kratos'],
+    command: ['serve', '-c', '/etc/config/kratos/kratos.yml', '--watch-courier'],
+    network: 'eve-network',
+    restart: 'unless-stopped',
+    healthCheck: {
+      command: 'wget -qO- http://localhost:4433/health/ready || exit 1',
+      interval: '10s',
+      timeout: '5s',
+      retries: 5,
+    },
+    dependsOn: ['eve-brain-kratos-migrate'],
   },
   // Arms Services
   openclaw: {

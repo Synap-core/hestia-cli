@@ -70,6 +70,13 @@ export { EntityStateManager, entityStateManager, migrateStateDirectory } from '.
 // Docker Compose Generator
 export { DockerComposeGenerator, createDockerComposeGenerator } from './docker-compose-generator.js';
 
+// Kratos config generation
+export {
+  generateKratosConfig,
+  parseKratosSecretsFromEnv,
+  type KratosSecrets,
+} from './kratos-config.js';
+
 // Setup profile (three-path Eve) + USB manifest + hardware facts
 export {
   type SetupProfile,

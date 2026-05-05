@@ -6,17 +6,23 @@
  * Two-channel rule: this page is operator-driven, so every pod call
  * goes through `/api/pod/trpc/*` (USER channel), never `/api/hub/*`.
  *
- *   • List:    GET  /api/pod/trpc/workspaces.list                (roster)
- *              GET  /api/pod/trpc/workspaces.listMembers         (per-ws)
- *   • Invite:  POST /api/pod/trpc/workspaces.createInvite
+ *   • Identity:    GET  /api/pod/trpc/users.me
+ *   • Roster:      GET  /api/pod/trpc/workspaces.listPodMembers
+ *                       (pod-wide, deduplicated by user, +primaryRole)
+ *   • Invites:     GET  /api/pod/trpc/workspaces.listAllInvites
+ *                  POST /api/pod/trpc/workspaces.createInvite
+ *                  POST /api/pod/trpc/workspaces.revokeInvite (= cancel)
+ *   • Member ops:  POST /api/pod/trpc/workspaces.updateMemberRole (per-ws)
+ *                  POST /api/pod/trpc/workspaces.removeFromPod (pod-wide)
  *
- * Roster simplification: the pod has no pod-wide `listPodMembers`
- * procedure yet. We render the first workspace's members as a stand-in;
- * for solo pods this matches the reality of the system. Multi-workspace
- * pods get a TODO surfaced in the page header.
+ * Pod-wide aggregation: `listPodMembers` returns a deduplicated roster
+ * with the highest role per user across the operator's accessible
+ * workspaces, plus the per-workspace memberships so we can render the
+ * "+ N more workspaces" affordance.
  *
- * The invite-link surface stays in this Eve UI — the pod doesn't email
- * invites yet, so the admin copies the URL and shares it manually.
+ * "Remove from pod" calls a single backend procedure that strips the
+ * target from every workspace the operator can manage. The backend
+ * enforces self-removal and last-owner guards.
  *
  * See: synap-team-docs/content/team/platform/eve-credentials.mdx §6
  */
@@ -26,19 +32,33 @@ import {
   Button,
   Card,
   Chip,
+  Dropdown,
+  DropdownItem,
+  DropdownMenu,
+  DropdownTrigger,
   Input,
+  Modal,
+  ModalBody,
+  ModalContent,
+  ModalFooter,
+  ModalHeader,
   Select,
   SelectItem,
   Spinner,
   addToast,
 } from "@heroui/react";
 import {
-  Users,
-  Mail,
-  Send,
-  Copy,
-  Check,
   AlertTriangle,
+  Check,
+  Copy,
+  Mail,
+  MoreHorizontal,
+  Send,
+  ShieldAlert,
+  Trash2,
+  UserCog,
+  UserMinus,
+  Users,
 } from "lucide-react";
 
 // ─── tRPC envelope helpers ───────────────────────────────────────────
@@ -57,7 +77,57 @@ function unwrapTrpc<T>(env: TrpcEnvelope<T> | null): T | null {
   return (data as T) ?? null;
 }
 
-// ─── Wire types (subset of pod responses) ─────────────────────────────
+async function podGet<T>(procedure: string, input: unknown = {}): Promise<T> {
+  const enc = encodeURIComponent(JSON.stringify({ json: input }));
+  const r = await fetch(`/api/pod/trpc/${procedure}?input=${enc}`, {
+    credentials: "include",
+    cache: "no-store",
+  });
+  if (!r.ok) {
+    const txt = await r.text().catch(() => "");
+    throw new Error(
+      txt && txt.length < 200 ? txt : `Pod returned ${r.status}`,
+    );
+  }
+  const env = (await r.json().catch(() => null)) as TrpcEnvelope<T> | null;
+  if (env?.error?.message) throw new Error(env.error.message);
+  const data = unwrapTrpc<T>(env);
+  if (data === null || data === undefined) {
+    throw new Error("Empty pod response");
+  }
+  return data;
+}
+
+async function podMutate<T>(procedure: string, input: unknown): Promise<T> {
+  const r = await fetch(`/api/pod/trpc/${procedure}`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ json: input }),
+    cache: "no-store",
+  });
+  if (!r.ok) {
+    const txt = await r.text().catch(() => "");
+    throw new Error(
+      txt && txt.length < 200 ? txt : `Pod returned ${r.status}`,
+    );
+  }
+  const env = (await r.json().catch(() => null)) as TrpcEnvelope<T> | null;
+  if (env?.error?.message) throw new Error(env.error.message);
+  return (unwrapTrpc<T>(env) ?? ({} as T)) as T;
+}
+
+// ─── Wire types ──────────────────────────────────────────────────────
+
+type Role = "owner" | "admin" | "editor" | "viewer";
+type EditableRole = "admin" | "editor" | "viewer";
+type InviteType = "pod" | "workspace";
+
+interface WireMe {
+  id: string;
+  email: string;
+  name: string | null;
+}
 
 interface WireWorkspace {
   id: string;
@@ -65,17 +135,32 @@ interface WireWorkspace {
   role?: string;
 }
 
-interface WireMember {
+interface WirePodMember {
   id: string;
-  workspaceId: string;
-  userId: string;
-  role: string;
-  joinedAt?: string | null;
-  user?: {
+  email: string;
+  name: string | null;
+  avatarUrl: string | null;
+  primaryRole: Role;
+  workspaceCount: number;
+  workspaces: Array<{
     id: string;
-    email?: string | null;
-    name?: string | null;
-  } | null;
+    name: string;
+    role: Role;
+    joinedAt: string;
+  }>;
+}
+
+interface WireInvite {
+  id: string;
+  type: InviteType;
+  email: string;
+  role: EditableRole;
+  token: string;
+  workspaceId: string | null;
+  workspaceName: string | null;
+  invitedBy: string;
+  expiresAt: string;
+  createdAt: string;
 }
 
 interface CreateInviteResult {
@@ -84,113 +169,70 @@ interface CreateInviteResult {
   expiresAt: string;
 }
 
-type Role = "admin" | "editor" | "viewer";
-type InviteType = "pod" | "workspace";
-
-type RosterState =
-  | { kind: "loading" }
-  | {
-      kind: "ready";
-      workspaceName: string;
-      members: WireMember[];
-      additionalWorkspaces: number;
-    }
-  | { kind: "empty"; message: string }
-  | { kind: "error"; message: string };
-
-interface InviteResult {
-  url: string;
-  email: string;
-  expiresAt: string;
-}
-
-// ─── Page ─────────────────────────────────────────────────────────────
+// ─── Page ────────────────────────────────────────────────────────────
 
 export default function MembersPage() {
-  const [roster, setRoster] = useState<RosterState>({ kind: "loading" });
+  const [me, setMe] = useState<WireMe | null>(null);
+  const [workspaces, setWorkspaces] = useState<WireWorkspace[]>([]);
+  const [members, setMembers] = useState<WirePodMember[]>([]);
+  const [invites, setInvites] = useState<WireInvite[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   // Invite form state.
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState<Role>("editor");
+  const [role, setRole] = useState<EditableRole>("editor");
   const [inviteType, setInviteType] = useState<InviteType>("pod");
+  const [inviteWorkspaceId, setInviteWorkspaceId] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const [result, setResult] = useState<InviteResult | null>(null);
-  const [copied, setCopied] = useState(false);
 
-  const fetchRoster = useCallback(async () => {
-    setRoster({ kind: "loading" });
+  // Modal state for "remove from pod" confirmation.
+  const [removeTarget, setRemoveTarget] = useState<WirePodMember | null>(null);
+  const [removing, setRemoving] = useState(false);
+
+  // Per-row mutation pending state — keyed by user id.
+  const [pendingUserId, setPendingUserId] = useState<string | null>(null);
+  // Per-invite pending state — keyed by invite id.
+  const [pendingInviteId, setPendingInviteId] = useState<string | null>(null);
+  const [copiedInviteId, setCopiedInviteId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setIsLoading(true);
+    setLoadError(null);
     try {
-      // 1. List workspaces the operator belongs to.
-      const wsInput = encodeURIComponent(JSON.stringify({ json: {} }));
-      const wsRes = await fetch(
-        `/api/pod/trpc/workspaces.list?input=${wsInput}`,
-        { credentials: "include", cache: "no-store" },
-      );
-      if (!wsRes.ok) {
-        const txt = await wsRes.text().catch(() => "");
-        throw new Error(
-          txt && txt.length < 200
-            ? txt
-            : `Pod returned ${wsRes.status}`,
-        );
+      const [meData, wsData, memData, inviteData] = await Promise.all([
+        podGet<WireMe>("users.me"),
+        podGet<WireWorkspace[]>("workspaces.list"),
+        podGet<WirePodMember[]>("workspaces.listPodMembers"),
+        podGet<WireInvite[]>("workspaces.listAllInvites"),
+      ]);
+      setMe(meData);
+      setWorkspaces(wsData);
+      setMembers(memData);
+      setInvites(inviteData);
+      // Default the workspace-invite picker to the first workspace
+      // when we have one.
+      if (wsData.length > 0 && !inviteWorkspaceId) {
+        setInviteWorkspaceId(wsData[0].id);
       }
-      const wsJson = (await wsRes.json().catch(
-        () => null,
-      )) as TrpcEnvelope<WireWorkspace[]> | null;
-      const workspaces = unwrapTrpc<WireWorkspace[]>(wsJson) ?? [];
-      if (workspaces.length === 0) {
-        setRoster({
-          kind: "empty",
-          message:
-            "You don't belong to any workspaces yet. Create one first.",
-        });
-        return;
-      }
-
-      // 2. List members of the first workspace.
-      // TODO(roster): the pod has no `workspaces.listAllMembers`
-      // procedure that aggregates members across workspaces. For now
-      // we render the first workspace and surface a count of the rest
-      // so multi-workspace pods know what they're seeing.
-      const first = workspaces[0];
-      const memberInput = encodeURIComponent(
-        JSON.stringify({ json: { workspaceId: first.id } }),
-      );
-      const memberRes = await fetch(
-        `/api/pod/trpc/workspaces.listMembers?input=${memberInput}`,
-        { credentials: "include", cache: "no-store" },
-      );
-      if (!memberRes.ok) {
-        const txt = await memberRes.text().catch(() => "");
-        throw new Error(
-          txt && txt.length < 200
-            ? txt
-            : `Pod returned ${memberRes.status}`,
-        );
-      }
-      const memberJson = (await memberRes.json().catch(
-        () => null,
-      )) as TrpcEnvelope<WireMember[]> | null;
-      const members = unwrapTrpc<WireMember[]>(memberJson) ?? [];
-      setRoster({
-        kind: "ready",
-        workspaceName: first.name,
-        members,
-        additionalWorkspaces: Math.max(0, workspaces.length - 1),
-      });
     } catch (err) {
-      setRoster({
-        kind: "error",
-        message:
-          err instanceof Error ? err.message : "Failed to load members.",
-      });
+      setLoadError(
+        err instanceof Error ? err.message : "Failed to load members.",
+      );
+    } finally {
+      setIsLoading(false);
     }
-  }, []);
+  }, [inviteWorkspaceId]);
 
   useEffect(() => {
-    void fetchRoster();
-  }, [fetchRoster]);
+    void load();
+    // We deliberately run once on mount; refetch via explicit calls
+    // below after mutations.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ─── Invite form ──────────────────────────────────────────────────
 
   const trimmedEmail = email.trim().toLowerCase();
   const emailLooksValid = useMemo(
@@ -202,53 +244,55 @@ export default function MembersPage() {
 
   async function handleInvite() {
     setFormError(null);
-    setResult(null);
     if (!trimmedEmail || !emailLooksValid) {
       setFormError("Enter a valid email address.");
       return;
     }
-    if (inviteType === "workspace") {
-      // Workspace-scoped invites need a workspace picker — out of scope
-      // for the first cut. Block at the form level.
-      setFormError(
-        "Workspace-scoped invites aren't wired yet. Use a pod invite for now.",
-      );
+    if (inviteType === "workspace" && !inviteWorkspaceId) {
+      setFormError("Pick a workspace for the invite.");
       return;
     }
     setSubmitting(true);
     try {
-      const r = await fetch("/api/pod/trpc/workspaces.createInvite", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          json: { type: inviteType, email: trimmedEmail, role },
-        }),
-        cache: "no-store",
-      });
-      if (!r.ok) {
-        const txt = await r.text().catch(() => "");
-        throw new Error(
-          txt && txt.length < 200
-            ? txt
-            : `Pod returned ${r.status}`,
-        );
-      }
-      const json = (await r.json().catch(
-        () => null,
-      )) as TrpcEnvelope<CreateInviteResult> | null;
-      const data = unwrapTrpc<CreateInviteResult>(json);
-      if (!data?.token) {
-        throw new Error("Pod did not return a token.");
-      }
-      const url = `${window.location.origin}/invite/${data.token}`;
-      setResult({
-        url,
+      const payload =
+        inviteType === "workspace"
+          ? {
+              type: "workspace" as const,
+              workspaceId: inviteWorkspaceId,
+              email: trimmedEmail,
+              role,
+            }
+          : { type: "pod" as const, email: trimmedEmail, role };
+      const created = await podMutate<CreateInviteResult>(
+        "workspaces.createInvite",
+        payload,
+      );
+      // Optimistic insert at the top of the pending list. Mostly
+      // cosmetic — listAllInvites will return the same row on next
+      // load — but the snappy UX is worth the few lines.
+      const optimistic: WireInvite = {
+        id: created.id,
+        type: inviteType,
         email: trimmedEmail,
-        expiresAt: data.expiresAt,
-      });
+        role,
+        token: created.token,
+        workspaceId:
+          inviteType === "workspace" ? inviteWorkspaceId : null,
+        workspaceName:
+          inviteType === "workspace"
+            ? workspaces.find((w) => w.id === inviteWorkspaceId)?.name ?? null
+            : null,
+        invitedBy: me?.id ?? "",
+        expiresAt: created.expiresAt,
+        createdAt: new Date().toISOString(),
+      };
+      setInvites((prev) => [optimistic, ...prev]);
       setEmail("");
-      addToast({ title: "Invite created", color: "success" });
+      addToast({
+        title: "Invite created",
+        description: `Invite link ready for ${trimmedEmail}.`,
+        color: "success",
+      });
     } catch (err) {
       setFormError(
         err instanceof Error ? err.message : "Failed to create invite.",
@@ -258,21 +302,127 @@ export default function MembersPage() {
     }
   }
 
-  async function handleCopy() {
-    if (!result) return;
+  // ─── Member row actions ───────────────────────────────────────────
+
+  /**
+   * Change a member's role across every workspace where the operator
+   * can manage them. We don't expose a per-workspace role editor in
+   * this surface — pod-wide role parity is the right default for a
+   * small ops dashboard. Operators who need per-workspace fidelity
+   * can drop into Browser settings.
+   */
+  async function handleChangeRole(target: WirePodMember, next: EditableRole) {
+    if (target.id === me?.id) {
+      addToast({
+        title: "Can't change your own role",
+        color: "warning",
+      });
+      return;
+    }
+    setPendingUserId(target.id);
     try {
-      await navigator.clipboard.writeText(result.url);
-      setCopied(true);
+      // Apply to every workspace where the target is currently a
+      // member AND the operator can act. The backend's
+      // updateMemberRole is per-workspace, so we iterate.
+      const ops = target.workspaces.map((w) =>
+        podMutate("workspaces.updateMemberRole", {
+          workspaceId: w.id,
+          userId: target.id,
+          role: next,
+        }).catch((err) => ({ workspaceId: w.id, error: String(err) })),
+      );
+      await Promise.all(ops);
+      addToast({
+        title: `Role updated to ${next}`,
+        color: "success",
+      });
+      await load();
+    } catch (err) {
+      addToast({
+        title: "Couldn't update role",
+        description: err instanceof Error ? err.message : undefined,
+        color: "danger",
+      });
+    } finally {
+      setPendingUserId(null);
+    }
+  }
+
+  async function confirmRemoveFromPod() {
+    if (!removeTarget) return;
+    setRemoving(true);
+    try {
+      await podMutate<{ removedFromWorkspaces: number; totalWorkspaces: number }>(
+        "workspaces.removeFromPod",
+        { userId: removeTarget.id },
+      );
+      addToast({
+        title: "Member removed",
+        description: `${removeTarget.email} has been removed from every workspace you manage.`,
+        color: "success",
+      });
+      setRemoveTarget(null);
+      await load();
+    } catch (err) {
+      addToast({
+        title: "Couldn't remove member",
+        description: err instanceof Error ? err.message : undefined,
+        color: "danger",
+      });
+    } finally {
+      setRemoving(false);
+    }
+  }
+
+  // ─── Invite row actions ───────────────────────────────────────────
+
+  async function handleCopyInvite(invite: WireInvite) {
+    try {
+      const url = `${window.location.origin}/invite/${invite.token}`;
+      await navigator.clipboard.writeText(url);
+      setCopiedInviteId(invite.id);
       addToast({ title: "Link copied", color: "success" });
-      window.setTimeout(() => setCopied(false), 1600);
+      window.setTimeout(() => setCopiedInviteId(null), 1600);
     } catch {
       addToast({ title: "Couldn't copy", color: "danger" });
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────
-  // Render
-  // ─────────────────────────────────────────────────────────────────
+  async function handleCancelInvite(invite: WireInvite) {
+    setPendingInviteId(invite.id);
+    try {
+      await podMutate("workspaces.revokeInvite", { id: invite.id });
+      setInvites((prev) => prev.filter((i) => i.id !== invite.id));
+      addToast({ title: "Invite cancelled", color: "success" });
+    } catch (err) {
+      addToast({
+        title: "Couldn't cancel invite",
+        description: err instanceof Error ? err.message : undefined,
+        color: "danger",
+      });
+    } finally {
+      setPendingInviteId(null);
+    }
+  }
+
+  // ─── Render ───────────────────────────────────────────────────────
+
+  // Last-owner detection for the Remove modal copy. We compute it on
+  // open: if the target is the only owner of any workspace, the
+  // backend will refuse — surface that ahead of time so the operator
+  // doesn't click into a 400.
+  const removeTargetBlocked = useMemo(() => {
+    if (!removeTarget) return null;
+    // Check if target is sole owner of any workspace they're in.
+    const blockedWs = removeTarget.workspaces.filter(
+      (w) => w.role === "owner",
+    );
+    if (blockedWs.length === 0) return null;
+    // We don't know the owner counts of OTHER workspaces from this
+    // view, so we surface a warning rather than a hard block.
+    // Backend enforces the actual rule.
+    return blockedWs;
+  }, [removeTarget]);
 
   return (
     <div className="space-y-8">
@@ -283,7 +433,7 @@ export default function MembersPage() {
           Members
         </h1>
         <p className="mt-1 max-w-2xl text-foreground/65">
-          People who have access to this pod.
+          People who have access to this pod across every workspace you can see.
         </p>
       </header>
 
@@ -297,60 +447,101 @@ export default function MembersPage() {
         <div className="flex items-center justify-between gap-3 px-5 py-4">
           <div className="flex items-center gap-2">
             <Users className="h-4 w-4 text-foreground/55" strokeWidth={2} />
-            <p className="text-[13px] font-medium text-foreground">
-              {roster.kind === "ready"
-                ? `Members of ${roster.workspaceName}`
-                : "Members"}
-            </p>
+            <p className="text-[13px] font-medium text-foreground">Members</p>
           </div>
-          {roster.kind === "ready" && (
+          {!isLoading && !loadError && (
             <Chip size="sm" variant="flat" radius="sm">
-              {roster.members.length}
+              {members.length}
             </Chip>
           )}
         </div>
         <div className="border-t border-foreground/[0.06]" />
         <div className="px-5 py-4">
-          {roster.kind === "loading" && (
+          {isLoading && (
             <div className="flex items-center gap-3 text-[13px] text-foreground/55">
               <Spinner size="sm" color="primary" />
               <span>Loading members…</span>
             </div>
           )}
-          {roster.kind === "error" && (
+          {!isLoading && loadError && (
             <div className="flex items-start gap-2">
               <AlertTriangle
                 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning"
                 strokeWidth={2.2}
               />
               <p className="text-[12.5px] leading-snug text-foreground/65">
-                {roster.message}
+                {loadError}
               </p>
             </div>
           )}
-          {roster.kind === "empty" && (
-            <p className="text-[13px] text-foreground/55">{roster.message}</p>
+          {!isLoading && !loadError && members.length === 0 && (
+            <p className="text-[13px] text-foreground/55">
+              No members yet. Invite a teammate below to get started.
+            </p>
           )}
-          {roster.kind === "ready" && (
-            <>
-              <ul className="flex flex-col gap-1">
-                {roster.members.map((m) => (
-                  <MemberRow key={m.id} member={m} />
-                ))}
-                {roster.members.length === 0 && (
-                  <p className="text-[13px] text-foreground/55">
-                    No members in this workspace yet.
-                  </p>
-                )}
-              </ul>
-              {roster.additionalWorkspaces > 0 && (
-                <p className="mt-3 text-[12px] leading-snug text-foreground/55">
-                  {roster.additionalWorkspaces} additional workspace
-                  {roster.additionalWorkspaces === 1 ? "" : "s"} on this pod.
-                  Cross-workspace roster aggregation is on the roadmap.
-                </p>
-              )}
-            </>
+          {!isLoading && !loadError && members.length > 0 && (
+            <ul className="flex flex-col gap-1">
+              {members.map((m) => (
+                <MemberRow
+                  key={m.id}
+                  member={m}
+                  isSelf={m.id === me?.id}
+                  isPending={pendingUserId === m.id}
+                  onChangeRole={(role) => void handleChangeRole(m, role)}
+                  onRemove={() => setRemoveTarget(m)}
+                />
+              ))}
+            </ul>
+          )}
+        </div>
+      </Card>
+
+      {/* Pending invites */}
+      <Card
+        isBlurred
+        shadow="none"
+        radius="md"
+        className="bg-foreground/[0.04] ring-1 ring-inset ring-foreground/10"
+      >
+        <div className="flex items-center justify-between gap-3 px-5 py-4">
+          <div className="flex items-center gap-2">
+            <Mail className="h-4 w-4 text-foreground/55" strokeWidth={2} />
+            <p className="text-[13px] font-medium text-foreground">
+              Pending invites
+            </p>
+          </div>
+          {!isLoading && !loadError && invites.length > 0 && (
+            <Chip size="sm" variant="flat" radius="sm">
+              {invites.length}
+            </Chip>
+          )}
+        </div>
+        <div className="border-t border-foreground/[0.06]" />
+        <div className="px-5 py-4">
+          {isLoading && (
+            <div className="flex items-center gap-3 text-[13px] text-foreground/55">
+              <Spinner size="sm" color="primary" />
+              <span>Loading invites…</span>
+            </div>
+          )}
+          {!isLoading && invites.length === 0 && (
+            <p className="text-[13px] text-foreground/55">
+              No pending invites. Use the form below to invite someone.
+            </p>
+          )}
+          {!isLoading && invites.length > 0 && (
+            <ul className="flex flex-col gap-1">
+              {invites.map((inv) => (
+                <InviteRow
+                  key={inv.id}
+                  invite={inv}
+                  isCopied={copiedInviteId === inv.id}
+                  isPending={pendingInviteId === inv.id}
+                  onCopy={() => void handleCopyInvite(inv)}
+                  onCancel={() => void handleCancelInvite(inv)}
+                />
+              ))}
+            </ul>
           )}
         </div>
       </Card>
@@ -363,7 +554,7 @@ export default function MembersPage() {
         className="bg-foreground/[0.04] ring-1 ring-inset ring-foreground/10"
       >
         <div className="flex items-center gap-2 px-5 py-4">
-          <Mail className="h-4 w-4 text-foreground/55" strokeWidth={2} />
+          <Send className="h-4 w-4 text-foreground/55" strokeWidth={2} />
           <p className="text-[13px] font-medium text-foreground">
             Invite teammate
           </p>
@@ -441,13 +632,38 @@ export default function MembersPage() {
               description={
                 inviteType === "pod"
                   ? "Adds them to every workspace on the pod."
-                  : "Workspace picker not wired yet."
+                  : "Scoped to one workspace."
               }
             >
               <SelectItem key="pod">Pod (all workspaces)</SelectItem>
               <SelectItem key="workspace">Single workspace</SelectItem>
             </Select>
           </div>
+
+          {inviteType === "workspace" && (
+            <Select
+              size="md"
+              radius="md"
+              variant="flat"
+              label="Workspace"
+              labelPlacement="outside"
+              selectedKeys={inviteWorkspaceId ? [inviteWorkspaceId] : []}
+              onSelectionChange={(keys) => {
+                const next = String(Array.from(keys)[0] ?? "");
+                if (next) setInviteWorkspaceId(next);
+              }}
+              isDisabled={submitting || workspaces.length === 0}
+              placeholder={
+                workspaces.length === 0
+                  ? "No workspaces available"
+                  : "Pick a workspace"
+              }
+            >
+              {workspaces.map((w) => (
+                <SelectItem key={w.id}>{w.name}</SelectItem>
+              ))}
+            </Select>
+          )}
 
           {formError && (
             <div
@@ -480,7 +696,8 @@ export default function MembersPage() {
               isDisabled={
                 submitting ||
                 trimmedEmail.length === 0 ||
-                !emailLooksValid
+                !emailLooksValid ||
+                (inviteType === "workspace" && !inviteWorkspaceId)
               }
               startContent={
                 submitting ? undefined : <Send className="h-3.5 w-3.5" />
@@ -493,89 +710,122 @@ export default function MembersPage() {
         </form>
       </Card>
 
-      {/* Invite result */}
-      {result && (
-        <Card
-          isBlurred
-          shadow="none"
-          radius="md"
-          className="bg-success/[0.06] ring-1 ring-inset ring-success/30"
-        >
-          <div className="flex flex-col gap-3 px-5 py-4">
-            <div className="flex items-start gap-3">
-              <Check
-                className="mt-0.5 h-4 w-4 shrink-0 text-success"
-                strokeWidth={2.2}
-                aria-hidden
-              />
-              <div className="min-w-0 flex-1">
-                <p className="text-[13px] font-medium text-foreground">
-                  Invite created for{" "}
-                  <span className="text-foreground">{result.email}</span>
+      {/* Remove from pod confirmation modal */}
+      <Modal
+        isOpen={removeTarget !== null}
+        onClose={() => {
+          if (!removing) setRemoveTarget(null);
+        }}
+        size="md"
+      >
+        <ModalContent>
+          {() => (
+            <>
+              <ModalHeader className="flex flex-col gap-1">
+                <span>Remove from pod?</span>
+                <span className="text-[12px] font-normal text-foreground/55">
+                  {removeTarget?.email}
+                </span>
+              </ModalHeader>
+              <ModalBody>
+                <p className="text-sm text-foreground/75">
+                  This removes{" "}
+                  <span className="font-medium text-foreground">
+                    {removeTarget?.name ?? removeTarget?.email}
+                  </span>{" "}
+                  from every workspace on this pod that you can manage.
+                  They&apos;ll lose access immediately. The user account
+                  itself is kept so audit history stays intact.
                 </p>
-                <p className="mt-0.5 text-[12.5px] text-foreground/65">
-                  Share this link with them — Eve doesn&apos;t email
-                  invites yet.
-                </p>
-              </div>
-            </div>
-            <div className="flex items-stretch gap-2">
-              <pre
-                className="
-                  min-w-0 flex-1 overflow-x-auto
-                  rounded-md
-                  bg-foreground/[0.04] ring-1 ring-inset ring-foreground/10
-                  px-3 py-2
-                  font-mono text-[12.5px] leading-snug text-foreground
-                "
-              >
-                {result.url}
-              </pre>
-              <Button
-                isIconOnly
-                variant="flat"
-                size="sm"
-                radius="md"
-                aria-label="Copy invite link"
-                onPress={() => void handleCopy()}
-                className="shrink-0"
-              >
-                {copied ? (
-                  <Check className="h-3.5 w-3.5 text-success" />
-                ) : (
-                  <Copy className="h-3.5 w-3.5" />
+                {removeTargetBlocked && removeTargetBlocked.length > 0 && (
+                  <div
+                    role="alert"
+                    className="
+                      mt-3 flex items-start gap-2
+                      rounded-lg
+                      bg-warning/10 ring-1 ring-inset ring-warning/30
+                      px-3 py-2
+                    "
+                  >
+                    <ShieldAlert
+                      className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning"
+                      strokeWidth={2.2}
+                      aria-hidden
+                    />
+                    <p className="text-[12.5px] leading-snug text-foreground">
+                      They&apos;re an owner of{" "}
+                      {removeTargetBlocked
+                        .map((w) => w.name)
+                        .filter(Boolean)
+                        .join(", ")}
+                      . If they&apos;re the only owner, removal will be
+                      blocked — promote another member first.
+                    </p>
+                  </div>
                 )}
-              </Button>
-            </div>
-            <p className="text-[12px] leading-snug text-foreground/55">
-              Expires{" "}
-              {new Date(result.expiresAt).toLocaleString(undefined, {
-                dateStyle: "medium",
-                timeStyle: "short",
-              })}
-              .
-            </p>
-          </div>
-        </Card>
-      )}
+              </ModalBody>
+              <ModalFooter>
+                <Button
+                  size="sm"
+                  variant="light"
+                  onPress={() => setRemoveTarget(null)}
+                  isDisabled={removing}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  color="danger"
+                  isLoading={removing}
+                  onPress={() => void confirmRemoveFromPod()}
+                  startContent={
+                    removing ? undefined : <Trash2 className="h-3.5 w-3.5" />
+                  }
+                >
+                  Remove from pod
+                </Button>
+              </ModalFooter>
+            </>
+          )}
+        </ModalContent>
+      </Modal>
     </div>
   );
 }
 
 // ─── Member row ──────────────────────────────────────────────────────
 
-function MemberRow({ member }: { member: WireMember }) {
+function MemberRow({
+  member,
+  isSelf,
+  isPending,
+  onChangeRole,
+  onRemove,
+}: {
+  member: WirePodMember;
+  isSelf: boolean;
+  isPending: boolean;
+  onChangeRole: (role: EditableRole) => void;
+  onRemove: () => void;
+}) {
   const name =
-    member.user?.name?.trim() ||
-    member.user?.email?.split("@")[0] ||
-    "Member";
-  const email = member.user?.email ?? "—";
-  const initials = name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((s) => s[0]?.toUpperCase())
-    .join("") || "?";
+    member.name?.trim() || member.email.split("@")[0] || "Member";
+  const initials =
+    name
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((s) => s[0]?.toUpperCase())
+      .join("") || "?";
+  const additional = Math.max(0, member.workspaceCount - 1);
+  // Owners can't be re-roled to admin/editor/viewer through this UI —
+  // changing ownership is a workspace-transfer flow, not a role bump.
+  const canEditRole = !isSelf && member.primaryRole !== "owner";
+  // Self can't be removed from this surface.
+  const canRemove = !isSelf;
+  // If the user has no actions available, hide the dropdown entirely
+  // rather than render an empty trigger.
+  const showActions = canEditRole || canRemove;
 
   return (
     <li
@@ -602,25 +852,215 @@ function MemberRow({ member }: { member: WireMember }) {
       <div className="min-w-0 flex-1">
         <p className="truncate text-[13px] font-medium text-foreground">
           {name}
+          {isSelf && (
+            <span className="ml-2 text-[11px] font-normal text-foreground/55">
+              you
+            </span>
+          )}
         </p>
-        <p className="truncate text-[12px] text-foreground/55">{email}</p>
+        <p className="truncate text-[12px] text-foreground/55">
+          {member.email}
+        </p>
       </div>
-      <Chip
-        size="sm"
-        variant="flat"
-        radius="sm"
-        className="shrink-0 capitalize"
-      >
-        {member.role}
-      </Chip>
-      {member.joinedAt && (
-        <span className="hidden shrink-0 text-[11.5px] text-foreground/40 sm:inline-block">
-          joined{" "}
-          {new Date(member.joinedAt).toLocaleDateString(undefined, {
-            dateStyle: "medium",
-          })}
-        </span>
-      )}
+      <div className="flex items-center gap-2">
+        <Chip
+          size="sm"
+          variant="flat"
+          radius="sm"
+          className="shrink-0 capitalize"
+          color={
+            member.primaryRole === "owner"
+              ? "primary"
+              : member.primaryRole === "admin"
+                ? "secondary"
+                : "default"
+          }
+        >
+          {member.primaryRole}
+        </Chip>
+        {additional > 0 && (
+          <Chip size="sm" variant="flat" radius="sm" className="shrink-0">
+            +{additional} more {additional === 1 ? "workspace" : "workspaces"}
+          </Chip>
+        )}
+        {isPending && <Spinner size="sm" color="primary" />}
+        {showActions && !isPending && (
+          <Dropdown placement="bottom-end">
+            <DropdownTrigger>
+              <button
+                type="button"
+                className="
+                  inline-flex h-8 w-8 items-center justify-center
+                  rounded-lg
+                  text-foreground/55 hover:text-foreground hover:bg-foreground/[0.06]
+                  transition-colors
+                "
+                aria-label={`Actions for ${member.email}`}
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </button>
+            </DropdownTrigger>
+            <DropdownMenu
+              aria-label={`Actions for ${member.email}`}
+              disabledKeys={[
+                ...(canEditRole ? [] : ["role-admin", "role-editor", "role-viewer"]),
+                ...(canRemove ? [] : ["remove"]),
+                // Don't offer the role they already have.
+                `role-${member.primaryRole}`,
+              ]}
+            >
+              <DropdownItem
+                key="role-admin"
+                startContent={<UserCog className="h-3.5 w-3.5" />}
+                onPress={() => onChangeRole("admin")}
+              >
+                Make admin
+              </DropdownItem>
+              <DropdownItem
+                key="role-editor"
+                startContent={<UserCog className="h-3.5 w-3.5" />}
+                onPress={() => onChangeRole("editor")}
+              >
+                Make editor
+              </DropdownItem>
+              <DropdownItem
+                key="role-viewer"
+                startContent={<UserCog className="h-3.5 w-3.5" />}
+                onPress={() => onChangeRole("viewer")}
+              >
+                Make viewer
+              </DropdownItem>
+              <DropdownItem
+                key="remove"
+                color="danger"
+                className="text-danger"
+                startContent={<UserMinus className="h-3.5 w-3.5" />}
+                onPress={onRemove}
+              >
+                Remove from pod
+              </DropdownItem>
+            </DropdownMenu>
+          </Dropdown>
+        )}
+      </div>
     </li>
   );
+}
+
+// ─── Invite row ──────────────────────────────────────────────────────
+
+function InviteRow({
+  invite,
+  isCopied,
+  isPending,
+  onCopy,
+  onCancel,
+}: {
+  invite: WireInvite;
+  isCopied: boolean;
+  isPending: boolean;
+  onCopy: () => void;
+  onCancel: () => void;
+}) {
+  const expiresAt = new Date(invite.expiresAt);
+  const expiresIn = formatRelativeFuture(expiresAt);
+  const expired = expiresAt.getTime() <= Date.now();
+
+  return (
+    <li
+      className="
+        flex items-center gap-3
+        rounded-lg
+        px-3 py-2.5
+        hover:bg-foreground/[0.03]
+        transition-colors
+      "
+    >
+      <span
+        aria-hidden
+        className="
+          flex h-9 w-9 shrink-0 items-center justify-center
+          rounded-full
+          bg-foreground/[0.06]
+          ring-1 ring-inset ring-foreground/10
+        "
+      >
+        <Mail className="h-3.5 w-3.5 text-foreground/55" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[13px] font-medium text-foreground">
+          {invite.email}
+        </p>
+        <p className="truncate text-[12px] text-foreground/55">
+          {invite.type === "pod"
+            ? "Pod invite (all workspaces)"
+            : `Workspace · ${invite.workspaceName ?? "—"}`}
+        </p>
+      </div>
+      <div className="flex items-center gap-2">
+        <Chip
+          size="sm"
+          variant="flat"
+          radius="sm"
+          className="shrink-0 capitalize"
+        >
+          {invite.role}
+        </Chip>
+        <span
+          className={`
+            hidden shrink-0 text-[11.5px] sm:inline-block
+            ${expired ? "text-warning" : "text-foreground/40"}
+          `}
+        >
+          {expired ? "expired" : `expires ${expiresIn}`}
+        </span>
+        {isPending && <Spinner size="sm" color="primary" />}
+        {!isPending && (
+          <>
+            <Button
+              isIconOnly
+              variant="flat"
+              size="sm"
+              radius="md"
+              aria-label="Copy invite link"
+              onPress={onCopy}
+              className="shrink-0"
+            >
+              {isCopied ? (
+                <Check className="h-3.5 w-3.5 text-success" />
+              ) : (
+                <Copy className="h-3.5 w-3.5" />
+              )}
+            </Button>
+            <Button
+              isIconOnly
+              variant="flat"
+              size="sm"
+              radius="md"
+              aria-label="Cancel invite"
+              onPress={onCancel}
+              className="shrink-0"
+            >
+              <Trash2 className="h-3.5 w-3.5 text-foreground/55" />
+            </Button>
+          </>
+        )}
+      </div>
+    </li>
+  );
+}
+
+// ─── Date helpers ────────────────────────────────────────────────────
+
+function formatRelativeFuture(date: Date): string {
+  const ms = date.getTime() - Date.now();
+  if (ms <= 0) return "just now";
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 60) return `in ${minutes}m`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `in ${hours}h`;
+  const days = Math.round(hours / 24);
+  if (days < 7) return `in ${days}d`;
+  const weeks = Math.round(days / 7);
+  return `in ${weeks}w`;
 }

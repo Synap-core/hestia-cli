@@ -11,8 +11,8 @@
  * Body: `{ email, name?, role? }`
  *
  * Token resolution order (first match wins):
- *   1. `secrets.pod?.bootstrapToken`     (forward-compat, not yet in schema)
- *   2. `secrets.synap?.bootstrapToken`   (forward-compat, not yet in schema)
+ *   1. `secrets.pod?.bootstrapToken`     (typed slot — populated by `eve install`)
+ *   2. `secrets.synap?.bootstrapToken`   (back-compat, not in schema; tolerated)
  *   3. `process.env.ADMIN_BOOTSTRAP_TOKEN`
  *   4. `process.env.EVE_PROVISIONING_TOKEN` (back-compat)
  *
@@ -39,17 +39,17 @@ interface ClaimBody {
 }
 
 function resolveBootstrapToken(secrets: Awaited<ReturnType<typeof readEveSecrets>>): string {
-  // Forward-compat: read possible nested slots that aren't in the schema yet.
-  // We tolerate `unknown` because the parsed type doesn't expose them.
-  const raw = secrets as unknown as {
-    pod?: { bootstrapToken?: string };
+  // `pod.bootstrapToken` is typed in the schema (`@eve/dna` SecretsSchema).
+  // `synap.bootstrapToken` is NOT in the schema — tolerated as a back-compat
+  // alias from older `.eve/secrets.json` shapes; we fish it out with a cast.
+  const fromPod = secrets?.pod?.bootstrapToken?.trim() ?? "";
+  if (fromPod) return fromPod;
+
+  const legacy = secrets as unknown as {
     synap?: { bootstrapToken?: string };
   } | null;
-  const fromSecrets =
-    raw?.pod?.bootstrapToken?.trim() ??
-    raw?.synap?.bootstrapToken?.trim() ??
-    "";
-  if (fromSecrets) return fromSecrets;
+  const fromSynap = legacy?.synap?.bootstrapToken?.trim() ?? "";
+  if (fromSynap) return fromSynap;
 
   return (
     process.env.ADMIN_BOOTSTRAP_TOKEN?.trim() ||

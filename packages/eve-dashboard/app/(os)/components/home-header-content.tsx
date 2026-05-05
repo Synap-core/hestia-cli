@@ -21,8 +21,9 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Sparkles } from "lucide-react";
+import { Plug, Sparkles } from "lucide-react";
 import { useStats } from "../hooks/use-stats";
+import { usePodPairing, type PairingState } from "../hooks/use-pod-pairing";
 
 // ─── Greeting (header-left) ──────────────────────────────────────────────────
 
@@ -91,7 +92,77 @@ const ACCENT = {
   inbox: "#60A5FA",
 } as const;
 
-export function HomeStatPills() {
+export interface HomeStatPillsProps {
+  /**
+   * When the pod isn't paired we replace the 3 stat pills with a single
+   * "Pair your pod" CTA pill. The home page passes a click handler that
+   * opens the `PodPairDialog`. When omitted the cluster always renders
+   * the stats (existing behavior preserved for any caller that doesn't
+   * want pairing-aware UI).
+   */
+  onPairPod?: () => void;
+  /**
+   * Optional override — when supplied, takes precedence over the
+   * internal `usePodPairing()` call. Useful for tests / Storybook and
+   * for the home page when pairing state is lifted up to coordinate
+   * with the pair dialog.
+   */
+  pairingState?: PairingState;
+}
+
+export function HomeStatPills({
+  onPairPod,
+  pairingState,
+}: HomeStatPillsProps = {}) {
+  const internalPairing = usePodPairing();
+  const effectiveState = pairingState ?? internalPairing.state;
+
+  const isUnpaired =
+    effectiveState === "unpaired" ||
+    effectiveState === "unconfigured" ||
+    effectiveState === "stale-cred";
+
+  // Single CTA pill when unpaired — replaces the 3 stat pills with the
+  // most important action the operator can take. Same outer chrome
+  // (rounded-full, bg-foreground/[0.04]) so the cluster's silhouette
+  // doesn't shift between states.
+  if (isUnpaired && onPairPod) {
+    return (
+      <div
+        className="
+          hidden md:flex items-center
+          rounded-full
+          bg-foreground/[0.04] border border-foreground/[0.06]
+        "
+        aria-label="Pair pod"
+      >
+        <button
+          type="button"
+          onClick={onPairPod}
+          className="
+            group flex items-center gap-1.5 rounded-full px-3 py-1
+            transition-colors duration-150
+            hover:bg-foreground/[0.06]
+            focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40
+          "
+        >
+          <Plug
+            className="h-3 w-3 shrink-0 text-primary"
+            strokeWidth={2}
+            aria-hidden
+          />
+          <span className="text-[12px] font-medium text-foreground">
+            Pair your pod
+          </span>
+        </button>
+      </div>
+    );
+  }
+
+  return <StatPillsCluster />;
+}
+
+function StatPillsCluster() {
   const { stats, isLoading } = useStats();
   return (
     <div

@@ -51,18 +51,26 @@ import {
 import { useHomeApps } from "./hooks/use-home-apps";
 import { useStats } from "./hooks/use-stats";
 import { useSetupStatus } from "./hooks/use-setup-status";
+import { usePodPairing } from "./hooks/use-pod-pairing";
 import { resolveAuthMethod } from "./lib/cp-auth";
 import { initiateCpOAuth } from "./lib/cp-oauth";
 import { DeviceFlowModal } from "./components/device-flow-modal";
+import { PodPairDialog } from "./components/pod-pair-dialog";
 
 export default function HomePage() {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [isDeviceFlowOpen, setIsDeviceFlowOpen] = useState(false);
+  const [isPairDialogOpen, setIsPairDialogOpen] = useState(false);
   const { apps, isLoading, bannerState, refetch } = useHomeApps();
   const { stats } = useStats();
   const { state: setupState } = useSetupStatus();
+  const {
+    state: pairingState,
+    userEmail: pairedEmail,
+    refetch: refetchPairing,
+  } = usePodPairing();
 
   // Filter is name + description + category — case-insensitive contains.
   const filtered = useMemo(() => {
@@ -118,7 +126,10 @@ export default function HomePage() {
       <PaneHeader
         actions={
           <>
-            <HomeStatPills />
+            <HomeStatPills
+              pairingState={pairingState}
+              onPairPod={() => setIsPairDialogOpen(true)}
+            />
             {isSignedOut && (
               <Button
                 size="sm"
@@ -212,6 +223,18 @@ export default function HomePage() {
         onApproved={() => {
           // Token is on disk now; refetch apps so the catalog upgrades
           // from public to per-user entitled.
+          refetch();
+        }}
+      />
+
+      <PodPairDialog
+        isOpen={isPairDialogOpen}
+        onClose={() => setIsPairDialogOpen(false)}
+        defaultEmail={pairedEmail}
+        onSuccess={() => {
+          // Token is freshly minted — repaint the header pill cluster
+          // and refetch the launcher so per-user entitled apps appear.
+          refetchPairing();
           refetch();
         }}
       />

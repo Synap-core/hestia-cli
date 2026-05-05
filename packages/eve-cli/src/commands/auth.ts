@@ -486,8 +486,12 @@ async function runProvision(opts: { agent?: string; email?: string }): Promise<v
     printInfo('Running first-admin setup before provisioning agent keys…');
     console.log();
 
+    const secrets = await readEveSecrets(process.cwd());
+    const domain = secrets?.domain?.primary;
+    const publicUrl = domain ? `https://pod.${domain}` : undefined;
+
     const mode = opts.email ? 'prompt' : 'magic-link';
-    await runSetupAdminInline({ synapUrl, provisioningToken, mode, email: opts.email });
+    await runSetupAdminInline({ synapUrl, provisioningToken, mode, email: opts.email, publicUrl });
     console.log();
   }
 

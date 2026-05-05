@@ -3,33 +3,33 @@
 /**
  * Inbox — Notifications panel.
  *
- * TODO(Phase 4 step 6): Migrate from `/api/hub/notifications` to
- * `/api/pod/trpc/notifCenter.list`. Blocker: `notifCenter.*` is a
- * `workspaceProcedure` and requires the `x-workspace-id` header.
- * Plumbing that through the catch-all proxy + the panel is its own
- * change (we need a workspace selector / "active workspace" state on
- * the dashboard, which we don't have yet). Until then this panel keeps
- * using the service channel — it's the only inbox surface that hasn't
- * moved yet.
+ * USER channel — the panel reads the operator's notification stream
+ * straight from the pod via tRPC over `/api/pod/*`. The pod-side
+ * router (`notifCenter.*` in synap-backend) is `workspaceProcedure`,
+ * so every call carries `x-workspace-id` plumbed through the
+ * `useActiveWorkspace` hook + `podTrpcFetch` helper.
  *
- * Reads the unified notification stream from the pod via
- * `GET /api/hub/notifications`. Each row exposes:
+ *   List:        GET  /api/pod/trpc/notifCenter.list
+ *                input { status: "all" | "unread" | "read" | "dismissed",
+ *                        limit?, offset?, category? }
+ *   Mark read:   POST /api/pod/trpc/notifCenter.markRead
+ *                input { notificationId }
+ *   Mark all:    POST /api/pod/trpc/notifCenter.markAllRead
  *
+ * Each row exposes:
  *   • Category color chip (info / success / warning / danger).
  *   • Title + message.
  *   • Relative timestamp.
  *   • Click area — when the notification carries an `actionUrl`,
- *     clicking opens it in a new tab. Mark-read is a separate POST.
+ *     clicking opens it in a new tab. Mark-read is a separate mutation.
  *
  * "Mark all read" is shown only when at least one row is unread.
  *
- * Wire shape note: the notification POST endpoint on the pod is
- * write-only at the moment (`registerNotificationsRoutes`). Listing
- * isn't part of the canonical Hub Protocol surface yet — the proxy
- * still goes there so that when the pod adds a GET handler this
- * panel just lights up. Until then, the panel will show the pod's
- * 404 inside a benign empty state ("No notifications") rather than
- * a hard error.
+ * Pre-workspace guard: when `useActiveWorkspace` hasn't resolved yet
+ * (no cached id and the `workspaces.list` call is still in flight) we
+ * render the loader. If it resolves to `null` (no pod session, no
+ * memberships) we render the empty state — `notifCenter.list` would
+ * 401 otherwise and that's noisier than necessary.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -43,19 +43,31 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { PanelEmpty, PanelError, PanelLoader } from "./panel-states";
+import { useActiveWorkspace } from "../../hooks/use-active-workspace";
+import { podTrpcFetch } from "../lib/pod-fetch";
 
+// Pod severity is a wider enum (info|success|warning|error|critical) but
+// the panel collapses critical → danger and treats error as danger. We
+// keep the local enum tight so the styling table stays exhaustive.
 type NotificationCategory = "info" | "success" | "warning" | "danger";
 
+/** A single row in the wire response (`notifCenter.list`). */
 interface WireNotification {
   id: string;
   type: string;
-  title?: string;
-  message?: string;
-  category?: NotificationCategory;
-  status?: "unread" | "read" | "actioned";
-  createdAt?: string;
-  actionUrl?: string;
-  data?: Record<string, unknown>;
+  title?: string | null;
+  message?: string | null;
+  /** Pod field; we map to NotificationCategory below. */
+  severity?: string | null;
+  status?: "unread" | "read" | "dismissed" | null;
+  createdAt?: string | Date | null;
+  actionUrl?: string | null;
+  data?: Record<string, unknown> | null;
+}
+
+interface NotifListResponse {
+  notifications: WireNotification[];
+  total: number;
 }
 
 type LoadState =
@@ -63,37 +75,42 @@ type LoadState =
   | { kind: "ready"; items: WireNotification[] }
   | { kind: "error"; message: string };
 
+const SEVERITY_TO_CATEGORY: Record<string, NotificationCategory> = {
+  info: "info",
+  success: "success",
+  warning: "warning",
+  error: "danger",
+  critical: "danger",
+};
+
+function severityToCategory(s: string | null | undefined): NotificationCategory {
+  if (!s) return "info";
+  return SEVERITY_TO_CATEGORY[s.toLowerCase()] ?? "info";
+}
+
 export function NotificationsPanel() {
+  const {
+    workspaceId,
+    isLoading: workspaceLoading,
+  } = useActiveWorkspace();
   const [load, setLoad] = useState<LoadState>({ kind: "loading" });
 
   const fetchAll = useCallback(async () => {
+    if (!workspaceId) {
+      // Nothing to fetch yet — the outer effect will retrigger when
+      // workspaceId resolves (or stays null and we render empty).
+      return;
+    }
     setLoad({ kind: "loading" });
     try {
-      const r = await fetch("/api/hub/notifications", {
-        credentials: "include",
-        cache: "no-store",
-      });
-      if (r.status === 404) {
-        // Pod doesn't expose a list handler yet — render empty rather
-        // than a noisy "couldn't load" error.
-        setLoad({ kind: "ready", items: [] });
-        return;
-      }
-      if (!r.ok) {
-        const txt = await r.text().catch(() => "");
-        throw new Error(
-          txt && txt.length < 200 ? txt : `Pod returned ${r.status}`,
-        );
-      }
-      const json = (await r.json().catch(() => null)) as
-        | { notifications?: WireNotification[] }
-        | WireNotification[]
-        | null;
-      const items: WireNotification[] = Array.isArray(json)
-        ? json
-        : Array.isArray(json?.notifications)
-          ? json.notifications
-          : [];
+      // status: "all" — the panel renders unread badges on individual
+      // rows but otherwise mixes read + unread in chronological order.
+      const data = await podTrpcFetch<NotifListResponse>(
+        "notifCenter.list",
+        { status: "all", limit: 50 },
+        { workspaceId },
+      );
+      const items = Array.isArray(data?.notifications) ? data.notifications : [];
       setLoad({ kind: "ready", items });
     } catch (err) {
       setLoad({
@@ -101,7 +118,7 @@ export function NotificationsPanel() {
         message: err instanceof Error ? err.message : "Network error",
       });
     }
-  }, []);
+  }, [workspaceId]);
 
   useEffect(() => {
     void fetchAll();
@@ -113,10 +130,10 @@ export function NotificationsPanel() {
   }, [load]);
 
   const handleMarkAllRead = useCallback(async () => {
-    if (load.kind !== "ready") return;
+    if (load.kind !== "ready" || !workspaceId) return;
     const targets = load.items.filter((n) => n.status === "unread");
     if (targets.length === 0) return;
-    // Optimistic local flip; the POST is best-effort.
+    // Optimistic local flip — the mutation is best-effort.
     setLoad((prev) =>
       prev.kind === "ready"
         ? {
@@ -128,16 +145,11 @@ export function NotificationsPanel() {
         : prev,
     );
     try {
-      await fetch("/api/hub/notifications", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "notification.mark_all_read",
-          ids: targets.map((n) => n.id),
-        }),
-        cache: "no-store",
-      });
+      await podTrpcFetch<{ success: boolean }>(
+        "notifCenter.markAllRead",
+        undefined,
+        { method: "POST", workspaceId },
+      );
     } catch {
       // The local flip already happened; a future fetchAll will reconcile.
       addToast({
@@ -145,29 +157,45 @@ export function NotificationsPanel() {
         color: "warning",
       });
     }
-  }, [load]);
+  }, [load, workspaceId]);
 
-  const handleOpen = useCallback(async (n: WireNotification) => {
-    if (n.actionUrl) {
-      window.open(n.actionUrl, "_blank", "noopener,noreferrer");
-    }
-    if (n.status !== "unread") return;
-    // Best-effort mark-read on click.
-    try {
-      await fetch("/api/hub/notifications", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "notification.mark_read",
-          id: n.id,
-        }),
-        cache: "no-store",
-      });
-    } catch {
-      /* swallow — visual stays consistent */
-    }
-  }, []);
+  const handleOpen = useCallback(
+    async (n: WireNotification) => {
+      if (n.actionUrl) {
+        window.open(n.actionUrl, "_blank", "noopener,noreferrer");
+      }
+      if (n.status !== "unread" || !workspaceId) return;
+      // Best-effort mark-read on click.
+      try {
+        await podTrpcFetch<{ success: boolean }>(
+          "notifCenter.markRead",
+          { notificationId: n.id },
+          { method: "POST", workspaceId },
+        );
+      } catch {
+        /* swallow — visual stays consistent */
+      }
+    },
+    [workspaceId],
+  );
+
+  // ─── Render guards ────────────────────────────────────────────────────────
+
+  // Workspace resolver still working — show loader; the panel re-renders
+  // automatically once the hook reports either an id or a final null.
+  if (workspaceLoading) return <PanelLoader />;
+
+  // No workspace at all (no pod session, no memberships). Don't bother
+  // calling the pod — surface a friendly empty.
+  if (!workspaceId) {
+    return (
+      <PanelEmpty
+        icon={Bell}
+        title="No workspace yet"
+        hint="Once your pod is paired and you’ve joined a workspace, alerts will appear here."
+      />
+    );
+  }
 
   if (load.kind === "loading") return <PanelLoader />;
   if (load.kind === "error") {
@@ -231,7 +259,7 @@ function NotificationRow({
   n: WireNotification;
   onOpen: (n: WireNotification) => void;
 }) {
-  const cat: NotificationCategory = n.category ?? "info";
+  const cat: NotificationCategory = severityToCategory(n.severity);
   const Icon = CATEGORY_ICON[cat];
   const isUnread = n.status === "unread";
   const clickable = !!n.actionUrl;
@@ -304,9 +332,9 @@ function prettyType(type: string): string {
     .replace(/^\w/, (c) => c.toUpperCase());
 }
 
-function relativeTime(ts: string): string {
-  const t = new Date(ts).getTime();
-  if (Number.isNaN(t)) return ts;
+function relativeTime(ts: string | Date): string {
+  const t = ts instanceof Date ? ts.getTime() : new Date(ts).getTime();
+  if (Number.isNaN(t)) return typeof ts === "string" ? ts : "";
   const diff = Date.now() - t;
   const sec = Math.floor(diff / 1000);
   if (sec < 60) return `${sec}s ago`;

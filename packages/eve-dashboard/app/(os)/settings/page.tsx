@@ -5,10 +5,12 @@ import { useRouter } from "next/navigation";
 import { Button, Spinner, Chip, addToast } from "@heroui/react";
 import {
   RefreshCw, KeyRound, RotateCw, Eye, EyeOff, Copy, Check,
-  Download, Sun, Moon, Monitor,
+  Download, Sun, Moon, Monitor, LogIn, LogOut, Plug,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { ThemeToggle } from "../../components/theme-toggle";
+import { usePodPairing } from "../hooks/use-pod-pairing";
+import { PodPairDialog } from "../components/pod-pair-dialog";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -92,6 +94,18 @@ export default function SettingsPage() {
           Configuration that belongs to Eve itself, not to your installed components.
         </p>
       </header>
+
+      {/* -----------------------------------------------------------------
+       * Pod connection — sign in / out of the user's pod
+       * -------------------------------------------------------------- */}
+      <Section
+        title="Pod connection"
+        description="Eve signs into your pod as you, not as itself. Use this to manage the cached user-channel session."
+      >
+        <Surface className="p-5">
+          <PodConnectionPanel />
+        </Surface>
+      </Section>
 
       {/* -----------------------------------------------------------------
        * Dashboard key — show + rotate
@@ -308,6 +322,167 @@ function RotatedKeyBanner({ secret, onSignOut }: { secret: string; onSignOut: ()
         </Button>
       </div>
     </div>
+  );
+}
+
+function PodConnectionPanel() {
+  const { state, userEmail, podUrl, expiresAt, refetch } = usePodPairing();
+  const [isPairOpen, setIsPairOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+
+  // The dialog opens in "quick re-sign-in" mode if we have an email,
+  // otherwise full email-prompt mode. Same component, parent passes
+  // `defaultEmail` based on cached state.
+  const openDialog = () => setIsPairOpen(true);
+
+  async function signOut() {
+    if (!confirm("Sign out of your pod?\n\nEve will keep your email so signing back in is one click. Cached marketplace data stays.")) return;
+    setSigningOut(true);
+    try {
+      const res = await fetch("/api/auth/pod-signout", {
+        method: "POST",
+        credentials: "include",
+      });
+      if (res.ok) {
+        addToast({ title: "Signed out of pod", color: "success" });
+        refetch();
+      } else {
+        addToast({ title: "Couldn't sign out", color: "danger" });
+      }
+    } catch {
+      addToast({ title: "Couldn't sign out", color: "danger" });
+    } finally {
+      setSigningOut(false);
+    }
+  }
+
+  const isPaired = state === "paired" || state === "needs-refresh";
+  const isLoading = state === "loading";
+
+  // Status pill mapping — keeps the visual identity tight.
+  let statusChip: React.ReactNode;
+  if (isLoading) {
+    statusChip = <Chip size="sm" variant="flat" radius="sm">checking…</Chip>;
+  } else if (state === "unconfigured") {
+    statusChip = <Chip size="sm" color="warning" variant="flat" radius="sm">no pod URL</Chip>;
+  } else if (isPaired) {
+    statusChip = (
+      <Chip size="sm" color="success" variant="flat" radius="sm">
+        signed in
+      </Chip>
+    );
+  } else {
+    statusChip = <Chip size="sm" color="warning" variant="flat" radius="sm">not signed in</Chip>;
+  }
+
+  // Primary action: depends on state. Sign in when unpaired, sign out
+  // when paired. Both share the dialog for sign-in flows.
+  const primaryAction = (() => {
+    if (isLoading || state === "unconfigured") return null;
+    if (isPaired) {
+      return (
+        <Button
+          size="sm"
+          color="default"
+          variant="flat"
+          radius="md"
+          startContent={<LogOut className="h-3.5 w-3.5" />}
+          isLoading={signingOut}
+          onPress={() => void signOut()}
+        >
+          Sign out of pod
+        </Button>
+      );
+    }
+    return (
+      <Button
+        size="sm"
+        color="primary"
+        variant="solid"
+        radius="md"
+        startContent={
+          state === "unpaired" ? (
+            <LogIn className="h-3.5 w-3.5" />
+          ) : (
+            <Plug className="h-3.5 w-3.5" />
+          )
+        }
+        onPress={openDialog}
+      >
+        {state === "unpaired" && userEmail
+          ? `Sign in as ${userEmail}`
+          : "Sign in to pod"}
+      </Button>
+    );
+  })();
+
+  return (
+    <>
+      <div className="flex flex-wrap items-start gap-4">
+        <div className="flex-1 min-w-[260px] space-y-3">
+          <Stat
+            icon={<Plug className="h-3.5 w-3.5" />}
+            label="Status"
+            value={statusChip}
+          />
+          <Stat
+            label="Pod URL"
+            value={
+              podUrl ? (
+                <span className="font-mono text-xs text-foreground break-all">
+                  {podUrl}
+                </span>
+              ) : (
+                <span className="text-sm text-default-400">not configured</span>
+              )
+            }
+          />
+          <Stat
+            label="Signed in as"
+            value={
+              userEmail ? (
+                <span className="font-mono text-xs text-foreground">{userEmail}</span>
+              ) : (
+                <span className="text-sm text-default-400">—</span>
+              )
+            }
+          />
+          <Stat
+            label="Token expires"
+            value={
+              expiresAt ? (
+                <span className="text-xs text-foreground tabular-nums">
+                  {new Date(expiresAt).toLocaleString()}
+                </span>
+              ) : (
+                <span className="text-sm text-default-400">—</span>
+              )
+            }
+          />
+          {state === "unconfigured" && (
+            <p className="text-xs text-default-500">
+              Eve doesn&apos;t know which pod to talk to yet. Set a pod URL via
+              the CLI (<code className="font-mono">eve setup pod</code>) or by
+              editing <code className="font-mono">~/.eve/secrets.json</code>.
+            </p>
+          )}
+          {state === "needs-refresh" && (
+            <p className="text-xs text-warning">
+              Your token has expired. The next pod call will auto-refresh, or
+              sign in again to refresh now.
+            </p>
+          )}
+        </div>
+        {primaryAction && <div className="self-start">{primaryAction}</div>}
+      </div>
+
+      <PodPairDialog
+        isOpen={isPairOpen}
+        onClose={() => setIsPairOpen(false)}
+        defaultEmail={userEmail}
+        onSuccess={refetch}
+      />
+    </>
   );
 }
 

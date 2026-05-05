@@ -1177,6 +1177,12 @@ export interface FirstAdminOptions {
   email?: string;
   password?: string;
   name?: string;
+  /**
+   * Public-facing URL to show in the magic-link output.
+   * When set, the setup URL uses this instead of synapUrl (which is often
+   * the loopback 127.0.0.1:4000 used for on-host API calls).
+   */
+  publicUrl?: string;
 }
 
 /**
@@ -1307,9 +1313,10 @@ export async function createFirstAdmin(
   if (!mlParsed || typeof mlParsed !== "object") return null;
   const mlObj = mlParsed as Record<string, unknown>;
   const mlToken = stringOr(mlObj.token, "");
-  // Build the URL from the CLI's known synapUrl rather than trusting the
-  // backend's PUBLIC_URL (which is often localhost:4000 on self-hosted installs).
-  const setupUrl = mlToken ? `${base}/setup?token=${mlToken}` : stringOr(mlObj.url, "");
+  // Build the URL from the public-facing URL, not synapUrl which is often the
+  // loopback 127.0.0.1:4000 used for on-host API calls.
+  const urlBase = (opts.publicUrl ?? "").replace(/\/+$/, "") || base;
+  const setupUrl = mlToken ? `${urlBase}/setup?token=${mlToken}` : stringOr(mlObj.url, "");
 
   // Caller uses the URL — we expose it via a callback or just return it.
   // We print it here since this is the lifecycle layer.
