@@ -27,7 +27,7 @@
  * See: synap-team-docs/content/team/platform/eve-os-vision.mdx §6
  */
 
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button, Spinner } from "@heroui/react";
 import { AlertCircle, CheckCircle2 } from "lucide-react";
@@ -81,6 +81,28 @@ function decodeJwtExp(jwt: string): string | undefined {
 }
 
 export default function CallbackPage() {
+  return (
+    <Suspense fallback={<CallbackFallback />}>
+      <CallbackInner />
+    </Suspense>
+  );
+}
+
+function CallbackFallback() {
+  return (
+    <main className="min-h-screen bg-background text-foreground flex items-center justify-center px-6 py-16">
+      <div className="w-full max-w-md rounded-2xl border border-divider bg-content1 p-8">
+        <Status
+          icon={<Spinner size="sm" color="primary" />}
+          title="Finishing sign-in…"
+          body="Exchanging your authorization code with Synap CP."
+        />
+      </div>
+    </main>
+  );
+}
+
+function CallbackInner() {
   const router = useRouter();
   const params = useSearchParams();
   const [state, setState] = useState<State>({ phase: "exchanging" });
