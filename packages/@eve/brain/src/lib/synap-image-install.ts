@@ -986,6 +986,10 @@ async function waitForKratosHealthy(maxWaitMs = 120_000): Promise<boolean> {
  * Ensure Kratos is running. Called from provision/setup flows that need
  * to create identities via the Kratos admin API. Idempotent — no-op if
  * Kratos is already up and healthy.
+ *
+ * Runs migrations explicitly via `compose run --rm` (avoids the ambiguous
+ * `condition: service_completed_successfully` behaviour when a restart
+ * policy is present), then starts kratos with `--no-deps`.
  */
 export async function ensureKratosRunning(deployDir: string, domain: string): Promise<void> {
   if (isKratosRunning(deployDir) && await probeKratosHealth()) return;
@@ -995,29 +999,43 @@ export async function ensureKratosRunning(deployDir: string, domain: string): Pr
     throw new Error(`No .env found at ${deployDir} — run \`eve install\` first.`);
   }
 
-  const envContent = readFileSync(envPath, 'utf-8');
+  let envContent = readFileSync(envPath, 'utf-8');
   const postgresPassword = parseEnvValue(envContent, 'POSTGRES_PASSWORD');
 
   // Ensure KRATOS_CONFIG_DIR is set in .env
-  let updatedEnv = envContent;
   if (!envContent.includes('KRATOS_CONFIG_DIR=')) {
     const sep = envContent.endsWith('\n') ? '' : '\n';
-    updatedEnv = `${envContent}${sep}KRATOS_CONFIG_DIR=./config/kratos\n`;
-    writeFileSync(envPath, updatedEnv, { encoding: 'utf-8', mode: 0o600 });
+    envContent = `${envContent}${sep}KRATOS_CONFIG_DIR=./config/kratos\n`;
+    writeFileSync(envPath, envContent, { encoding: 'utf-8', mode: 0o600 });
   }
 
   // Write kratos.yml + identity.schema.json
   await generateKratosConfig(deployDir, domain, postgresPassword, parseKratosSecretsFromEnv(envContent), 'http://backend:4000');
 
-  // Start Kratos — compose handles kratos-migrate dependency
-  console.log('  Starting Kratos (running migrations if needed)…');
-  spawnSync('docker', ['compose', 'up', '-d', 'kratos'], {
-    cwd: deployDir,
-    stdio: 'inherit',
-    env: { ...process.env, COMPOSE_PROJECT_NAME: 'synap-backend' },
-  });
+  const composeEnv = { ...process.env, COMPOSE_PROJECT_NAME: 'synap-backend' };
 
-  await waitForKratosHealthy();
+  // Run kratos-migrate explicitly — one-shot, no restart-policy ambiguity
+  console.log('  Running Kratos DB migrations…');
+  const migrateResult = spawnSync('docker', ['compose', 'run', '--rm', 'kratos-migrate'], {
+    cwd: deployDir, stdio: 'inherit', env: composeEnv,
+  });
+  if (migrateResult.status !== 0) {
+    throw new Error('Kratos DB migration failed — check `docker compose logs kratos-migrate`');
+  }
+
+  // Start kratos with --no-deps (migration already done above)
+  console.log('  Starting Kratos…');
+  const upResult = spawnSync('docker', ['compose', 'up', '-d', '--no-deps', 'kratos'], {
+    cwd: deployDir, stdio: 'inherit', env: composeEnv,
+  });
+  if (upResult.status !== 0) {
+    throw new Error('Failed to start Kratos — check `docker compose logs kratos`');
+  }
+
+  const healthy = await waitForKratosHealthy(90_000);
+  if (!healthy) {
+    throw new Error('Kratos did not become healthy in time — check `docker compose logs kratos`');
+  }
 }
 
 export async function installSynapFromImage(opts: SynapImageInstallOptions = {}): Promise<SynapImageInstallResult> {

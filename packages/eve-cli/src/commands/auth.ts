@@ -43,6 +43,7 @@ import {
 import {
   AGENTS,
   entityStateManager,
+  findPodDeployDir,
   readAgentKey,
   readEveSecrets,
   resolveAgent,
@@ -480,15 +481,16 @@ async function runProvision(opts: { agent?: string; email?: string }): Promise<v
   // ------------------------------------------------------------------
   // Ensure Kratos is running — it may never have been started on older
   // installs or when the backend was started independently of eve install.
+  // We print plain output here (no spinner) so docker compose logs are
+  // visible to the operator.
   // ------------------------------------------------------------------
   try {
-    const kratosSpinner = createSpinner('Ensuring Kratos (auth) is running…');
-    kratosSpinner.start();
     const secrets = await readEveSecrets(process.cwd());
     const domain = secrets?.domain?.primary ?? 'localhost';
-    const deployDir = '/opt/synap-backend';
+    const deployDir = findPodDeployDir() ?? '/opt/synap-backend';
+    printInfo(`Ensuring Kratos is running (deploy dir: ${deployDir})…`);
     await ensureKratosRunning(deployDir, domain);
-    kratosSpinner.succeed('Kratos ready');
+    printSuccess('Kratos ready');
   } catch (err) {
     // Non-fatal — log and continue; createAdminUser will give a clear error if kratos is still down
     printWarning(`Could not ensure Kratos: ${err instanceof Error ? err.message : String(err)}`);
