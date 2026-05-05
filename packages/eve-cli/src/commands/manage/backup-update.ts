@@ -8,6 +8,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getGlobalCliFlags } from '@eve/cli-kit';
 import { runActionToCompletion } from '@eve/lifecycle';
+import { findPodDeployDir } from '@eve/dna';
 import {
   printInfo,
   printSuccess,
@@ -153,7 +154,11 @@ function buildUpdateTargets(deployDir: string | undefined): UpdateTarget[] {
       label: '🧠 Synap Data Pod',
       update: async () => {
         const env = { ...process.env, COMPOSE_PROJECT_NAME: 'synap-backend' };
-        await execa('docker', ['compose', 'pull', 'backend', 'backend-migrate', 'realtime', '--ignore-pull-failures'], { cwd: deployDir, env, stdio: 'inherit' });
+        // Pull the backend image — no --ignore-pull-failures so a registry
+        // auth failure or missing tag surfaces as an error rather than
+        // silently keeping the old image. backend-migrate shares the same
+        // image as backend; realtime has its own separate image.
+        await execa('docker', ['compose', 'pull', 'backend', 'backend-migrate', 'realtime'], { cwd: deployDir, env, stdio: 'inherit' });
         await execa('docker', ['compose', 'run', '--rm', 'backend-migrate'], { cwd: deployDir, env, stdio: 'inherit' });
         await execa('docker', ['compose', 'up', '-d', '--no-deps', 'backend', 'realtime'], { cwd: deployDir, env, stdio: 'inherit' });
         const name = getSynapBackendContainer();
@@ -238,8 +243,12 @@ export function backupUpdateCommands(program: Command): void {
     .option('--only <organs>', 'Comma-separated organs to update (deprecated — use positional args)')
     .option('--skip <organs>', 'Comma-separated organs to skip, e.g. traefik')
     .action(async (components: string[] | undefined, opts: { only?: string; skip?: string }) => {
-      const deployDirs = ['/opt/synap-backend', process.env.SYNAP_DEPLOY_DIR].filter(Boolean) as string[];
-      const deployDir = deployDirs.find(d => existsSync(join(d, 'docker-compose.yml')));
+      // Use findPodDeployDir() — the canonical resolver used everywhere else
+      // (preflight, doctor, lifecycle). It checks SYNAP_DEPLOY_DIR env var
+      // first, then walks candidate paths including /opt/synap-backend/deploy
+      // and /opt/synap-backend. The old hardcoded list missed the deploy/
+      // subdirectory layout and couldn't be overridden without changing code.
+      const deployDir = findPodDeployDir() ?? undefined;
 
       const targets = buildUpdateTargets(deployDir);
 
