@@ -34,6 +34,7 @@ import {
   AI_CONSUMERS_NEEDING_RECREATE,
   pruneOldImagesForRepo,
   ensureSynapLoopbackOverride,
+  connectTraefikToEveNetwork,
   type ComponentInfo,
   type EnsureOverrideResult,
 } from "@eve/dna";
@@ -537,53 +538,19 @@ async function* runPostUpdateHooks(comp: ComponentInfo): AsyncGenerator<Lifecycl
  * eve-network to their traefik compose file too.
  */
 async function* postUpdateConnectTraefik(): AsyncGenerator<LifecycleEvent> {
-  const { execSync } = await import("node:child_process");
-
-  const candidates = [
-    "eve-legs-traefik",        // Eve-managed (standard install)
-    "traefik-traefik-1",       // /opt/traefik compose project (common)
-    "traefik_traefik_1",       // older compose naming
-    "traefik",                 // bare hand-installed container
-  ];
-
-  // Also probe via label filter to catch any compose project name
-  let labelMatch: string | null = null;
-  try {
-    const out = execSync(
-      'docker ps --filter "ancestor=traefik" --filter "status=running" --format "{{.Names}}"',
-      { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], timeout: 4000 },
-    ).trim();
-    labelMatch = out.split("\n")[0]?.trim() || null;
-  } catch { /* docker not available or no traefik */ }
-
-  const toTry = labelMatch ? [labelMatch, ...candidates] : candidates;
-
-  for (const name of toTry) {
-    try {
-      // Check if container exists and is running before attempting connect
-      execSync(`docker inspect --format "{{.State.Running}}" ${name}`, {
-        stdio: ["ignore", "ignore", "ignore"],
-        timeout: 2000,
-      });
-      // Container exists — attempt network connect (idempotent, error = already connected)
-      try {
-        execSync(`docker network connect eve-network ${name}`, {
-          stdio: ["ignore", "ignore", "ignore"],
-          timeout: 5000,
-        });
-        yield { type: "log", line: `Connected ${name} → eve-network (Traefik can now route to backend)` };
-      } catch {
-        // Already connected — that's fine
-        yield { type: "log", line: `${name} already on eve-network ✓` };
-      }
-      return;
-    } catch { /* container not found — try next */ }
+  const result = connectTraefikToEveNetwork();
+  if (result.connected && result.containerName) {
+    if (result.alreadyConnected) {
+      yield { type: "log", line: `${result.containerName} already on eve-network ✓` };
+    } else {
+      yield { type: "log", line: `Connected ${result.containerName} → eve-network (Traefik can now route to backend)` };
+    }
+  } else {
+    yield {
+      type: "log",
+      line: "Could not find Traefik container to connect to eve-network — if Traefik routes to backend return 502, run: docker network connect eve-network <traefik-container-name>",
+    };
   }
-
-  yield {
-    type: "log",
-    line: "Could not find Traefik container to connect to eve-network — if Traefik routes to backend return 502, run: docker network connect eve-network <traefik-container-name>",
-  };
 }
 
 /**
@@ -1891,4 +1858,13 @@ export {
   type EnsureBuilderWorkspaceOptions,
   type EnsureBuilderWorkspaceResult,
 } from "./builder-workspace.js";
+
+// Backend preflight — auto-discover + auto-configure prerequisites before
+// any command that needs to reach the synap-backend. Call this at the top
+// of every command handler that talks to the pod.
+export {
+  runBackendPreflight,
+  type PreflightResult,
+  type PreflightOptions,
+} from "./preflight.js";
 

@@ -26,16 +26,20 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join } from "node:path";
 import { execSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { writeEnvVar } from "./env-files.js";
 import {
   LEGACY_CODER_ENGINE_SLUGS,
+  POD_DEPLOY_DIR_CANDIDATES,
+  SYNAP_BACKEND_CONTAINERS,
   agentsToProvision,
+  findPodDeployDir,
   readAgentKey,
   readEveSecrets,
   resolveSynapUrlOnHost,
+  restartBackendContainer,
   writeAgentKey,
   writeCodeEngine,
   writeEveSecrets,
@@ -832,43 +836,7 @@ async function waitForBackend(
 // Self-healing — auto-generate PROVISIONING_TOKEN when missing/empty
 // ---------------------------------------------------------------------------
 
-/**
- * Pod deploy directories we know how to write to. Same list used by
- * `resolveProvisioningTokenWithDiagnostics`. Order matters — the first
- * dir that contains a `docker-compose.yml` (or has parent compose
- * artefacts) wins.
- */
-const POD_DEPLOY_DIR_CANDIDATES: ReadonlyArray<string> = [
-  "/opt/synap-backend/deploy",
-  "/opt/synap-backend",
-  "/opt/synap/deploy",
-  "/opt/synap",
-  "/opt/synap-pod/deploy",
-  "/opt/synap-pod",
-  "/srv/synap-backend/deploy",
-  "/srv/synap/deploy",
-];
-
-/**
- * Locate the pod's deploy directory — the one containing the .env we
- * own. A directory qualifies if it has at least an .env file alongside
- * a compose file we recognise. Returns the SYNAP_DEPLOY_DIR override
- * unconditionally when set (even if compose files are absent — operators
- * may scaffold via env), otherwise the first matching candidate.
- */
-function findPodDeployDir(): string | null {
-  if (process.env.SYNAP_DEPLOY_DIR && existsSync(process.env.SYNAP_DEPLOY_DIR)) {
-    return process.env.SYNAP_DEPLOY_DIR;
-  }
-  for (const dir of POD_DEPLOY_DIR_CANDIDATES) {
-    if (!existsSync(dir)) continue;
-    const hasCompose =
-      existsSync(join(dir, "docker-compose.yml")) ||
-      existsSync(join(dir, "docker-compose.standalone.yml"));
-    if (hasCompose) return dir;
-  }
-  return null;
-}
+// POD_DEPLOY_DIR_CANDIDATES, findPodDeployDir — imported from @eve/dna/docker-helpers
 
 export interface EnsureProvisioningTokenResult {
   token: string;
@@ -916,47 +884,10 @@ export async function ensurePodProvisioningToken(): Promise<EnsureProvisioningTo
   const result = writeEnvVar(deployDir, "PROVISIONING_TOKEN", token);
   const envFilePath = join(deployDir, ".env");
 
-  // Best-effort restart so the running backend reloads its env. We try
-  // compose first (correct path — recreates only if config changed),
-  // then `docker restart` as a fallback for hosts without compose v2.
-  // Either failure is non-fatal: the token is on disk; the next manual
-  // restart will pick it up.
-  let backendRestarted = false;
-  try {
-    execSync(`docker compose -f ${join(deployDir, "docker-compose.yml")} up -d backend`, {
-      stdio: ["ignore", "ignore", "ignore"],
-      timeout: 30_000,
-    });
-    backendRestarted = true;
-  } catch {
-    // try the standalone compose file
-    try {
-      execSync(
-        `docker compose -f ${join(deployDir, "docker-compose.standalone.yml")} up -d backend`,
-        { stdio: ["ignore", "ignore", "ignore"], timeout: 30_000 },
-      );
-      backendRestarted = true;
-    } catch {
-      // last resort — plain restart
-      for (const container of SYNAP_BACKEND_CONTAINERS) {
-        try {
-          execSync(`docker restart ${container}`, {
-            stdio: ["ignore", "ignore", "ignore"],
-            timeout: 15_000,
-          });
-          backendRestarted = true;
-          break;
-        } catch {
-          // try next container name
-        }
-      }
-    }
-  }
-
-  // Touch reference to satisfy unused-var lint when WriteEnvVarResult.changed
-  // isn't otherwise used here. We log via the caller.
-  void result;
-  void dirname; // imported for future use if we ever want to walk up
+  // Best-effort restart so the running backend reloads its env.
+  // Non-fatal: the token is on disk; the next manual restart picks it up.
+  const backendRestarted = restartBackendContainer(deployDir);
+  void result; // WriteEnvVarResult.changed logged by caller if needed
 
   return {
     token,
@@ -1087,11 +1018,7 @@ function readEnvFileVarWithStatus(envPath: string, key: string): EnvProbe {
   }
 }
 
-const SYNAP_BACKEND_CONTAINERS: ReadonlyArray<string> = [
-  "synap-backend-backend-1",
-  "synap-backend",
-  "synap-backend-1",
-];
+// SYNAP_BACKEND_CONTAINERS — imported from @eve/dna/docker-helpers
 
 function readProvisioningTokenFromDocker(): string | null {
   return readProvisioningTokenFromDockerWithStatus().value;

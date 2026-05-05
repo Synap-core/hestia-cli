@@ -35,6 +35,7 @@ import {
   provisionAllAgents,
   renewAgentKey,
   runActionToCompletion,
+  runBackendPreflight,
   type AuthFailure,
   type AuthStatus,
   type ProvisionResult,
@@ -443,36 +444,51 @@ async function runProvision(opts: { agent?: string; email?: string }): Promise<v
   printHeader('Synap auth provision');
   console.log();
 
-  // Check if the pod has a first admin yet. If not, run setup-admin first
-  // so provision has a workspace to work with.
-  const secrets = await readEveSecrets(process.cwd());
-  const synapUrl = await resolveSynapUrlOnHost(secrets);
+  // ------------------------------------------------------------------
+  // Preflight: auto-discover and configure every prerequisite so the
+  // operator doesn't have to manually set up secrets.json, compose
+  // overrides, or PROVISIONING_TOKEN before running this command.
+  // ------------------------------------------------------------------
+  const preflightSpinner = createSpinner('Checking prerequisites…');
+  preflightSpinner.start();
 
-  if (synapUrl) {
-    const needsSetup = await checkNeedsAdmin(synapUrl);
-    if (needsSetup) {
-      printWarning('No admin account found on this pod.');
-      printInfo('Running first-admin setup before provisioning agent keys…');
-      console.log();
-
-      const provisioningToken =
-        process.env.EVE_PROVISIONING_TOKEN?.trim() ||
-        process.env.PROVISIONING_TOKEN?.trim() ||
-        '';
-
-      if (!provisioningToken) {
-        printError('PROVISIONING_TOKEN not found — cannot create first admin automatically.');
-        printInfo(
-          '  Run `eve setup admin` manually, then retry `eve auth provision`.',
-        );
-        process.exitCode = 1;
-        return;
+  let synapUrl: string;
+  let provisioningToken: string;
+  try {
+    const preflight = await runBackendPreflight({ cwd: process.cwd() });
+    synapUrl = preflight.synapUrl;
+    provisioningToken = preflight.provisioningToken;
+    if (preflight.configured || preflight.notes.length > 0) {
+      preflightSpinner.succeed('Prerequisites ready (auto-configured)');
+      for (const note of preflight.notes) {
+        printInfo(`  ${note}`);
       }
-
-      const mode = opts.email ? 'prompt' : 'magic-link';
-      await runSetupAdminInline({ synapUrl, provisioningToken, mode, email: opts.email });
       console.log();
+    } else {
+      preflightSpinner.succeed('Prerequisites ready');
     }
+  } catch (err) {
+    preflightSpinner.fail('Preflight failed');
+    printError(err instanceof Error ? err.message : String(err));
+    console.log();
+    printInfo('Run `eve setup` to initialise Eve on this server from scratch.');
+    process.exitCode = 1;
+    return;
+  }
+
+  // ------------------------------------------------------------------
+  // Check if the pod has a first admin yet. If not, run setup-admin
+  // inline so provision has a workspace to associate agents with.
+  // ------------------------------------------------------------------
+  const needsSetup = await checkNeedsAdmin(synapUrl);
+  if (needsSetup) {
+    printWarning('No admin account found on this pod.');
+    printInfo('Running first-admin setup before provisioning agent keys…');
+    console.log();
+
+    const mode = opts.email ? 'prompt' : 'magic-link';
+    await runSetupAdminInline({ synapUrl, provisioningToken, mode, email: opts.email });
+    console.log();
   }
 
   if (opts.agent) {

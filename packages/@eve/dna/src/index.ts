@@ -204,5 +204,23 @@ export {
   writeClaudeCodeSettings,
 } from './builder-hub-wiring.js';
 
+// Pod config auto-discovery (reads on-disk .env / Traefik / docker inspect)
+export {
+  type DiscoveredPodConfig,
+  discoverPodConfig,
+} from './discover.js';
+
+// Shared Docker helpers — pod deploy-dir resolution, backend restart,
+// Traefik network connect. Single source of truth used by lifecycle and
+// preflight so container names and fallback strategies never drift.
+export {
+  POD_DEPLOY_DIR_CANDIDATES,
+  findPodDeployDir,
+  SYNAP_BACKEND_CONTAINERS,
+  restartBackendContainer,
+  connectTraefikToEveNetwork,
+  type ConnectTraefikResult,
+} from './docker-helpers.js';
+
 // Version
 export const VERSION = '0.1.0';
