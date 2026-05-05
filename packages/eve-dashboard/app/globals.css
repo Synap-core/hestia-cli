@@ -247,6 +247,61 @@ body {
 }
 
 /* ----------------------------------------------------------------------
+ * Agents app — React Flow surface
+ *
+ * The Agents page renders the topology with @xyflow/react, but we
+ * want our own custom nodes (glass-icon HTML) to be the entire visual
+ * — no boxes, no borders, no background fill from the library. These
+ * rules suppress React Flow's default chrome inside the .agents-flow
+ * scope only.
+ * ------------------------------------------------------------------- */
+.agents-flow .react-flow__node {
+  background: transparent;
+  border: none;
+  padding: 0;
+  box-shadow: none;
+  outline: none;
+  width: auto;
+  font-size: inherit;
+  color: inherit;
+}
+.agents-flow .react-flow__node.selectable:hover {
+  background: transparent;
+}
+.agents-flow .react-flow__node-default,
+.agents-flow .react-flow__node-default.selected,
+.agents-flow .react-flow__node-default.selectable:focus,
+.agents-flow .react-flow__node-default.selectable:focus-visible {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+.agents-flow .react-flow__node.selected {
+  outline: none;
+}
+.agents-flow .react-flow__handle {
+  opacity: 0;
+  pointer-events: none;
+  width: 1px;
+  height: 1px;
+}
+.agents-flow .react-flow__edge-path {
+  stroke-linecap: round;
+}
+.agents-flow .react-flow__edges {
+  z-index: 0;
+}
+.agents-flow .react-flow__nodes {
+  z-index: 1;
+}
+.agents-flow .agent-node:focus-visible {
+  outline: none;
+}
+.agents-flow .react-flow__background {
+  opacity: 0.5;
+}
+
+/* ----------------------------------------------------------------------
  * Scrollbar — calm, not invisible
  * ------------------------------------------------------------------- */
 * {

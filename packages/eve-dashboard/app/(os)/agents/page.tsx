@@ -35,6 +35,7 @@ import { AgentGraph } from "./components/agent-graph";
 import { ActivityFeed } from "./components/activity-feed";
 import { ChannelStrip } from "./components/channel-strip";
 import { NodePanel } from "./components/node-panel";
+import { TimelineCanvas } from "./components/timeline-canvas";
 import { ConnectChannelsModal } from "./components/connect-channels-modal";
 import { useRealtimeEvents } from "./hooks/use-realtime-events";
 import { useChannels } from "./hooks/use-channels";
@@ -257,55 +258,72 @@ export default function AgentsPage() {
           </div>
         )}
 
-        {/* Graph — only in compact mode. Fixed height: 320 on small, 380 on lg. */}
+        {/* Compact mode — graph (top) + activity feed (bottom). The
+            graph stays fixed height; the feed fills the remaining
+            vertical space; the channel strip pins to the bottom. */}
         {viewMode === "compact" && (
-          <div className="relative shrink-0 mb-3 h-[320px] lg:h-[380px]">
-            <AgentGraph
+          <>
+            <div className="relative shrink-0 mb-3 h-[300px] lg:h-[360px]">
+              <AgentGraph
+                events={events}
+                agentStatuses={agentStatuses}
+                selectedAgent={selectedAgent}
+                onSelectAgent={(id) =>
+                  setSelectedAgent((prev) => (prev === id ? null : id))
+                }
+                channels={channels}
+                highlightedLane={highlightedLaneKey}
+              />
+
+              {/* Side panel slides in over the graph */}
+              {selectedAgent && (
+                <NodePanel
+                  agentId={selectedAgent}
+                  events={byAgent[selectedAgent] ?? []}
+                  status={agentStatuses[selectedAgent]}
+                  onClose={() => setSelectedAgent(null)}
+                  onSelectAgent={(id) => setSelectedAgent(id)}
+                />
+              )}
+            </div>
+
+            <div className="min-h-0 flex-1 mb-3">
+              <ActivityFeed
+                events={events}
+                isEmpty={isEmpty}
+                onHighlightLane={setHighlightedLane}
+                density="compact"
+                onSendTestEvent={() => void sendTestEvent()}
+              />
+            </div>
+          </>
+        )}
+
+        {/* Timeline mode — full-pane swimlane canvas. One row per agent,
+            time on the X axis, events plotted as colored markers, causal
+            chains drawn as soft curves between markers. Leverages the
+            event chain to show what happened, when, and to whom. */}
+        {viewMode === "timeline" && (
+          <div className="min-h-0 flex-1 mb-3">
+            <TimelineCanvas
               events={events}
               agentStatuses={agentStatuses}
-              selectedAgent={selectedAgent}
-              onSelectAgent={(id) =>
-                setSelectedAgent((prev) => (prev === id ? null : id))
-              }
-              channels={channels}
-              highlightedLane={highlightedLaneKey}
+              isEmpty={isEmpty}
+              onSelectAgent={setSelectedAgent}
+              onSendTestEvent={() => void sendTestEvent()}
             />
-
-            {/* Side panel slides in over the graph */}
-            {selectedAgent && (
-              <NodePanel
-                agentId={selectedAgent}
-                events={byAgent[selectedAgent] ?? []}
-                status={agentStatuses[selectedAgent]}
-                onClose={() => setSelectedAgent(null)}
-                onSelectAgent={(id) => setSelectedAgent(id)}
-              />
-            )}
           </div>
         )}
 
-        {/* Channel strip — always visible. Doubles as the first-run CTA when
-            there are no channels yet (its empty state already says
-            "No channels connected yet · Connect a channel"). */}
-        <div className="shrink-0 mb-3">
+        {/* Channel strip — pinned to the bottom of the pane. Doubles as
+            the first-run CTA: "No channels connected yet · Connect a
+            channel". Always visible regardless of view mode. */}
+        <div className="shrink-0">
           <ChannelStrip
             channels={channels}
             isLoading={isChannelsLoading}
             partial={channelsPartial}
             onConnect={() => setIsConnectOpen(true)}
-          />
-        </div>
-
-        {/* Activity feed — fills remaining height. In timeline mode it
-            owns the whole pane below the channel strip; in compact mode
-            it shares space with the graph above. */}
-        <div className="min-h-0 flex-1">
-          <ActivityFeed
-            events={events}
-            isEmpty={isEmpty}
-            onHighlightLane={viewMode === "compact" ? setHighlightedLane : undefined}
-            density={viewMode === "timeline" ? "timeline" : "compact"}
-            onSendTestEvent={() => void sendTestEvent()}
           />
         </div>
       </div>

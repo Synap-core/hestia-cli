@@ -246,9 +246,10 @@ function MessagingTokenForm({
             base: "bg-foreground/[0.04] border border-foreground/[0.08]",
           }}
         >
-          <CardBody className="space-y-3 px-4 py-4">
-            <div className="flex items-center gap-2">
-              <span className="text-[12.5px] font-medium text-foreground">Status</span>
+          <CardBody className="space-y-4 px-4 py-4">
+            {/* Status row — chip pill, no input label collision */}
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[12.5px] font-medium text-foreground/85">Status</span>
               {isConnectedHere ? (
                 <Chip size="sm" radius="full" color="success" variant="flat" startContent={<Check className="h-3 w-3" />}>
                   Connected
@@ -264,20 +265,30 @@ function MessagingTokenForm({
               )}
             </div>
 
-            <Input
-              type="password"
-              label={help.tokenLabel}
-              labelPlacement="outside"
-              placeholder={isConnectedHere ? "(stored — leave blank to keep)" : "Paste your bot token"}
-              value={token}
-              onChange={e => setToken(e.target.value)}
-              variant="flat"
-              radius="md"
-              size="sm"
-              classNames={{
-                inputWrapper: "bg-foreground/[0.04] border border-foreground/[0.08]",
-              }}
-            />
+            {/* Token input — manual label avoids HeroUI's floating
+                "outside" label (which collided with the Status row). */}
+            <div className="space-y-1.5">
+              <label
+                htmlFor={`${platform}-token-input`}
+                className="block text-[11.5px] font-medium uppercase tracking-[0.06em] text-foreground/55"
+              >
+                {help.tokenLabel}
+              </label>
+              <Input
+                id={`${platform}-token-input`}
+                type="password"
+                aria-label={help.tokenLabel}
+                placeholder={isConnectedHere ? "(stored — leave blank to keep)" : "Paste your bot token"}
+                value={token}
+                onChange={e => setToken(e.target.value)}
+                variant="flat"
+                radius="md"
+                size="sm"
+                classNames={{
+                  inputWrapper: "bg-foreground/[0.04] border border-foreground/[0.08] data-[hover=true]:bg-foreground/[0.06]",
+                }}
+              />
+            </div>
 
             {errorMsg && (
               <div className="flex items-center gap-2 text-[12px] text-danger">

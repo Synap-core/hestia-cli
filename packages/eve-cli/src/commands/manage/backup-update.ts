@@ -7,8 +7,13 @@ import { existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getGlobalCliFlags } from '@eve/cli-kit';
-import { runActionToCompletion } from '@eve/lifecycle';
-import { findPodDeployDir } from '@eve/dna';
+import {
+  runActionToCompletion,
+  runBackendPreflight,
+  provisionAllAgents,
+  checkNeedsAdmin,
+} from '@eve/lifecycle';
+import { findPodDeployDir, entityStateManager } from '@eve/dna';
 import {
   printInfo,
   printSuccess,
@@ -121,6 +126,49 @@ function findSelfUpdateScript(): string | null {
   return null;
 }
 
+/**
+ * After a successful `eve update synap`, re-run agent provisioning so:
+ *   - New agents introduced in this release get their first key minted.
+ *   - Any first-install that previously failed auth gets a retry.
+ *
+ * skipIfPresent=true: keys that already exist are NOT re-minted — this
+ * is an update, not a key rotation. Use `eve auth renew` for that.
+ *
+ * Never throws — this is a best-effort post-update hook. Returns sub-lines
+ * for the spinner row so the user can see what happened without noise.
+ */
+async function tryPostUpdateProvision(deployDir: string): Promise<{ subLines: string[] }> {
+  const subLines: string[] = [];
+  try {
+    const preflight = await runBackendPreflight({ cwd: deployDir });
+    const needsAdmin = await checkNeedsAdmin(preflight.synapUrl);
+    if (needsAdmin) {
+      const setupUrl = `${preflight.synapUrl.replace('127.0.0.1:4000', preflight.synapUrl)}/setup`;
+      subLines.push(`Admin setup required — run: eve auth provision`);
+      return { subLines };
+    }
+    const installed = await entityStateManager.getInstalledComponents().catch(() => [] as string[]);
+    const results = await provisionAllAgents({
+      installedComponentIds: installed,
+      deployDir,
+      reason: 'post-update',
+      synapUrl: preflight.synapUrl,
+      provisioningToken: preflight.provisioningToken,
+      skipIfPresent: true,
+    });
+    const ok = results.filter(r => r.provisioned).length;
+    const failed = results.filter(r => !r.provisioned);
+    if (failed.length > 0) {
+      subLines.push(`${failed.length} agent key(s) failed — run: eve auth provision`);
+    } else if (ok > 0) {
+      subLines.push(`${ok} agent key${ok === 1 ? '' : 's'} verified`);
+    }
+  } catch {
+    subLines.push('Agent provision skipped (backend not ready — run: eve auth provision)');
+  }
+  return { subLines };
+}
+
 function buildUpdateTargets(deployDir: string | undefined): UpdateTarget[] {
   const targets: UpdateTarget[] = [];
 
@@ -163,6 +211,11 @@ function buildUpdateTargets(deployDir: string | undefined): UpdateTarget[] {
         await execa('docker', ['compose', 'up', '-d', '--no-deps', 'backend', 'realtime'], { cwd: deployDir, env, stdio: 'inherit' });
         const name = getSynapBackendContainer();
         if (name) connectToEveNetwork(name);
+
+        // Post-update: mint agent keys for any new agents added in this
+        // release, and verify existing ones are still valid. Best-effort
+        // — a provision failure never blocks the update itself.
+        return tryPostUpdateProvision(deployDir);
       },
     });
   }

@@ -40,6 +40,11 @@ import {
   addonComponentIds,
 } from '../../lib/components.js';
 import { RSSHubService } from '@eve/eyes';
+import {
+  runBackendPreflight,
+  provisionAllAgents,
+  checkNeedsAdmin,
+} from '@eve/lifecycle';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -329,12 +334,103 @@ export async function runInstall(opts: InstallOptions): Promise<void> {
   }
 
   // -----------------------------------------------------------------
+  // 7d. Auto-provision Synap agent keys (best-effort, always-on)
+  // -----------------------------------------------------------------
+  if (!jsonMode && installedComponents.includes('synap')) {
+    await runPostInstallProvision(installedComponents);
+  }
+
+  // -----------------------------------------------------------------
   // 8. Final recap — context-aware
   // -----------------------------------------------------------------
   if (!jsonMode) {
     await printInstallationRecap(installedComponents);
   } else {
     outputJson({ ok: true, components: installList });
+  }
+}
+
+/**
+ * After install: try to reach the backend and mint agent keys automatically.
+ *
+ * Three outcomes:
+ *   1. Success → agent keys are ready, operators can use Eve immediately.
+ *   2. Admin needed → print the setup URL and the command to run next.
+ *   3. Backend not ready → print actionable command with no blocking wait.
+ *
+ * Never throws — install should never fail at this step.
+ */
+async function runPostInstallProvision(installedComponents: string[]): Promise<void> {
+  console.log();
+  const spinner = createSpinner('Connecting Eve agents to Synap…');
+  spinner.start();
+
+  let synapUrl: string;
+  let provisioningToken: string;
+  try {
+    const preflight = await runBackendPreflight({ cwd: process.cwd() });
+    synapUrl = preflight.synapUrl;
+    provisioningToken = preflight.provisioningToken;
+  } catch (err) {
+    spinner.warn('Backend not reachable yet (still starting up)');
+    console.log();
+    printInfo('Once it\'s up, run:');
+    console.log(`  ${colors.info('eve auth provision')}`);
+    printInfo('This will create your first admin account and mint agent API keys.');
+    return;
+  }
+
+  const needsAdmin = await checkNeedsAdmin(synapUrl);
+  if (needsAdmin) {
+    spinner.warn('Backend is up — first admin account required');
+    const secrets = await readEveSecrets(process.cwd());
+    const domain = secrets?.domain?.primary;
+    const ssl = !!secrets?.domain?.ssl;
+    const protocol = ssl ? 'https' : 'http';
+    const setupUrl = domain ? `${protocol}://pod.${domain}/setup` : `${synapUrl}/setup`;
+    console.log();
+    printInfo('1. Create your admin account at:');
+    console.log(`      ${colors.primary.bold(setupUrl)}`);
+    console.log();
+    printInfo('2. Then run:');
+    console.log(`      ${colors.info('eve auth provision')}`);
+    printInfo('   This mints API keys so Eve\'s services can talk to Synap.');
+    return;
+  }
+
+  const results = await provisionAllAgents({
+    installedComponentIds: installedComponents,
+    deployDir: process.cwd(),
+    reason: 'post-install',
+    synapUrl,
+    provisioningToken,
+    skipIfPresent: true,
+  });
+
+  const ok = results.filter(r => r.provisioned);
+  const failed = results.filter(r => !r.provisioned);
+
+  if (failed.length === 0) {
+    spinner.succeed(`Agent keys ready (${ok.length} agent${ok.length === 1 ? '' : 's'} provisioned)`);
+  } else if (ok.length > 0) {
+    spinner.warn(`${ok.length} agent${ok.length === 1 ? '' : 's'} provisioned, ${failed.length} failed`);
+    for (const f of failed) {
+      printWarning(`  ${f.agentType}: ${f.reason.split('\n')[0]}`);
+    }
+    console.log();
+    printInfo(`Retry with: ${colors.info('eve auth provision')}`);
+  } else {
+    spinner.warn('Agent provisioning failed');
+    const topReason = results[0]?.provisioned === false ? results[0].reason : '';
+    if (topReason.includes('404') || topReason.includes('backend version')) {
+      console.log();
+      printInfo('Backend image is outdated. Run:');
+      console.log(`  ${colors.info('eve update synap && eve auth provision')}`);
+    } else {
+      console.log();
+      printInfo(`Reason: ${topReason.split('\n')[0] || 'unknown'}`);
+      printInfo(`Retry with: ${colors.info('eve auth provision')}`);
+    }
   }
 }
 
@@ -441,6 +537,10 @@ async function printInstallationRecap(installedComponents: string[]): Promise<vo
   console.log(colors.muted(`    eve add <component>      install another component`));
   if (domain) {
     console.log(colors.muted(`    eve domain check         verify all routes`));
+  }
+  if (installedComponents.includes('synap')) {
+    console.log(colors.muted(`    eve auth provision       mint/refresh agent keys`));
+    console.log(colors.muted(`    eve auth status          check key health per agent`));
   }
   console.log();
   console.log(colors.success.bold('━'.repeat(60)));

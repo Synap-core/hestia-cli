@@ -23,6 +23,7 @@
     "@xterm/xterm": "^5.5.0",
     "@xyflow/react": "^12.0.0",
     "baileys": "7.0.0-rc.9",
+    "dagre": "^0.8.5",
     "framer-motion": "^11.0.0",
     "jose": "^5.0.0",
     "lucide-react": "^0.441.0",
@@ -38,6 +39,7 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@types/dagre": "^0.7.52",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
