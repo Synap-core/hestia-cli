@@ -132,73 +132,49 @@ body {
 }
 
 /* ----------------------------------------------------------------------
- * 2.5D app icon — premium pressed-glass treatment.
+ * Glass app icon — visionOS material recipe.
  *
- * Recipe (eve-os-home-design.mdx §5.1, expanded for v2.1 design pass):
- *   1. Brand color or gradient as the base fill (per app via inline style).
- *   2. Top→bottom subtle darkening overlay so the icon reads as a 3D form,
- *      not a flat decal.
- *   3. ::before pseudo-element paints a glossy highlight on the top
- *      ~45% of the icon — fakes a soft specular reflection.
- *   4. Inner top/bottom hairlines (1px) carve the silhouette.
- *   5. Outer drop shadow lifts the icon off the pane surface.
+ * The Apple visionOS system applies its own rim specular, contact shadow,
+ * and glass overlay automatically. On the web we fake the same effect
+ * with three layered primitives (no drop shadow, no glossy gradient):
  *
- * Apply via `class="app-icon-25d"` and supply `style={{ background: ... }}`
+ *   1. Brand color as a flat-or-soft gradient base (inline `style.background`).
+ *   2. A 1px inner ring at white-18% — implies glass thickness.
+ *   3. A top-edge linear-gradient highlight (white-30% → transparent) —
+ *      stands in for the system specular Apple paints automatically.
+ *
+ * What this recipe explicitly does NOT do:
+ *   • No box-shadow drop shadow (depth = blurred pane behind, not cast shadow)
+ *   • No ::before glossy reflection (would conflict with the wallpaper bleed)
+ *   • No bottom-shade gradient (visionOS surfaces don't darken at the base)
+ *
+ * Apply via `class="glass-icon"` and supply `style={{ background: ... }}`
  * for the brand color / gradient.
  * ------------------------------------------------------------------- */
-.app-icon-25d {
+.glass-icon {
   position: relative;
-  border-radius: theme('borderRadius.app-icon');
   isolation: isolate;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.32),     /* top inner highlight */
-    inset 0 -1px 0 rgba(0, 0, 0, 0.22),          /* bottom inner shade */
-    inset 0 0 0 1px rgba(255, 255, 255, 0.08),   /* hairline edge */
-    0 8px 18px -6px rgba(0, 0, 0, 0.55),         /* soft drop shadow */
-    0 1px 0 rgba(255, 255, 255, 0.06);           /* crisp top edge */
+  border-radius: theme('borderRadius.app-icon');
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
   transition: transform 200ms ease-out, box-shadow 200ms ease-out;
+  overflow: hidden;
 }
-.app-icon-25d::before {
+.glass-icon::after {
+  /* System-style top-edge specular. One layer, fades by 50% mark. */
   content: "";
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.20) 0%, rgba(255, 255, 255, 0.04) 38%, transparent 60%),
-    linear-gradient(180deg, transparent 60%, rgba(0, 0, 0, 0.18) 100%);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.22) 0%, transparent 50%);
   pointer-events: none;
   z-index: 1;
 }
-.app-icon-25d > * {
+.glass-icon > * {
   position: relative;
   z-index: 2;
 }
-.app-icon-25d:hover {
-  /* Brighten top highlight + deepen drop shadow on hover. */
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.42),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.22),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.12),
-    0 14px 26px -8px rgba(0, 0, 0, 0.65),
-    0 1px 0 rgba(255, 255, 255, 0.10);
-}
-
-/* Light-mode tweaks — drop shadow is gentler over the pastel pane. */
-:not(.dark) .app-icon-25d {
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.55),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.10),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.18),
-    0 8px 18px -6px rgba(0, 0, 0, 0.20),
-    0 1px 0 rgba(255, 255, 255, 0.30);
-}
-:not(.dark) .app-icon-25d:hover {
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.65),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.10),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.25),
-    0 14px 26px -8px rgba(0, 0, 0, 0.28),
-    0 1px 0 rgba(255, 255, 255, 0.40);
+.glass-icon:hover {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.30);
 }
 
 /* ----------------------------------------------------------------------

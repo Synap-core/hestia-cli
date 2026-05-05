@@ -3,21 +3,18 @@
 /**
  * `AddAppButton` — the dock's `+` terminator.
  *
- * Always rendered last in the dock. Opens the marketplace.
+ * Same 40×40 bounding box as a real DockIcon. No glass recipe (we want
+ * this to feel like empty real estate, not a launcher tile) — just a
+ * frosted pill with a soft inner stroke and a centered `+` glyph.
  *
- * Phase 2 wires this to the external CP marketplace URL in a new tab.
- * Phase 4 routes to an in-OS `/marketplace` surface.
- *
- * Visual: same 48×48 bounding box as the dock icons, but with a
- * dashed border and a transparent fill — read as "add", not "app".
+ * Phase 2: external CP marketplace URL in a new tab.
+ * Phase 4: in-OS `/marketplace` route.
  */
 
 import { Plus } from "lucide-react";
 import { CP_BASE_URL } from "../lib/cp-oauth";
 
 export function AddAppButton() {
-  // The dashboard knows the CP base URL via the OAuth client config —
-  // reuse it so the dock + the grid's "+ Add" tile target the same URL.
   const marketplaceUrl = `${CP_BASE_URL}/marketplace`;
 
   return (
@@ -28,17 +25,18 @@ export function AddAppButton() {
       aria-label="Add app from marketplace"
       title="Marketplace"
       className="
-        group flex h-11 w-11 shrink-0 items-center justify-center
-        rounded-icon
-        border border-dashed border-white/25
-        text-white/55
+        group inline-flex h-10 w-10 shrink-0 items-center justify-center
+        rounded-app-icon
+        bg-foreground/[0.06]
+        ring-1 ring-inset ring-foreground/15
+        text-foreground/55
         transition-all duration-200 ease-out
-        hover:border-white/55 hover:text-white/95 hover:scale-[1.08]
+        hover:bg-foreground/[0.10] hover:text-foreground hover:scale-[1.10]
         active:scale-[0.95]
-        focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40
+        focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50
       "
     >
-      <Plus className="h-4 w-4" strokeWidth={2} aria-hidden />
+      <Plus className="h-5 w-5" strokeWidth={2.2} aria-hidden />
     </a>
   );
 }

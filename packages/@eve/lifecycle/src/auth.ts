@@ -395,10 +395,13 @@ export async function provisionAgent(opts: ProvisionAgentOptions): Promise<Provi
   // The caller can still force a specific URL via `opts.synapUrl`.
   const synapUrl = (opts.synapUrl ?? (await resolveSynapUrlOnHost(secrets))).trim();
   if (!synapUrl) {
+    const hasSecrets = !!secrets;
     return {
       provisioned: false,
       agentType,
-      reason: "synap pod URL unresolved — run `eve install` or set domain.primary in secrets.json",
+      reason: hasSecrets
+        ? "synap pod URL unresolved — set domain.primary or synap.apiUrl in ~/.eve/secrets.json"
+        : "~/.eve/secrets.json not found — run `eve setup` first to initialise Eve on this server",
     };
   }
 

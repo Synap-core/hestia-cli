@@ -3,33 +3,29 @@
 /**
  * `DockIcon` — single icon in the dock pill.
  *
- * Renders a vivid 48×48 rounded square with a Lucide glyph (or remote
- * SVG) over the brand-color background from `lib/brand-colors.ts`.
+ * Renders a 40×40 visionOS glass tile with a 20×20 Lucide glyph (or
+ * remote SVG) over the brand-color gradient. Active state shows a 3px
+ * tall accent pill 6px below the icon.
  *
- * States (per shell §5):
- *   • Default — vivid icon, no extras
- *   • Hover   — scale 1.08 (200ms ease-out) + outer glow ring (8px,
- *               accent at 20% opacity)
- *   • Active  — 4px-tall x 12px-wide pill underneath, color-matched
- *   • Press   — scale 0.95 (80ms)
+ * The bounding box, the glyph size, and the centering math is shared
+ * with `add-app-button.tsx` so every dock entry — pinned, core, or the
+ * `+` terminator — feels identical.
  *
- * No emoji is used anywhere in the dock — Lucide for known apps,
- * remote SVG/PNG for marketplace apps.
+ * No drop shadow. Depth comes from the dock's frosted pill behind.
+ *
+ * See: synap-team-docs/content/team/platform/eve-os-shell.mdx §5
  */
 
 import Link from "next/link";
-import dynamic from "next/dynamic";
-import type { LucideIcon, LucideProps } from "lucide-react";
 import {
   Home, Sparkles, Settings as SettingsIcon, MessageSquare, Brain,
   Paperclip, Wrench, Code2, Users, LayoutGrid, Box,
+  Cpu, Rss,
+  type LucideIcon, type LucideProps,
 } from "lucide-react";
 import { brandColorFor } from "../lib/brand-colors";
 import type { DockApp } from "./use-dock-apps";
 
-// Statically import the small set of glyphs the dock + grid use today.
-// Adding to the registry: add the brand-colors entry, then the matching
-// Lucide import here. The runtime resolver below maps name→component.
 const GLYPHS: Record<string, LucideIcon> = {
   Home,
   Sparkles,
@@ -41,6 +37,8 @@ const GLYPHS: Record<string, LucideIcon> = {
   Code2,
   Users,
   LayoutGrid,
+  Cpu,
+  Rss,
 };
 
 function GlyphFor({
@@ -52,12 +50,9 @@ function GlyphFor({
   return <Icon {...props} />;
 }
 
-void dynamic; // reserved for future remote-icon component
-
 export interface DockIconProps {
   app: DockApp;
   active: boolean;
-  /** Optional iconUrl (marketplace apps) — overrides the Lucide glyph. */
   iconUrl?: string;
 }
 
@@ -66,58 +61,48 @@ export function DockIcon({ app, active, iconUrl }: DockIconProps) {
   const useRemote = !palette.glyph && iconUrl;
 
   return (
-    <Link
-      href={app.path}
-      aria-label={`Open ${app.name}`}
-      title={app.name}
-      className="
-        group relative flex h-11 w-11 shrink-0 items-center justify-center
-        app-icon-25d
-        transition-transform duration-200 ease-out
-        hover:scale-[1.08] active:scale-[0.95] active:duration-[80ms]
-        focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40
-      "
-      style={{ background: palette.bg }}
-    >
-      {/* Outer accent glow on hover. Brand-specific so Tailwind ring
-          can't carry it — paint via inline style instead. */}
-      <span
+    <div className="relative flex h-10 w-10 shrink-0 items-center justify-center">
+      <Link
+        href={app.path}
+        aria-label={`Open ${app.name}`}
+        title={app.name}
         className="
-          pointer-events-none absolute -inset-1 rounded-icon
-          opacity-0 group-hover:opacity-100
-          transition-opacity duration-200 ease-out
+          glass-icon
+          flex h-10 w-10 items-center justify-center
+          transition-transform duration-200 ease-out
+          hover:scale-[1.10] active:scale-[0.95] active:duration-[80ms]
+          focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50
         "
-        aria-hidden
-        style={{ boxShadow: `0 0 22px 2px ${palette.accent}40` }}
-      />
+        style={{ background: palette.bg }}
+      >
+        {useRemote ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={iconUrl}
+            alt=""
+            width={20}
+            height={20}
+            className="h-5 w-5 object-contain"
+            referrerPolicy="no-referrer"
+          />
+        ) : (
+          <GlyphFor
+            glyph={palette.glyph}
+            className="h-5 w-5 text-white"
+            strokeWidth={2}
+            aria-hidden
+          />
+        )}
+      </Link>
 
-      {useRemote ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={iconUrl}
-          alt=""
-          width={26}
-          height={26}
-          className="h-[26px] w-[26px] object-contain drop-shadow-[0_1px_1px_rgba(0,0,0,0.4)]"
-          referrerPolicy="no-referrer"
-        />
-      ) : (
-        <GlyphFor
-          glyph={palette.glyph}
-          className="h-[22px] w-[22px] text-white drop-shadow-[0_1px_1px_rgba(0,0,0,0.4)]"
-          strokeWidth={2}
-          aria-hidden
-        />
-      )}
-
-      {/* Active indicator pill — 3px tall x 10px wide, sits ~6px below. */}
+      {/* Active indicator pill — 3px tall x 10px wide, ~6px below the icon. */}
       {active && (
         <span
-          className="absolute -bottom-2 left-1/2 h-[3px] w-2.5 -translate-x-1/2 rounded-full"
+          className="absolute -bottom-1.5 left-1/2 h-[3px] w-2.5 -translate-x-1/2 rounded-full"
           style={{ background: palette.accent }}
           aria-hidden
         />
       )}
-    </Link>
+    </div>
   );
 }

@@ -3,23 +3,21 @@
 /**
  * `PaneHeader` — sticky 56px header at the top of the popup pane.
  *
- * Three slots:
- *   • `back` (optional) — back arrow, rendered when the app is one or
- *      more levels deep. Apps own their own routing so they pass a
- *      handler explicitly; the shell does not infer history.
- *   • `title` (optional) — string. The Home explicitly omits this so
- *      the greeting block carries identity instead.
- *   • `actions` (optional) — top-right slot for app-specific buttons
- *      (settings gear, filter, etc.).
+ * Three slots (provided by each app):
+ *   • `back` (optional) — invoked when the operator clicks ⌃ to go back
+ *   • `title` (optional) — string. The Home omits this so the greeting
+ *      block carries identity instead.
+ *   • `actions` (optional) — top-right slot for app-specific buttons.
  *
- * The header has a subtle bottom border that fades in only when the
- * body content is scrolled (`hasScrolled`). For v1 we just always
- * render the border at low opacity — the polish pass adds the
- * scroll-aware fade.
+ * The back affordance uses HeroUI Button (isIconOnly, variant=light)
+ * so its hover + focus + disabled states inherit the theme. Same for
+ * the actions slot — pass HeroUI components there, not raw <button>s,
+ * so contrast and motion are consistent with the rest of the OS.
  *
  * See: synap-team-docs/content/team/platform/eve-os-shell.mdx §4
  */
 
+import { Button } from "@heroui/react";
 import { ChevronLeft } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -31,34 +29,28 @@ export interface PaneHeaderProps {
 
 export function PaneHeader({ title, back, actions }: PaneHeaderProps) {
   return (
-    <header
-      className="
-        flex h-14 shrink-0 items-center justify-between gap-3 px-5
-        border-b border-white/[0.04] dark:border-white/[0.04]
-      "
-    >
+    <header className="flex h-14 shrink-0 items-center justify-between gap-3 px-4 border-b border-foreground/[0.05]">
       <div className="flex items-center gap-2 min-w-0">
         {back && (
-          <button
-            type="button"
-            onClick={back}
+          <Button
+            isIconOnly
+            variant="light"
+            size="sm"
+            radius="full"
             aria-label="Back"
-            className="
-              inline-flex h-8 w-8 items-center justify-center rounded-full
-              text-default-500 hover:text-foreground hover:bg-white/5
-              transition-colors
-            "
+            onPress={back}
+            className="text-foreground/55 hover:text-foreground"
           >
             <ChevronLeft className="h-4 w-4" />
-          </button>
+          </Button>
         )}
         {title && (
-          <h1 className="font-heading text-base font-medium text-foreground truncate">
+          <h1 className="font-heading text-[15px] font-medium text-foreground truncate">
             {title}
           </h1>
         )}
       </div>
-      <div className="flex items-center gap-1.5">{actions}</div>
+      <div className="flex items-center gap-1">{actions}</div>
     </header>
   );
 }

@@ -464,5 +464,10 @@ export function resolveSynapUrl(
     return `${ssl ? 'https' : 'http'}://pod.${domain}`;
   }
 
-  return stored || 'http://127.0.0.1:4000';
+  // Stored loopback URL is a last resort — only used when the caller
+  // already knows the backend is reachable there (e.g. docker-in-docker).
+  // Returning empty string here lets callers surface a proper "run eve
+  // setup" error instead of silently attempting an unreachable localhost.
+  if (stored) return stored;
+  return '';
 }

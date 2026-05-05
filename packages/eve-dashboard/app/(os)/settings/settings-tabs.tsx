@@ -1,31 +1,36 @@
 "use client";
 
 /**
- * `SettingsTabs` — horizontal tab strip + pane header for the Settings app.
+ * `SettingsTabs` — pane header + horizontal HeroUI Tabs for Settings.
  *
- * Replaces the legacy sidebar. Tabs are flat (no nesting); deeper
- * pages (e.g. /settings/components/[id]) keep the parent tab active.
+ * Replaces the legacy AppShell sidebar. Tabs are flat (no nesting);
+ * deeper pages (e.g. /settings/components/[id]) keep the parent tab
+ * active.
  *
- * The Stack Pulse tab carries the contents of the legacy `/dashboard`
- * page — recontextualized as one of Settings' lenses.
+ * Tabs are rendered with HeroUI's `Tabs` (variant=underlined) so the
+ * cursor, hover, and selected-state colors all flow from theme tokens.
+ * Selecting a tab pushes a route — the page below renders the content
+ * for that route normally.
+ *
+ * See: synap-team-docs/content/team/platform/eve-os-shell.mdx §6
  */
 
-import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { Tabs, Tab } from "@heroui/react";
+import { useRouter, usePathname } from "next/navigation";
 import {
   Settings as SettingsIcon, Boxes, MessagesSquare, Sparkles, Globe,
   Stethoscope, Activity, Terminal, CalendarClock, LayoutGrid,
+  type LucideIcon,
 } from "lucide-react";
-import type { ComponentType } from "react";
 import { PaneHeader } from "../components/pane-header";
 
-interface Tab {
+interface TabDef {
   href: string;
   label: string;
-  Icon: ComponentType<{ className?: string }>;
+  Icon: LucideIcon;
 }
 
-const TABS: Tab[] = [
+const TABS: TabDef[] = [
   { href: "/settings",              label: "General",      Icon: SettingsIcon },
   { href: "/settings/stack-pulse",  label: "Stack pulse",  Icon: Activity },
   { href: "/settings/components",   label: "Components",   Icon: Boxes },
@@ -40,47 +45,60 @@ const TABS: Tab[] = [
 
 const EXACT_ONLY = new Set<string>(["/settings"]);
 
-function isActive(pathname: string | null, href: string): boolean {
-  if (!pathname) return false;
-  if (EXACT_ONLY.has(href)) return pathname === href;
-  return pathname === href || pathname.startsWith(href + "/");
+function activeKey(pathname: string | null): string {
+  if (!pathname) return "/settings";
+  // Exact match first.
+  if (EXACT_ONLY.has(pathname)) return pathname;
+  // Longest prefix wins (so /settings/components/[id] activates Components).
+  let best = "/settings";
+  let bestLen = -1;
+  for (const t of TABS) {
+    if (EXACT_ONLY.has(t.href)) continue;
+    if (pathname === t.href || pathname.startsWith(t.href + "/")) {
+      if (t.href.length > bestLen) { best = t.href; bestLen = t.href.length; }
+    }
+  }
+  return best;
 }
 
 export function SettingsTabs() {
+  const router = useRouter();
   const pathname = usePathname();
+  const selected = activeKey(pathname);
 
   return (
     <>
       <PaneHeader title="Settings" />
-      <nav
-        aria-label="Settings sections"
-        className="
-          shrink-0 overflow-x-auto border-b border-white/[0.04]
-          px-4 py-2
-        "
-      >
-        <div className="flex gap-1 min-w-max">
-          {TABS.map(({ href, label, Icon }) => {
-            const active = isActive(pathname, href);
-            return (
-              <Link
-                key={href}
-                href={href}
-                className={
-                  "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 " +
-                  "text-xs whitespace-nowrap transition-colors " +
-                  (active
-                    ? "bg-white/10 text-foreground"
-                    : "text-default-500 hover:bg-white/5 hover:text-foreground")
-                }
-              >
-                <Icon className="h-3.5 w-3.5" />
-                {label}
-              </Link>
-            );
-          })}
-        </div>
-      </nav>
+      <div className="shrink-0 px-4 pt-1">
+        <Tabs
+          aria-label="Settings sections"
+          variant="underlined"
+          color="primary"
+          selectedKey={selected}
+          onSelectionChange={key => router.push(String(key))}
+          classNames={{
+            base: "w-full",
+            tabList:
+              "gap-1 w-full overflow-x-auto p-0 border-b border-foreground/[0.06]",
+            cursor: "w-full bg-primary",
+            tab: "max-w-fit px-3 h-10",
+            tabContent:
+              "text-foreground/55 group-data-[selected=true]:text-foreground",
+          }}
+        >
+          {TABS.map(({ href, label, Icon }) => (
+            <Tab
+              key={href}
+              title={
+                <span className="inline-flex items-center gap-1.5 text-[12.5px]">
+                  <Icon className="h-3.5 w-3.5" strokeWidth={2} />
+                  {label}
+                </span>
+              }
+            />
+          ))}
+        </Tabs>
+      </div>
     </>
   );
 }

@@ -21,7 +21,8 @@
  */
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { Button } from "@heroui/react";
 import { Settings as SettingsIcon } from "lucide-react";
 import { CpAuthBanner } from "../components/cp-auth-banner";
 import { PaneHeader } from "./components/pane-header";
@@ -38,6 +39,7 @@ import { CP_BASE_URL } from "./lib/cp-oauth";
 const MARKETPLACE_URL = `${CP_BASE_URL}/marketplace`;
 
 export default function HomePage() {
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const { apps, isLoading, bannerState, refetch } = useHomeApps();
 
@@ -60,17 +62,17 @@ export default function HomePage() {
     <>
       <PaneHeader
         actions={
-          <Link
-            href="/settings"
+          <Button
+            isIconOnly
+            variant="light"
+            size="sm"
+            radius="full"
             aria-label="Open settings"
-            className="
-              inline-flex h-8 w-8 items-center justify-center rounded-full
-              text-default-500 hover:text-foreground hover:bg-white/5
-              transition-colors
-            "
+            onPress={() => router.push("/settings")}
+            className="text-foreground/55 hover:text-foreground"
           >
             <SettingsIcon className="h-4 w-4" strokeWidth={2} />
-          </Link>
+          </Button>
         }
       />
 
@@ -90,11 +92,11 @@ export default function HomePage() {
         ) : (
           <div className="mt-6 min-h-0 flex-1">
             {noResultsForSearch ? (
-              <p className="px-2 py-12 text-center text-[13px] text-default-500">
+              <p className="px-2 py-12 text-center text-[13px] text-foreground/55">
                 No apps match{" "}
                 <span className="font-medium text-foreground">&ldquo;{query}&rdquo;</span>.
                 Try clearing the search or browse the marketplace from the{" "}
-                <span className="text-default-400">+</span> tile.
+                <span className="text-foreground/40">+</span> tile.
               </p>
             ) : (
               <AppGrid

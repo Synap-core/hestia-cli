@@ -1,29 +1,33 @@
 "use client";
 
 /**
- * `GreetingRow` — Zone A + Zone B fused into a single horizontal row.
+ * `GreetingRow` — greeting block + 3 visionOS-style stat squares on a
+ * single horizontal row.
  *
- * Layout:
+ * Layout (desktop):
  *
  *   [ ✦ Good evening                  ] [ ☐ ] [ ☐ ] [ ☐ ]
  *   [   Tuesday · May 5               ]
- *   ↑ flex-1, left-aligned              ↑ three compact stat squares
  *
- * On mobile (< 640px) the squares stack below the greeting in a 3-up
- * grid; the greeting stays left-aligned.
+ * Layout (mobile):
+ *   greeting on top, three squares below in a 3-up grid.
  *
- * Concentric radius rule:
- *   pane radius (32) − body padding (20) = card radius (12)
+ * The stat squares are HeroUI `Card`s with `isBlurred shadow="none"`
+ * so they layer correctly over the frosted pane (visionOS material —
+ * surfaces don't cast shadows; depth comes from translucent stacking).
  *
- * Each square is 92×92 (mobile) / 104×104 (md) / 112×112 (lg). Square
- * shape is mandatory per the v2.1 design pass — they read as glanceable
- * facts, not data widgets.
+ * Text uses HeroUI vibrancy tiers via `text-foreground` + opacity:
+ *   • greeting heading: gradient text-fill on top of foreground
+ *   • value:           text-foreground (100%)
+ *   • label:           text-foreground/55 (secondary)
+ *   • date subtitle:   text-foreground/55
  *
  * See: synap-team-docs/content/team/platform/eve-os-home-design.mdx §3–§4
  */
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { Card, CardBody } from "@heroui/react";
 import { Sparkles } from "lucide-react";
 import { useStats } from "../hooks/use-stats";
 import { CP_BASE_URL } from "../lib/cp-oauth";
@@ -72,36 +76,35 @@ export function GreetingRow({ firstName }: GreetingRowProps) {
         sm:flex-row sm:items-end sm:justify-between sm:gap-6
       "
     >
-      {/* Left: greeting block */}
+      {/* Greeting block */}
       <div className="flex items-center gap-3 sm:gap-4 min-w-0">
         <Sparkles
-          className="h-7 w-7 shrink-0 text-emerald-300/90"
+          className="h-6 w-6 shrink-0 text-primary"
           aria-hidden
           strokeWidth={1.6}
         />
         <div className="min-w-0">
-          <p
+          <h1
             className="
               font-heading font-light leading-[1.05] tracking-tight truncate
               text-[26px] sm:text-[28px] md:text-[32px]
-              bg-gradient-to-br from-emerald-200 via-emerald-100 to-violet-200
+              bg-gradient-to-br from-emerald-200 via-foreground to-violet-200
               bg-clip-text text-transparent
             "
           >
             Good {part}{tail}
-          </p>
-          <p className="mt-1.5 text-[12px] text-default-400 dark:text-default-500 tabular">
+          </h1>
+          <p className="mt-1.5 text-[12px] text-foreground/55 tabular">
             {dateLabel}
           </p>
         </div>
       </div>
 
-      {/* Right: three compact square stat tiles */}
-      <div className="grid grid-cols-3 gap-2 sm:gap-2.5 shrink-0">
+      {/* Three compact square stat tiles */}
+      <div className="grid grid-cols-3 gap-2 shrink-0">
         <StatSquare
           label="Agents"
           value={stats.agentsRunning}
-          sublabel={isLoading ? "—" : (stats.agentsSubLabel ?? "")}
           accent={ACCENT.agents}
           href="/agents"
           isLoading={isLoading}
@@ -109,7 +112,6 @@ export function GreetingRow({ firstName }: GreetingRowProps) {
         <StatSquare
           label="Today"
           value={stats.eventsToday}
-          sublabel={isLoading ? "—" : "events"}
           accent={ACCENT.events}
           href="/agents?view=timeline"
           isLoading={isLoading}
@@ -117,13 +119,6 @@ export function GreetingRow({ firstName }: GreetingRowProps) {
         <StatSquare
           label="Updates"
           value={stats.updatesAvailable}
-          sublabel={
-            isLoading
-              ? "—"
-              : stats.updatesAvailable === 0
-                ? "up to date"
-                : "available"
-          }
           accent={ACCENT.updates}
           href={`${CP_BASE_URL}/marketplace`}
           external
@@ -134,12 +129,11 @@ export function GreetingRow({ firstName }: GreetingRowProps) {
   );
 }
 
-// ── Single 92×92 square stat tile ────────────────────────────────────────────
+// ── Single visionOS-style stat tile ──────────────────────────────────────────
 
 interface StatSquareProps {
   label: string;
   value: number;
-  sublabel: string;
   accent: string;
   href: string;
   external?: boolean;
@@ -147,85 +141,59 @@ interface StatSquareProps {
 }
 
 function StatSquare({
-  label, value, sublabel, accent, href, external, isLoading,
+  label, value, accent, href, external, isLoading,
 }: StatSquareProps) {
-  const body = (
-    <span
-      className="
-        group relative flex h-[92px] w-[92px] flex-col items-start justify-between
-        rounded-stat-card
-        border border-white/[0.08] bg-white/[0.04]
-        p-3 backdrop-blur-md
-        transition-[background,border-color,box-shadow] duration-200 ease-out
-        hover:bg-white/[0.08] hover:border-white/[0.14]
-        sm:h-[104px] sm:w-[104px] sm:p-3.5
-        md:h-[112px] md:w-[112px]
-      "
-      style={{ ["--card-accent" as string]: accent } as React.CSSProperties}
+  const card = (
+    <Card
+      isBlurred
+      shadow="none"
+      radius="lg"
+      classNames={{
+        base: `
+          h-[78px] w-[78px] sm:h-[88px] sm:w-[88px]
+          bg-foreground/[0.05] border border-foreground/[0.08]
+          transition-[background,border-color] duration-200 ease-out
+          hover:bg-foreground/[0.08] hover:border-foreground/[0.14]
+        `,
+      }}
     >
-      <span className="text-[10px] font-medium uppercase tracking-[0.06em] text-default-500">
-        {label}
-      </span>
-      {isLoading ? (
-        <span
-          className="block h-6 w-10 rounded-md bg-white/10 animate-shimmer-pulse"
-          aria-hidden
-        />
-      ) : (
-        <span
-          className="
-            font-heading text-[26px] font-light leading-none tabular text-foreground
-            sm:text-[30px] md:text-[34px]
-          "
-        >
-          {value}
-        </span>
-      )}
-      <span
-        className="
-          block w-full truncate text-[10.5px] leading-tight text-default-500
-        "
-        title={sublabel}
-      >
-        {sublabel || " "}
-      </span>
-
-      {/* Hover-only accent ring (inset). Color comes from --card-accent. */}
-      <span
-        className="
-          pointer-events-none absolute inset-0 rounded-stat-card
-          opacity-0 transition-opacity duration-200
-          group-hover:opacity-100
-        "
-        style={{
-          boxShadow:
-            "inset 0 0 0 1px var(--card-accent), 0 0 18px -8px var(--card-accent)",
-        }}
-        aria-hidden
-      />
-    </span>
+      <CardBody className="relative flex flex-col items-start justify-between p-2.5 sm:p-3">
+        <div className="flex items-center gap-1.5">
+          <span
+            className="h-1.5 w-1.5 shrink-0 rounded-full"
+            style={{ background: accent }}
+            aria-hidden
+          />
+          <span className="text-[10px] font-medium uppercase tracking-[0.06em] text-foreground/55">
+            {label}
+          </span>
+        </div>
+        {isLoading ? (
+          <span
+            className="block h-7 w-8 rounded-md bg-foreground/10 animate-shimmer-pulse"
+            aria-hidden
+          />
+        ) : (
+          <span className="font-heading text-[26px] font-light leading-none tabular text-foreground sm:text-[30px]">
+            {value}
+          </span>
+        )}
+      </CardBody>
+    </Card>
   );
+
+  const ariaLabel = `${label}: ${value}`;
 
   if (external) {
     return (
-      <a
-        href={href}
-        target="_blank"
-        rel="noreferrer"
-        aria-label={`${label}: ${value} ${sublabel}`}
-        className="block"
-      >
-        {body}
+      <a href={href} target="_blank" rel="noreferrer" aria-label={ariaLabel} className="block">
+        {card}
       </a>
     );
   }
   return (
-    <Link
-      href={href}
-      aria-label={`${label}: ${value} ${sublabel}`}
-      className="block"
-    >
-      {body}
+    <Link href={href} aria-label={ariaLabel} className="block">
+      {card}
     </Link>
   );
 }
