@@ -201,9 +201,12 @@ export class TraefikService {
           `      service: ${s.id}-svc`
         );
       }
-      // No SSL: serve on both HTTP and HTTPS (no TLS termination — browser
-      // will warn about self-signed cert, but requests reach the backend
-      // instead of Traefik returning 404 because websecure has no router).
+      // No SSL: serve on HTTP, and also on HTTPS with Traefik's default
+      // self-signed cert. Without tls: {}, Traefik won't terminate TLS for
+      // websecure routers → browser gets ERR_SSL_PROTOCOL_ERROR instead of
+      // a cert warning. With tls: {}, HTTPS works (browser warns about
+      // self-signed cert) — far less confusing than a hard connection error.
+      // Run `eve domain set <domain> --ssl --email <e>` to get a real cert.
       return (
         `    ${s.id}-http:\n` +
         `      rule: "Host(\`${host}\`)"\n` +
@@ -214,6 +217,7 @@ export class TraefikService {
         `      rule: "Host(\`${host}\`)"\n` +
         `      entryPoints:\n` +
         `        - websecure\n` +
+        `      tls: {}\n` +
         `      service: ${s.id}-svc`
       );
     }).join('\n');

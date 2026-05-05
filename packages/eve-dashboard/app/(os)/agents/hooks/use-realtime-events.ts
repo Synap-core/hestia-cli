@@ -21,7 +21,7 @@
  *      synap-team-docs/content/team/platform/eve-os-vision.mdx
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 import {
   EVENT_NAMES,
@@ -29,6 +29,13 @@ import {
   type EventName,
   timestampFor,
 } from "../lib/event-types";
+import {
+  type AgentId,
+  type AgentStatusSnapshot,
+  allAgents,
+  deriveAgentStatuses,
+  originatorOfEvent,
+} from "../lib/agent-registry";
 
 interface RealtimeCredentials {
   podUrl: string;
@@ -51,12 +58,21 @@ export interface UseRealtimeEventsOptions {
 }
 
 export interface UseRealtimeEventsResult {
+  /** Flat sliding window. Newest first. Capped at `bufferSize`. */
   events: AgentEvent[];
   status: RealtimeStatus;
   /** Force a reconnect — useful for the "retry" affordance. */
   reconnect: () => void;
   /** Wipe the in-memory buffer. */
   clear: () => void;
+  /** Derived: events grouped by originator agent (newest first, max 20 each). */
+  byAgent: Record<AgentId, AgentEvent[]>;
+  /** Derived: status snapshot per agent (idle / active / error). */
+  agentStatuses: Record<AgentId, AgentStatusSnapshot>;
+  /** Derived: rolling count of events seen in the last 60 seconds. */
+  eventsPerMinute: number;
+  /** Derived: count of `*:failed` events in the last 24 hours. */
+  errors24h: number;
 }
 
 const DEFAULT_BUFFER_SIZE = 200;
@@ -181,5 +197,59 @@ export function useRealtimeEvents(
     };
   }, [connect]);
 
-  return { events, status, reconnect, clear };
+  // ─── Derived state ─────────────────────────────────────────────────────────
+  //
+  // Computing these per-render rather than imperatively keeps the source of
+  // truth in the `events` array and avoids stale-state bugs. useMemo guards
+  // against re-deriving on unrelated re-renders (e.g. status flips).
+
+  const byAgent = useMemo<Record<AgentId, AgentEvent[]>>(() => {
+    const out = {} as Record<AgentId, AgentEvent[]>;
+    for (const agent of allAgents()) {
+      out[agent.id] = [];
+    }
+    for (const evt of events) {
+      const id = originatorOfEvent(evt.name);
+      const list = out[id];
+      if (list && list.length < 20) list.push(evt);
+    }
+    return out;
+  }, [events]);
+
+  const agentStatuses = useMemo(
+    () => deriveAgentStatuses(events),
+    [events],
+  );
+
+  const eventsPerMinute = useMemo(() => {
+    const cutoff = Date.now() - 60_000;
+    let n = 0;
+    for (const evt of events) {
+      const t = Date.parse(evt.at);
+      if (Number.isFinite(t) && t >= cutoff) n += 1;
+    }
+    return n;
+  }, [events]);
+
+  const errors24h = useMemo(() => {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    let n = 0;
+    for (const evt of events) {
+      if (!evt.name.endsWith(":failed")) continue;
+      const t = Date.parse(evt.at);
+      if (Number.isFinite(t) && t >= cutoff) n += 1;
+    }
+    return n;
+  }, [events]);
+
+  return {
+    events,
+    status,
+    reconnect,
+    clear,
+    byAgent,
+    agentStatuses,
+    eventsPerMinute,
+    errors24h,
+  };
 }

@@ -24,7 +24,7 @@
  * See: synap-team-docs/content/team/platform/eve-os-roadmap.mdx M5
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Card,
@@ -67,6 +67,25 @@ function pricingChip(p: MarketplaceAppWithEntitlement["pricing"]): string {
 }
 
 export default function MarketplacePage() {
+  return (
+    <Suspense fallback={<MarketplacePageFallback />}>
+      <MarketplacePageInner />
+    </Suspense>
+  );
+}
+
+function MarketplacePageFallback() {
+  return (
+    <>
+      <PaneHeader title="Marketplace" />
+      <div className="flex flex-1 items-center justify-center py-16">
+        <Spinner size="md" />
+      </div>
+    </>
+  );
+}
+
+function MarketplacePageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   // Handoff from synap.live/marketplace/install/<slug>: scrolls + highlights

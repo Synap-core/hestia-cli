@@ -460,7 +460,7 @@ export function resolveSynapUrl(
 
   const domain = secrets?.domain?.primary?.trim();
   if (domain && domain !== 'localhost') {
-    const ssl = secrets?.domain?.ssl !== false; // default true
+    const ssl = secrets?.domain?.ssl ?? false; // default false — must opt-in with --ssl
     return `${ssl ? 'https' : 'http'}://pod.${domain}`;
   }
 
