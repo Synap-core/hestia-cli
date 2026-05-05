@@ -183,6 +183,23 @@ const SecretsSchema = z.object({
       issuedAt: z.string().optional(),
       /** Optional expiry hint (server-side decode of JWT exp). */
       expiresAt: z.string().optional(),
+      /**
+       * In-flight device authorization flows (RFC 8628), keyed by an
+       * opaque handle the dashboard server hands to the browser. Each
+       * entry stores the device_code (server-side secret) so subsequent
+       * polling calls can resolve the handle without exposing the code
+       * to the client. Entries are short-lived (15 min) and any
+       * leftovers are ignored after expires_at — no GC required.
+       */
+      deviceFlow: z
+        .record(
+          z.object({
+            deviceCode: z.string(),
+            expiresAt: z.number(),
+            interval: z.number(),
+          }),
+        )
+        .optional(),
     })
     .optional(),
   /** Primary domain + SSL config */

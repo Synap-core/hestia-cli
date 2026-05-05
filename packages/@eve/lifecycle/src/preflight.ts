@@ -125,8 +125,17 @@ export async function runBackendPreflight(
   let secrets = await readEveSecrets(cwd);
   let synapUrl = await resolveSynapUrlOnHost(secrets);
 
-  if (synapUrl) {
-    // Already configured — just ensure the token exists and return.
+  // Fast path: ONLY when the resolved URL is the loopback (127.0.0.1 / localhost).
+  // A public URL (pod.domain.com) means the loopback isn't bound yet — we must
+  // still run the loopback setup steps (override write + backend restart) so the
+  // CLI gets a direct path to the backend on future calls. Triggering the fast path
+  // on a public URL causes the compose override to never be written.
+  const isLoopback = synapUrl
+    ? synapUrl.includes("127.0.0.1") || synapUrl.includes("localhost")
+    : false;
+
+  if (synapUrl && isLoopback) {
+    // Loopback confirmed reachable — truly fast path.
     const tokenResult = await ensurePodProvisioningToken();
     const provisioningToken = tokenResult.token;
     if (!provisioningToken) {

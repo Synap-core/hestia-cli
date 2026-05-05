@@ -1,34 +1,26 @@
 /**
- * Client-side wrapper for the Synap CP marketplace API.
+ * Client-side wrapper for the Synap CP marketplace.
  *
- * Calls go to `${CP_BASE_URL}/api/marketplace/*` with the user-scoped
- * JWT in the `Authorization` header. On 401 we assume the token has
- * expired or been revoked and bounce the user back through the OAuth
- * flow.
+ * Calls go to **same-origin `/api/marketplace/*` proxies** on Eve's
+ * Next.js server, NOT directly to the CP. The proxy attaches the
+ * bearer token from disk and forwards to `api.synap.live`. This:
  *
- * IMPORTANT: this file is "client" in the sense that it runs in the
- * browser. It does, however, fetch the bearer token from the
- * server-side proxy (`/api/secrets/cp-token`) so the token only lives
- * in memory long enough for one request. We deliberately do NOT cache
- * the token in module scope.
+ *   • Kills CORS — the browser never crosses origins, so self-hosted
+ *     Eve at any custom domain works without per-tenant allow-listing.
+ *   • Keeps the token off the browser — JWT lives only in
+ *     `~/.eve/secrets.json` after the initial sign-in write.
+ *   • Survives token rotation (refresh + device flow) without
+ *     touching this file — all the auth machinery lives server-side.
  *
  * Type duplication note (PR #2 spec §4):
  *   `@synap/marketplace` lives in the `synap-control-plane-api`
  *   monorepo (sibling repo) — it is NOT in the hestia-cli pnpm
- *   workspace. Adding it as a workspace dep is impossible without
- *   restructuring both repos. We mirror the response shape locally
- *   to ship Phase 2 unblocked. When the hestia-cli workspace is
- *   linked to the CP types via a published npm package or a turbo
- *   "remote workspace", swap these locals for the upstream import.
- *   Tracking marker:  TODO(eve-os-vision §4): replace local types
- *   with `import type { ListAppsResponse, ... } from "@synap/marketplace"`.
+ *   workspace. We mirror the response shape locally. When the
+ *   workspace is linked to CP types via a published npm package,
+ *   swap these locals for the upstream import.
  */
 
-import {
-  CP_BASE_URL,
-  getCpUserToken,
-  initiateCpOAuth,
-} from "./cp-oauth";
+import { initiateCpOAuth } from "./cp-oauth";
 
 // ─── Type mirror of @synap/marketplace ────────────────────────────────────────
 // MUST stay in sync with synap-control-plane-api/packages/marketplace-types/src/index.ts
@@ -121,47 +113,38 @@ export class MarketplaceError extends Error {
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
 /**
- * Issue a request to the CP. Auth is OPTIONAL by default — the CP's
- * `/api/marketplace/apps` route uses `optionalAuth` and returns the
- * public catalog (free apps marked `entitled: true`) when called
- * without a bearer. Routes that mutate state (e.g. `/install`) must
- * pass `requireAuth: true` so a missing token is surfaced as a 401
- * instead of a quiet anonymous request.
+ * Issue a request to the **same-origin Eve marketplace proxy**.
  *
- * @param requireAuth
- *   When true, refuse to call the API without a token and trigger
- *   `onUnauthorized`. When false (default), fall through to an
- *   anonymous request — the CP decides whether the route allows it.
+ * Path is the slug under `/api/marketplace/*` (e.g. `apps`, `install`).
+ * The proxy on the Eve server is responsible for attaching the bearer
+ * from disk and forwarding upstream. The browser never has the token
+ * after the initial sign-in write.
  *
  * @param onUnauthorized
- *   What to do when the CP returns 401, or when `requireAuth` is true
- *   and there's no token. By default we trigger `initiateCpOAuth()`
- *   (full redirect). Tests pass a stub.
+ *   What to do when the upstream CP returns 401. By default we trigger
+ *   `initiateCpOAuth()` (full redirect). Tests pass a stub.
+ *
+ * The `requireAuth` flag is gone — the proxy enforces it where needed.
+ * `/api/marketplace/apps` happily serves anonymous; `/api/marketplace/install`
+ * 401s without a token. Both surface 401 the same way to this client.
  */
 async function cpFetch(
-  path: string,
-  init: RequestInit & {
-    onUnauthorized?: () => void;
-    requireAuth?: boolean;
-  } = {},
+  slug: string,
+  init: RequestInit & { onUnauthorized?: () => void } = {},
 ): Promise<Response> {
-  const token = await getCpUserToken();
-
-  if (!token && init.requireAuth) {
-    (init.onUnauthorized ?? (() => void initiateCpOAuth()))();
-    throw new CpUnauthorizedError("No CP user token available");
-  }
-
   const headers = new Headers(init.headers);
-  if (token) headers.set("Authorization", `Bearer ${token}`);
   if (init.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  // Default Accept for safety against gateways that strip wildcards.
   if (!headers.has("Accept")) headers.set("Accept", "application/json");
 
-  const url = `${CP_BASE_URL}${path}`;
-  const res = await fetch(url, { ...init, headers });
+  const url = `/api/marketplace/${slug.replace(/^\//, "")}`;
+  const res = await fetch(url, {
+    ...init,
+    headers,
+    credentials: "include",
+    cache: "no-store",
+  });
 
   if (res.status === 401) {
     (init.onUnauthorized ?? (() => void initiateCpOAuth()))();
@@ -185,7 +168,7 @@ async function cpFetch(
 export async function fetchMarketplaceApps(opts: {
   onUnauthorized?: () => void;
 } = {}): Promise<ListAppsResponse> {
-  const res = await cpFetch("/api/marketplace/apps", {
+  const res = await cpFetch("apps", {
     method: "GET",
     onUnauthorized: opts.onUnauthorized,
   });
@@ -215,11 +198,10 @@ export async function installApp(
   if (!ref.slug && !ref.appId) {
     throw new Error("installApp requires either { slug } or { appId }");
   }
-  const res = await cpFetch("/api/marketplace/install", {
+  const res = await cpFetch("install", {
     method: "POST",
     body: JSON.stringify(ref),
     onUnauthorized: opts.onUnauthorized,
-    requireAuth: true,
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");

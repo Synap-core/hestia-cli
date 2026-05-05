@@ -45,12 +45,15 @@ import { AppGrid } from "./components/app-grid";
 import { SearchBar } from "./components/search-bar";
 import { EmptyState } from "./components/empty-state";
 import { useHomeApps } from "./hooks/use-home-apps";
+import { resolveAuthMethod } from "./lib/cp-auth";
 import { initiateCpOAuth } from "./lib/cp-oauth";
+import { DeviceFlowModal } from "./components/device-flow-modal";
 
 export default function HomePage() {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
+  const [isDeviceFlowOpen, setIsDeviceFlowOpen] = useState(false);
   const { apps, isLoading, bannerState, refetch } = useHomeApps();
 
   // Filter is name + description + category — case-insensitive contains.
@@ -64,15 +67,23 @@ export default function HomePage() {
     );
   }, [query, apps]);
 
-  // initiateCpOAuth() navigates the page on success. If it throws (CP
-  // unreachable, crypto unavailable, etc.) the page never navigates and
-  // we'd previously be silent. Surface the error inline instead.
+  // Sign-in resolver: loopback Eve uses PKCE (full-page redirect);
+  // anywhere else uses device flow (modal with a user_code). Both
+  // persist the resulting JWT server-side; the browser only triggers
+  // the right machinery for its hostname.
   const handleSignIn = useCallback(async () => {
     setAuthError(null);
+    const method = resolveAuthMethod();
+
+    if (method === "device-flow") {
+      setIsDeviceFlowOpen(true);
+      return;
+    }
+
+    // PKCE: full-page redirect. If the navigation doesn't fire within
+    // 1.5s the user is stuck on a dead button — surface a hint.
     try {
       await initiateCpOAuth();
-      // If we're still here after this resolves, the navigation didn't
-      // start — set a hint so the user isn't left wondering.
       window.setTimeout(() => {
         if (document.visibilityState !== "hidden") {
           setAuthError(
@@ -175,6 +186,16 @@ export default function HomePage() {
 
         <SearchBar value={query} onChange={setQuery} />
       </div>
+
+      <DeviceFlowModal
+        isOpen={isDeviceFlowOpen}
+        onClose={() => setIsDeviceFlowOpen(false)}
+        onApproved={() => {
+          // Token is on disk now; refetch apps so the catalog upgrades
+          // from public to per-user entitled.
+          refetch();
+        }}
+      />
     </>
   );
 }

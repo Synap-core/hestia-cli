@@ -25,6 +25,8 @@ import { useState } from "react";
 import { Card, CardBody, Button } from "@heroui/react";
 import { LogIn, RefreshCw, AlertTriangle } from "lucide-react";
 import { initiateCpOAuth } from "../(os)/lib/cp-oauth";
+import { resolveAuthMethod } from "../(os)/lib/cp-auth";
+import { DeviceFlowModal } from "../(os)/components/device-flow-modal";
 
 export type CpAuthBannerState =
   | { kind: "working" }

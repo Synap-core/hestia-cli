@@ -240,6 +240,13 @@ body {
   animation: eve-tile-pulse 1.6s ease-in-out infinite;
 }
 
+/* Breathing dot used by the device-flow modal "waiting for approval"
+   chip. Same idle/breathing motion as the agent-status dot. */
+@keyframes agent-pulse-dot {
+  0%, 100% { transform: scale(1);   opacity: 1; }
+  50%      { transform: scale(0.8); opacity: 0.4; }
+}
+
 /* prefers-reduced-motion: kill the lift + pulse for users who asked
    the OS to keep things still. */
 @media (prefers-reduced-motion: reduce) {
