@@ -24,8 +24,8 @@
  * See: synap-team-docs/content/team/platform/eve-os-roadmap.mdx M5
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Card,
   Chip,
@@ -68,11 +68,17 @@ function pricingChip(p: MarketplaceAppWithEntitlement["pricing"]): string {
 
 export default function MarketplacePage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // Handoff from synap.live/marketplace/install/<slug>: scrolls + highlights
+  // the app row. We only auto-scroll once per page load — subsequent renders
+  // (e.g. after install completes) shouldn't yank the viewport.
+  const installSlug = searchParams.get("install");
   const [apps, setApps] = useState<MarketplaceAppWithEntitlement[]>([]);
   const [bannerState, setBannerState] = useState<CpAuthBannerState>({ kind: "working" });
   const [isLoading, setIsLoading] = useState(true);
   const [category, setCategory] = useState<string>("all");
   const [query, setQuery] = useState("");
+  const handoffScrolledRef = useRef(false);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -100,6 +106,20 @@ export default function MarketplacePage() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Handoff scroll-into-view. Runs once after the catalog loads and a
+  // `?install=<slug>` is present. Doesn't auto-click install (would bypass
+  // confirmation) — just brings the right card into view + flashes a ring.
+  useEffect(() => {
+    if (handoffScrolledRef.current) return;
+    if (!installSlug || isLoading) return;
+    const el = document.querySelector<HTMLElement>(`[data-app-slug="${CSS.escape(installSlug)}"]`);
+    if (!el) return;
+    handoffScrolledRef.current = true;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.classList.add("ring-2", "ring-primary/60");
+    setTimeout(() => el.classList.remove("ring-2", "ring-primary/60"), 2400);
+  }, [installSlug, isLoading, apps]);
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim();
@@ -217,6 +237,7 @@ function MarketplaceCard({
       isBlurred
       shadow="none"
       radius="md"
+      data-app-slug={app.slug}
       className="
         flex flex-col gap-3 p-4
         bg-foreground/[0.04]
