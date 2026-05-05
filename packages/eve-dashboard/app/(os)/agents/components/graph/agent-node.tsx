@@ -104,40 +104,37 @@ function AgentNodeComponent({ data }: NodeProps<AgentRFNode>) {
         />
       </div>
 
-      {/* Label — only for primaries and brain. Subagents get a tiny
-          label too but smaller, on hover only (CSS-only). */}
-      {!isSub ? (
-        <div
-          className="
-            mt-2 text-center text-foreground select-none
-            text-[12.5px] font-medium leading-tight
-          "
-        >
-          {agent.label}
-          {status !== "idle" && (
-            <span
-              className={
-                "block text-[10px] uppercase tracking-[0.06em] " +
-                (status === "error" ? "text-danger" : "text-success")
-              }
-            >
-              {status}
-            </span>
-          )}
-        </div>
-      ) : (
-        <div
-          className="
-            mt-1.5 text-center text-foreground/65 select-none
-            text-[10.5px] font-medium leading-tight
-            transition-opacity opacity-0 group-hover:opacity-100
-            data-[selected=true]:opacity-100
-          "
-          data-selected={isSelected || undefined}
-        >
-          {agent.label}
-        </div>
-      )}
+      {/* Label — primaries + brain show always; subagents always too
+          (was hover-only — that's the cursor-trap the user hit). All
+          labels use explicit white opacity tiers, NOT theme tokens, so
+          react-flow's color cascade can't drag them dark. */}
+      <div
+        className={
+          "mt-2 text-center select-none leading-tight whitespace-nowrap " +
+          (isSub
+            ? "text-[10.5px] font-medium text-white/70"
+            : "text-[12.5px] font-medium text-white/95")
+        }
+        style={{
+          // Belt-and-braces against any cascade: explicit color value
+          // wins over inherited react-flow color.
+          color: isSub ? "rgba(255,255,255,0.72)" : "rgba(255,255,255,0.95)",
+          textShadow: "0 1px 2px rgba(0,0,0,0.45)",
+        }}
+      >
+        {agent.label}
+        {!isSub && status !== "idle" && (
+          <span
+            className="block text-[10px] uppercase tracking-[0.06em] mt-0.5"
+            style={{
+              color: status === "error" ? "#FCA5A5" : "#6EE7B7",
+              textShadow: "0 1px 2px rgba(0,0,0,0.55)",
+            }}
+          >
+            {status}
+          </span>
+        )}
+      </div>
     </div>
   );
 }

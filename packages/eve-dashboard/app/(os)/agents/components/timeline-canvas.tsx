@@ -32,9 +32,9 @@
  * See: synap-team-docs/content/team/platform/eve-agents-design.mdx §M3
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@heroui/react";
-import { Beaker } from "lucide-react";
+import { Beaker, Locate } from "lucide-react";
 import {
   type AgentId,
   type AgentStatusSnapshot,
@@ -65,6 +65,17 @@ const MARKER_R_HOVER = 9;
 const WINDOW_MS = 5 * 60 * 1000; // 5 minutes
 const X_PAD = 0.04;
 
+// User-controlled viewport — drag-to-pan + wheel-zoom. The viewport is
+// expressed as a span in ms (zoom) plus an offset in ms relative to
+// "now" (pan). When the offset is 0 the right edge of the chart is the
+// present moment ("live"); a positive offset means the viewport is
+// shifted into the past (right edge = now - offset).
+//
+// Zoom span is clamped: at most 24h back, at least 30s.
+const ZOOM_MIN_MS = 30_000;          // 30s — drill into a burst
+const ZOOM_MAX_MS = 24 * 60 * 60 * 1000; // 24h — overview
+const PAN_MAX_MS = 24 * 60 * 60 * 1000;  // can't pan further back than 24h
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 export interface TimelineCanvasProps {
@@ -85,7 +96,14 @@ export function TimelineCanvas({
   const [activeChain, setActiveChain] = useState<Set<string> | null>(null);
   const [hoverEventId, setHoverEventId] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
   const [width, setWidth] = useState(0);
+
+  // Viewport state — span (zoom) + offset (pan). Default: 5min span,
+  // anchored to "now" (offset 0). Updated by drag + wheel handlers.
+  const [zoomMs, setZoomMs] = useState<number>(WINDOW_MS);
+  const [offsetMs, setOffsetMs] = useState<number>(0);
+  const isLive = offsetMs === 0;
 
   // Observe container width so the time axis scales fluidly. SVG handles
   // its own height via the lane count.
@@ -123,20 +141,20 @@ export function TimelineCanvas({
     return out;
   }, [events, lanes]);
 
-  // Time window — auto-extend if any event is older than `now - WINDOW_MS`.
-  const now = Date.now();
-  const oldestTs = useMemo(() => {
-    let min = now - WINDOW_MS;
-    for (const evt of events) {
-      const t = Date.parse(evt.at);
-      if (Number.isFinite(t) && t < min) min = t;
-    }
-    return min;
-  }, [events, now]);
+  // Time window — driven by user pan/zoom state. When offset = 0 the
+  // viewport's right edge tracks `now`; otherwise it sits in the past.
+  // We tick `now` once per second so the live edge advances when the
+  // user is in live mode.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!isLive) return; // freeze when panned into the past
+    const i = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(i);
+  }, [isLive]);
 
-  const timeMin = oldestTs;
-  const timeMax = now;
-  const timeSpan = Math.max(timeMax - timeMin, 30_000); // never zero
+  const timeMax = now - offsetMs;
+  const timeMin = timeMax - zoomMs;
+  const timeSpan = Math.max(zoomMs, 30_000);
 
   const innerHeight = TOP_PAD + lanes.length * LANE_HEIGHT + BOTTOM_PAD;
   const plotW = Math.max(width - LABEL_W - RIGHT_PAD, 200);
@@ -149,6 +167,64 @@ export function TimelineCanvas({
   function yFor(laneIdx: number): number {
     return TOP_PAD + laneIdx * LANE_HEIGHT + LANE_HEIGHT / 2;
   }
+
+  // Pixel ↔ time conversions for drag/zoom math.
+  const msPerPixel = timeSpan / Math.max(plotW * (1 - 2 * X_PAD), 1);
+
+  // ── Drag-to-pan ───────────────────────────────────────────────────────────
+  const dragRef = useRef<{ startX: number; startOffset: number } | null>(null);
+  const onPointerDown = useCallback(
+    (e: React.PointerEvent<SVGSVGElement>) => {
+      // Don't start a pan if the user is clicking a marker or label —
+      // those have their own click handlers and stop propagation.
+      if ((e.target as Element).closest("[data-no-pan='1']")) return;
+      dragRef.current = { startX: e.clientX, startOffset: offsetMs };
+      (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    },
+    [offsetMs],
+  );
+  const onPointerMove = useCallback(
+    (e: React.PointerEvent<SVGSVGElement>) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      const dx = e.clientX - drag.startX;
+      // Drag right (positive dx) → reveal more past (offset increases).
+      const next = Math.max(
+        0,
+        Math.min(PAN_MAX_MS, drag.startOffset + dx * msPerPixel),
+      );
+      setOffsetMs(next);
+    },
+    [msPerPixel],
+  );
+  const onPointerUp = useCallback(() => {
+    dragRef.current = null;
+  }, []);
+
+  // ── Wheel-to-zoom ─────────────────────────────────────────────────────────
+  const onWheel = useCallback(
+    (e: React.WheelEvent<SVGSVGElement>) => {
+      // Only handle when the user is actively wheeling on the canvas.
+      // Page-scroll wheels with deltaY < 0 / > 0 should NOT zoom unless
+      // the cursor is over the SVG. React passes onWheel only when the
+      // cursor is over us, so we're already in scope.
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 0.85 : 1.18;
+      setZoomMs((prev) => {
+        const next = Math.max(
+          ZOOM_MIN_MS,
+          Math.min(ZOOM_MAX_MS, prev * factor),
+        );
+        return next;
+      });
+    },
+    [],
+  );
+
+  const resetToLive = useCallback(() => {
+    setOffsetMs(0);
+    setZoomMs(WINDOW_MS);
+  }, []);
 
   // Causal chains — one chain per "root request". We bucket consecutive
   // events that share a `taskId` or fall within 8s of each other into a
@@ -170,21 +246,25 @@ export function TimelineCanvas({
     return activeChain.has(eventId);
   }
 
-  // ── Time axis ticks (every minute, plus "now") ─────────────────────────────
+  // ── Time axis ticks — adaptive interval based on zoom span ────────────────
+  // Span dictates tick granularity: 30s → tick every 5s; 5min → 1min;
+  // 1h → 10min; 24h → 1h. Keeps the axis legible at any zoom level.
   const ticks = useMemo(() => {
     const out: { x: number; label: string }[] = [];
-    const minute = 60_000;
-    const startMin = Math.ceil(timeMin / minute) * minute;
-    for (let t = startMin; t <= timeMax; t += minute) {
+    const tickStep = chooseTickStep(timeSpan);
+    const startTick = Math.ceil(timeMin / tickStep) * tickStep;
+    for (let t = startTick; t <= timeMax; t += tickStep) {
       out.push({ x: xFor(t), label: relativeAt(t, now) });
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timeMin, timeMax, plotW]);
+  }, [timeMin, timeMax, timeSpan, plotW]);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
-      {/* Header — chain count + clear filter */}
+      {/* Header — chain count + viewport controls. Reset button surfaces
+          when the viewport has been panned away from "now" or zoomed
+          beyond the default span. */}
       <div className="flex items-center justify-between gap-2 px-1">
         <div className="flex items-center gap-2">
           <span className="text-[12.5px] font-medium text-foreground">
@@ -193,19 +273,48 @@ export function TimelineCanvas({
           <span className="text-[11.5px] text-foreground/55 tabular-nums">
             {events.length} {events.length === 1 ? "event" : "events"}
             {chains.length > 0 ? ` · ${chains.length} chain${chains.length === 1 ? "" : "s"}` : ""}
+            {!isLive && ` · ${formatSpanShort(zoomMs)} window`}
           </span>
+          {!isLive && (
+            <span className="text-[10.5px] uppercase tracking-[0.06em] text-foreground/55 px-1.5 py-[1px] rounded bg-foreground/[0.06]">
+              paused
+            </span>
+          )}
         </div>
-        {activeChain && (
-          <Button
-            size="sm"
-            radius="full"
-            variant="light"
-            onPress={() => setActiveChain(null)}
-            className="text-foreground/65 hover:text-foreground"
-          >
-            Clear filter
-          </Button>
-        )}
+        <div className="flex items-center gap-1.5">
+          {activeChain && (
+            <Button
+              size="sm"
+              radius="full"
+              variant="light"
+              onPress={() => setActiveChain(null)}
+              className="text-foreground/65 hover:text-foreground"
+            >
+              Clear filter
+            </Button>
+          )}
+          {!isLive || zoomMs !== WINDOW_MS ? (
+            <Button
+              size="sm"
+              radius="full"
+              variant="flat"
+              startContent={<Locate className="h-3 w-3" />}
+              onPress={resetToLive}
+              className="text-foreground/85"
+            >
+              Live
+            </Button>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-[11px] text-success px-1">
+              <span
+                className="h-1.5 w-1.5 rounded-full bg-success"
+                style={{ boxShadow: "0 0 6px rgba(52,211,153,0.7)" }}
+                aria-hidden
+              />
+              Live
+            </span>
+          )}
+        </div>
       </div>
 
       <div
@@ -219,10 +328,18 @@ export function TimelineCanvas({
           <EmptyTimeline onSendTestEvent={onSendTestEvent} />
         ) : width > 0 ? (
           <svg
+            ref={svgRef}
             width="100%"
             height={innerHeight}
             viewBox={`0 0 ${width} ${innerHeight}`}
-            className="block"
+            className="block touch-none select-none"
+            style={{ cursor: dragRef.current ? "grabbing" : "grab" }}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerUp}
+            onPointerLeave={onPointerUp}
+            onWheel={onWheel}
           >
             {/* Lane backgrounds + labels */}
             {lanes.map((agent, i) => {
@@ -252,9 +369,11 @@ export function TimelineCanvas({
                     y={yFor(i) - 16}
                     width={LABEL_W - 12}
                     height={32}
+                    data-no-pan="1"
                   >
                     <button
                       type="button"
+                      data-no-pan="1"
                       onClick={() => onSelectAgent(agent.id)}
                       className="
                         flex h-full w-full items-center gap-2 rounded-md px-2
@@ -306,24 +425,30 @@ export function TimelineCanvas({
               </g>
             ))}
 
-            {/* "Now" line at the right edge */}
-            <line
-              x1={xFor(now)}
-              y1={TOP_PAD - 8}
-              x2={xFor(now)}
-              y2={innerHeight - BOTTOM_PAD + 8}
-              stroke="rgba(52, 211, 153, 0.55)"
-              strokeWidth={1.2}
-            />
-            <text
-              x={xFor(now)}
-              y={TOP_PAD - 12}
-              textAnchor="end"
-              className="fill-success text-[10px] tabular-nums"
-              style={{ fontFamily: "inherit" }}
-            >
-              now
-            </text>
+            {/* "Now" line — only renders when the viewport actually
+                reaches present time (i.e. live mode, not panned into
+                the past). */}
+            {now >= timeMin && now <= timeMax + zoomMs * 0.04 && (
+              <>
+                <line
+                  x1={xFor(now)}
+                  y1={TOP_PAD - 8}
+                  x2={xFor(now)}
+                  y2={innerHeight - BOTTOM_PAD + 8}
+                  stroke="rgba(52, 211, 153, 0.55)"
+                  strokeWidth={1.2}
+                />
+                <text
+                  x={xFor(now)}
+                  y={TOP_PAD - 12}
+                  textAnchor="end"
+                  className="fill-success text-[10px] tabular-nums"
+                  style={{ fontFamily: "inherit" }}
+                >
+                  now
+                </text>
+              </>
+            )}
 
             {/* Causal chain curves — drawn beneath markers */}
             {chains.map((chain) => {
@@ -384,6 +509,7 @@ export function TimelineCanvas({
                 return (
                   <g
                     key={evt.id}
+                    data-no-pan="1"
                     style={{
                       cursor: "pointer",
                       transition: "opacity 200ms",
@@ -601,6 +727,29 @@ function accentForEventName(name: string): string {
 function rootAgentForEvent(evt: AgentEvent): AgentId {
   const id = originatorOfEvent(evt.name);
   return id.includes(".") ? (id.split(".")[0] as AgentId) : id;
+}
+
+/**
+ * Compact human-readable form of a viewport span — used in the
+ * paused-state header chip ("paused · 12m window").
+ */
+function formatSpanShort(ms: number): string {
+  if (ms < 90_000) return `${Math.round(ms / 1000)}s`;
+  if (ms < 90 * 60_000) return `${Math.round(ms / 60_000)}m`;
+  return `${Math.round(ms / (60 * 60_000))}h`;
+}
+
+/**
+ * Pick a tick interval (in ms) appropriate for the given viewport span.
+ * Aims for 5–8 ticks across the canvas at any zoom level.
+ */
+function chooseTickStep(spanMs: number): number {
+  if (spanMs <= 60_000) return 10_000;            // 10s ticks for ≤ 1min
+  if (spanMs <= 5 * 60_000) return 60_000;        // 1min for ≤ 5min
+  if (spanMs <= 30 * 60_000) return 5 * 60_000;   // 5min for ≤ 30min
+  if (spanMs <= 60 * 60_000) return 10 * 60_000;  // 10min for ≤ 1h
+  if (spanMs <= 6 * 60 * 60_000) return 60 * 60_000; // 1h for ≤ 6h
+  return 6 * 60 * 60_000;                         // 6h for everything bigger
 }
 
 function relativeAt(ts: number, now: number): string {

@@ -1,34 +1,36 @@
 "use client";
 
 /**
- * `AgentGraph` — Synap-centered agent topology, rendered with React Flow.
+ * `AgentGraph` — agent topology rendered with React Flow + dagre.
  *
- * Why React Flow (`@xyflow/react`):
- *   • Node selection / focus / panning / zoom come for free, with proper
- *     hit-testing — the previous SVG version had selection rings drawn at
- *     <rect> y-offsets that drifted from the underlying HTML glass-icon.
- *   • Edge animation via `animated: true` replaces hand-rolled
- *     `<animateMotion>` tags; pulses Just Work without timer juggling.
- *   • Custom HTML nodes (vs. <foreignObject>) means the same `.glass-icon`
- *     recipe Eve uses on Home renders pixel-identical here.
+ * Layout: directed left-to-right via dagre (the same engine the studio
+ * data-structure view uses). Nodes never overlap by construction; new
+ * agents from the registry slot in automatically. Synap sits in the
+ * middle rank as the only shared sink/source.
  *
- * Layout: deterministic radial. Synap at center. Primary agents on an
- * inner ring at angles derived from their role (`computeSlots`).
- * Subagents are ALWAYS visible — fanned out on an outer arc behind
- * their parent, not hover-revealed (the old behavior trapped the cursor:
- * leave parent → subs vanish → can't click them).
+ *   [channels] → OpenClaw ─┐
+ *                          ├→  Synap → Hermes → {scrape, embed}
+ *               Personas ──┘
  *
- * Adding a new agent at runtime: append to the registry (or future
- * `query_agents` Hub Protocol call) and the layout picks it up. No
- * angular slots to hand-edit, no parent fan code to touch.
+ * Interaction:
+ *   • Drag the canvas to pan
+ *   • Scroll to zoom
+ *   • Drag a node to reposition (changes are local, not persisted)
+ *   • Click a node → side panel
+ *   • Controls (bottom-left): zoom in/out + fit-view
+ *
+ * Visual: custom HTML nodes via `AgentNode` carry the `.glass-icon`
+ * recipe (1px white inner ring + top-edge specular). Selection ring is
+ * a CSS box-shadow on the icon — pixel-perfect alignment.
  *
  * See: synap-team-docs/content/team/platform/eve-agents-design.mdx
  */
 
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   ReactFlow,
   Background,
+  Controls,
   type Edge as RFEdge,
   type NodeTypes,
   type EdgeTypes,
@@ -37,28 +39,14 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
-  allAgents, brandFor, computeSlots, getAgent, laneForEvent,
-  primaryAgents, slotToPoint, subagentsOf,
-  type AgentId, type AgentMeta, type AgentStatusSnapshot,
+  brandFor, getAgent, laneForEvent,
+  type AgentId, type AgentStatusSnapshot,
 } from "../lib/agent-registry";
 import { fallbackBrandColor } from "../../lib/brand-colors";
+import { computeDagreLayout } from "../lib/dagre-layout";
 import type { AgentEvent } from "../lib/event-types";
 import type { UnifiedChannel } from "../lib/channel-types";
 import { AgentNode, type AgentRFNode } from "./graph/agent-node";
-
-// ─── Layout constants ────────────────────────────────────────────────────────
-
-const VIEW_W = 880;
-const VIEW_H = 460;
-const CENTER = { x: VIEW_W / 2, y: VIEW_H / 2 };
-const INNER_RADIUS = 200;
-const SUB_FAN_RADIUS = 130;
-const SUB_FAN_SPAN_DEG = 100;
-
-// Node sizes — matching `.glass-icon` recipe.
-const NODE_BRAIN = 88;
-const NODE_PRIMARY = 64;
-const NODE_SUB = 44;
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
@@ -81,11 +69,6 @@ export function AgentGraph(props: AgentGraphProps) {
 
 // ─── Canvas ──────────────────────────────────────────────────────────────────
 
-function nodeSizeFor(agent: AgentMeta): number {
-  if (agent.role === "brain") return NODE_BRAIN;
-  return agent.parentId ? NODE_SUB : NODE_PRIMARY;
-}
-
 const laneKey = (a: AgentId, b: AgentId) => `${a}->${b}`;
 
 const nodeTypes: NodeTypes = { agent: AgentNode };
@@ -98,146 +81,102 @@ function AgentGraphCanvas({
   onSelectAgent,
   highlightedLane,
 }: AgentGraphProps) {
-  const slots = useMemo(() => computeSlots(), []);
-  const allList = useMemo(() => allAgents(), []);
-  const primaries = useMemo(() => primaryAgents(), []);
-
-  // Pre-compute subagent angular positions for each parent. Each subagent
-  // sits at a unique angle on a 100° arc behind its parent. Behind = on
-  // the side AWAY from Synap, so subs never occlude the brain.
-  const subAngles = useMemo<Record<AgentId, number>>(() => {
-    const out: Record<string, number> = {};
-    for (const parent of primaries) {
-      const parentSlot = slots[parent.id];
-      const subs = subagentsOf(parent.id);
-      if (subs.length === 0) continue;
-      // Anchor angle = parent slot (pointing from center outward).
-      // Subagents fan symmetrically on either side of the anchor, in the
-      // outer half-plane from the brain.
-      if (subs.length === 1) {
-        out[subs[0].id] = parentSlot;
-      } else {
-        const step = SUB_FAN_SPAN_DEG / (subs.length - 1);
-        subs.forEach((sub, i) => {
-          out[sub.id] =
-            (parentSlot - SUB_FAN_SPAN_DEG / 2 + step * i + 360) % 360;
-        });
-      }
-    }
-    return out as Record<AgentId, number>;
-  }, [primaries, slots]);
+  // The dagre computation is pure — same input always returns same
+  // output. Memoise once; if we add server-driven runtime agents later
+  // this re-runs when the registry changes.
+  const layout = useMemo(() => computeDagreLayout(), []);
 
   // ── Build nodes ────────────────────────────────────────────────────────────
   const nodes = useMemo<AgentRFNode[]>(() => {
-    const out: AgentRFNode[] = [];
-
-    for (const agent of allList) {
-      const size = nodeSizeFor(agent);
-      const brand =
-        getAgent(agent.id) ? brandFor(agent) : fallbackBrandColor(agent.id);
-      const status = agentStatuses[agent.id]?.status ?? "idle";
-      const isSelected = selectedAgent === agent.id;
-
-      let position: { x: number; y: number };
-      if (agent.role === "brain") {
-        position = { x: CENTER.x - size / 2, y: CENTER.y - size / 2 };
-      } else if (agent.parentId) {
-        const angle = subAngles[agent.id] ?? slots[agent.id] ?? 0;
-        // Anchor on the parent's outer ring: parent center + sub-radius
-        // along the angle from CENTER (so subs sit "behind" parents).
-        const parent = getAgent(agent.parentId);
-        const parentSize = parent ? nodeSizeFor(parent) : NODE_PRIMARY;
-        const parentPos = slotToPoint(slots[agent.parentId] ?? 0, INNER_RADIUS);
-        const subPos = slotToPoint(angle, SUB_FAN_RADIUS);
-        position = {
-          // Parent center → add SUB_FAN_RADIUS along the angle from CENTER.
-          x: CENTER.x + parentPos.x + (subPos.x - 0) * 0.7 - size / 2,
-          y: CENTER.y + parentPos.y + (subPos.y - 0) * 0.7 - size / 2,
-        };
-        // Note: 0.7 keeps subs close enough that the parent→sub edge reads
-        // as a tight cluster; pure outer-ring would push them off-canvas.
-        void parentSize;
-      } else {
-        const p = slotToPoint(slots[agent.id] ?? 0, INNER_RADIUS);
-        position = {
-          x: CENTER.x + p.x - size / 2,
-          y: CENTER.y + p.y - size / 2,
+    return layout.nodes.map((laid) => {
+      const agent = getAgent(laid.id);
+      if (!agent) {
+        // Should never happen — the layout is built from the registry.
+        // If the registry mutates between layout and render, fall back
+        // to a placeholder so we don't crash.
+        return {
+          id: laid.id,
+          type: "agent",
+          position: { x: laid.x - laid.size / 2, y: laid.y - laid.size / 2 },
+          data: {
+            agent: {
+              id: laid.id,
+              label: laid.id,
+              description: "",
+              role: "custom",
+              brandSlug: laid.id,
+              glyph: () => null as never,
+            } as never,
+            size: laid.size,
+            accent: "#888",
+            background: "#444",
+            glyph: (() => null) as never,
+            status: "idle",
+            isSelected: false,
+          },
+          draggable: true,
+          selectable: true,
         };
       }
-
-      out.push({
+      const brand = brandFor(agent);
+      const status = agentStatuses[agent.id]?.status ?? "idle";
+      return {
         id: agent.id,
         type: "agent",
-        position,
+        position: {
+          x: laid.x - laid.size / 2,
+          y: laid.y - laid.size / 2,
+        },
         data: {
           agent,
-          size,
+          size: laid.size,
           accent: brand.accent,
           background: brand.bg,
           glyph: agent.glyph,
           status,
-          isSelected,
+          isSelected: selectedAgent === agent.id,
         },
-        // React Flow built-in selection — we still drive selectedAgent
-        // ourselves via onNodeClick because we want a single-select model.
+        draggable: true,
         selectable: true,
-        draggable: false,
-        // We bypass React Flow's selection styling and use our own ring
-        // (rendered inside AgentNode based on `data.isSelected`) so the
-        // ring matches the glass-icon's silhouette pixel-for-pixel.
         focusable: true,
-      });
-    }
-    return out;
-  }, [allList, agentStatuses, selectedAgent, slots, subAngles]);
+      };
+    });
+  }, [layout, agentStatuses, selectedAgent]);
 
   // ── Build edges ────────────────────────────────────────────────────────────
   const edges = useMemo<RFEdge[]>(() => {
-    const out: RFEdge[] = [];
+    return layout.edges.map((e) => {
+      const targetAgent = getAgent(e.target);
+      const sourceAgent = getAgent(e.source);
+      const brand = targetAgent
+        ? brandFor(targetAgent)
+        : sourceAgent
+          ? brandFor(sourceAgent)
+          : fallbackBrandColor(e.target);
 
-    // Synap ↔ each primary
-    for (const agent of primaries) {
-      const brand = brandFor(agent);
-      const key = laneKey("synap", agent.id);
-      const reverseKey = laneKey(agent.id, "synap");
       const isHot =
-        highlightedLane === key || highlightedLane === reverseKey;
-      out.push({
-        id: `synap__${agent.id}`,
-        source: "synap",
-        target: agent.id,
-        animated: isHot || hasRecentActivity(events, agent.id),
+        highlightedLane === laneKey(e.source, e.target) ||
+        highlightedLane === laneKey(e.target, e.source);
+      const isLive = hasRecentActivity(events, e.source, e.target);
+
+      return {
+        id: `${e.source}__${e.target}`,
+        source: e.source,
+        target: e.target,
+        animated: isHot || isLive,
         style: {
-          stroke: isHot ? brand.accent : "rgba(255,255,255,0.18)",
-          strokeWidth: isHot ? 2.2 : 1.2,
-          opacity: isHot ? 1 : 0.65,
+          stroke: isHot
+            ? brand.accent
+            : isLive
+              ? `${brand.accent}aa`
+              : "rgba(255,255,255,0.16)",
+          strokeWidth: isHot ? 2.4 : isLive ? 1.6 : 1,
+          opacity: isHot ? 1 : isLive ? 0.85 : 0.5,
           transition: "stroke 220ms ease-out, opacity 220ms ease-out",
         },
-      });
-    }
-
-    // Parent ↔ subagent
-    for (const agent of allList) {
-      if (!agent.parentId) continue;
-      const brand = brandFor(agent);
-      const key = laneKey(agent.parentId, agent.id);
-      const reverseKey = laneKey(agent.id, agent.parentId);
-      const isHot =
-        highlightedLane === key || highlightedLane === reverseKey;
-      out.push({
-        id: `${agent.parentId}__${agent.id}`,
-        source: agent.parentId,
-        target: agent.id,
-        animated: isHot,
-        style: {
-          stroke: isHot ? brand.accent : "rgba(255,255,255,0.10)",
-          strokeWidth: 1,
-          opacity: 0.5,
-        },
-      });
-    }
-    return out;
-  }, [primaries, allList, events, highlightedLane]);
+      };
+    });
+  }, [layout.edges, events, highlightedLane]);
 
   return (
     <div className="absolute inset-0">
@@ -246,54 +185,97 @@ function AgentGraphCanvas({
         edges={edges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
-        nodesDraggable={false}
+        nodesDraggable
         nodesConnectable={false}
         elementsSelectable
-        zoomOnScroll={false}
-        zoomOnDoubleClick={false}
+        zoomOnScroll
+        zoomOnDoubleClick
         panOnScroll={false}
-        panOnDrag={false}
+        panOnDrag
+        minZoom={0.4}
+        maxZoom={1.5}
         proOptions={{ hideAttribution: true }}
         onPaneClick={() => onSelectAgent(null)}
         onNodeClick={(_e, node) => {
           const id = node.id as AgentId;
           onSelectAgent(selectedAgent === id ? null : id);
         }}
-        defaultViewport={{ x: 0, y: 0, zoom: 1 }}
+        defaultViewport={{ x: 0, y: 0, zoom: 0.95 }}
         fitView
-        fitViewOptions={{ padding: 0.18, minZoom: 0.55, maxZoom: 1.1 }}
+        fitViewOptions={{ padding: 0.22, minZoom: 0.55, maxZoom: 1.1 }}
         className="agents-flow"
       >
         <Background color="rgba(255,255,255,0.04)" gap={28} size={1} />
+        <Controls
+          position="bottom-left"
+          showInteractive={false}
+          showFitView
+          showZoom
+          className="!bottom-3 !left-3"
+        />
       </ReactFlow>
-      <FitViewObserver />
+      <ResizeRefitter />
     </div>
   );
 }
 
-// Re-fit when the container resizes (compact ↔ timeline toggle, window).
-function FitViewObserver() {
+// Re-fit when the container resizes — without it, the graph stays
+// pinned at its last fit and toggling compact/timeline mode (or
+// resizing the window) leaves nodes off-canvas.
+function ResizeRefitter() {
   const { fitView } = useReactFlow();
-  const ref = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const t = window.setTimeout(
-      () => fitView({ padding: 0.18, duration: 200 }),
-      50,
-    );
-    return () => window.clearTimeout(t);
+  const lastSizeRef = useRef<{ w: number; h: number }>({ w: 0, h: 0 });
+
+  const refit = useCallback(() => {
+    fitView({ padding: 0.22, duration: 200 });
   }, [fitView]);
-  return <div ref={ref} aria-hidden className="hidden" />;
+
+  useEffect(() => {
+    const t = window.setTimeout(refit, 50);
+    return () => window.clearTimeout(t);
+  }, [refit]);
+
+  useEffect(() => {
+    const onResize = () => {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      if (
+        Math.abs(w - lastSizeRef.current.w) > 20 ||
+        Math.abs(h - lastSizeRef.current.h) > 20
+      ) {
+        lastSizeRef.current = { w, h };
+        refit();
+      }
+    };
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [refit]);
+
+  return null;
 }
 
-// Heuristic: emit `animated: true` on synap↔agent edges when the agent
-// has at least one event in the last 20s. Cheap; runs on every render
-// but events array is at most 200 entries.
-function hasRecentActivity(events: AgentEvent[], agentId: AgentId): boolean {
+/**
+ * Heuristic: emit `animated: true` on edges adjacent to an agent that
+ * has fired at least one event in the last 20s. Cheap; runs on every
+ * render but events array is at most 200 entries.
+ *
+ * Both directions count — an edge from A→B lights up when EITHER A or
+ * B was an originator OR a target in a recent lane.
+ */
+function hasRecentActivity(
+  events: AgentEvent[],
+  source: AgentId,
+  target: AgentId,
+): boolean {
   const cutoff = Date.now() - 20_000;
   for (const evt of events) {
     const lane = laneForEvent(evt.name as never);
     if (!lane) continue;
-    if (lane.from !== agentId && lane.to !== agentId) continue;
+    const hits =
+      (lane.from === source && lane.to === target) ||
+      (lane.from === target && lane.to === source);
+    if (!hits) continue;
     const ts = Date.parse(evt.at);
     if (Number.isFinite(ts) && ts >= cutoff) return true;
   }

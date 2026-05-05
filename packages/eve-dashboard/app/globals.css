@@ -254,6 +254,11 @@ body {
  * — no boxes, no borders, no background fill from the library. These
  * rules suppress React Flow's default chrome inside the .agents-flow
  * scope only.
+ *
+ * Color cascade gotcha: react-flow's stylesheet sets `color: #222` on
+ * `.react-flow__node`, which inherits into our HTML node and produces
+ * black text on the dark pane. We force the agent-node label color
+ * back to the foreground token here.
  * ------------------------------------------------------------------- */
 .agents-flow .react-flow__node {
   background: transparent;
@@ -263,7 +268,10 @@ body {
   outline: none;
   width: auto;
   font-size: inherit;
-  color: inherit;
+  /* Force-override react-flow's hard-coded `color` so labels read
+     against the dark background. Uses the HeroUI foreground HSL
+     variable (resolves to white in dark mode, near-black in light). */
+  color: hsl(var(--heroui-foreground));
 }
 .agents-flow .react-flow__node.selectable:hover {
   background: transparent;
@@ -299,6 +307,36 @@ body {
 }
 .agents-flow .react-flow__background {
   opacity: 0.5;
+}
+
+/* React Flow built-in Controls — restyle to fit the dark pane. */
+.agents-flow .react-flow__controls {
+  background: transparent;
+  box-shadow: none;
+  border: none;
+}
+.agents-flow .react-flow__controls-button {
+  background: hsl(var(--heroui-content1) / 0.9);
+  border: 1px solid hsl(var(--heroui-foreground) / 0.10);
+  border-radius: 8px;
+  margin-bottom: 4px;
+  width: 28px;
+  height: 28px;
+  color: hsl(var(--heroui-foreground) / 0.85);
+  backdrop-filter: blur(12px);
+  transition: background 150ms, color 150ms;
+}
+.agents-flow .react-flow__controls-button:hover {
+  background: hsl(var(--heroui-content2) / 0.95);
+  color: hsl(var(--heroui-foreground));
+}
+.agents-flow .react-flow__controls-button svg {
+  fill: currentColor;
+  max-width: 14px;
+  max-height: 14px;
+}
+.agents-flow .react-flow__attribution {
+  display: none;
 }
 
 /* ----------------------------------------------------------------------

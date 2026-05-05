@@ -27,7 +27,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Button, ButtonGroup, Chip, Tooltip } from "@heroui/react";
-import { Plug, AlertTriangle, RefreshCw, Activity, LayoutDashboard, ListOrdered, Beaker } from "lucide-react";
+import { Plug, AlertTriangle, RefreshCw, Activity, LayoutDashboard, ListOrdered, Beaker, PanelRightClose, PanelRightOpen } from "lucide-react";
 import type { EventName } from "./lib/event-types";
 import { PaneHeader } from "../components/pane-header";
 import { CpAuthBanner } from "../../components/cp-auth-banner";
@@ -43,24 +43,38 @@ import type { AgentId, Lane } from "./lib/agent-registry";
 
 type ViewMode = "compact" | "timeline";
 const VIEW_MODE_PREF_KEY = "eve.agents.viewMode";
+const RAIL_COLLAPSED_PREF_KEY = "eve.agents.activityRail.collapsed";
 
 export default function AgentsPage() {
   const [selectedAgent, setSelectedAgent] = useState<AgentId | null>(null);
   const [highlightedLane, setHighlightedLane] = useState<Lane | null>(null);
   const [isConnectOpen, setIsConnectOpen] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("compact");
+  const [isRailCollapsed, setIsRailCollapsed] = useState(false);
 
-  // Hydrate persisted view mode once on mount.
+  // Hydrate persisted prefs once on mount.
   useEffect(() => {
     try {
       const v = localStorage.getItem(VIEW_MODE_PREF_KEY);
       if (v === "timeline" || v === "compact") setViewMode(v);
+      const r = localStorage.getItem(RAIL_COLLAPSED_PREF_KEY);
+      if (r === "1") setIsRailCollapsed(true);
     } catch { /* localStorage disabled */ }
   }, []);
 
   const updateViewMode = useCallback((next: ViewMode) => {
     setViewMode(next);
     try { localStorage.setItem(VIEW_MODE_PREF_KEY, next); } catch { /* noop */ }
+  }, []);
+
+  const toggleRail = useCallback(() => {
+    setIsRailCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(RAIL_COLLAPSED_PREF_KEY, next ? "1" : "0");
+      } catch { /* noop */ }
+      return next;
+    });
   }, []);
 
   const {
@@ -258,62 +272,59 @@ export default function AgentsPage() {
           </div>
         )}
 
-        {/* Compact mode — graph (top) + activity feed (bottom). The
-            graph stays fixed height; the feed fills the remaining
-            vertical space; the channel strip pins to the bottom. */}
-        {viewMode === "compact" && (
-          <>
-            <div className="relative shrink-0 mb-3 h-[300px] lg:h-[360px]">
-              <AgentGraph
+        {/* Main split — primary canvas (graph or timeline) + collapsible
+            activity rail on the right. */}
+        <div className="flex min-h-0 flex-1 gap-3 mb-3">
+          <div className="relative min-w-0 flex-1">
+            {viewMode === "compact" ? (
+              <>
+                <AgentGraph
+                  events={events}
+                  agentStatuses={agentStatuses}
+                  selectedAgent={selectedAgent}
+                  onSelectAgent={(id) =>
+                    setSelectedAgent((prev) => (prev === id ? null : id))
+                  }
+                  channels={channels}
+                  highlightedLane={highlightedLaneKey}
+                />
+
+                {/* Side panel slides in over the graph */}
+                {selectedAgent && (
+                  <NodePanel
+                    agentId={selectedAgent}
+                    events={byAgent[selectedAgent] ?? []}
+                    status={agentStatuses[selectedAgent]}
+                    onClose={() => setSelectedAgent(null)}
+                    onSelectAgent={(id) => setSelectedAgent(id)}
+                  />
+                )}
+              </>
+            ) : (
+              <TimelineCanvas
                 events={events}
                 agentStatuses={agentStatuses}
-                selectedAgent={selectedAgent}
-                onSelectAgent={(id) =>
-                  setSelectedAgent((prev) => (prev === id ? null : id))
-                }
-                channels={channels}
-                highlightedLane={highlightedLaneKey}
-              />
-
-              {/* Side panel slides in over the graph */}
-              {selectedAgent && (
-                <NodePanel
-                  agentId={selectedAgent}
-                  events={byAgent[selectedAgent] ?? []}
-                  status={agentStatuses[selectedAgent]}
-                  onClose={() => setSelectedAgent(null)}
-                  onSelectAgent={(id) => setSelectedAgent(id)}
-                />
-              )}
-            </div>
-
-            <div className="min-h-0 flex-1 mb-3">
-              <ActivityFeed
-                events={events}
                 isEmpty={isEmpty}
-                onHighlightLane={setHighlightedLane}
-                density="compact"
+                onSelectAgent={setSelectedAgent}
                 onSendTestEvent={() => void sendTestEvent()}
               />
-            </div>
-          </>
-        )}
+            )}
+          </div>
 
-        {/* Timeline mode — full-pane swimlane canvas. One row per agent,
-            time on the X axis, events plotted as colored markers, causal
-            chains drawn as soft curves between markers. Leverages the
-            event chain to show what happened, when, and to whom. */}
-        {viewMode === "timeline" && (
-          <div className="min-h-0 flex-1 mb-3">
-            <TimelineCanvas
+          <ActivityRail
+            isCollapsed={isRailCollapsed}
+            onToggle={toggleRail}
+            unreadCount={events.length}
+          >
+            <ActivityFeed
               events={events}
-              agentStatuses={agentStatuses}
               isEmpty={isEmpty}
-              onSelectAgent={setSelectedAgent}
+              onHighlightLane={setHighlightedLane}
+              density="compact"
               onSendTestEvent={() => void sendTestEvent()}
             />
-          </div>
-        )}
+          </ActivityRail>
+        </div>
 
         {/* Channel strip — pinned to the bottom of the pane. Doubles as
             the first-run CTA: "No channels connected yet · Connect a
@@ -333,6 +344,94 @@ export default function AgentsPage() {
         onClose={onCloseConnect}
       />
     </>
+  );
+}
+
+// ─── Activity rail (collapsible right sidebar) ───────────────────────────────
+
+function ActivityRail({
+  isCollapsed,
+  onToggle,
+  unreadCount,
+  children,
+}: {
+  isCollapsed: boolean;
+  onToggle: () => void;
+  unreadCount: number;
+  children: React.ReactNode;
+}) {
+  if (isCollapsed) {
+    // Thin vertical strip — vertical "Activity" label + count chip.
+    return (
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-label={`Show activity rail · ${unreadCount} events`}
+        className="
+          group relative flex h-full w-9 shrink-0 flex-col items-center
+          justify-between rounded-lg
+          bg-foreground/[0.04] border border-foreground/[0.08]
+          py-3
+          transition-colors duration-150
+          hover:bg-foreground/[0.07] hover:border-foreground/[0.14]
+          focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40
+        "
+      >
+        <PanelRightOpen
+          className="h-4 w-4 text-foreground/65 group-hover:text-foreground"
+          strokeWidth={1.8}
+        />
+        <span
+          className="
+            font-medium text-[11px] tracking-[0.18em] uppercase
+            text-foreground/65 group-hover:text-foreground/85
+            [writing-mode:vertical-rl] [text-orientation:mixed]
+            select-none
+          "
+        >
+          Activity
+        </span>
+        <Chip size="sm" radius="full" variant="flat" className="text-[10.5px]">
+          {unreadCount}
+        </Chip>
+      </button>
+    );
+  }
+
+  return (
+    <aside
+      className="
+        relative flex h-full w-full max-w-[340px] flex-col shrink-0
+        rounded-lg
+        bg-foreground/[0.04] border border-foreground/[0.08]
+      "
+    >
+      <header className="flex shrink-0 items-center justify-between gap-2 px-3 pt-2.5 pb-1.5 border-b border-foreground/[0.06]">
+        <div className="flex items-center gap-1.5">
+          <Activity className="h-3.5 w-3.5 text-foreground/65" strokeWidth={2.2} />
+          <span className="text-[12px] font-medium text-foreground">
+            Activity
+          </span>
+          <span className="text-[11px] text-foreground/55 tabular-nums">
+            {unreadCount}
+          </span>
+        </div>
+        <Button
+          isIconOnly
+          variant="light"
+          size="sm"
+          radius="full"
+          aria-label="Collapse activity rail"
+          onPress={onToggle}
+          className="text-foreground/55 hover:text-foreground -mr-1"
+        >
+          <PanelRightClose className="h-3.5 w-3.5" />
+        </Button>
+      </header>
+      <div className="min-h-0 flex-1 overflow-hidden p-2">
+        {children}
+      </div>
+    </aside>
   );
 }
 
