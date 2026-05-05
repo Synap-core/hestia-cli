@@ -283,6 +283,7 @@ function CallbackInner() {
                 <p className="mt-1 text-sm text-default-500 break-words">
                   {state.message}
                 </p>
+                <SignInDiagnostic message={state.message} />
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -307,6 +308,65 @@ function CallbackInner() {
         )}
       </div>
     </main>
+  );
+}
+
+/**
+ * Map an OAuth error message to an actionable hint. Pattern-match
+ * against common failure modes so the user knows whether to:
+ *   • try again (transient network blip)
+ *   • check their CP base URL (typo / wrong env)
+ *   • file a bug (genuinely unexpected)
+ *   • check their pod-pairing state (no token at all)
+ */
+function diagnose(message: string): { hint: string; action?: string } | null {
+  const m = message.toLowerCase();
+  if (m.includes("network error") || m.includes("failed to fetch")) {
+    return {
+      hint: `Couldn't reach Synap CP at ${CP_BASE_URL}. Check your network or whether the CP is deployed.`,
+    };
+  }
+  if (m.includes("invalid_client") || m.includes("unknown client")) {
+    return {
+      hint: "The eve-dashboard OAuth client isn't registered on the CP you're pointing at. Verify NEXT_PUBLIC_CP_BASE_URL.",
+    };
+  }
+  if (m.includes("invalid_grant") && m.includes("redirect")) {
+    return {
+      hint: `This Eve install's redirect URI (${typeof window !== "undefined" ? window.location.origin : ""}/auth/callback) isn't in the CP's allowed list. Loopback (127.0.0.1 / localhost) is auto-allowed; non-loopback hosts need to be added.`,
+    };
+  }
+  if (m.includes("invalid_grant")) {
+    return {
+      hint: "The authorization code expired or was already used. Try again — codes are single-use and live for 10 minutes.",
+    };
+  }
+  if (m.includes("invalid_scope")) {
+    return {
+      hint: "The CP rejected one of the scopes Eve asked for. Update the dashboard or extend the client's allowedScopes on the CP.",
+    };
+  }
+  if (m.includes("state mismatch")) {
+    return {
+      hint: "Probably a stale tab or a CSRF probe — close any other Eve tabs and try again.",
+    };
+  }
+  if (m.includes("sessionstorage was cleared")) {
+    return {
+      hint: "The PKCE verifier was lost between redirects (private browsing? extension wipe?). Try again in a normal tab.",
+    };
+  }
+  return null;
+}
+
+function SignInDiagnostic({ message }: { message: string }): React.ReactElement | null {
+  const diagnosis = diagnose(message);
+  if (!diagnosis) return null;
+  return (
+    <p className="mt-2 text-xs text-default-400">
+      <span className="font-medium text-default-500">Hint: </span>
+      {diagnosis.hint}
+    </p>
   );
 }
 

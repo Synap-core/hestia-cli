@@ -31,12 +31,7 @@ import { AppGrid } from "./components/app-grid";
 import { SearchBar } from "./components/search-bar";
 import { EmptyState } from "./components/empty-state";
 import { useHomeApps } from "./hooks/use-home-apps";
-import { CP_BASE_URL } from "./lib/cp-oauth";
-
-// Until the synap-landing /marketplace ships, the "Browse marketplace"
-// link points back to the CP. This is the single source of truth for
-// every "open marketplace" affordance on the Home.
-const MARKETPLACE_URL = `${CP_BASE_URL}/marketplace`;
+import { MARKETPLACE_URL } from "./lib/marketplace-url";
 
 export default function HomePage() {
   const router = useRouter();

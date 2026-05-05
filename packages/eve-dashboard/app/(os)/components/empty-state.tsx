@@ -11,10 +11,10 @@
 
 import { Button } from "@heroui/react";
 import { LayoutGrid } from "lucide-react";
-import { CP_BASE_URL } from "../lib/cp-oauth";
+import { MARKETPLACE_URL } from "../lib/marketplace-url";
 
 export function EmptyState() {
-  const marketplaceUrl = `${CP_BASE_URL}/marketplace`;
+  const marketplaceUrl = MARKETPLACE_URL;
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-6 py-12 text-center">

@@ -12,10 +12,10 @@
  */
 
 import { Plus } from "lucide-react";
-import { CP_BASE_URL } from "../lib/cp-oauth";
+import { MARKETPLACE_URL } from "../lib/marketplace-url";
 
 export function AddAppButton() {
-  const marketplaceUrl = `${CP_BASE_URL}/marketplace`;
+  const marketplaceUrl = MARKETPLACE_URL;
 
   return (
     <a
