@@ -1,11 +1,24 @@
 import type { Command } from 'commander';
 import { execSync } from 'node:child_process';
-import { existsSync, readdirSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 import { writeEveSecrets, readEveSecrets, getAccessUrls, getServerIp, entityStateManager } from '@eve/dna';
 import { TraefikService } from '@eve/legs';
 import { colors, printSuccess, printInfo, printWarning, printError } from '../lib/ui.js';
 import { probeRoutes, probeSummary, probeVerdict, type RouteProbe } from '../lib/probe-routes.js';
+
+const PLACEHOLDER_DOMAINS = new Set([
+  'localhost', '127.0.0.1', '::1', 'example.com',
+  'yourdomain.com', 'mydomain.com', 'your-domain.com',
+]);
+
+function isPlaceholderDomain(d: string): boolean {
+  const lower = d.toLowerCase();
+  return PLACEHOLDER_DOMAINS.has(lower) ||
+    lower.startsWith('127.') ||
+    lower.startsWith('192.168.') ||
+    lower.startsWith('10.') ||
+    !lower.includes('.');
+}
 
 /** Render a per-route probe summary as a small table (used by `set` + `check`). */
 function renderProbeTable(probes: RouteProbe[]): void {
@@ -345,6 +358,13 @@ export function domainCommand(program: Command): void {
         process.exit(1);
       }
 
+      // Fix C: Fail clearly if the stored domain is a placeholder
+      if (isPlaceholderDomain(domainName)) {
+        printError(`Stored domain "${domainName}" is a placeholder — secrets.json was corrupted by an earlier bug.`);
+        printInfo('Fix: eve domain set <yourdomain> --ssl --email <you@example.com>');
+        process.exit(1);
+      }
+
       console.log();
       console.log(colors.primary.bold('Eve — Traefik repair'));
       console.log(colors.muted('─'.repeat(60)));
@@ -356,46 +376,20 @@ export function domainCommand(program: Command): void {
         execSync('docker rm -f eve-legs-traefik', { stdio: 'inherit' });
       } catch { /* container may not exist */ }
 
-      // 2. Wipe stale dynamic config files (legacy from pre-Eve installs)
-      const HOST_DYNAMIC_DIR = '/opt/traefik/dynamic';
-      const HOST_STATIC_CONFIG = '/opt/traefik/traefik.yml';
-      if (existsSync(HOST_DYNAMIC_DIR)) {
-        printInfo('Cleaning stale dynamic config files...');
-        try {
-          for (const file of readdirSync(HOST_DYNAMIC_DIR)) {
-            if (file.endsWith('.yml') || file.endsWith('.yaml')) {
-              const path = join(HOST_DYNAMIC_DIR, file);
-              try {
-                unlinkSync(path);
-                console.log(`  ${colors.muted('•')} removed ${file}`);
-              } catch (err) {
-                printWarning(`  could not remove ${file}: ${err instanceof Error ? err.message : String(err)}`);
-              }
-            }
-          }
-        } catch (err) {
-          printWarning(`  could not read ${HOST_DYNAMIC_DIR}: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-
-      // 3. Also remove the static config so a fresh one is generated
-      if (existsSync(HOST_STATIC_CONFIG)) {
-        try {
-          unlinkSync(HOST_STATIC_CONFIG);
-          console.log(`  ${colors.muted('•')} removed traefik.yml`);
-        } catch { /* non-fatal */ }
-      }
-
-      // 4. Reinstall Traefik (recreates container with proper bind mounts)
-      printInfo('Reinstalling Traefik (fresh container)...');
+      // 2. Wipe stale dynamic config files using TraefikService (Fix E)
       const traefik = new TraefikService();
+      printInfo('Cleaning stale config files...');
+      traefik.cleanConfig();
+
+      // 3. Reinstall Traefik (recreates container with proper bind mounts)
+      printInfo('Reinstalling Traefik (fresh container)...');
       await traefik.install();
 
-      // 5. Reapply domain routes
+      // 4. Reapply domain routes (Fix D: pass behindProxy)
       printInfo('Applying domain routes...');
       let installedComponents: string[] | undefined;
       try { installedComponents = await entityStateManager.getInstalledComponents(); } catch { /* ignore */ }
-      await traefik.configureSubdomains(domainName, !!secrets?.domain?.ssl, secrets?.domain?.email, installedComponents);
+      await traefik.configureSubdomains(domainName, !!secrets?.domain?.ssl, secrets?.domain?.email, installedComponents, !!secrets?.domain?.behindProxy);
 
       console.log();
       printSuccess('Repair complete. Run `eve domain check` to verify.');

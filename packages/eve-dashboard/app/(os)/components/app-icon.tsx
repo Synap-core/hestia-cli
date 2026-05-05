@@ -25,6 +25,7 @@
 import {
   Box, MessageSquare, Brain, Sparkles, Code2, Wrench, Users,
   LayoutGrid, Paperclip, Home, Settings as SettingsIcon, Cpu, Rss,
+  Lock,
   type LucideIcon, type LucideProps,
 } from "lucide-react";
 import { brandColorFor } from "../lib/brand-colors";
@@ -74,8 +75,13 @@ export function AppIcon({ app }: AppIconProps) {
         focus-visible:rounded-app-icon
       "
     >
+      {/* Wrapping span is `relative` so the lock chip can sit in the
+          glyph's top-right without escaping to a far-up ancestor (the
+          old version was missing this — the chip ended up centred on
+          the page). */}
       <span
         className="
+          relative
           glass-icon
           flex h-[68px] w-[68px] items-center justify-center
           transition-transform duration-200 ease-out
@@ -106,13 +112,17 @@ export function AppIcon({ app }: AppIconProps) {
         {!app.isEntitled && (
           <span
             className="
-              absolute -right-1 -top-1 z-10 rounded-full
-              bg-content1 px-1.5 py-0.5 text-[9px] font-medium uppercase
-              tracking-wider text-foreground/55 border border-divider
+              absolute -right-1.5 -top-1.5 z-10
+              inline-flex h-5 w-5 items-center justify-center
+              rounded-full
+              bg-warning/90 ring-2 ring-background
+              text-warning-foreground
+              shadow-[0_2px_6px_rgba(0,0,0,0.25)]
             "
-            title="Locked"
+            title="Locked — upgrade required"
+            aria-label="Locked"
           >
-            Locked
+            <Lock className="h-2.5 w-2.5" strokeWidth={2.6} />
           </span>
         )}
       </span>

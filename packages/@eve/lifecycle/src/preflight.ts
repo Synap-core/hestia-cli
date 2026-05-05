@@ -36,30 +36,31 @@ import {
   type EveSecrets,
 } from "@eve/dna";
 
+import {
+  ensurePodProvisioningToken,
+  type EnsureProvisioningTokenResult,
+} from "./auth.js";
+
 // Placeholder domains written by the synap-backend defaults that must never
 // land in secrets.json as the configured domain. If we detect one stored from
 // a previous buggy preflight run, we clear it so the user is not stuck with
 // *.localhost Traefik routes.
-const PLACEHOLDER_DOMAINS = new Set([
+const PREFLIGHT_PLACEHOLDER_DOMAINS = new Set([
   "localhost", "127.0.0.1", "::1",
   "example.com", "yourdomain.com", "mydomain.com", "your-domain.com",
 ]);
 
-function isPlaceholderDomain(d: string | undefined): boolean {
+function isPreflightPlaceholderDomain(d: string | undefined): boolean {
   if (!d) return false;
   const lower = d.toLowerCase();
   return (
-    PLACEHOLDER_DOMAINS.has(lower) ||
+    PREFLIGHT_PLACEHOLDER_DOMAINS.has(lower) ||
     lower.startsWith("127.") ||
     lower.startsWith("192.168.") ||
     lower.startsWith("10.") ||
     !lower.includes(".")
   );
 }
-import {
-  ensurePodProvisioningToken,
-  type EnsureProvisioningTokenResult,
-} from "./auth.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -144,6 +145,16 @@ export async function runBackendPreflight(
   // ------------------------------------------------------------------
 
   let secrets = await readEveSecrets(cwd);
+
+  // If a previous buggy preflight wrote a placeholder domain (e.g. "localhost"
+  // from synap-backend's default .env) into secrets, clear it now so it doesn't
+  // cascade into Traefik route generation with wrong hostnames.
+  if (isPreflightPlaceholderDomain(secrets?.domain?.primary)) {
+    secrets = await writeEveSecrets({ domain: { primary: undefined } }, cwd);
+    notes.push("Cleared placeholder domain from secrets (was set to a default value — re-run `eve domain set` to configure)");
+    configured = true;
+  }
+
   let synapUrl = await resolveSynapUrlOnHost(secrets);
 
   // Fast path: ONLY when the resolved URL is the loopback (127.0.0.1 / localhost).

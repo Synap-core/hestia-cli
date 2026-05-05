@@ -61,6 +61,14 @@ export interface HomeApp {
   /** False = locked, show "Upgrade" affordance (deferred). */
   isEntitled: boolean;
   installCount?: number;
+  /**
+   * True when the app runs *on this Eve* — either a local component or
+   * a marketplace `eve_component` (which is the catalog face of a local
+   * component). False for first-party Synap apps hosted on `.synap.live`
+   * (`appType: "url"`). Drives the "On your Eve" vs "Synap apps" split
+   * on the home grid.
+   */
+  isLocal: boolean;
 }
 
 export interface UseHomeAppsResult {
@@ -159,6 +167,7 @@ function localToHomeApp(c: LocalComponentRow): HomeApp | null {
     isAI: AI_LOCAL_COMPONENTS.has(c.id),
     isEntitled: true,
     installCount: undefined,
+    isLocal: true,
   };
 }
 
@@ -211,6 +220,7 @@ function marketplaceToHomeApp(
     isAI,
     isEntitled: m.entitled,
     installCount: m.installCount,
+    isLocal: m.appType === "eve_component",
   };
 }
 

@@ -3,15 +3,21 @@
 /**
  * `AppGrid` — Zone C of the Home pane.
  *
- * Responsive CSS grid of vivid colorful `AppIcon`s. Auto-fills columns
- * based on pane width (~6–8 on desktop, 3–4 on mobile).
+ * Two labelled sections, top → bottom:
+ *
+ *   1. **On your Eve**  — `app.isLocal === true`. Components running
+ *                         on this machine (Chat, OpenClaw, Hermes…)
+ *                         and marketplace `eve_component` entries.
+ *   2. **Synap apps**   — `app.isLocal === false`. First-party apps
+ *                         hosted on `.synap.live` (Studio, Hub, Canvas,
+ *                         CRM, DevPlane, The Arch).
+ *
+ * The "+ Add" tile lives at the end of the Synap-apps row — opening the
+ * marketplace is the natural follow-up to either section.
  *
  * Skeleton state matches the count cached from the previous visit
  * (stored under `home.iconCount` in localStorage) so the grid feels
  * instant on returning visits. Genuine first load defaults to 6.
- *
- * The `+ Add` icon is always last, even during skeleton render — gives
- * the operator a clear path to the marketplace before anything resolves.
  *
  * See: synap-team-docs/content/team/platform/eve-os-home-design.mdx §5
  */
@@ -44,22 +50,26 @@ function readCachedIconCount(): number {
 
 // Body gutter is 20px (per concentric radius rule), but the grid is
 // allowed to breathe further inside that — the icons themselves carry
-// the visual rhythm. justify-items-center keeps short rows balanced.
+// the visual rhythm. justify-items-start so a short row hugs the left
+// edge instead of centring (cleaner with section headers above).
 const GRID = `
   grid grid-cols-3 gap-x-4 gap-y-6
   sm:grid-cols-4 sm:gap-x-5 sm:gap-y-7
   md:grid-cols-6
   lg:grid-cols-7
   xl:grid-cols-8
-  px-2 pb-6 pt-2
-  content-start justify-items-center
+  px-2
+  content-start justify-items-start
 `;
 
-export function AppGrid({ apps, isLoading, marketplaceUrl, hideAdd }: AppGridProps) {
+export function AppGrid({
+  apps,
+  isLoading,
+  marketplaceUrl,
+  hideAdd,
+}: AppGridProps) {
   const cachedCountRef = useRef<number | null>(null);
 
-  // Cache the resolved count so the next mount renders the right
-  // skeleton density. Updated whenever `apps` changes meaningfully.
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (apps.length === 0) return;
@@ -70,9 +80,11 @@ export function AppGrid({ apps, isLoading, marketplaceUrl, hideAdd }: AppGridPro
     cachedCountRef.current = readCachedIconCount();
   }
 
+  // ── Skeleton — single block, no section labels (we don't yet know
+  //    which side of the split each app lives on).
   if (isLoading && apps.length === 0) {
     return (
-      <div id="home-app-grid" className={GRID}>
+      <div id="home-app-grid" className={`${GRID} pb-6 pt-2`}>
         {Array.from({ length: cachedCountRef.current }).map((_, i) => (
           <SkeletonIcon key={i} />
         ))}
@@ -81,18 +93,83 @@ export function AppGrid({ apps, isLoading, marketplaceUrl, hideAdd }: AppGridPro
     );
   }
 
+  const localApps = apps.filter((a) => a.isLocal);
+  const synapApps = apps.filter((a) => !a.isLocal);
+
   return (
-    <div id="home-app-grid" className={GRID} role="list">
-      {apps.map(app => (
-        <div key={`${app.source}:${app.id}`} role="listitem" className="animate-icon-fade-in">
-          <AppIcon app={app} />
-        </div>
-      ))}
-      {!hideAdd && (
-        <div role="listitem">
-          <AddAppIcon href={marketplaceUrl} />
+    <div id="home-app-grid" className="flex flex-col gap-7 pt-2 pb-6">
+      {localApps.length > 0 && (
+        <Section title="On your Eve" hint="Running on this machine.">
+          <div className={GRID} role="list">
+            {localApps.map((app) => (
+              <div
+                key={`${app.source}:${app.id}`}
+                role="listitem"
+                className="animate-icon-fade-in"
+              >
+                <AppIcon app={app} />
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {synapApps.length > 0 && (
+        <Section title="Synap apps" hint="Hosted on synap.live.">
+          <div className={GRID} role="list">
+            {synapApps.map((app) => (
+              <div
+                key={`${app.source}:${app.id}`}
+                role="listitem"
+                className="animate-icon-fade-in"
+              >
+                <AppIcon app={app} />
+              </div>
+            ))}
+            {!hideAdd && (
+              <div role="listitem">
+                <AddAppIcon href={marketplaceUrl} />
+              </div>
+            )}
+          </div>
+        </Section>
+      )}
+
+      {/* Edge case: only Synap apps were hidden (no marketplace, no url
+          apps reachable) — keep the "+ Add" tile reachable from the
+          local row so the user can browse the marketplace. */}
+      {synapApps.length === 0 && localApps.length > 0 && !hideAdd && (
+        <div className={`${GRID}`} role="list">
+          <div role="listitem">
+            <AddAppIcon href={marketplaceUrl} />
+          </div>
         </div>
       )}
     </div>
+  );
+}
+
+// ─── Section header ──────────────────────────────────────────────────────────
+
+function Section({
+  title,
+  hint,
+  children,
+}: {
+  title: string;
+  hint: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section>
+      <header className="mb-3 flex items-baseline gap-2 px-2">
+        <h2 className="text-[12.5px] font-medium uppercase tracking-[0.06em] text-foreground/70">
+          {title}
+        </h2>
+        <span className="text-[11.5px] text-foreground/45">·</span>
+        <span className="text-[11.5px] text-foreground/55">{hint}</span>
+      </header>
+      {children}
+    </section>
   );
 }

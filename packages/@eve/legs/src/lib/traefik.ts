@@ -1,5 +1,5 @@
 import { execSync, spawnSync } from 'child_process';
-import { writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync } from 'fs';
+import { writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync, chmodSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { COMPONENTS } from '@eve/dna';
 
@@ -153,6 +153,15 @@ export class TraefikService {
       execSync('docker network create eve-network', { stdio: 'ignore' });
     } catch { /* already exists */ }
 
+    // Ensure acme.json exists as a file with correct permissions
+    const acmePath = join(this.configDir, 'acme.json');
+    if (!existsSync(acmePath)) {
+      writeFileSync(acmePath, '', { mode: 0o600 });
+    } else {
+      // Fix permissions if wrong
+      try { chmodSync(acmePath, 0o600); } catch { /* non-fatal */ }
+    }
+
     // Silent because the container often doesn't exist on first install or
     // after `domain repair` — surfacing "No such container" to the user is noise.
     spawnSync('docker', ['rm', '-f', 'eve-legs-traefik'], { stdio: 'ignore' });
@@ -167,7 +176,7 @@ export class TraefikService {
       '-v', '/var/run/docker.sock:/var/run/docker.sock:ro',
       '-v', `${this.configDir}/traefik.yml:/etc/traefik/traefik.yml:ro`,
       '-v', `${this.dynamicConfigDir}:/etc/traefik/dynamic:ro`,
-      '-v', 'eve-legs-traefik-certs:/etc/traefik/acme.json',
+      '-v', `${acmePath}:/etc/traefik/acme.json`,
       '--network', 'eve-network',
       'traefik:v3.0',
     ], { stdio: 'inherit' });
@@ -347,7 +356,13 @@ export class TraefikService {
     // Rewrite routes — HTTP only, no SSL
     await this.configureSubdomains(domain, false, undefined, installedComponents, true);
 
-    this.recreateTraefikContainer(['80:80', '8080:8080']);
+    const acmePath = join(this.configDir, 'acme.json');
+    if (!existsSync(acmePath)) {
+      writeFileSync(acmePath, '', { mode: 0o600 });
+    } else {
+      try { chmodSync(acmePath, 0o600); } catch { /* non-fatal */ }
+    }
+    this.recreateTraefikContainer(['80:80', '8080:8080'], acmePath);
   }
 
   /**
@@ -359,11 +374,17 @@ export class TraefikService {
     // configureSubdomains also rewrites the static config — no need to write separately.
     await this.configureSubdomains(domain, ssl, email, installedComponents, false);
 
-    this.recreateTraefikContainer(['80:80', '443:443', '8080:8080']);
+    const acmePath = join(this.configDir, 'acme.json');
+    if (!existsSync(acmePath)) {
+      writeFileSync(acmePath, '', { mode: 0o600 });
+    } else {
+      try { chmodSync(acmePath, 0o600); } catch { /* non-fatal */ }
+    }
+    this.recreateTraefikContainer(['80:80', '443:443', '8080:8080'], acmePath);
   }
 
   /** Stop + remove + relaunch the Traefik container with the given port bindings. */
-  private recreateTraefikContainer(ports: string[]): void {
+  private recreateTraefikContainer(ports: string[], acmePath: string): void {
     spawnSync('docker', ['rm', '-f', 'eve-legs-traefik'], { stdio: 'ignore' });
 
     const result = spawnSync('docker', [
@@ -374,7 +395,7 @@ export class TraefikService {
       '-v', '/var/run/docker.sock:/var/run/docker.sock:ro',
       '-v', `${this.traefikConfigPath}:/etc/traefik/traefik.yml:ro`,
       '-v', `${this.dynamicConfigDir}:/etc/traefik/dynamic:ro`,
-      '-v', 'eve-legs-traefik-certs:/etc/traefik/acme.json',
+      '-v', `${acmePath}:/etc/traefik/acme.json`,
       '--network', 'eve-network',
       'traefik:v3.0',
     ], { stdio: 'inherit' });
@@ -421,9 +442,10 @@ export class TraefikService {
   }
 
   getRoutes(): Route[] {
+    // Legacy: path-based route files written by addRoute()
     try {
       if (!existsSync(this.dynamicConfigDir)) return [];
-      const files = readdirSafe(this.dynamicConfigDir).filter(f => f.endsWith('.yml'));
+      const files = readdirSafe(this.dynamicConfigDir).filter(f => f.endsWith('.yml') && f !== 'eve-routes.yml');
       return files.flatMap(file => {
         const content = readFileSync(join(this.dynamicConfigDir, file), 'utf-8');
         const pathMatch = content.match(/PathPrefix\(`(.+)`\)/);
@@ -432,7 +454,7 @@ export class TraefikService {
         return [{
           path: pathMatch[1],
           target: urlMatch[1],
-          domain: content.match(/Host\(`(.+)`\)/)?.[1],
+          domain: content.match(/Host\(`(.+?)`\)/)?.[1],
           ssl: content.includes('tls:'),
         }];
       });
@@ -450,14 +472,46 @@ export class TraefikService {
     } catch {}
     const routes = this.getRoutes();
     const proxyStatus = this.getProxyModeStatus();
+
+    // Read domain and SSL from eve-routes.yml (the main routes file)
+    let domain: string | null = routes.find(r => r.domain)?.domain ?? null;
+    let ssl = routes.some(r => r.ssl);
+    const eveRoutesPath = join(this.dynamicConfigDir, 'eve-routes.yml');
+    if (existsSync(eveRoutesPath)) {
+      try {
+        const content = readFileSync(eveRoutesPath, 'utf-8');
+        const hostMatch = content.match(/Host\(`([^`]+)`\)/);
+        if (hostMatch) {
+          // Strip the subdomain prefix to get the bare domain
+          const host = hostMatch[1];
+          const parts = host.split('.');
+          domain = parts.length > 2 ? parts.slice(1).join('.') : host;
+        }
+        ssl = content.includes('certResolver:');
+      } catch { /* non-fatal */ }
+    }
+
     return {
       installed,
       running,
-      domain: routes.find(r => r.domain)?.domain ?? null,
-      ssl: routes.some(r => r.ssl),
+      domain,
+      ssl,
       behindProxy: proxyStatus.enabled,
       routes,
     };
+  }
+
+  cleanConfig(): void {
+    if (existsSync(this.dynamicConfigDir)) {
+      for (const file of readdirSafe(this.dynamicConfigDir)) {
+        if (file.endsWith('.yml') || file.endsWith('.yaml')) {
+          try { unlinkSync(join(this.dynamicConfigDir, file)); } catch { /* non-fatal */ }
+        }
+      }
+    }
+    if (existsSync(this.traefikConfigPath)) {
+      try { unlinkSync(this.traefikConfigPath); } catch { /* non-fatal */ }
+    }
   }
 }
 
