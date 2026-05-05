@@ -36,21 +36,20 @@ export const BRAND_COLORS: Record<string, BrandColor> = {
   agents:      { bg: vGrad("#34D399", "#10B981"), glyph: "Sparkles",      accent: "#34D399" },
   settings:    { bg: vGrad("#94A3B8", "#475569"), glyph: "Settings",      accent: "#94A3B8" },
 
-  // ── Eve components ──────────────────────────────────────────────────────
+  // ── Eve components (run on the operator's machine) ──────────────────────
   openwebui:   { bg: vGrad("#34D399", "#059669"), glyph: "MessageSquare", accent: "#10B981" },
-  chat:        { bg: vGrad("#34D399", "#059669"), glyph: "MessageSquare", accent: "#10B981" },
-  synap:       { bg: vGrad("#6EE7B7", "#10B981"), glyph: "Brain",         accent: "#34D399" },
   openclaw:    { bg: vGrad("#A78BFA", "#7C3AED"), glyph: "Paperclip",     accent: "#A78BFA" },
   hermes:      { bg: vGrad("#FBBF24", "#D97706"), glyph: "Wrench",        accent: "#FBBF24" },
-  "dev-agent": { bg: vGrad("#818CF8", "#4F46E5"), glyph: "Code2",         accent: "#818CF8" },
   ollama:      { bg: vGrad("#94A3B8", "#475569"), glyph: "Cpu",           accent: "#94A3B8" },
   rsshub:      { bg: vGrad("#FB923C", "#EA580C"), glyph: "Rss",           accent: "#FB923C" },
 
-  // ── Marketplace classics ────────────────────────────────────────────────
-  "the-arch":  { bg: vGrad("#A855F7", "#6D28D9"), glyph: null,            accent: "#A855F7" },
-  arch:        { bg: vGrad("#A855F7", "#6D28D9"), glyph: null,            accent: "#A855F7" },
-  crm:         { bg: vGrad("#FB7185", "#E11D48"), glyph: "Users",         accent: "#FB7185" },
-  devplane:    { bg: vGrad("#FCD34D", "#D97706"), glyph: "LayoutGrid",    accent: "#FBBF24" },
+  // ── First-party Synap apps (synap-app/apps/*) ───────────────────────────
+  studio:      { bg: vGrad("#6EE7B7", "#10B981"), glyph: "LayoutDashboard", accent: "#34D399" },
+  hub:         { bg: vGrad("#FBBF24", "#F59E0B"), glyph: "Grid3x3",         accent: "#FBBF24" },
+  canvas:      { bg: vGrad("#67E8F9", "#0891B2"), glyph: "PenTool",         accent: "#22D3EE" },
+  devplane:    { bg: vGrad("#A5B4FC", "#4F46E5"), glyph: "Layers",          accent: "#818CF8" },
+  crm:         { bg: vGrad("#FB7185", "#E11D48"), glyph: "Users",           accent: "#FB7185" },
+  "the-arch":  { bg: vGrad("#A855F7", "#6D28D9"), glyph: "Sparkles",        accent: "#A855F7" },
 };
 
 /** Stable hash → 0–359 hue. */

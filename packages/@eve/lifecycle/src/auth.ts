@@ -1154,23 +1154,54 @@ export interface FirstAdminOptions {
 
 /**
  * Check whether the pod still needs a first admin.
- * Returns true when no human users exist (needsSetup === true).
- * Returns false on any error so callers don't block on a temporarily
- * unreachable backend.
+ *
+ * Returns true when needsSetup === true in the backend response.
+ *
+ * Two-attempt strategy:
+ *   1. Unauthenticated GET /api/hub/setup/status — the endpoint should be
+ *      public, but some backend versions require auth.
+ *   2. If 401/403, retry with the PROVISIONING_TOKEN as Bearer — the
+ *      bootstrap token is always available and the setup endpoint accepts it.
+ *
+ * Defaults to true on transport errors (backend not up) so callers prompt
+ * for admin setup rather than silently skipping it. Defaults to false on
+ * other non-200 status codes (endpoint missing → older backend without the
+ * setup flow).
  */
-export async function checkNeedsAdmin(synapUrl: string): Promise<boolean> {
+export async function checkNeedsAdmin(
+  synapUrl: string,
+  provisioningToken?: string,
+): Promise<boolean> {
   const url = `${synapUrl.replace(/\/+$/, "")}/api/hub/setup/status`;
-  try {
-    const runner = new FetchRunner();
-    const res = await runner.httpGet(url, { Accept: "application/json" }, { timeoutMs: 6_000 });
-    if (res.status < 200 || res.status >= 300) return false;
-    const parsed = tryJson(res.body);
-    if (!parsed || typeof parsed !== "object") return false;
-    const obj = parsed as Record<string, unknown>;
-    return obj.needsSetup === true;
-  } catch {
-    return false;
+  const runner = new FetchRunner();
+
+  const attempt = async (headers: Record<string, string>): Promise<boolean | null> => {
+    try {
+      const res = await runner.httpGet(url, { Accept: "application/json", ...headers }, { timeoutMs: 6_000 });
+      if (res.status === 404) return false; // endpoint absent — older backend
+      if (res.status === 401 || res.status === 403) return null; // needs different auth
+      if (res.status < 200 || res.status >= 300) return false;
+      const parsed = tryJson(res.body);
+      if (!parsed || typeof parsed !== "object") return false;
+      const obj = parsed as Record<string, unknown>;
+      return obj.needsSetup === true;
+    } catch {
+      return true; // transport error — backend not ready, assume setup needed
+    }
+  };
+
+  // 1. Try unauthenticated first
+  const first = await attempt({});
+  if (first !== null) return first;
+
+  // 2. Endpoint required auth — retry with provisioning token
+  if (provisioningToken) {
+    const second = await attempt({ Authorization: `Bearer ${provisioningToken}` });
+    if (second !== null) return second;
   }
+
+  // 3. Auth required but no token available — assume needs setup to be safe
+  return true;
 }
 
 /**
