@@ -380,7 +380,7 @@ async function runPostInstallProvision(installedComponents: string[]): Promise<v
     return;
   }
 
-  const needsAdmin = await checkNeedsAdmin(synapUrl);
+  const needsAdmin = await checkNeedsAdmin(synapUrl, provisioningToken);
   if (needsAdmin) {
     spinner.warn('Backend is up — first admin account required');
     const secrets = await readEveSecrets(process.cwd());

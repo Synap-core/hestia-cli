@@ -1287,7 +1287,7 @@ export async function createFirstAdmin(
   const pollInterval = 3_000;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, pollInterval));
-    const needs = await checkNeedsAdmin(opts.synapUrl);
+    const needs = await checkNeedsAdmin(opts.synapUrl, opts.provisioningToken);
     // needs === false means admin now exists (hasAdmin = true)
     if (!needs) {
       return { userId: "", workspaceId: "" };
