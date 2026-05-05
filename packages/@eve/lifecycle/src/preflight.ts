@@ -35,6 +35,27 @@ import {
   restartBackendContainer,
   type EveSecrets,
 } from "@eve/dna";
+
+// Placeholder domains written by the synap-backend defaults that must never
+// land in secrets.json as the configured domain. If we detect one stored from
+// a previous buggy preflight run, we clear it so the user is not stuck with
+// *.localhost Traefik routes.
+const PLACEHOLDER_DOMAINS = new Set([
+  "localhost", "127.0.0.1", "::1",
+  "example.com", "yourdomain.com", "mydomain.com", "your-domain.com",
+]);
+
+function isPlaceholderDomain(d: string | undefined): boolean {
+  if (!d) return false;
+  const lower = d.toLowerCase();
+  return (
+    PLACEHOLDER_DOMAINS.has(lower) ||
+    lower.startsWith("127.") ||
+    lower.startsWith("192.168.") ||
+    lower.startsWith("10.") ||
+    !lower.includes(".")
+  );
+}
 import {
   ensurePodProvisioningToken,
   type EnsureProvisioningTokenResult,
