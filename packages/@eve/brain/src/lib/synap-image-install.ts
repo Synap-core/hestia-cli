@@ -945,7 +945,7 @@ function connectToEveNetwork(containerName: string): void {
   }
 }
 
-function isKratosRunning(deployDir: string): boolean {
+function isKratosRunning(_deployDir: string): boolean {
   try {
     const out = execSync(
       'docker ps --filter "label=com.docker.compose.project=synap-backend" --filter "label=com.docker.compose.service=kratos" --format "{{.Names}}"',
