@@ -201,11 +201,19 @@ export class TraefikService {
           `      service: ${s.id}-svc`
         );
       }
+      // No SSL: serve on both HTTP and HTTPS (no TLS termination — browser
+      // will warn about self-signed cert, but requests reach the backend
+      // instead of Traefik returning 404 because websecure has no router).
       return (
-        `    ${s.id}:\n` +
+        `    ${s.id}-http:\n` +
         `      rule: "Host(\`${host}\`)"\n` +
         `      entryPoints:\n` +
         `        - web\n` +
+        `      service: ${s.id}-svc\n` +
+        `    ${s.id}-https:\n` +
+        `      rule: "Host(\`${host}\`)"\n` +
+        `      entryPoints:\n` +
+        `        - websecure\n` +
         `      service: ${s.id}-svc`
       );
     }).join('\n');
