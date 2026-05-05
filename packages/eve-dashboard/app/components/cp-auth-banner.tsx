@@ -21,6 +21,7 @@
  *      synap-team-docs/content/team/platform/eve-os-home-design.mdx §7
  */
 
+import { useState } from "react";
 import { Card, CardBody, Button } from "@heroui/react";
 import { LogIn, RefreshCw, AlertTriangle } from "lucide-react";
 import { initiateCpOAuth } from "../(os)/lib/cp-oauth";
@@ -44,33 +45,7 @@ export function CpAuthBanner({
   if (state.kind === "working") return null;
 
   if (state.kind === "signed-out") {
-    return (
-      <Card
-        isBlurred
-        shadow="none"
-        radius="lg"
-        classNames={{
-          base: "bg-foreground/[0.04] border border-foreground/[0.08]",
-        }}
-      >
-        <CardBody className="flex flex-row items-center gap-3 px-4 py-2.5">
-          <LogIn className="h-4 w-4 shrink-0 text-primary" strokeWidth={2} aria-hidden />
-          <p className="flex-1 min-w-0 text-[13px] text-foreground">
-            Sign in to see your apps from the Synap marketplace.
-          </p>
-          <Button
-            color="primary"
-            variant="solid"
-            size="sm"
-            radius="full"
-            onPress={() => (onSignIn ? onSignIn() : void initiateCpOAuth())}
-            className="font-medium"
-          >
-            Sign in
-          </Button>
-        </CardBody>
-      </Card>
-    );
+    return <SignedOutBanner onSignIn={onSignIn} />;
   }
 
   // state.kind === "error"
@@ -101,6 +76,79 @@ export function CpAuthBanner({
           className="font-medium"
         >
           Retry
+        </Button>
+      </CardBody>
+    </Card>
+  );
+}
+
+// ─── Signed-out variant — handles its own click + error feedback ────────────
+
+function SignedOutBanner({ onSignIn }: { onSignIn?: () => void }) {
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+
+  const handleClick = async () => {
+    setError(null);
+    setPending(true);
+    try {
+      if (onSignIn) {
+        onSignIn();
+        return;
+      }
+      await initiateCpOAuth();
+      // If the redirect didn't fire within ~1.5s, something silently
+      // failed (DNS, CORS, etc.). Surface a hint so the user knows.
+      window.setTimeout(() => {
+        if (document.visibilityState !== "hidden") {
+          setError("Couldn't reach Synap. Check your network or CP URL.");
+          setPending(false);
+        }
+      }, 1500);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't start sign-in");
+      setPending(false);
+    }
+  };
+
+  return (
+    <Card
+      isBlurred
+      shadow="none"
+      radius="lg"
+      classNames={{
+        base: error
+          ? "bg-warning/10 border border-warning/30"
+          : "bg-foreground/[0.04] border border-foreground/[0.08]",
+      }}
+    >
+      <CardBody className="flex flex-row items-center gap-3 px-4 py-2.5">
+        {error ? (
+          <AlertTriangle
+            className="h-4 w-4 shrink-0 text-warning"
+            strokeWidth={2}
+            aria-hidden
+          />
+        ) : (
+          <LogIn
+            className="h-4 w-4 shrink-0 text-primary"
+            strokeWidth={2}
+            aria-hidden
+          />
+        )}
+        <p className="flex-1 min-w-0 text-[13px] text-foreground">
+          {error ?? "Sign in to see your apps from the Synap marketplace."}
+        </p>
+        <Button
+          color="primary"
+          variant="solid"
+          size="sm"
+          radius="full"
+          isLoading={pending}
+          onPress={() => void handleClick()}
+          className="font-medium"
+        >
+          Sign in
         </Button>
       </CardBody>
     </Card>

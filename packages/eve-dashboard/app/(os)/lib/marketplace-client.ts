@@ -121,26 +121,39 @@ export class MarketplaceError extends Error {
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
 /**
- * Issue a request to the CP with the user bearer token attached.
+ * Issue a request to the CP. Auth is OPTIONAL by default — the CP's
+ * `/api/marketplace/apps` route uses `optionalAuth` and returns the
+ * public catalog (free apps marked `entitled: true`) when called
+ * without a bearer. Routes that mutate state (e.g. `/install`) must
+ * pass `requireAuth: true` so a missing token is surfaced as a 401
+ * instead of a quiet anonymous request.
+ *
+ * @param requireAuth
+ *   When true, refuse to call the API without a token and trigger
+ *   `onUnauthorized`. When false (default), fall through to an
+ *   anonymous request — the CP decides whether the route allows it.
  *
  * @param onUnauthorized
- *   What to do when the CP returns 401. By default we trigger
- *   `initiateCpOAuth()` (full redirect). Tests pass a stub here so they
- *   can assert the trigger fires without actually navigating away.
+ *   What to do when the CP returns 401, or when `requireAuth` is true
+ *   and there's no token. By default we trigger `initiateCpOAuth()`
+ *   (full redirect). Tests pass a stub.
  */
 async function cpFetch(
   path: string,
-  init: RequestInit & { onUnauthorized?: () => void } = {},
+  init: RequestInit & {
+    onUnauthorized?: () => void;
+    requireAuth?: boolean;
+  } = {},
 ): Promise<Response> {
   const token = await getCpUserToken();
-  if (!token) {
-    // No token at all — same end-user effect as a 401.
+
+  if (!token && init.requireAuth) {
     (init.onUnauthorized ?? (() => void initiateCpOAuth()))();
     throw new CpUnauthorizedError("No CP user token available");
   }
 
   const headers = new Headers(init.headers);
-  headers.set("Authorization", `Bearer ${token}`);
+  if (token) headers.set("Authorization", `Bearer ${token}`);
   if (init.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
@@ -206,6 +219,7 @@ export async function installApp(
     method: "POST",
     body: JSON.stringify(ref),
     onUnauthorized: opts.onUnauthorized,
+    requireAuth: true,
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");

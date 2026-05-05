@@ -28,6 +28,7 @@ import {
   fetchMarketplaceApps,
   type MarketplaceAppWithEntitlement,
 } from "../lib/marketplace-client";
+import { getCpUserToken } from "../lib/cp-oauth";
 import type { CpAuthBannerState } from "../../components/cp-auth-banner";
 
 // ─── Public types ────────────────────────────────────────────────────────────
@@ -266,21 +267,26 @@ export function useHomeApps(): UseHomeAppsResult {
       setError(e instanceof Error ? e : new Error("Failed to load components"));
     }
 
-    // Marketplace second — slower, may bounce through OAuth. The
-    // marketplace client handles 401 by triggering OAuth, but we
-    // override that here so the page can render with a banner instead
-    // of a forced redirect.
+    // Marketplace second. We check token presence up front so the banner
+    // state reflects "signed-in vs out" regardless of whether the fetch
+    // succeeds. Without a token the CP returns the public catalog with
+    // free apps marked `entitled: true` — they still render.
     let marketRows: MarketplaceAppWithEntitlement[] = [];
-    let nextBanner: CpAuthBannerState = { kind: "working" };
+    const hasToken = !!(await getCpUserToken());
+    let nextBanner: CpAuthBannerState = hasToken
+      ? { kind: "working" }
+      : { kind: "signed-out" };
     let unreachable = false;
     try {
       const res = await fetchMarketplaceApps({
-        // Don't redirect — let the page render with the banner.
-        onUnauthorized: () => { /* swallowed; banner handles it */ },
+        // Don't redirect on 401 — surface as banner state instead.
+        onUnauthorized: () => { /* swallowed */ },
       });
       marketRows = res.apps;
     } catch (e) {
       if (e instanceof CpUnauthorizedError) {
+        // Edge case: token was on disk but the CP rejected it (rotated
+        // or revoked). Treat as signed-out so the user can re-auth.
         nextBanner = { kind: "signed-out" };
       } else if (e instanceof MarketplaceError) {
         nextBanner = { kind: "error", message: `HTTP ${e.status}` };

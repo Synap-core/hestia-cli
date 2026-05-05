@@ -25,9 +25,17 @@ export interface PaneHeaderProps {
   title?: string;
   back?: () => void;
   actions?: ReactNode;
+  /**
+   * Optional custom content for the left side of the header. When
+   * provided, replaces the default `title` rendering — useful for the
+   * Home page where we want a richer greeting block (sparkle + date)
+   * instead of a plain heading. The `back` button still renders before
+   * children when both are set.
+   */
+  children?: ReactNode;
 }
 
-export function PaneHeader({ title, back, actions }: PaneHeaderProps) {
+export function PaneHeader({ title, back, actions, children }: PaneHeaderProps) {
   return (
     <header className="flex h-14 shrink-0 items-center justify-between gap-3 px-4 border-b border-foreground/[0.05]">
       <div className="flex items-center gap-2 min-w-0">
@@ -44,11 +52,13 @@ export function PaneHeader({ title, back, actions }: PaneHeaderProps) {
             <ChevronLeft className="h-4 w-4" />
           </Button>
         )}
-        {title && (
+        {children ? (
+          children
+        ) : title ? (
           <h1 className="font-heading text-[15px] font-medium text-foreground truncate">
             {title}
           </h1>
-        )}
+        ) : null}
       </div>
       <div className="flex items-center gap-1">{actions}</div>
     </header>
