@@ -118,9 +118,20 @@ pnpm --filter @eve/cli... run build
 
 echo "[bootstrap] Build complete in $TARGET_DIR"
 
+# Install the `eve` binary globally so users can call it directly instead of
+# going through pnpm or npx (which downloads a potentially older registry
+# version). The dist file already has a Node shebang.
+EVE_BIN="$TARGET_DIR/packages/eve-cli/dist/index.js"
+if [[ -f "$EVE_BIN" ]]; then
+  chmod +x "$EVE_BIN"
+  ln -sf "$EVE_BIN" /usr/local/bin/eve
+  echo "[bootstrap] Installed: eve → $EVE_BIN"
+else
+  echo "[bootstrap] WARNING: $EVE_BIN not found — run 'eve' via: cd $TARGET_DIR && pnpm run eve"
+fi
+
 if [[ "$NO_SETUP" -eq 1 ]]; then
-  echo "[bootstrap] Skipped eve setup (--no-setup). Next:"
-  echo "  cd $TARGET_DIR && pnpm --filter @eve/cli exec eve setup"
+  echo "[bootstrap] Skipped eve setup (--no-setup). Run: eve setup"
   exit 0
 fi
 

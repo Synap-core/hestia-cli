@@ -37,7 +37,7 @@ import {
   consumeOAuthChallenge,
   initiateCpOAuth,
   persistCpUserToken,
-} from "../../(home)/lib/cp-oauth";
+} from "../../(os)/lib/cp-oauth";
 
 type State =
   | { phase: "exchanging" }

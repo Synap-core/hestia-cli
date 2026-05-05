@@ -510,8 +510,80 @@ async function* runPostUpdateHooks(comp: ComponentInfo): AsyncGenerator<Lifecycl
     yield* postUpdateReconcileOpenclaw();
   }
   if (comp.id === "synap") {
+    yield* postUpdateConnectTraefik();
     yield* postUpdateReconcileAuth();
   }
+}
+
+/**
+ * After `eve update synap`, ensure the Traefik container is on eve-network
+ * so it can route pod.<domain> → backend:4000 via Docker DNS.
+ *
+ * The backend is already on eve-network because the compose override
+ * declares it. Traefik however may be a separately-managed container
+ * (e.g. in /opt/traefik as its own compose project) that doesn't
+ * automatically join eve-network on restart. We connect it explicitly —
+ * idempotent, docker returns a non-zero exit code if already connected
+ * which we deliberately swallow.
+ *
+ * We try four candidate names in order:
+ *   1. Eve-managed container (standard install)
+ *   2. Compose project name variants for an external /opt/traefik setup
+ *   3. Bare "traefik" for hand-installed single containers
+ *
+ * Failures are non-fatal: the update succeeds even if we can't find
+ * Traefik. The operator can run `docker network connect eve-network
+ * <traefik-name>` manually and it won't need repeating if they add
+ * eve-network to their traefik compose file too.
+ */
+async function* postUpdateConnectTraefik(): AsyncGenerator<LifecycleEvent> {
+  const { execSync } = await import("node:child_process");
+
+  const candidates = [
+    "eve-legs-traefik",        // Eve-managed (standard install)
+    "traefik-traefik-1",       // /opt/traefik compose project (common)
+    "traefik_traefik_1",       // older compose naming
+    "traefik",                 // bare hand-installed container
+  ];
+
+  // Also probe via label filter to catch any compose project name
+  let labelMatch: string | null = null;
+  try {
+    const out = execSync(
+      'docker ps --filter "ancestor=traefik" --filter "status=running" --format "{{.Names}}"',
+      { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], timeout: 4000 },
+    ).trim();
+    labelMatch = out.split("\n")[0]?.trim() || null;
+  } catch { /* docker not available or no traefik */ }
+
+  const toTry = labelMatch ? [labelMatch, ...candidates] : candidates;
+
+  for (const name of toTry) {
+    try {
+      // Check if container exists and is running before attempting connect
+      execSync(`docker inspect --format "{{.State.Running}}" ${name}`, {
+        stdio: ["ignore", "ignore", "ignore"],
+        timeout: 2000,
+      });
+      // Container exists — attempt network connect (idempotent, error = already connected)
+      try {
+        execSync(`docker network connect eve-network ${name}`, {
+          stdio: ["ignore", "ignore", "ignore"],
+          timeout: 5000,
+        });
+        yield { type: "log", line: `Connected ${name} → eve-network (Traefik can now route to backend)` };
+      } catch {
+        // Already connected — that's fine
+        yield { type: "log", line: `${name} already on eve-network ✓` };
+      }
+      return;
+    } catch { /* container not found — try next */ }
+  }
+
+  yield {
+    type: "log",
+    line: "Could not find Traefik container to connect to eve-network — if Traefik routes to backend return 502, run: docker network connect eve-network <traefik-container-name>",
+  };
 }
 
 /**

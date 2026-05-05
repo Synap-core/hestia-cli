@@ -21,7 +21,7 @@
 
 import { Button } from "@heroui/react";
 import { LogIn, RefreshCw, AlertTriangle } from "lucide-react";
-import { initiateCpOAuth } from "../(home)/lib/cp-oauth";
+import { initiateCpOAuth } from "../(os)/lib/cp-oauth";
 
 export type CpAuthBannerState =
   /** Cleanly working — banner hidden. */
