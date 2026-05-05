@@ -7,7 +7,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { mkdir, writeFile, readFile, access } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export interface KratosSecrets {
@@ -153,6 +153,7 @@ export async function generateKratosConfig(
   domain: string,
   postgresPassword: string,
   existing?: Partial<KratosSecrets>,
+  backendUrl?: string,
 ): Promise<KratosSecrets> {
   const configDir = join(deployDir, 'config', 'kratos');
   await mkdir(configDir, { recursive: true });
@@ -161,7 +162,7 @@ export async function generateKratosConfig(
   const cipher = existing?.KRATOS_SECRETS_CIPHER || randomHex(32);
   const webhook = existing?.KRATOS_WEBHOOK_SECRET || randomHex(24);
 
-  const yml = buildKratosYml(domain, postgresPassword, webhook);
+  const yml = buildKratosYml(domain, postgresPassword, webhook, backendUrl);
 
   // Append secrets block (kratos reads env vars SECRETS_COOKIE / SECRETS_CIPHER,
   // so the yml doesn't need them inline — but we write them for completeness

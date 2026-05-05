@@ -5,6 +5,8 @@ import { execSync, spawnSync } from 'node:child_process';
 import {
   ensureSynapLoopbackOverride,
   pruneOldImagesForRepo,
+  generateKratosConfig,
+  parseKratosSecretsFromEnv,
 } from '@eve/dna';
 
 export interface SynapImageInstallOptions {
@@ -898,9 +900,15 @@ function generateEnv(opts: Required<SynapImageInstallOptions> & { bootstrapToken
     'RSSHUB_URL=http://eve-eyes-rsshub:1200',
     '',
     'POSTGRES_INIT_SCRIPT=./config/postgres/init-databases.sh',
+    'KRATOS_CONFIG_DIR=./config/kratos',
     'EMBEDDING_PROVIDER=deterministic',
     'ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000',
   ].join('\n');
+}
+
+function parseEnvValue(content: string, key: string): string {
+  const m = content.match(new RegExp(`^${key}=(.*)$`, 'm'));
+  return m?.[1]?.trim() ?? '';
 }
 
 function run(args: string[], cwd: string): void {
@@ -936,31 +944,6 @@ function connectToEveNetwork(containerName: string): void {
   }
 }
 
-async function waitForPostgresHealthy(deployDir: string, maxWaitMs = 90_000): Promise<void> {
-  const start = Date.now();
-  process.stdout.write('  Waiting for postgres to be ready');
-  while (Date.now() - start < maxWaitMs) {
-    try {
-      const result = spawnSync(
-        'docker', ['compose', 'ps', '--format', 'json', 'postgres'],
-        { cwd: deployDir, encoding: 'utf-8', env: { ...process.env, COMPOSE_PROJECT_NAME: 'synap-backend' } },
-      );
-      const lines = (result.stdout || '').trim().split('\n').filter(Boolean);
-      for (const line of lines) {
-        try {
-          const obj = JSON.parse(line) as { Health?: string; State?: string };
-          if (obj.Health === 'healthy' || obj.State === 'running') {
-            process.stdout.write(' ✓\n');
-            return;
-          }
-        } catch {}
-      }
-    } catch {}
-    process.stdout.write('.');
-    await new Promise(r => setTimeout(r, 3000));
-  }
-  process.stdout.write(' (timed out, continuing anyway)\n');
-}
 
 export async function installSynapFromImage(opts: SynapImageInstallOptions = {}): Promise<SynapImageInstallResult> {
   const deployDir = opts.deployDir ?? '/opt/synap-backend';
@@ -1039,6 +1022,14 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
     const m = existing.match(/^ADMIN_BOOTSTRAP_TOKEN=(.+)$/m);
     bootstrapToken = m?.[1] ?? gen(16);
 
+    // Self-heal KRATOS_CONFIG_DIR — old installs never had this var.
+    if (!existing.includes('KRATOS_CONFIG_DIR=')) {
+      const sep = existing.endsWith('\n') ? '' : '\n';
+      existing = `${existing}${sep}KRATOS_CONFIG_DIR=./config/kratos\n`;
+      writeFileSync(envPath, existing, { encoding: 'utf-8', mode: 0o600 });
+      console.log('  Added KRATOS_CONFIG_DIR=./config/kratos (was missing)');
+    }
+
     // If the backend is already running, nothing to do — UNLESS we just
     // self-healed PROVISIONING_TOKEN, in which case the running backend
     // is holding the stale (empty) value. Recreate it so the new env
@@ -1052,10 +1043,36 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
           env: { ...process.env, COMPOSE_PROJECT_NAME: 'synap-backend' },
         });
       }
+      // Ensure Kratos config files exist and Kratos container is running.
+      // (Old installs never started Kratos — this makes them self-heal.)
+      const envContent = readFileSync(envPath, 'utf-8');
+      const postgresPassword = parseEnvValue(envContent, 'POSTGRES_PASSWORD');
+      try {
+        await generateKratosConfig(deployDir, domain, postgresPassword, parseKratosSecretsFromEnv(envContent), 'http://backend:4000');
+        console.log('  Ensured Kratos config files exist');
+        spawnSync('docker', ['compose', 'up', '-d', 'kratos'], {
+          cwd: deployDir, stdio: 'inherit',
+          env: { ...process.env, COMPOSE_PROJECT_NAME: 'synap-backend' },
+        });
+      } catch (err) {
+        console.warn(`  Could not ensure Kratos: ${err instanceof Error ? err.message : String(err)}`);
+      }
       return { bootstrapToken, deployDir, containerName: runningContainer };
     }
     // Container not running — fall through to pull + start (preserving the existing secrets)
     console.log('  Backend not running — resuming install...');
+  }
+
+  // 3b. Generate Kratos config files (kratos.yml + identity.schema.json)
+  {
+    const envContent = readFileSync(envPath, 'utf-8');
+    const postgresPassword = parseEnvValue(envContent, 'POSTGRES_PASSWORD');
+    try {
+      await generateKratosConfig(deployDir, domain, postgresPassword, parseKratosSecretsFromEnv(envContent), 'http://backend:4000');
+      console.log('  Generated Kratos config files');
+    } catch (err) {
+      console.warn(`  Could not generate Kratos config: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   // 4. Pull backend image (backend + backend-migrate + realtime all use the same image;
@@ -1066,22 +1083,16 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
     env: { ...process.env, COMPOSE_PROJECT_NAME: 'synap-backend', BACKEND_VERSION: 'main' },
   });
 
-  // 5. Start infrastructure services
-  console.log('  Starting postgres, redis, minio, typesense...');
-  run(['docker', 'compose', 'up', '-d', 'postgres', 'redis', 'minio', 'typesense'], deployDir);
+  // 5. Bring up backend, realtime, and kratos.
+  // Compose resolves the full dependency graph automatically:
+  //   postgres/redis/minio/typesense start first (healthcheck-gated)
+  //   backend-migrate + kratos-migrate run as one-shots (depends_on completed_successfully)
+  //   backend, realtime, kratos start after their migrations pass
+  // Caddy, Hydra, pod-agent, and profile-gated services are intentionally excluded.
+  console.log('  Starting services (compose handles dependency ordering)...');
+  run(['docker', 'compose', 'up', '-d', 'backend', 'realtime', 'kratos'], deployDir);
 
-  // 6. Wait for postgres
-  await waitForPostgresHealthy(deployDir);
-
-  // 7. Run migrations
-  console.log('  Running database migrations...');
-  run(['docker', 'compose', 'run', '--rm', 'backend-migrate'], deployDir);
-
-  // 8. Start backend + realtime (no caddy — Traefik handles routing)
-  console.log('  Starting backend and realtime...');
-  run(['docker', 'compose', 'up', '-d', 'backend', 'realtime'], deployDir);
-
-  // 9. Connect to eve-network so Traefik can route to it
+  // 6. Connect to eve-network so Traefik can route to it
   let containerName: string | null = null;
   for (let i = 0; i < 10; i++) {
     containerName = getSynapBackendContainer();
@@ -1093,7 +1104,7 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
     console.log(`  Connected ${containerName} → eve-network`);
   }
 
-  // 10. Reclaim disk by pruning old image versions. The new container
+  // 7. Reclaim disk by pruning old image versions. The new container
   // is up by now, so its image is protected (rmi refuses in-use). Older
   // tags are removed; the latest 3 are kept for rollback. Failures are
   // non-fatal — disk reclamation is opportunistic, never blocks install.
