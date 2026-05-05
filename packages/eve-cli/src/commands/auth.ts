@@ -541,8 +541,21 @@ async function runProvision(opts: { agent?: string; email?: string }): Promise<v
     printWarning(
       `${failures.length} agent${failures.length === 1 ? '' : 's'} failed to provision — see reasons above.`,
     );
-    printInfo('Most common cause: PROVISIONING_TOKEN unavailable.');
-    printInfo('  Set EVE_PROVISIONING_TOKEN, or ensure the pod deploy/.env is readable.');
+    // Surface the actionable hint that matches the actual failure pattern.
+    const allOld = failures.every((r) => r.reason.includes('backend version too old'));
+    const allToken = failures.every((r) =>
+      r.reason.includes('PROVISIONING_TOKEN') || r.reason.includes('401') || r.reason.includes('403'),
+    );
+    if (allOld) {
+      printInfo('Fix: run `eve update synap` to update the backend, then retry `eve auth provision`.');
+    } else if (allToken) {
+      printInfo('Fix: ensure PROVISIONING_TOKEN is set in /opt/synap-backend/.env, then retry.');
+    } else {
+      printInfo('Common causes:');
+      printInfo('  • Backend outdated → `eve update synap`');
+      printInfo('  • PROVISIONING_TOKEN missing → check /opt/synap-backend/.env');
+      printInfo('  • Backend unreachable → `eve doctor`');
+    }
     process.exitCode = 1;
   } else {
     printSuccess('All agents provisioned.');

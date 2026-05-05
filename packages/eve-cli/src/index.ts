@@ -35,6 +35,19 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const pkg = JSON.parse(readFileSync(join(__dirname, '../package.json'), 'utf-8')) as { version: string };
 
+// Warn when invoked via `npx eve` — npx downloads the published npm package,
+// ignoring the locally-installed build at /usr/local/bin/eve. Any fixes or
+// updates shipped via `eve update eve` / `git pull + build` won't be visible
+// until the user switches to the installed binary.
+if (process.env.npm_execpath?.includes('npx') || process.env.npm_lifecycle_script?.startsWith('npx')) {
+  process.stderr.write(
+    '\n⚠️  You are running Eve via `npx eve` which downloads the published npm package.\n' +
+    '   This bypasses any local updates. Use the installed binary instead:\n' +
+    '     eve <command>\n' +
+    '   If `eve` is not found, run: bash /opt/eve/scripts/self-update.sh\n\n',
+  );
+}
+
 const program = new Command();
 
 program.configureHelp({
