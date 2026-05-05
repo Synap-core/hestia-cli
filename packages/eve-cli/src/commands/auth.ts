@@ -49,6 +49,7 @@ import {
   resolveSynapUrlOnHost,
   type AgentInfo,
 } from '@eve/dna';
+import { ensureKratosRunning } from '@eve/brain';
 import { buildPodRunner } from '../lib/doctor-runners.js';
 import {
   colors,
@@ -474,6 +475,23 @@ async function runProvision(opts: { agent?: string; email?: string }): Promise<v
     printInfo('Run `eve setup` to initialise Eve on this server from scratch.');
     process.exitCode = 1;
     return;
+  }
+
+  // ------------------------------------------------------------------
+  // Ensure Kratos is running — it may never have been started on older
+  // installs or when the backend was started independently of eve install.
+  // ------------------------------------------------------------------
+  try {
+    const kratosSpinner = createSpinner('Ensuring Kratos (auth) is running…');
+    kratosSpinner.start();
+    const secrets = await readEveSecrets(process.cwd());
+    const domain = secrets?.domain?.primary ?? 'localhost';
+    const deployDir = '/opt/synap-backend';
+    await ensureKratosRunning(deployDir, domain);
+    kratosSpinner.succeed('Kratos ready');
+  } catch (err) {
+    // Non-fatal — log and continue; createAdminUser will give a clear error if kratos is still down
+    printWarning(`Could not ensure Kratos: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   // ------------------------------------------------------------------

@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execSync, spawnSync } from 'node:child_process';
+import * as http from 'node:http';
 import {
   ensureSynapLoopbackOverride,
   pruneOldImagesForRepo,
@@ -944,6 +945,80 @@ function connectToEveNetwork(containerName: string): void {
   }
 }
 
+function isKratosRunning(deployDir: string): boolean {
+  try {
+    const out = execSync(
+      'docker ps --filter "label=com.docker.compose.project=synap-backend" --filter "label=com.docker.compose.service=kratos" --format "{{.Names}}"',
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
+    ).trim();
+    return out.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function probeKratosHealth(): Promise<boolean> {
+  return new Promise((resolve) => {
+    const req = http.get('http://127.0.0.1:4433/health/ready', (res) => {
+      resolve(res.statusCode === 200);
+    });
+    req.setTimeout(2000, () => { req.destroy(); resolve(false); });
+    req.on('error', () => resolve(false));
+  });
+}
+
+async function waitForKratosHealthy(maxWaitMs = 120_000): Promise<boolean> {
+  const start = Date.now();
+  process.stdout.write('  Waiting for Kratos to be ready');
+  while (Date.now() - start < maxWaitMs) {
+    if (await probeKratosHealth()) {
+      process.stdout.write(' ✓\n');
+      return true;
+    }
+    process.stdout.write('.');
+    await new Promise(r => setTimeout(r, 3000));
+  }
+  process.stdout.write(' (timed out)\n');
+  return false;
+}
+
+/**
+ * Ensure Kratos is running. Called from provision/setup flows that need
+ * to create identities via the Kratos admin API. Idempotent — no-op if
+ * Kratos is already up and healthy.
+ */
+export async function ensureKratosRunning(deployDir: string, domain: string): Promise<void> {
+  if (isKratosRunning(deployDir) && await probeKratosHealth()) return;
+
+  const envPath = join(deployDir, '.env');
+  if (!existsSync(envPath)) {
+    throw new Error(`No .env found at ${deployDir} — run \`eve install\` first.`);
+  }
+
+  const envContent = readFileSync(envPath, 'utf-8');
+  const postgresPassword = parseEnvValue(envContent, 'POSTGRES_PASSWORD');
+
+  // Ensure KRATOS_CONFIG_DIR is set in .env
+  let updatedEnv = envContent;
+  if (!envContent.includes('KRATOS_CONFIG_DIR=')) {
+    const sep = envContent.endsWith('\n') ? '' : '\n';
+    updatedEnv = `${envContent}${sep}KRATOS_CONFIG_DIR=./config/kratos\n`;
+    writeFileSync(envPath, updatedEnv, { encoding: 'utf-8', mode: 0o600 });
+  }
+
+  // Write kratos.yml + identity.schema.json
+  await generateKratosConfig(deployDir, domain, postgresPassword, parseKratosSecretsFromEnv(envContent), 'http://backend:4000');
+
+  // Start Kratos — compose handles kratos-migrate dependency
+  console.log('  Starting Kratos (running migrations if needed)…');
+  spawnSync('docker', ['compose', 'up', '-d', 'kratos'], {
+    cwd: deployDir,
+    stdio: 'inherit',
+    env: { ...process.env, COMPOSE_PROJECT_NAME: 'synap-backend' },
+  });
+
+  await waitForKratosHealthy();
+}
 
 export async function installSynapFromImage(opts: SynapImageInstallOptions = {}): Promise<SynapImageInstallResult> {
   const deployDir = opts.deployDir ?? '/opt/synap-backend';
@@ -1042,20 +1117,6 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
           cwd: deployDir, stdio: 'inherit',
           env: { ...process.env, COMPOSE_PROJECT_NAME: 'synap-backend' },
         });
-      }
-      // Ensure Kratos config files exist and Kratos container is running.
-      // (Old installs never started Kratos — this makes them self-heal.)
-      const envContent = readFileSync(envPath, 'utf-8');
-      const postgresPassword = parseEnvValue(envContent, 'POSTGRES_PASSWORD');
-      try {
-        await generateKratosConfig(deployDir, domain, postgresPassword, parseKratosSecretsFromEnv(envContent), 'http://backend:4000');
-        console.log('  Ensured Kratos config files exist');
-        spawnSync('docker', ['compose', 'up', '-d', 'kratos'], {
-          cwd: deployDir, stdio: 'inherit',
-          env: { ...process.env, COMPOSE_PROJECT_NAME: 'synap-backend' },
-        });
-      } catch (err) {
-        console.warn(`  Could not ensure Kratos: ${err instanceof Error ? err.message : String(err)}`);
       }
       return { bootstrapToken, deployDir, containerName: runningContainer };
     }
