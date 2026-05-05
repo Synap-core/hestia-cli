@@ -28,17 +28,17 @@ export function AddAppButton() {
       aria-label="Add app from marketplace"
       title="Marketplace"
       className="
-        group flex h-12 w-12 shrink-0 items-center justify-center
+        group flex h-11 w-11 shrink-0 items-center justify-center
         rounded-icon
-        border border-dashed border-white/30
-        text-white/60
+        border border-dashed border-white/25
+        text-white/55
         transition-all duration-200 ease-out
-        hover:border-white/60 hover:text-white/95 hover:scale-[1.08]
+        hover:border-white/55 hover:text-white/95 hover:scale-[1.08]
         active:scale-[0.95]
         focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40
       "
     >
-      <Plus className="h-5 w-5" aria-hidden />
+      <Plus className="h-4 w-4" strokeWidth={2} aria-hidden />
     </a>
   );
 }

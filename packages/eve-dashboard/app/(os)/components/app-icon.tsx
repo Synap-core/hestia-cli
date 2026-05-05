@@ -1,22 +1,27 @@
 "use client";
 
 /**
- * `AppIcon` — vivid colored icon in the Home grid.
+ * `AppIcon` — premium 2.5D launcher tile.
  *
- * 80×80 (desktop) / 64×64 (mobile) rounded square painted with the
- * brand color from `lib/brand-colors.ts`. Glyph centered in the upper
- * 70%, label below.
+ * Composed of three layers (see `.app-icon-25d` recipe in globals.css):
+ *   1. brand-color vertical gradient (top→mid→dark) as the body
+ *   2. ::before specular highlight on the upper 45%
+ *   3. inner 1px hairlines + outer drop shadow
  *
- * Hover: scale 1.04 + outer glow ring (NO translateY). Press: 0.96.
- * Active state mirrors default — the dock owns the active indicator,
- * the grid does NOT double-mark.
+ * The glyph (or remote `iconUrl`) sits centered, white at 95% alpha.
+ * The label below is always single-line truncated; an optional status
+ * line beneath truncates the same way. Layout never reflows.
+ *
+ * Hover scales 1.04 + brightens the highlight (handled by the .app-icon-25d
+ * pseudo). No translateY lift — we want icons to feel pressed into the
+ * surface, not floating above it.
  *
  * See: synap-team-docs/content/team/platform/eve-os-home-design.mdx §5
  */
 
 import {
   Box, MessageSquare, Brain, Sparkles, Code2, Wrench, Users,
-  LayoutGrid, Paperclip, Home, Settings as SettingsIcon,
+  LayoutGrid, Paperclip, Home, Settings as SettingsIcon, Cpu, Rss,
   type LucideIcon, type LucideProps,
 } from "lucide-react";
 import { brandColorFor } from "../lib/brand-colors";
@@ -24,7 +29,7 @@ import type { HomeApp } from "../hooks/use-home-apps";
 
 const GLYPHS: Record<string, LucideIcon> = {
   Box, MessageSquare, Brain, Sparkles, Code2, Wrench, Users,
-  LayoutGrid, Paperclip, Home, Settings: SettingsIcon,
+  LayoutGrid, Paperclip, Home, Settings: SettingsIcon, Cpu, Rss,
 };
 
 function GlyphFor({ glyph, ...props }: { glyph: string | null } & LucideProps) {
@@ -38,7 +43,11 @@ export interface AppIconProps {
 }
 
 export function AppIcon({ app }: AppIconProps) {
-  // Status text under the icon. Empty string ⇒ second line is dropped.
+  const palette = brandColorFor(app.id);
+  const useRemote = !palette.glyph && Boolean(app.iconUrl);
+
+  // Status text under the icon name. Empty string ⇒ second line is omitted
+  // entirely (no reserved blank line — the label sits closer to the icon).
   const statusLabel =
     app.status === "online"
       ? "running"
@@ -47,9 +56,6 @@ export function AppIcon({ app }: AppIconProps) {
         : app.status === "degraded"
           ? "degraded"
           : "";
-
-  const palette = brandColorFor(app.id);
-  const useRemote = !palette.glyph && Boolean(app.iconUrl);
 
   return (
     <a
@@ -62,32 +68,23 @@ export function AppIcon({ app }: AppIconProps) {
           : `Open ${app.name}`
       }
       className="
-        group flex flex-col items-center gap-3
-        focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40
-        focus-visible:rounded-2xl
+        group flex w-full max-w-[112px] flex-col items-center gap-2.5
+        focus:outline-none focus-visible:rounded-app-icon
+        focus-visible:ring-2 focus-visible:ring-emerald-400/40
       "
     >
       <span
         className="
-          relative flex h-16 w-16 items-center justify-center
-          rounded-[18px]
+          app-icon-25d
+          flex h-16 w-16 items-center justify-center
           transition-transform duration-200 ease-out
           group-hover:scale-[1.04]
           group-active:scale-[0.96] group-active:duration-[80ms]
-          sm:h-20 sm:w-20
+          sm:h-[72px] sm:w-[72px]
+          md:h-20 md:w-20
         "
         style={{ background: palette.bg }}
       >
-        {/* Outer glow ring on hover. Brand-color, 35% opacity, 24px blur. */}
-        <span
-          className="
-            pointer-events-none absolute inset-0 rounded-[18px]
-            opacity-0 group-hover:opacity-100
-            transition-opacity duration-200 ease-out
-          "
-          aria-hidden
-          style={{ boxShadow: `0 0 24px -4px ${palette.accent}59` }}
-        />
         {useRemote ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -95,23 +92,24 @@ export function AppIcon({ app }: AppIconProps) {
             alt=""
             width={40}
             height={40}
-            className="h-8 w-8 object-contain sm:h-10 sm:w-10"
+            className="h-9 w-9 object-contain drop-shadow-[0_1px_1px_rgba(0,0,0,0.4)] sm:h-10 sm:w-10"
             referrerPolicy="no-referrer"
           />
         ) : (
           <GlyphFor
             glyph={palette.glyph}
-            className="h-8 w-8 text-white/95 sm:h-10 sm:w-10"
-            strokeWidth={1.6}
+            className="h-8 w-8 text-white drop-shadow-[0_1px_1px_rgba(0,0,0,0.35)] sm:h-9 sm:w-9 md:h-10 md:w-10"
+            strokeWidth={1.9}
             aria-hidden
           />
         )}
         {!app.isEntitled && (
           <span
             className="
-              absolute -right-1 -top-1 rounded-full bg-content1
-              px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider
-              text-default-500 border border-divider
+              absolute -right-1.5 -top-1.5 z-10 rounded-full
+              bg-content1 px-1.5 py-0.5 text-[9px] font-medium uppercase
+              tracking-wider text-default-500 border border-divider
+              shadow-sm
             "
             title="Locked"
           >
@@ -119,11 +117,14 @@ export function AppIcon({ app }: AppIconProps) {
           </span>
         )}
       </span>
-      <span className="flex flex-col items-center gap-0.5 max-w-[112px]">
+
+      {/* Label block — fixed two-row max so the grid never reflows.
+          Single-line truncate on both name and status. */}
+      <span className="flex w-full flex-col items-center leading-none">
         <span
           className="
-            truncate text-[13px] font-medium leading-tight
-            text-default-700 dark:text-default-200
+            block w-full truncate text-center text-[12.5px] font-medium
+            text-default-700 dark:text-default-100
             group-hover:text-default-900 dark:group-hover:text-default-50
             transition-colors
           "
@@ -132,7 +133,14 @@ export function AppIcon({ app }: AppIconProps) {
           {app.name}
         </span>
         {statusLabel && (
-          <span className="text-[11px] text-default-500 leading-tight">{statusLabel}</span>
+          <span
+            className="
+              mt-1 block w-full truncate text-center text-[10.5px] font-normal
+              text-default-500 dark:text-default-400
+            "
+          >
+            {statusLabel}
+          </span>
         )}
       </span>
     </a>

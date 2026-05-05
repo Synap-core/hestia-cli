@@ -32,16 +32,16 @@ export function Dock() {
       aria-label="Application dock"
       className="
         os-dock
-        fixed bottom-4 left-1/2 z-20 -translate-x-1/2
-        flex max-w-[80vw] items-center gap-1.5 overflow-x-auto
-        px-3 py-2
+        fixed bottom-5 left-1/2 z-20 -translate-x-1/2
+        flex max-w-[80vw] items-center gap-2 overflow-x-auto
+        px-3 py-2.5
       "
     >
       {apps.map(app => (
         <DockIcon key={app.id} app={app} active={isActive(app.path)} />
       ))}
       <span
-        className="mx-1 h-8 w-px shrink-0 bg-white/10"
+        className="mx-0.5 h-7 w-px shrink-0 bg-white/10"
         aria-hidden
       />
       <AddAppButton />

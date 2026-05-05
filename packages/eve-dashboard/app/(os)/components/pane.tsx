@@ -35,15 +35,15 @@ export function Pane({ children }: PaneProps) {
   // that re-fires the entrance animation declared via Tailwind keyframes.
   const pathname = usePathname();
   return (
-    <main className="pane-container relative z-10 flex min-h-screen items-start justify-center px-4 pt-4 pb-32 sm:pt-8 md:items-center md:pt-0">
+    <main className="pane-container relative z-10 flex min-h-screen items-start justify-center px-4 pt-4 pb-28 sm:pt-8 md:items-center md:pt-0 md:pb-24">
       <div
         className="
           os-pane
-          flex w-full max-w-[1440px] flex-col overflow-hidden
-          h-[calc(100vh-7rem)] sm:h-[88vh] md:h-[84vh]
-          md:min-h-[600px] md:max-h-[920px]
-          sm:max-w-[min(800px,90vw)]
-          md:max-w-[min(1440px,80vw)] md:min-w-[min(1024px,90vw)]
+          flex w-full max-w-[1280px] flex-col overflow-hidden
+          h-[calc(100vh-6.5rem)] sm:h-[86vh] md:h-[82vh]
+          md:min-h-[600px] md:max-h-[880px]
+          sm:max-w-[min(820px,90vw)]
+          md:max-w-[min(1280px,82vw)] md:min-w-[min(960px,90vw)]
         "
       >
         <div

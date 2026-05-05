@@ -1,49 +1,35 @@
 "use client";
 
 /**
- * CP authentication banner.
+ * CP authentication banner — translucent inline notice for the OS pane.
  *
- * Renders one of three states above the OS Home app grid:
+ * States:
  *
- *   • `signed-out`  — no `cp.userToken` on disk. Prompts the user to
- *                      sign in via `initiateCpOAuth()`.
- *   • `error`       — the marketplace returned a non-401 error or the
- *                      network failed. Offers a Retry button.
- *   • `working`     — banner is hidden (renders null).
+ *   • `signed-out` — no `cp.userToken` on disk. Prompts the user to
+ *                    sign in via `initiateCpOAuth()`.
+ *   • `error`      — marketplace returned a non-401 / network failed.
+ *                    Offers a Retry button.
+ *   • `working`    — banner is hidden (renders null).
  *
- * Phase 2 will mount this component above `<AppGrid />` on the OS
- * Home page. For Phase 1 of the OAuth client work it is exported but
- * NOT mounted anywhere yet — the spec is explicit about that.
+ * Visual: a low-contrast frosted pill that reads as a system suggestion,
+ * not an alarm. Sits inside the popup pane so it inherits the wallpaper
+ * tint that bleeds through the pane backdrop.
  *
  * See: synap-team-docs/content/team/platform/eve-os-vision.mdx §6
- *      synap-team-docs/content/team/platform/eve-os-home-design.mdx §5.6
+ *      synap-team-docs/content/team/platform/eve-os-home-design.mdx §7
  */
 
-import { Button } from "@heroui/react";
 import { LogIn, RefreshCw, AlertTriangle } from "lucide-react";
 import { initiateCpOAuth } from "../(os)/lib/cp-oauth";
 
 export type CpAuthBannerState =
-  /** Cleanly working — banner hidden. */
   | { kind: "working" }
-  /** No CP token on disk. Show the sign-in CTA. */
   | { kind: "signed-out" }
-  /** Marketplace error (network down, 5xx, etc.) — show retry. */
   | { kind: "error"; message?: string };
 
 export interface CpAuthBannerProps {
   state: CpAuthBannerState;
-  /**
-   * Called when the user clicks Retry in the error state. Hosts pass
-   * a refetcher (e.g. `() => mutate()`). Required for the error
-   * variant; ignored for the others.
-   */
   onRetry?: () => void;
-  /**
-   * Called instead of the default `initiateCpOAuth()` when the user
-   * clicks Sign in. Useful for tests / Storybook stories that don't
-   * want a real navigation.
-   */
   onSignIn?: () => void;
 }
 
@@ -57,20 +43,27 @@ export function CpAuthBanner({
   if (state.kind === "signed-out") {
     return (
       <Surface tone="info">
-        <span className="text-default-500">
-          <LogIn className="h-4 w-4" />
+        <span className="text-emerald-300/90">
+          <LogIn className="h-3.5 w-3.5" strokeWidth={2} />
         </span>
-        <p className="flex-1 min-w-0 text-sm text-foreground">
+        <p className="flex-1 min-w-0 text-[13px] text-default-200">
           Sign in to see your apps from the Synap marketplace.
         </p>
-        <Button
-          color="primary"
-          size="sm"
-          radius="md"
-          onPress={() => (onSignIn ? onSignIn() : void initiateCpOAuth())}
+        <button
+          type="button"
+          onClick={() => (onSignIn ? onSignIn() : void initiateCpOAuth())}
+          className="
+            shrink-0 inline-flex h-7 items-center justify-center rounded-full
+            px-3 text-[12px] font-medium text-white
+            transition-[filter,transform] duration-200
+            hover:brightness-110 active:scale-[0.98]
+          "
+          style={{
+            background: "linear-gradient(135deg, #10B981 0%, #34D399 100%)",
+          }}
         >
           Sign in
-        </Button>
+        </button>
       </Surface>
     );
   }
@@ -78,24 +71,29 @@ export function CpAuthBanner({
   // state.kind === "error"
   return (
     <Surface tone="warning">
-      <span className="text-warning">
-        <AlertTriangle className="h-4 w-4" />
+      <span className="text-amber-300">
+        <AlertTriangle className="h-3.5 w-3.5" strokeWidth={2} />
       </span>
-      <p className="flex-1 min-w-0 text-sm text-foreground">
+      <p className="flex-1 min-w-0 text-[13px] text-default-200">
         Couldn&apos;t reach marketplace
         {state.message ? <span className="text-default-500"> — {state.message}</span> : null}
         .
       </p>
-      <Button
-        size="sm"
-        radius="md"
-        variant="bordered"
-        startContent={<RefreshCw className="h-3.5 w-3.5" />}
-        onPress={() => onRetry?.()}
-        isDisabled={!onRetry}
+      <button
+        type="button"
+        onClick={() => onRetry?.()}
+        disabled={!onRetry}
+        className="
+          shrink-0 inline-flex h-7 items-center gap-1 rounded-full
+          border border-white/10 bg-white/5 px-3
+          text-[12px] font-medium text-default-200
+          transition-colors hover:bg-white/10
+          disabled:opacity-50 disabled:cursor-not-allowed
+        "
       >
+        <RefreshCw className="h-3 w-3" />
         Retry
-      </Button>
+      </button>
     </Surface>
   );
 }
@@ -107,15 +105,20 @@ function Surface({
   tone: "info" | "warning";
   children: React.ReactNode;
 }) {
-  // Lean on existing HeroUI / Tailwind tokens — neutral surface w/ a
-  // tinted border per tone. Matches the rest of the dashboard's chrome.
-  const border =
+  // Inline frosted pill. Tone = subtle background tint at the left edge.
+  // No solid border on the body — the inset shadow from the pane already
+  // provides separation. Concentric rule: border-radius 12 inside a body
+  // padded 20 from a pane-radius-32 surface (32 - 20 = 12 ✓).
+  const tint =
     tone === "warning"
-      ? "border-warning/40 bg-warning/5"
-      : "border-divider bg-content1";
+      ? "bg-amber-400/[0.06] ring-amber-400/15"
+      : "bg-white/[0.04] ring-white/[0.08]";
   return (
     <div
-      className={`flex items-center gap-3 rounded-xl border ${border} px-4 py-3`}
+      className={
+        "flex items-center gap-3 rounded-stat-card px-3.5 py-2.5 ring-1 backdrop-blur-md " +
+        tint
+      }
       role="status"
       aria-live="polite"
     >

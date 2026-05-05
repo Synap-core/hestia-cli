@@ -71,29 +71,24 @@ export function DockIcon({ app, active, iconUrl }: DockIconProps) {
       aria-label={`Open ${app.name}`}
       title={app.name}
       className="
-        group relative flex h-12 w-12 shrink-0 items-center justify-center
-        rounded-icon
+        group relative flex h-11 w-11 shrink-0 items-center justify-center
+        app-icon-25d
         transition-transform duration-200 ease-out
         hover:scale-[1.08] active:scale-[0.95] active:duration-[80ms]
         focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40
       "
-      style={{
-        background: palette.bg,
-        boxShadow: `0 0 0 0 ${palette.accent}33`,
-      }}
+      style={{ background: palette.bg }}
     >
-      {/* Outer accent glow on hover. We re-declare the box-shadow on
-          hover (instead of a transform-only effect) because the glow
-          color is brand-specific — Tailwind's ring utility can't
-          read a per-app palette without inline style. */}
+      {/* Outer accent glow on hover. Brand-specific so Tailwind ring
+          can't carry it — paint via inline style instead. */}
       <span
         className="
-          pointer-events-none absolute inset-0 rounded-icon
+          pointer-events-none absolute -inset-1 rounded-icon
           opacity-0 group-hover:opacity-100
           transition-opacity duration-200 ease-out
         "
         aria-hidden
-        style={{ boxShadow: `0 0 18px 2px ${palette.accent}33` }}
+        style={{ boxShadow: `0 0 22px 2px ${palette.accent}40` }}
       />
 
       {useRemote ? (
@@ -101,23 +96,24 @@ export function DockIcon({ app, active, iconUrl }: DockIconProps) {
         <img
           src={iconUrl}
           alt=""
-          width={28}
-          height={28}
-          className="h-7 w-7 object-contain"
+          width={26}
+          height={26}
+          className="h-[26px] w-[26px] object-contain drop-shadow-[0_1px_1px_rgba(0,0,0,0.4)]"
           referrerPolicy="no-referrer"
         />
       ) : (
         <GlyphFor
           glyph={palette.glyph}
-          className="h-6 w-6 text-white/95"
+          className="h-[22px] w-[22px] text-white drop-shadow-[0_1px_1px_rgba(0,0,0,0.4)]"
+          strokeWidth={2}
           aria-hidden
         />
       )}
 
-      {/* Active indicator pill — 4px tall x 12px wide, sits ~6px below the icon. */}
+      {/* Active indicator pill — 3px tall x 10px wide, sits ~6px below. */}
       {active && (
         <span
-          className="absolute -bottom-2 left-1/2 h-1 w-3 -translate-x-1/2 rounded-full"
+          className="absolute -bottom-2 left-1/2 h-[3px] w-2.5 -translate-x-1/2 rounded-full"
           style={{ background: palette.accent }}
           aria-hidden
         />

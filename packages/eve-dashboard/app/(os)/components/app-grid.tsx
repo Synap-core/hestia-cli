@@ -25,6 +25,8 @@ import type { HomeApp } from "../hooks/use-home-apps";
 export interface AppGridProps {
   apps: HomeApp[];
   isLoading: boolean;
+  /** Where the trailing "+ Add" tile points. */
+  marketplaceUrl: string;
   /** Hide the "+ Add" terminator (used by the empty-state CTA). */
   hideAdd?: boolean;
 }
@@ -40,17 +42,20 @@ function readCachedIconCount(): number {
   return Math.min(parsed, 24); // sanity cap
 }
 
+// Body gutter is 20px (per concentric radius rule), but the grid is
+// allowed to breathe further inside that — the icons themselves carry
+// the visual rhythm. justify-items-center keeps short rows balanced.
 const GRID = `
-  grid grid-cols-3 gap-6
-  sm:grid-cols-4 sm:gap-7
+  grid grid-cols-3 gap-x-4 gap-y-6
+  sm:grid-cols-4 sm:gap-x-5 sm:gap-y-7
   md:grid-cols-6
   lg:grid-cols-7
   xl:grid-cols-8
-  px-6 pb-8 pt-2
-  content-start
+  px-2 pb-6 pt-2
+  content-start justify-items-center
 `;
 
-export function AppGrid({ apps, isLoading, hideAdd }: AppGridProps) {
+export function AppGrid({ apps, isLoading, marketplaceUrl, hideAdd }: AppGridProps) {
   const cachedCountRef = useRef<number | null>(null);
 
   // Cache the resolved count so the next mount renders the right
@@ -71,7 +76,7 @@ export function AppGrid({ apps, isLoading, hideAdd }: AppGridProps) {
         {Array.from({ length: cachedCountRef.current }).map((_, i) => (
           <SkeletonIcon key={i} />
         ))}
-        {!hideAdd && <AddAppIcon />}
+        {!hideAdd && <AddAppIcon href={marketplaceUrl} />}
       </div>
     );
   }
@@ -85,7 +90,7 @@ export function AppGrid({ apps, isLoading, hideAdd }: AppGridProps) {
       ))}
       {!hideAdd && (
         <div role="listitem">
-          <AddAppIcon />
+          <AddAppIcon href={marketplaceUrl} />
         </div>
       )}
     </div>

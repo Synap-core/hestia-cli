@@ -79,11 +79,28 @@ module.exports = {
         pane: "40px",
         dock: "48px",
       },
+      // Concentric corner system (locked).
+      //
+      //   parent radius = child radius + gap
+      //
+      // Home composition:
+      //   • Pane radius     32     (outer shell popup)
+      //   • Body gutter     20     (padding from pane edge to first child)
+      //   • Stat-card radius 12    (32 - 20 = 12 ✓)
+      //   • App-icon radius 18     (independent leaves; not nested)
+      //
+      // Dock composition:
+      //   • Dock pill radius 9999 (full pill — concentricity satisfied trivially)
+      //   • Icon radius     14     (was 12 — pairs with the new app-icon scale)
+      //
+      // Anyone adding a new container inside the pane MUST follow this rule.
       borderRadius: {
         tile: "20px",
-        pane: "24px",
-        dock: "32px",
-        icon: "12px",
+        pane: "32px",
+        dock: "9999px",
+        icon: "14px",
+        "stat-card": "12px",
+        "app-icon": "18px",
       },
       keyframes: {
         // Wallpaper drift — opposing slow loops on translate3d only, GPU-friendly.

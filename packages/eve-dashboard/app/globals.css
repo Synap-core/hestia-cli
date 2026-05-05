@@ -54,23 +54,23 @@ body {
 .os-blob-a {
   width: 120vw;
   height: 120vw;
-  left: -20vw;
-  top: -30vw;
-  background: radial-gradient(closest-side, rgba(99, 102, 241, 0.40), transparent 70%);
+  left: -25vw;
+  top: -35vw;
+  background: radial-gradient(closest-side, rgba(129, 140, 248, 0.55), transparent 70%);
 }
 .os-blob-b {
-  width: 100vw;
-  height: 100vw;
-  right: -20vw;
-  bottom: -30vw;
-  background: radial-gradient(closest-side, rgba(16, 185, 129, 0.28), transparent 70%);
+  width: 110vw;
+  height: 110vw;
+  right: -25vw;
+  bottom: -35vw;
+  background: radial-gradient(closest-side, rgba(16, 185, 129, 0.42), transparent 70%);
 }
 .os-blob-c {
-  width: 80vw;
-  height: 80vw;
-  left: 10vw;
-  bottom: 10vw;
-  background: radial-gradient(closest-side, rgba(244, 114, 182, 0.18), transparent 70%);
+  width: 90vw;
+  height: 90vw;
+  left: 5vw;
+  bottom: 0vw;
+  background: radial-gradient(closest-side, rgba(244, 114, 182, 0.32), transparent 70%);
 }
 :not(.dark) .os-blob-a {
   background: radial-gradient(closest-side, rgba(129, 140, 248, 0.45), transparent 70%);
@@ -97,20 +97,23 @@ body {
  * ------------------------------------------------------------------- */
 .os-pane {
   border-radius: theme('borderRadius.pane');
-  background: theme('colors.os.paneBgLight');
-  -webkit-backdrop-filter: blur(40px) saturate(140%);
-          backdrop-filter: blur(40px) saturate(140%);
-  border: 1px solid theme('colors.os.paneBorderLight');
+  background: rgba(255, 255, 255, 0.55);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+          backdrop-filter: blur(40px) saturate(180%);
+  border: 1px solid rgba(0, 0, 0, 0.06);
   box-shadow:
     0 24px 64px -12px rgba(0, 0, 0, 0.15),
-    inset 0 0 0 1px rgba(0, 0, 0, 0.02);
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
 }
 .dark .os-pane {
-  background: theme('colors.os.paneBg');
-  border-color: theme('colors.os.paneBorder');
+  /* Lower alpha so the wallpaper colors bleed through as a faint
+     mesh tint rather than reading as a flat black panel. */
+  background: rgba(18, 18, 26, 0.42);
+  border-color: rgba(255, 255, 255, 0.07);
   box-shadow:
-    0 24px 64px -12px rgba(0, 0, 0, 0.5),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+    0 30px 80px -16px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.03);
 }
 
 /* ----------------------------------------------------------------------
@@ -126,6 +129,76 @@ body {
 .dark .os-dock {
   background: theme('colors.os.dockBg');
   border-color: theme('colors.os.paneBorder');
+}
+
+/* ----------------------------------------------------------------------
+ * 2.5D app icon — premium pressed-glass treatment.
+ *
+ * Recipe (eve-os-home-design.mdx §5.1, expanded for v2.1 design pass):
+ *   1. Brand color or gradient as the base fill (per app via inline style).
+ *   2. Top→bottom subtle darkening overlay so the icon reads as a 3D form,
+ *      not a flat decal.
+ *   3. ::before pseudo-element paints a glossy highlight on the top
+ *      ~45% of the icon — fakes a soft specular reflection.
+ *   4. Inner top/bottom hairlines (1px) carve the silhouette.
+ *   5. Outer drop shadow lifts the icon off the pane surface.
+ *
+ * Apply via `class="app-icon-25d"` and supply `style={{ background: ... }}`
+ * for the brand color / gradient.
+ * ------------------------------------------------------------------- */
+.app-icon-25d {
+  position: relative;
+  border-radius: theme('borderRadius.app-icon');
+  isolation: isolate;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.32),     /* top inner highlight */
+    inset 0 -1px 0 rgba(0, 0, 0, 0.22),          /* bottom inner shade */
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),   /* hairline edge */
+    0 8px 18px -6px rgba(0, 0, 0, 0.55),         /* soft drop shadow */
+    0 1px 0 rgba(255, 255, 255, 0.06);           /* crisp top edge */
+  transition: transform 200ms ease-out, box-shadow 200ms ease-out;
+}
+.app-icon-25d::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.20) 0%, rgba(255, 255, 255, 0.04) 38%, transparent 60%),
+    linear-gradient(180deg, transparent 60%, rgba(0, 0, 0, 0.18) 100%);
+  pointer-events: none;
+  z-index: 1;
+}
+.app-icon-25d > * {
+  position: relative;
+  z-index: 2;
+}
+.app-icon-25d:hover {
+  /* Brighten top highlight + deepen drop shadow on hover. */
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.22),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+    0 14px 26px -8px rgba(0, 0, 0, 0.65),
+    0 1px 0 rgba(255, 255, 255, 0.10);
+}
+
+/* Light-mode tweaks — drop shadow is gentler over the pastel pane. */
+:not(.dark) .app-icon-25d {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.10),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.18),
+    0 8px 18px -6px rgba(0, 0, 0, 0.20),
+    0 1px 0 rgba(255, 255, 255, 0.30);
+}
+:not(.dark) .app-icon-25d:hover {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.65),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.10),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.25),
+    0 14px 26px -8px rgba(0, 0, 0, 0.28),
+    0 1px 0 rgba(255, 255, 255, 0.40);
 }
 
 /* ----------------------------------------------------------------------

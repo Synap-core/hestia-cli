@@ -4,15 +4,18 @@
  * Eve OS Home — `/`
  *
  * The UmbrelOS-style app launcher rendered inside the popup pane.
- * Four vertical zones (top → bottom):
+ * Composition (top → bottom):
  *
- *   • Greeting     — wordless pane header + "Good evening" + date
- *   • Stat cards   — agents running / events today / updates available
- *   • App grid     — vivid colorful icons (NOT gray tiles)
- *   • Search       — capsule search at the bottom (Cmd+K)
+ *   • GreetingRow — greeting block + 3 compact stat squares on a single row
+ *   • CpAuthBanner — only when CP token is missing/expired
+ *   • AppGrid — vivid 2.5D app icons (premium pressed-glass)
+ *   • SearchBar — capsule search at the bottom (Cmd+K)
+ *
+ * Concentric corner radii are mandatory inside the pane:
+ *   pane radius (32) − body gutter (20) = inner card radius (12)
  *
  * The pane chrome (frosted glass, dock, wallpaper) is owned by the
- * shell at `app/(os)/layout.tsx` — this page just fills the body.
+ * shell at `app/(os)/layout.tsx`. This page just fills the body.
  *
  * See: synap-team-docs/content/team/platform/eve-os-home-design.mdx
  */
@@ -22,19 +25,23 @@ import Link from "next/link";
 import { Settings as SettingsIcon } from "lucide-react";
 import { CpAuthBanner } from "../components/cp-auth-banner";
 import { PaneHeader } from "./components/pane-header";
-import { Greeting } from "./components/greeting";
-import { StatCards } from "./components/stat-cards";
+import { GreetingRow } from "./components/greeting-row";
 import { AppGrid } from "./components/app-grid";
 import { SearchBar } from "./components/search-bar";
 import { EmptyState } from "./components/empty-state";
 import { useHomeApps } from "./hooks/use-home-apps";
+import { CP_BASE_URL } from "./lib/cp-oauth";
+
+// Until the synap-landing /marketplace ships, the "Browse marketplace"
+// link points back to the CP. This is the single source of truth for
+// every "open marketplace" affordance on the Home.
+const MARKETPLACE_URL = `${CP_BASE_URL}/marketplace`;
 
 export default function HomePage() {
   const [query, setQuery] = useState("");
   const { apps, isLoading, bannerState, refetch } = useHomeApps();
 
   // Filter is name + description + category — case-insensitive contains.
-  // Fast at hundreds of apps; revisit if catalogs grow.
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim();
     if (!q) return apps;
@@ -62,42 +69,43 @@ export default function HomePage() {
               transition-colors
             "
           >
-            <SettingsIcon className="h-4 w-4" />
+            <SettingsIcon className="h-4 w-4" strokeWidth={2} />
           </Link>
         }
       />
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-        {/* Auth banner — sits above everything else when CP token is missing. */}
+      {/* Body — 20px outer gutter holds the concentric radius rule
+          (pane 32 − gutter 20 = inner card radius 12). */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pb-5 pt-4 sm:px-6 sm:pt-5">
         {showBanner && (
-          <div className="px-6 pt-4">
+          <div className="mb-4">
             <CpAuthBanner state={bannerState} onRetry={refetch} />
           </div>
         )}
 
-        <Greeting />
+        <GreetingRow />
 
-        {!showColdEmpty && <StatCards />}
-
-        {/* App grid takes whatever room is left between stat strip and search. */}
         {showColdEmpty ? (
           <EmptyState />
         ) : (
           <div className="mt-6 min-h-0 flex-1">
             {noResultsForSearch ? (
-              <p className="px-6 py-12 text-center text-sm text-default-500">
+              <p className="px-2 py-12 text-center text-[13px] text-default-500">
                 No apps match{" "}
                 <span className="font-medium text-foreground">&ldquo;{query}&rdquo;</span>.
-                Try clearing the search or browse the marketplace from the
-                <span className="text-default-400"> + </span> tile.
+                Try clearing the search or browse the marketplace from the{" "}
+                <span className="text-default-400">+</span> tile.
               </p>
             ) : (
-              <AppGrid apps={filtered} isLoading={isLoading} />
+              <AppGrid
+                apps={filtered}
+                isLoading={isLoading}
+                marketplaceUrl={MARKETPLACE_URL}
+              />
             )}
           </div>
         )}
 
-        {/* Sticky-ish search via flex layout — last child of body column. */}
         <SearchBar value={query} onChange={setQuery} />
       </div>
     </>
