@@ -896,11 +896,17 @@ async function waitThenReconcileOpenclaw(
  * nothing to compile — idempotent overwrite is fine.
  */
 async function* postUpdateReconcileHermes(): AsyncGenerator<LifecycleEvent> {
-  yield { type: "log", line: "Regenerating Hermes config.yaml + Synap memory plugin…" };
+  yield { type: "log", line: "Regenerating Hermes env + config.yaml + Synap memory plugin…" };
   try {
+    // env file MUST be written before config.yaml — writeHermesConfigYaml reads
+    // secrets that writeHermesEnvFile also reads, but the env file is what the
+    // container actually picks up (--env-file at docker run time). Since Hermes
+    // is in AI_CONSUMERS_NEEDING_RECREATE, the lifecycle will recreate the
+    // container after this hook runs, re-reading the fresh env file.
+    await writeHermesEnvFile();
     await writeHermesConfigYaml();
     generateSynapPlugin();
-    yield { type: "log", line: "Hermes config + plugin regenerated ✓" };
+    yield { type: "log", line: "Hermes env, config + plugin regenerated ✓" };
   } catch (err) {
     yield {
       type: "log",
@@ -1057,13 +1063,106 @@ async function* wireHermesIntoOpenwebui(): AsyncGenerator<LifecycleEvent> {
   ].join("\n");
 
   writeFileSync(owEnv, (stripped ? stripped + "\n\n" : "") + hermesBlock + "\n", { mode: 0o600 });
+  yield { type: "log", line: `OpenWebUI env updated — ${urlCount} model source(s) in .env` };
 
-  yield { type: "log", line: `OpenWebUI env updated — ${urlCount} model source(s) wired` };
+  // OpenWebUI reads OPENAI_API_BASE_URLS from env only on first startup and
+  // seeds its database. After that the DB is the source of truth and a simple
+  // restart won't add new entries. Use the admin API to upsert the model source
+  // so this is idempotent on any subsequent run.
+  yield* wireHermesViaOpenwebuiApi(hermesUrl, hermesApiKey);
+}
 
-  // Restart OpenWebUI so it picks up the new env.
-  yield { type: "step", label: "Restarting OpenWebUI to apply model sources…" };
-  yield* runCommand("docker", ["compose", "up", "-d"], { cwd: "/opt/openwebui" });
-  yield { type: "log", line: "Hermes wired into OpenWebUI ✓ — open a new chat and select a model" };
+/**
+ * Register (or update) the Hermes model source via OpenWebUI's admin API.
+ *
+ * OpenWebUI's env var OPENAI_API_BASE_URLS is only read on first boot.
+ * On every subsequent run, the DB is authoritative — so we must use the
+ * POST /api/v1/configs/ endpoint to add/update the entry.
+ */
+async function* wireHermesViaOpenwebuiApi(
+  hermesUrl: string,
+  hermesApiKey: string,
+): AsyncGenerator<LifecycleEvent> {
+  const owEnv = "/opt/openwebui/.env";
+  const webuiSecret = readFileSync(owEnv, "utf-8").split("\n")
+    .find(l => l.startsWith("WEBUI_SECRET_KEY="))?.split("=", 2)[1]?.trim() ?? "";
+
+  if (!webuiSecret) {
+    // No secret key — fall back to restart so the env file at least applies
+    // on the next fresh install.
+    yield { type: "step", label: "Restarting OpenWebUI (no WEBUI_SECRET_KEY — API wiring skipped)…" };
+    yield* runCommand("docker", ["compose", "up", "-d"], { cwd: "/opt/openwebui" });
+    return;
+  }
+
+  const owAdminUrl = "http://localhost:3000";
+
+  // Wait up to 30 s for OpenWebUI to be reachable.
+  let owReady = false;
+  for (let i = 0; i < 6; i++) {
+    try {
+      const r = await fetch(`${owAdminUrl}/health`);
+      if (r.ok) { owReady = true; break; }
+    } catch { /* not up yet */ }
+    await new Promise(r => setTimeout(r, 5_000));
+  }
+  if (!owReady) {
+    yield { type: "log", line: "OpenWebUI not reachable — run 'eve update hermes' once it is up" };
+    return;
+  }
+
+  const { createHmac } = await import("node:crypto");
+  const header  = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({
+    id: "eve-lifecycle",
+    role: "admin",
+    iat: Math.floor(Date.now() / 1000),
+    exp: Math.floor(Date.now() / 1000) + 300,
+  })).toString("base64url");
+  const sig = createHmac("sha256", webuiSecret).update(`${header}.${payload}`).digest("base64url");
+  const jwt = `${header}.${payload}.${sig}`;
+
+  const authHeaders = { "Authorization": `Bearer ${jwt}`, "Content-Type": "application/json" };
+
+  try {
+    const cfgRes = await fetch(`${owAdminUrl}/api/v1/configs/`, { headers: authHeaders });
+    if (!cfgRes.ok) {
+      yield { type: "log", line: `OpenWebUI config read failed (${cfgRes.status}) — manual step: Admin → Connections → add ${hermesUrl}` };
+      return;
+    }
+    const cfg = await cfgRes.json() as Record<string, unknown>;
+
+    // Upsert Hermes into the openai connections list.
+    const openai = (cfg.openai ?? {}) as Record<string, unknown>;
+    const urls: string[] = Array.isArray(openai.api_base_urls) ? openai.api_base_urls : [];
+    const keys: string[] = Array.isArray(openai.api_keys) ? openai.api_keys : [];
+    const idx = urls.indexOf(hermesUrl);
+    if (idx === -1) {
+      urls.push(hermesUrl);
+      keys.push(hermesApiKey);
+    } else {
+      keys[idx] = hermesApiKey;
+    }
+    // Pad keys list to match urls length (OpenWebUI requires equal-length arrays).
+    while (keys.length < urls.length) keys.push("");
+    openai.api_base_urls = urls;
+    openai.api_keys = keys;
+    cfg.openai = openai;
+
+    const saveRes = await fetch(`${owAdminUrl}/api/v1/configs/`, {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify(cfg),
+    });
+    if (saveRes.ok) {
+      yield { type: "log", line: `Hermes wired into OpenWebUI ✓ (${urls.length} model source${urls.length === 1 ? "" : "s"}) — open a new chat and select a Hermes model` };
+    } else {
+      const body = await saveRes.json().catch(() => ({})) as Record<string, unknown>;
+      yield { type: "log", line: `OpenWebUI config save returned ${saveRes.status}: ${JSON.stringify(body)}` };
+    }
+  } catch (err) {
+    yield { type: "log", line: `OpenWebUI API wiring failed (${err instanceof Error ? err.message : String(err)}) — run 'eve update hermes' once OpenWebUI is up` };
+  }
 }
 
 /**

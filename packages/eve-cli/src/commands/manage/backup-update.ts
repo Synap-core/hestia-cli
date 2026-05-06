@@ -77,11 +77,11 @@ function lifecycleUpdate(id: string, label: string): UpdateTarget {
         const headline = result.error ?? 'update failed';
         throw new Error(tail ? `${headline}\n${tail}` : headline);
       }
-      // Surface OpenClaw reconciliation as a sub-line under the spinner so
-      // the user sees self-healing happen without having to dig through
-      // verbose logs. We prefer the "re-added" or "in sync" headline note
-      // — the rest goes to verbose-only debug output.
-      return { subLines: extractOpenclawSubLines(id, result.logs) };
+      // Surface post-update reconciliation log lines under the spinner.
+      // OpenClaw gets a filtered headline; everything else gets all log lines
+      // so operators can see what actually happened (env rewired, API called, etc.)
+      if (id === 'openclaw') return { subLines: extractOpenclawSubLines(id, result.logs) };
+      return { subLines: result.logs.filter(l => l.trim().length > 0) };
     },
   };
 }

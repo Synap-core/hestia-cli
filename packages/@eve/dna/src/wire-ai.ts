@@ -488,6 +488,11 @@ export const AI_CONSUMERS: ReadonlySet<string> = new Set([
  */
 export const AI_CONSUMERS_NEEDING_RECREATE: ReadonlySet<string> = new Set([
   'openclaw',
+  // Hermes is started via `docker run --env-file ~/.eve/hermes.env`. Docker
+  // bakes env vars into the container spec at creation time — `docker restart`
+  // reuses those stale values. Any channel credential or AI config change
+  // requires a full recreate so the updated hermes.env is re-read.
+  'hermes',
 ]);
 
 /**
