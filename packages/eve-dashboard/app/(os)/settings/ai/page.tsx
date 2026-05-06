@@ -200,6 +200,28 @@ export default function AiProvidersPage() {
     } finally { setSavingId(null); }
   }
 
+  async function testProvider(id: string) {
+    setTestingId(id);
+    setTestResults(prev => ({ ...prev, [id]: undefined as any }));
+    try {
+      const res = await fetch("/api/ai/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ providerId: id }),
+      });
+      const data = await res.json() as { ok?: boolean; latency?: number; modelCount?: number; models?: string[]; error?: string };
+      setTestResults(prev => ({ ...prev, [id]: data as any }));
+      if (res.ok && data.ok) {
+        addToast({ title: `${getProviderLabel(id)}: OK · ${data.modelCount} models`, color: "success" });
+      } else if (!res.ok || !data.ok) {
+        addToast({ title: `${getProviderLabel(id)}: ${data.error ?? "Test failed"}`, color: "danger" });
+      }
+    } catch {
+      addToast({ title: `${getProviderLabel(id)}: Network error`, color: "danger" });
+    } finally { setTestingId(null); }
+  }
+
   async function setDefault(id: string) {
     setSavingId(`default-${id}`);
     try {
@@ -425,6 +447,42 @@ export default function AiProvidersPage() {
                   </div>
                 </div>
 
+                {/* Test result */}
+                {testResults[p.id] && (
+                  <div className={`mt-3 rounded-lg border px-3 py-2 ${
+                    testResults[p.id].ok
+                      ? "border-success/20 bg-success/5"
+                      : "border-danger/20 bg-danger/5"
+                  }`}>
+                    <div className="flex items-center gap-2">
+                      {testResults[p.id].ok ? (
+                        <CheckCircle2 className="h-3.5 w-3.5 text-success" />
+                      ) : (
+                        <XCircle className="h-3.5 w-3.5 text-danger" />
+                      )}
+                      <span className="text-xs">
+                        {testResults[p.id].ok
+                          ? `${testResults[p.id].modelCount} model(s) · ${testResults[p.id].latency}ms`
+                          : testResults[p.id].error}
+                      </span>
+                    </div>
+                    {(testResults[p.id].ok && (testResults[p.id].models?.length ?? 0) > 0 && (
+                      <div className="mt-1.5 flex flex-wrap gap-1">
+                        {(testResults[p.id].models ?? []).slice(0, 8).map(m => (
+                          <Chip key={m} size="sm" variant="flat" radius="sm" className="h-5 px-1.5 text-[10px]">
+                            {m}
+                          </Chip>
+                        ))}
+                        {testResults[p.id].modelCount! > 8 && (
+                          <Chip size="sm" variant="flat" radius="sm" className="h-5 px-1.5 text-[10px] text-default-400">
+                            +{testResults[p.id].modelCount! - 8} more
+                          </Chip>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 {/* Edit fields */}
                 {isEditing && (
                   <div className="mt-7 grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -442,18 +500,32 @@ export default function AiProvidersPage() {
                 )}
 
                 {/* Footer */}
-                <div className="mt-5 flex items-center justify-between border-t border-divider pt-4">
+                <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-divider pt-4">
                   <Switch size="sm" isSelected={p.enabled} onValueChange={v => void saveProvider(pid, { enabled: v })}>
                     <span className="text-xs text-default-500">Enabled</span>
                   </Switch>
-                  {isEditing ? (
-                    <div className="flex gap-2">
-                      <Button size="sm" variant="light" radius="md" onPress={() => setEditing(prev => { const n = { ...prev }; delete n[p.id]; return n; })}>Cancel</Button>
-                      <Button size="sm" color="primary" radius="md" startContent={<Save className="h-3.5 w-3.5"/>} isLoading={savingId === p.id} onPress={() => void saveProvider(pid, { ...(editState.apiKey ? { apiKey: editState.apiKey } : {}), ...(editState.defaultModel ? { defaultModel: editState.defaultModel } : {}), ...(editState.baseUrl ? { baseUrl: editState.baseUrl } : {}) })}>Save</Button>
-                    </div>
-                  ) : (
-                    <Button size="sm" variant="bordered" radius="md" onPress={() => setEditing(prev => ({ ...prev, [p.id]: {} }))}>Edit</Button>
-                  )}
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="light"
+                      radius="md"
+                      className="text-default-500"
+                      isDisabled={!!savingId || !(p.baseUrl && p.baseUrl.trim())}
+                      isLoading={testingId === p.id}
+                      startContent={testingId === p.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Beaker className="h-3.5 w-3.5" />}
+                      onPress={() => void testProvider(pid)}
+                    >
+                      Test
+                    </Button>
+                    {isEditing ? (
+                      <>
+                        <Button size="sm" variant="light" radius="md" onPress={() => setEditing(prev => { const n = { ...prev }; delete n[p.id]; return n; })}>Cancel</Button>
+                        <Button size="sm" color="primary" radius="md" startContent={<Save className="h-3.5 w-3.5"/>} isLoading={savingId === p.id} onPress={() => void saveProvider(pid, { ...(editState.apiKey ? { apiKey: editState.apiKey } : {}), ...(editState.defaultModel ? { defaultModel: editState.defaultModel } : {}), ...(editState.baseUrl ? { baseUrl: editState.baseUrl } : {}) })}>Save</Button>
+                      </>
+                    ) : (
+                      <Button size="sm" variant="bordered" radius="md" onPress={() => setEditing(prev => ({ ...prev, [p.id]: {} }))}>Edit</Button>
+                    )}
+                  </div>
                 </div>
               </Surface>
             );
