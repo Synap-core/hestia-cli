@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, writeFileSync, copyFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { randomBytes } from 'node:crypto';
 import type { EveSecrets } from './secrets-contract.js';
-import { readAgentKeyOrLegacy, readEveSecrets } from './secrets-contract.js';
+import { readAgentKeyOrLegacy, readEveSecrets, writeEveSecrets } from './secrets-contract.js';
 import { resolveSynapUrl } from './components.js';
 
 /** Default Hub Protocol path on the Synap API host (Better Auth / Hub REST). */
@@ -148,11 +149,16 @@ export async function writeClaudeCodeSettings(projectDir: string, cwd: string = 
 }
 
 /**
- * Dotenv for Hermes daemon — reads secrets and writes `.eve/hermes.env` for docker compose `env_file`.
+ * Dotenv for Hermes daemon — reads secrets and writes `~/.eve/hermes.env`
+ * for docker compose `env_file`. Injects Hub credentials, AI config, and
+ * centralised channel tokens so Hermes can serve Telegram/Discord/etc without
+ * storing its own copy of the credentials.
  *
- * Uses the `hermes` agent's key (its own user + scopes on the pod),
- * minted by the post-install hook in @eve/lifecycle. Falls back to
- * legacy only for installs that haven't migrated yet.
+ * Channel routing: `secrets.channelRouting` maps platform → agent-slug. If the
+ * target agent is `hermes` (or no routing entry exists), channel env vars are
+ * injected. This keeps Hermes stateless relative to channel credentials while
+ * remaining trivially swappable — change the routing entry and re-run to
+ * redirect a platform to another agent without touching Hermes config.
  */
 export async function writeHermesEnvFile(cwd: string = process.cwd()): Promise<string> {
   const secrets = await readEveSecrets(cwd);
@@ -160,10 +166,21 @@ export async function writeHermesEnvFile(cwd: string = process.cwd()): Promise<s
   const hermesConfig = secrets?.builder?.hermes;
   const synapApiKey = await readAgentKeyOrLegacy('hermes', cwd);
 
+  // Ensure a stable API_SERVER_KEY exists — generated once at first write,
+  // then reused so OpenWebUI (and other consumers) don't need reconfiguring.
+  let apiServerKey = hermesConfig?.apiServerKey;
+  if (!apiServerKey) {
+    apiServerKey = randomBytes(32).toString('hex');
+    await writeEveSecrets({
+      builder: { hermes: { ...(hermesConfig ?? {}), apiServerKey } },
+    });
+  }
+
   const eveDir = join(cwd, '.eve');
   mkdirSync(eveDir, { recursive: true });
   const path = join(eveDir, 'hermes.env');
-  const lines = [
+
+  const lines: string[] = [
     `SYNAP_API_URL=${resolveSynapUrl(secrets)}`,
     `SYNAP_API_KEY=${synapApiKey}`,
     `HUB_BASE_URL=${hub ?? ''}`,
@@ -171,8 +188,284 @@ export async function writeHermesEnvFile(cwd: string = process.cwd()): Promise<s
     `HERMES_POLL_INTERVAL_MS=${hermesConfig?.pollIntervalMs ?? 30000}`,
     `HERMES_MAX_CONCURRENT_TASKS=${hermesConfig?.maxConcurrentTasks ?? 1}`,
     `EVE_WORKSPACE_DIR=${secrets?.builder?.workspaceDir ?? join(cwd, '.eve', 'workspace')}`,
-    '',
+    // API server key — clients (OpenWebUI, LobeChat, etc.) use this to call
+    // the Hermes OpenAI-compat gateway at port 8642.
+    `API_SERVER_ENABLED=true`,
+    `API_SERVER_PORT=8642`,
+    `API_SERVER_KEY=${apiServerKey}`,
   ];
+
+  // Inject centralised channel credentials for each platform routed to hermes
+  // (or defaulting to hermes when no routing entry is set).
+  const routing = secrets?.channels ? buildChannelRouting(secrets) : {};
+  const channels = secrets?.channels ?? {};
+
+  if (channels.telegram?.enabled && routing.telegram === 'hermes') {
+    lines.push(`TELEGRAM_BOT_TOKEN=${channels.telegram.botToken ?? ''}`);
+    if (channels.telegram.webhookSecret) {
+      lines.push(`TELEGRAM_WEBHOOK_SECRET=${channels.telegram.webhookSecret}`);
+    }
+  }
+  if (channels.discord?.enabled && routing.discord === 'hermes') {
+    lines.push(`DISCORD_BOT_TOKEN=${channels.discord.botToken ?? ''}`);
+    if (channels.discord.guildId) lines.push(`DISCORD_GUILD_ID=${channels.discord.guildId}`);
+    if (channels.discord.applicationId) lines.push(`DISCORD_APPLICATION_ID=${channels.discord.applicationId}`);
+  }
+  if (channels.whatsapp?.enabled && routing.whatsapp === 'hermes') {
+    lines.push(`WHATSAPP_PHONE_NUMBER_ID=${channels.whatsapp.phoneNumberId ?? ''}`);
+    lines.push(`WHATSAPP_ACCESS_TOKEN=${channels.whatsapp.accessToken ?? ''}`);
+    if (channels.whatsapp.verifyToken) lines.push(`WHATSAPP_VERIFY_TOKEN=${channels.whatsapp.verifyToken}`);
+  }
+  if (channels.signal?.enabled && routing.signal === 'hermes') {
+    lines.push(`SIGNAL_PHONE_NUMBER=${channels.signal.phoneNumber ?? ''}`);
+    lines.push(`SIGNAL_API_URL=${channels.signal.apiUrl ?? ''}`);
+  }
+  if (channels.matrix?.enabled && routing.matrix === 'hermes') {
+    lines.push(`MATRIX_HOMESERVER_URL=${channels.matrix.homeserverUrl ?? ''}`);
+    lines.push(`MATRIX_ACCESS_TOKEN=${channels.matrix.accessToken ?? ''}`);
+    if (channels.matrix.roomId) lines.push(`MATRIX_ROOM_ID=${channels.matrix.roomId}`);
+  }
+  if (channels.slack?.enabled && routing.slack === 'hermes') {
+    lines.push(`SLACK_BOT_TOKEN=${channels.slack.botToken ?? ''}`);
+    lines.push(`SLACK_SIGNING_SECRET=${channels.slack.signingSecret ?? ''}`);
+    if (channels.slack.appToken) lines.push(`SLACK_APP_TOKEN=${channels.slack.appToken}`);
+  }
+
+  lines.push('');
   writeFileSync(path, lines.join('\n'), { mode: 0o600 });
   return path;
+}
+
+/**
+ * Resolve effective channel routing: for each platform, return the target
+ * agent slug. Falls back to 'hermes' when no explicit routing is configured.
+ */
+function buildChannelRouting(secrets: EveSecrets): Record<string, string> {
+  const platforms = ['telegram', 'discord', 'whatsapp', 'signal', 'matrix', 'slack'] as const;
+  const result: Record<string, string> = {};
+  for (const p of platforms) {
+    result[p] = secrets.channelRouting?.[p] ?? 'hermes';
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Hermes config + Synap memory plugin generation
+// ---------------------------------------------------------------------------
+
+const HERMES_CONFIG_YAML = (
+  model: string,
+  baseUrl: string,
+  apiKey: string,
+  apiServerKey: string,
+) => `# Hermes config — managed by Eve (eve install / eve ai apply)
+# Editing this file directly is fine; Eve will overwrite the managed sections on the next apply.
+
+memory:
+  # Synap memory provider: 100% of memory syncs go to the Data Pod.
+  # The synap plugin lives at $HERMES_HOME/plugins/memory/synap/
+  provider: synap
+
+model:
+  name: ${model}
+  base_url: ${baseUrl}
+  api_key: ${apiKey}
+
+# OpenAI-compat API gateway — OpenWebUI, LobeChat, LibreChat connect here.
+# Port 8642 is exposed by docker-compose; clients reach it at hermes.${`<your-domain>`}
+# or directly at http://eve-builder-hermes:8642 from within eve-network.
+api_server:
+  enabled: true
+  port: 8642
+  key: ${apiServerKey}
+  host: 0.0.0.0
+
+# Hermes dashboard — admin UI
+dashboard:
+  port: 9119
+`;
+
+/**
+ * Writes `~/.eve/hermes/config.yaml` — Hermes picks this up at startup
+ * (via HERMES_HOME=/opt/data → /opt/data/config.yaml inside container,
+ * which maps to ~/.eve/hermes/config.yaml on the host).
+ *
+ * Sets `memory.provider: synap` so every conversation turn is forwarded
+ * to the Synap Data Pod via the plugin. Model block points Hermes at
+ * Synap IS as the OpenAI-compat backend (same hub used by all components).
+ */
+export async function writeHermesConfigYaml(cwd: string = process.cwd()): Promise<string> {
+  const secrets = await readEveSecrets(cwd);
+  const synapUrl = resolveSynapUrl(secrets);
+  const synapApiKey = await readAgentKeyOrLegacy('hermes', cwd);
+
+  // Resolve model — honour per-service override in secrets.ai.serviceModels.
+  // Default to synap/balanced (tier alias → IS routes to best available model).
+  const serviceModels = secrets?.ai?.serviceModels ?? {};
+  const model = serviceModels['hermes'] ?? 'synap/balanced';
+  const baseUrl = synapUrl ? `${synapUrl.replace(/\/$/, '')}/v1` : 'http://eve-brain-synap:4000/v1';
+
+  // Reuse the stable API server key (same one written to hermes.env).
+  const apiServerKey = secrets?.builder?.hermes?.apiServerKey ?? '';
+
+  const hermesDir = join(homedir(), '.eve', 'hermes');
+  mkdirSync(hermesDir, { recursive: true });
+  const configPath = join(hermesDir, 'config.yaml');
+  writeFileSync(configPath, HERMES_CONFIG_YAML(model, baseUrl, synapApiKey, apiServerKey), { mode: 0o600 });
+  return configPath;
+}
+
+// ---------------------------------------------------------------------------
+// Synap memory provider plugin (Python)
+// ---------------------------------------------------------------------------
+
+const SYNAP_PLUGIN_YAML = `name: synap
+version: 1.0.0
+description: Synap Data Pod memory provider — routes all Hermes memory operations to the Synap Hub Protocol
+hooks:
+  - sync_turn
+  - on_session_end
+  - on_memory_write
+  - prefetch
+`;
+
+const SYNAP_PROVIDER_PY = `"""
+Synap Data Pod — Hermes MemoryProvider plugin.
+
+Generated by Eve (eve install / eve ai apply). Do not edit manually;
+re-run the install flow to regenerate.
+
+This plugin receives 100% of Hermes memory syncs and forwards them to
+the Synap Data Pod via Hub Protocol. Hermes enforces a single-provider
+constraint so every conversation turn, session summary, and memory write
+lands in Synap — no local SQLite divergence.
+
+Env vars read at runtime (injected by Eve into hermes.env):
+  SYNAP_API_KEY   — Hub Protocol bearer token (hermes agent identity)
+  HUB_BASE_URL    — e.g. https://pod.example.com/api/hub
+"""
+import os
+import json
+import urllib.request
+import urllib.parse
+import urllib.error
+from typing import Any
+
+
+def _hub_url(path: str) -> str:
+    base = os.environ.get("HUB_BASE_URL", "").rstrip("/")
+    return f"{base}{path}"
+
+
+def _headers() -> dict[str, str]:
+    return {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {os.environ.get('SYNAP_API_KEY', '')}",
+    }
+
+
+def _post(path: str, payload: dict) -> dict | None:
+    try:
+        data = json.dumps(payload).encode()
+        req = urllib.request.Request(_hub_url(path), data=data, headers=_headers(), method="POST")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read())
+    except (urllib.error.URLError, Exception):
+        return None
+
+
+def _get(path: str) -> dict | None:
+    try:
+        req = urllib.request.Request(_hub_url(path), headers=_headers(), method="GET")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read())
+    except (urllib.error.URLError, Exception):
+        return None
+
+
+class SynapMemoryProvider:
+    """Synap Data Pod — Hermes MemoryProvider contract."""
+
+    def __init__(self):
+        self._session_id: str | None = None
+
+    def is_available(self) -> bool:
+        return bool(os.environ.get("SYNAP_API_KEY")) and bool(os.environ.get("HUB_BASE_URL"))
+
+    def initialize(self, session_id: str, **kwargs) -> None:
+        self._session_id = session_id
+
+    def prefetch(self, query: str) -> list[dict]:
+        """Return relevant memories from Synap for the given query.
+
+        Uses GET /memory?query=X — full-text search backed by knowledge_facts.
+        userId is resolved from the Bearer token (SYNAP_API_KEY = hermes agent).
+        """
+        if not query:
+            return []
+        try:
+            encoded_query = urllib.parse.quote(query)
+            encoded_session = urllib.parse.quote(self._session_id or "")
+            url = _hub_url(f"/memory?query={encoded_query}&limit=10&sessionId={encoded_session}")
+            req = urllib.request.Request(url, headers=_headers(), method="GET")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                items = json.loads(resp.read())
+                if isinstance(items, list):
+                    return items
+        except Exception:
+            pass
+        return []
+
+    def sync_turn(self, user: str, assistant: str) -> None:
+        """Persist a conversation turn as two memory facts."""
+        session_tag = f"[session:{self._session_id}]" if self._session_id else ""
+        if user:
+            _post("/memory", {"fact": f"{session_tag}[user] {user}"})
+        if assistant:
+            _post("/memory", {"fact": f"{session_tag}[assistant] {assistant}"})
+
+    def on_session_end(self, messages: list[dict]) -> None:
+        """Summarise the session as a single memory fact."""
+        if not messages:
+            return
+        parts = []
+        for m in messages[-20:]:  # cap at last 20 to avoid huge facts
+            role = m.get("role", "?")
+            content = str(m.get("content", ""))[:300]
+            parts.append(f"{role}: {content}")
+        summary = " | ".join(parts)
+        session_tag = f"[session:{self._session_id}] " if self._session_id else ""
+        _post("/memory", {"fact": f"{session_tag}[summary] {summary}", "confidence": 0.9})
+
+    def on_memory_write(self, action: str, target: str, content: str) -> None:
+        """Intercept explicit remember/update commands — store as facts."""
+        if action in ("remember", "add", "update", "replace"):
+            _post("/memory", {"fact": content, "confidence": 1.0})
+
+    def get_tool_schemas(self) -> list[dict]:
+        return []
+
+    def handle_tool_call(self, name: str, args: dict) -> Any:
+        return None
+
+
+def register(ctx):
+    ctx.register_memory_provider(SynapMemoryProvider())
+`;
+
+/**
+ * Generates the Synap memory provider plugin into `~/.eve/hermes/plugins/memory/synap/`:
+ *   - plugin.yaml  — Hermes plugin manifest
+ *   - __init__.py  — MemoryProvider implementation (pure stdlib, no deps)
+ *
+ * The plugin dir is volume-mounted into the Hermes container at
+ * $HERMES_HOME/plugins/memory/synap/ so the official image picks it up
+ * without any custom Dockerfile.
+ */
+export function generateSynapPlugin(): { pluginDir: string } {
+  const pluginDir = join(homedir(), '.eve', 'hermes', 'plugins', 'memory', 'synap');
+  mkdirSync(pluginDir, { recursive: true });
+  writeFileSync(join(pluginDir, 'plugin.yaml'), SYNAP_PLUGIN_YAML, 'utf-8');
+  writeFileSync(join(pluginDir, '__init__.py'), SYNAP_PROVIDER_PY, 'utf-8');
+  return { pluginDir };
 }

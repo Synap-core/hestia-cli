@@ -35,6 +35,9 @@ import {
   pruneOldImagesForRepo,
   ensureSynapLoopbackOverride,
   connectTraefikToEveNetwork,
+  writeHermesEnvFile,
+  writeHermesConfigYaml,
+  generateSynapPlugin,
   type ComponentInfo,
   type EnsureOverrideResult,
 } from "@eve/dna";
@@ -184,6 +187,9 @@ const UPDATE_PLAN: Record<string, UpdatePlan> = {
   traefik: { imagePull: "traefik:v3.0" },
   ollama: { imagePull: "ollama/ollama:latest" },
   openclaw: { imagePull: "ghcr.io/openclaw/openclaw:latest" },
+  // Hermes: pull latest image, then regenerate config + plugin so the new
+  // container starts with the current Synap memory provider and AI wiring.
+  hermes: { imagePull: "nousresearch/hermes-agent:latest" },
   rsshub: { imagePull: "diygod/rsshub:latest" },
   // openwebui + pipelines were installed via `docker compose up -d`. After
   // a remove/down the container is gone, so a plain `docker restart` after
@@ -513,6 +519,9 @@ async function* runPostUpdateHooks(comp: ComponentInfo): AsyncGenerator<Lifecycl
   if (comp.id === "synap") {
     yield* postUpdateConnectTraefik();
     yield* postUpdateReconcileAuth();
+  }
+  if (comp.id === "hermes") {
+    yield* postUpdateReconcileHermes();
   }
 }
 
@@ -876,6 +885,83 @@ async function waitThenReconcileOpenclaw(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Hermes — post-update reconciliation + install
+// ---------------------------------------------------------------------------
+
+/**
+ * After `eve update hermes`, regenerate the Synap memory plugin and
+ * config.yaml so the fresh container starts with the current AI wiring
+ * and memory provider. The plugin is pure Python + stdlib so there's
+ * nothing to compile — idempotent overwrite is fine.
+ */
+async function* postUpdateReconcileHermes(): AsyncGenerator<LifecycleEvent> {
+  yield { type: "log", line: "Regenerating Hermes config.yaml + Synap memory plugin…" };
+  try {
+    await writeHermesConfigYaml();
+    generateSynapPlugin();
+    yield { type: "log", line: "Hermes config + plugin regenerated ✓" };
+  } catch (err) {
+    yield {
+      type: "log",
+      line: `Warning: could not regenerate Hermes config — ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
+/**
+ * Install Hermes: generate env + config + plugin, pull image, run container.
+ *
+ * Unlike OpenClaw (docker run with inline env vars), Hermes reads config
+ * from a volume-mounted file (~/.eve/hermes/config.yaml) and an env_file
+ * (~/.eve/hermes.env). We write both before the container starts so it
+ * boots with the correct AI provider and memory plugin in one shot.
+ */
+async function* installHermes(): AsyncGenerator<LifecycleEvent> {
+  yield { type: "step", label: "Writing Hermes env + config + Synap memory plugin…" };
+  try {
+    await writeHermesEnvFile();
+    await writeHermesConfigYaml();
+    generateSynapPlugin();
+    yield { type: "log", line: "Env file, config.yaml, and Synap plugin written ✓" };
+  } catch (err) {
+    throw new Error(
+      `Failed to write Hermes config: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  yield* ensureEveNetwork();
+
+  yield { type: "step", label: "Pulling Hermes image…" };
+  const pullCode = yield* runCommand("docker", ["pull", "nousresearch/hermes-agent:latest"]);
+  if (pullCode !== 0) throw new Error(`docker pull nousresearch/hermes-agent:latest exited ${pullCode}`);
+
+  yield { type: "step", label: "Starting Hermes…" };
+  const hermesHome = join(homedir(), ".eve", "hermes");
+  mkdirSync(hermesHome, { recursive: true });
+  const hermesEnv = join(homedir(), ".eve", "hermes.env");
+
+  const args = [
+    "run", "-d",
+    "--name", "eve-builder-hermes",
+    "--network", "eve-network",
+    "--restart", "unless-stopped",
+    "-p", "8642:8642",
+    "-p", "9119:9119",
+    "-v", `${hermesHome}:/opt/data`,
+    "--env-file", hermesEnv,
+    "-e", "HERMES_HOME=/opt/data",
+    "-e", "API_SERVER_ENABLED=true",
+    "-e", "API_SERVER_PORT=8642",
+    "-e", "DASHBOARD_PORT=9119",
+    "nousresearch/hermes-agent:latest",
+  ];
+  const runCode = yield* runCommand("docker", args);
+  if (runCode !== 0) throw new Error(`docker run exited ${runCode}`);
+
+  yield { type: "log", line: "Hermes container running — gateway: :8642, dashboard: :9119" };
+}
+
 /**
  * Components that have an install recipe in this module (vs. CLI-only).
  * `update` falls back to the install path for these when the container
@@ -889,6 +975,7 @@ const HAS_INSTALL_RECIPE: ReadonlySet<string> = new Set([
   "openwebui",
   "openwebui-pipelines",
   "openclaw",
+  "hermes",
   "eve-dashboard",
 ]);
 
@@ -1169,7 +1256,11 @@ async function* runInstallRecipe(
       return;
     }
 
-    case "hermes":
+    case "hermes": {
+      yield* installHermes();
+      return;
+    }
+
     case "dokploy":
     case "opencode":
     case "openclaude":

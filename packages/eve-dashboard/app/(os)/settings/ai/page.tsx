@@ -6,7 +6,7 @@ import {
   Button, Input, Select, SelectItem, Spinner, addToast, Switch, Chip,
 } from "@heroui/react";
 import {
-  Plus, Trash2, RefreshCw, Save, Check, AlertCircle, Plug,
+  Plus, Trash2, RefreshCw, Save, Check, AlertCircle, Plug, MessageSquare, ExternalLink,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -30,11 +30,22 @@ interface AiConfig {
   fallbackProvider: ProviderId | null;
   /** Per-service override: componentId → providerId. Missing = use default. */
   serviceProviders: Partial<Record<string, ProviderId>>;
+  /** Per-service model override: componentId → model string. */
+  serviceModels: Partial<Record<string, string>>;
   providers: ProviderEntry[];
   validProviders: ProviderId[];
   /** Component ids that consume the central AI config. Server-driven. */
   aiConsumers: string[];
 }
+
+interface MessagingConfig {
+  enabled: boolean;
+  platform: string | null;
+  hasToken: boolean;
+  tokenMasked?: string;
+}
+
+type MessagingPlatform = "telegram" | "discord" | "signal" | "matrix";
 
 interface ApplyResult {
   ok: boolean;
@@ -99,17 +110,22 @@ export default function AiProvidersPage() {
   const router = useRouter();
   const [config, setConfig] = useState<AiConfig | null>(null);
   const [consumers, setConsumers] = useState<ComponentSummary[] | null>(null);
+  const [messaging, setMessaging] = useState<MessagingConfig | null>(null);
+  const [editingMessaging, setEditingMessaging] = useState<{ platform?: string; botToken?: string } | null>(null);
+  const [savingMessaging, setSavingMessaging] = useState(false);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
   const [editing, setEditing] = useState<Record<string, { apiKey?: string; defaultModel?: string }>>({});
   const [adding, setAdding] = useState<{ id?: ProviderId; apiKey?: string; defaultModel?: string } | null>(null);
+  const [editingServiceModels, setEditingServiceModels] = useState<Record<string, string>>({});
 
   const fetchConfig = useCallback(async () => {
     try {
-      const [aiRes, compRes] = await Promise.all([
+      const [aiRes, compRes, msgRes] = await Promise.all([
         fetch("/api/ai", { credentials: "include" }),
         fetch("/api/components", { credentials: "include" }),
+        fetch("/api/arms/messaging", { credentials: "include" }),
       ]);
       if (aiRes.status === 401) { router.push("/login"); return; }
       let aiConsumers: string[] = [];
@@ -126,6 +142,9 @@ export default function AiProvidersPage() {
             .filter(c => consumerSet.has(c.id))
             .map(c => ({ id: c.id, label: c.label, installed: c.installed })),
         );
+      }
+      if (msgRes.ok) {
+        setMessaging(await msgRes.json() as MessagingConfig);
       }
     } finally { setLoading(false); }
   }, [router]);
@@ -209,6 +228,73 @@ export default function AiProvidersPage() {
       });
       await fetchConfig();
     } finally { setSavingId(null); }
+  }
+
+  async function setServiceModel(componentId: string, model: string | null) {
+    setSavingId(`model-${componentId}`);
+    try {
+      const res = await fetch("/api/ai", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ serviceModels: { [componentId]: model } }),
+      });
+      const data = await res.json().catch(() => ({})) as { applied?: Array<{ id: string; outcome: string }> };
+      const wired = (data.applied ?? []).find(r => r.id === componentId);
+      addToast({
+        title: model === null
+          ? `${componentId} using provider default model${wired?.outcome === "ok" ? " · re-wired" : ""}`
+          : `${componentId} model set to ${model}${wired?.outcome === "ok" ? " · re-wired" : ""}`,
+        color: "success",
+      });
+      setEditingServiceModels(prev => { const n = { ...prev }; delete n[componentId]; return n; });
+      await fetchConfig();
+    } catch {
+      addToast({ title: "Failed to save model override", color: "danger" });
+    } finally { setSavingId(null); }
+  }
+
+  async function saveMessaging() {
+    if (!editingMessaging) return;
+    setSavingMessaging(true);
+    try {
+      const res = await fetch("/api/arms/messaging", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          enabled: true,
+          platform: editingMessaging.platform || null,
+          botToken: editingMessaging.botToken || null,
+        }),
+      });
+      if (res.ok) {
+        addToast({ title: "Messaging config saved · OpenClaw restarted", color: "success" });
+        setEditingMessaging(null);
+        await fetchConfig();
+      } else {
+        const err = await res.json() as { error?: string };
+        addToast({ title: err.error ?? "Save failed", color: "danger" });
+      }
+    } catch {
+      addToast({ title: "Save failed", color: "danger" });
+    } finally { setSavingMessaging(false); }
+  }
+
+  async function disableMessaging() {
+    setSavingMessaging(true);
+    try {
+      await fetch("/api/arms/messaging", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ enabled: false }),
+      });
+      addToast({ title: "Messaging disabled", color: "success" });
+      await fetchConfig();
+    } catch {
+      addToast({ title: "Failed", color: "danger" });
+    } finally { setSavingMessaging(false); }
   }
 
   async function applyWiring() {
@@ -557,62 +643,102 @@ export default function AiProvidersPage() {
             <h3 className="font-medium text-foreground">Per-service routing</h3>
           </div>
           <p className="mt-1 text-xs text-default-500">
-            By default each service uses your global provider above. Pick a
-            different provider here to override per service — saves and
-            re-wires automatically.
+            By default each service uses your global provider and model. Override either per service — saves and re-wires automatically.
           </p>
           <ul className="mt-4 space-y-2">
             {consumers.map(c => {
               const override = config?.serviceProviders?.[c.id];
+              const modelOverride = config?.serviceModels?.[c.id];
               const effective = override ?? config?.defaultProvider ?? null;
               const usable = (config?.providers ?? []).filter(
                 p => p.id === "ollama" || p.hasApiKey,
               );
+              const editingModel = editingServiceModels[c.id] ?? modelOverride ?? "";
+              const isModelDirty = editingServiceModels[c.id] !== undefined && editingServiceModels[c.id] !== (modelOverride ?? "");
               return (
                 <li
                   key={c.id}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-divider bg-content1 px-3 py-2.5"
+                  className="flex flex-col gap-2 rounded-lg border border-divider bg-content1 px-3 py-2.5"
                 >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-foreground">{c.label}</span>
-                      {!c.installed && (
-                        <Chip size="sm" variant="flat" radius="sm">not installed</Chip>
-                      )}
-                      {c.installed && override && (
-                        <Chip size="sm" color="primary" variant="flat" radius="sm">override</Chip>
-                      )}
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-foreground">{c.label}</span>
+                        {!c.installed && (
+                          <Chip size="sm" variant="flat" radius="sm">not installed</Chip>
+                        )}
+                        {c.installed && (override || modelOverride) && (
+                          <Chip size="sm" color="primary" variant="flat" radius="sm">override</Chip>
+                        )}
+                      </div>
+                      <p className="mt-0.5 text-[11px] text-default-500">
+                        {effective
+                          ? `Routes via ${PROVIDER_LABELS[effective as ProviderId] ?? effective}`
+                          : "No provider — pick one above first"}
+                        {modelOverride && ` · model: ${modelOverride}`}
+                      </p>
                     </div>
-                    <p className="mt-0.5 text-[11px] text-default-500">
-                      {effective
-                        ? `Routes via ${PROVIDER_LABELS[effective]}`
-                        : "No provider — pick one above first"}
-                    </p>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Select
+                        size="sm"
+                        variant="bordered"
+                        className="min-w-[180px]"
+                        aria-label={`Provider for ${c.label}`}
+                        isDisabled={!c.installed || !!savingId || usable.length === 0}
+                        selectedKeys={override ? new Set([override]) : new Set(["__default__"])}
+                        onSelectionChange={(keys) => {
+                          const sel = Array.from(keys)[0] as string | undefined;
+                          const next = sel === "__default__" || !sel
+                            ? null
+                            : sel as ProviderId;
+                          if (next === (override ?? null)) return;
+                          void setServiceProvider(c.id, next);
+                        }}
+                      >
+                        {[
+                          <SelectItem key="__default__">Use global default</SelectItem>,
+                          ...usable.map(p => (
+                            <SelectItem key={p.id}>{PROVIDER_LABELS[p.id]}</SelectItem>
+                          )),
+                        ]}
+                      </Select>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <Select
+                  {/* Per-service model override */}
+                  <div className="flex items-center gap-2">
+                    <Input
                       size="sm"
                       variant="bordered"
-                      className="min-w-[180px]"
-                      aria-label={`Provider for ${c.label}`}
-                      isDisabled={!c.installed || savingId === `svc-${c.id}` || usable.length === 0}
-                      selectedKeys={override ? new Set([override]) : new Set(["__default__"])}
-                      onSelectionChange={(keys) => {
-                        const sel = Array.from(keys)[0] as string | undefined;
-                        const next = sel === "__default__" || !sel
-                          ? null
-                          : sel as ProviderId;
-                        if (next === (override ?? null)) return;
-                        void setServiceProvider(c.id, next);
-                      }}
-                    >
-                      {[
-                        <SelectItem key="__default__">Use global default</SelectItem>,
-                        ...usable.map(p => (
-                          <SelectItem key={p.id}>{PROVIDER_LABELS[p.id]}</SelectItem>
-                        )),
-                      ]}
-                    </Select>
+                      placeholder="Model override (e.g. llama3.1:8b, claude-sonnet-4-7) — leave blank for provider default"
+                      className="flex-1 text-xs"
+                      value={editingModel}
+                      isDisabled={!c.installed || !!savingId}
+                      onValueChange={v => setEditingServiceModels(prev => ({ ...prev, [c.id]: v }))}
+                    />
+                    {isModelDirty && (
+                      <Button
+                        size="sm"
+                        color="primary"
+                        variant="flat"
+                        isLoading={savingId === `model-${c.id}`}
+                        onPress={() => {
+                          const val = editingServiceModels[c.id]?.trim() || null;
+                          void setServiceModel(c.id, val);
+                        }}
+                      >
+                        Save
+                      </Button>
+                    )}
+                    {modelOverride && !isModelDirty && (
+                      <Button
+                        size="sm"
+                        variant="flat"
+                        onPress={() => void setServiceModel(c.id, null)}
+                        isDisabled={!!savingId}
+                      >
+                        Clear
+                      </Button>
+                    )}
                   </div>
                 </li>
               );
@@ -632,13 +758,21 @@ export default function AiProvidersPage() {
         <ul className="mt-2 space-y-1">
           <li className="flex gap-2"><span className="text-default-400">→</span> Synap IS receives upstream provider keys (Anthropic / OpenAI / OpenRouter).</li>
           <li className="flex gap-2"><span className="text-default-400">→</span> OpenClaw is wired to use Synap IS as its OpenAI-compat backend.</li>
-          <li className="flex gap-2"><span className="text-default-400">→</span> Open WebUI is wired the same way.</li>
-          <li className="flex gap-2"><span className="text-default-400">→</span> Each service can override the global default via the per-service routing panel above.</li>
+          <li className="flex gap-2"><span className="text-default-400">→</span> Open WebUI and Hermes are wired the same way.</li>
+          <li className="flex gap-2"><span className="text-default-400">→</span> Each service can override the provider and model via the per-service routing panel above.</li>
         </ul>
         <p className="mt-3">
           Most changes auto-apply on save. Use{" "}
           <span className="font-medium text-foreground">Apply to components</span> when you want to manually re-push the current config (e.g. after restarting a container).
         </p>
+        <a
+          href="/settings/channels"
+          className="mt-3 inline-flex items-center gap-1.5 text-xs text-primary hover:underline"
+        >
+          <MessageSquare className="h-3.5 w-3.5" />
+          Configure messaging channels (Telegram, Discord, etc.)
+          <ExternalLink className="h-3 w-3 opacity-60" />
+        </a>
       </section>
     </div>
   );

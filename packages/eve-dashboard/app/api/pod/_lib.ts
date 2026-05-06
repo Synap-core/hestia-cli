@@ -89,6 +89,22 @@ export function resolveEveExternalUrl(
 }
 
 /**
+ * Mint a fresh JWT-Bearer assertion and exchange it for a Kratos session.
+ *
+ * Does NOT persist anything. Use this when minting a session for a
+ * user who is NOT the host owner — their pod token lives in the
+ * browser only (multi-user mode, see /api/auth/pod-signin docs).
+ *
+ * Throws `PodSigninError` on every error path so callers can surface a
+ * structured response to the dashboard UI.
+ */
+export async function mintPodUserToken(
+  operatorEmail: string,
+): Promise<PodSessionMint> {
+  return mintPodUserTokenInternal(operatorEmail, { persist: false });
+}
+
+/**
  * Mint a fresh JWT-Bearer assertion, exchange it for a Kratos session,
  * and persist the result in `~/.eve/secrets.json`.
  *
@@ -102,6 +118,13 @@ export function resolveEveExternalUrl(
  */
 export async function mintAndStorePodUserToken(
   operatorEmail: string,
+): Promise<PodSessionMint> {
+  return mintPodUserTokenInternal(operatorEmail, { persist: true });
+}
+
+async function mintPodUserTokenInternal(
+  operatorEmail: string,
+  opts: { persist: boolean },
 ): Promise<PodSessionMint> {
   const email = operatorEmail.trim().toLowerCase();
   if (!email) {
@@ -217,7 +240,9 @@ export async function mintAndStorePodUserToken(
   }
 
   const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
-  await writePodUserToken(accessToken, expiresAt, podUser.email);
+  if (opts.persist) {
+    await writePodUserToken(accessToken, expiresAt, podUser.email);
+  }
 
   return {
     token: accessToken,
@@ -228,6 +253,48 @@ export async function mintAndStorePodUserToken(
       name: podUser.name ?? null,
     },
   };
+}
+
+/**
+ * Verify a CP bearer token by calling CP's `/auth/get-session`. Returns
+ * the user identity if valid, or `null` if the token is rejected /
+ * unreachable.
+ *
+ * Used by the pod-signin route's multi-user gate: when a request
+ * carries a `cpToken`, we ask CP "who is this?" and compare against
+ * the host owner's stored userId before deciding whether to persist
+ * the resulting pod token to disk.
+ *
+ * NOTE: this is a deliberately narrow helper — we don't keep the
+ * Better Auth session shape stable enough to share types here. We only
+ * need `id` and `email` for the gate.
+ */
+export async function verifyCpTokenAgainstControlPlane(
+  cpToken: string,
+  cpBaseUrl: string,
+): Promise<{ userId: string; email: string } | null> {
+  if (!cpToken.trim()) return null;
+  let res: Response;
+  try {
+    res = await fetch(`${cpBaseUrl.replace(/\/+$/, "")}/auth/get-session`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${cpToken}`,
+        Accept: "application/json",
+      },
+      cache: "no-store",
+    });
+  } catch {
+    return null;
+  }
+  if (!res.ok) return null;
+  const body = (await res.json().catch(() => null)) as
+    | { user?: { id?: string; email?: string } }
+    | null;
+  const id = body?.user?.id;
+  const email = body?.user?.email;
+  if (!id || !email) return null;
+  return { userId: id, email };
 }
 
 /**

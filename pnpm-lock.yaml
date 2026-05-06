@@ -284,6 +284,9 @@ importers:
       '@heroui/theme':
         specifier: ^2.4.0
         version: 2.4.26(tailwindcss@3.4.19(tsx@4.21.0)(yaml@2.8.3))
+      '@synap-core/auth':
+        specifier: ^1.0.0
+        version: 1.0.1
       '@types/qrcode':
         specifier: ^1.5.0
         version: 1.5.6
@@ -2523,6 +2526,9 @@ packages:
 
   '@swc/helpers@0.5.21':
     resolution: {integrity: sha512-jI/VAmtdjB/RnI8GTnokyX7Ug8c+g+ffD6QRLa6XQewtnGyukKkKSk3wLTM3b5cjt1jNh9x0jfVlagdN2gDKQg==}
+
+  '@synap-core/auth@1.0.1':
+    resolution: {integrity: sha512-ZlM1IrvXFngm1KL1ssE7DMlkafF+UU4AxfifFAEZrn99WmbDYiaTsxm7p1Jd308N9KOZbHPQYbSkeoxs+M9lEg==}
 
   '@tanstack/react-virtual@3.11.3':
     resolution: {integrity: sha512-vCU+OTylXN3hdC8RKg68tPlBPjjxtzon7Ys46MgrSLE+JhSjSTPvoQifV6DQJeJmA8Q3KT6CphJbejupx85vFw==}
@@ -6943,6 +6949,8 @@ snapshots:
   '@swc/helpers@0.5.21':
     dependencies:
       tslib: 2.8.1
+
+  '@synap-core/auth@1.0.1': {}
 
   '@tanstack/react-virtual@3.11.3(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
     dependencies:

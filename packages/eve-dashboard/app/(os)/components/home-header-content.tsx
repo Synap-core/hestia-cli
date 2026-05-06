@@ -21,9 +21,29 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Plug, Sparkles } from "lucide-react";
+import {
+  Button,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+  addToast,
+} from "@heroui/react";
+import {
+  Circle,
+  ExternalLink,
+  LogOut,
+  Plug,
+  Sparkles,
+  User,
+} from "lucide-react";
 import { useStats } from "../hooks/use-stats";
+import { useMemberCount } from "../hooks/use-member-count";
 import { usePodPairing, type PairingState } from "../hooks/use-pod-pairing";
+import {
+  getSharedSession,
+  isSelfHostedSession,
+  signOutOfControlPlane,
+} from "@/lib/synap-auth";
 
 // ─── Greeting (header-left) ──────────────────────────────────────────────────
 
@@ -90,6 +110,7 @@ const ACCENT = {
   agents: "#34D399",
   events: "#A78BFA",
   inbox: "#60A5FA",
+  members: "#94A3B8",
 } as const;
 
 export interface HomeStatPillsProps {
@@ -164,6 +185,7 @@ export function HomeStatPills({
 
 function StatPillsCluster() {
   const { stats, isLoading } = useStats();
+  const { count: memberCount, isLoading: membersLoading } = useMemberCount();
   return (
     <div
       className="
@@ -195,6 +217,14 @@ function StatPillsCluster() {
         accent={ACCENT.inbox}
         href="/inbox"
         isLoading={isLoading}
+      />
+      <span className="h-3 w-px bg-foreground/[0.10]" aria-hidden />
+      <StatPill
+        label="members"
+        value={memberCount}
+        accent={ACCENT.members}
+        href="/settings/members"
+        isLoading={membersLoading}
       />
     </div>
   );
@@ -241,3 +271,249 @@ function StatPill({ label, value, accent, href, isLoading }: StatPillProps) {
     </Link>
   );
 }
+
+// ─── Pod status chip (header-right) ──────────────────────────────────────────
+//
+// Single-glance health of the local pod. Click opens the pair dialog
+// — same affordance as the "Pair your pod" CTA pill, but always
+// visible (even when paired) so the operator can re-pair / switch
+// account from one place.
+
+interface PodStatusChipProps {
+  pairingState: PairingState;
+  onClick: () => void;
+}
+
+const STATUS_TONE: Record<
+  PairingState,
+  { dot: string; label: string; tone: string }
+> = {
+  loading: { dot: "#94A3B8", label: "Checking…", tone: "text-foreground/55" },
+  unconfigured: {
+    dot: "#94A3B8",
+    label: "No pod",
+    tone: "text-foreground/55",
+  },
+  unpaired: {
+    dot: "#F59E0B",
+    label: "Unclaimed",
+    tone: "text-warning",
+  },
+  paired: {
+    dot: "#34D399",
+    label: "Pod connected",
+    tone: "text-success",
+  },
+  "needs-refresh": {
+    dot: "#34D399",
+    label: "Pod connected",
+    tone: "text-success",
+  },
+  "stale-cred": {
+    dot: "#EF4444",
+    label: "Stale",
+    tone: "text-danger",
+  },
+};
+
+export function PodStatusChip({ pairingState, onClick }: PodStatusChipProps) {
+  const tone = STATUS_TONE[pairingState];
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={`Pod status — ${tone.label}`}
+      className="
+        hidden md:inline-flex items-center gap-1.5
+        rounded-full px-2.5 py-1
+        bg-foreground/[0.04] border border-foreground/[0.06]
+        transition-colors duration-150
+        hover:bg-foreground/[0.06]
+        focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40
+      "
+    >
+      <span
+        aria-hidden
+        className="h-2 w-2 shrink-0 rounded-full"
+        style={{ background: tone.dot }}
+      />
+      <span className={`text-[11.5px] font-medium ${tone.tone}`}>
+        {tone.label}
+      </span>
+    </button>
+  );
+}
+
+// ─── Account avatar + popover ────────────────────────────────────────────────
+//
+// Right-most cluster element. 32px circle with initials (or image),
+// click → popover with name/email/mode + Manage account + Sign out.
+
+export interface AccountAvatarProps {
+  /**
+   * Optional override for the CP origin used by "Manage account". Falls
+   * back to `NEXT_PUBLIC_CP_API_URL` then `https://synap.live`.
+   */
+  cpAccountUrl?: string;
+}
+
+export function AccountAvatar({ cpAccountUrl }: AccountAvatarProps) {
+  const [session, setSession] = useState<ReturnType<
+    typeof getSharedSession
+  > | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
+
+  useEffect(() => {
+    setSession(getSharedSession());
+    function onStorage(e: StorageEvent) {
+      if (e.key !== "synap:session") return;
+      setSession(getSharedSession());
+    }
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  if (!session) {
+    return null;
+  }
+
+  const isSelfHosted = isSelfHostedSession(session);
+  const display = session.userName || "—";
+  const initials = computeInitials(display);
+
+  // For Manage account — point at the CP web account page.
+  const cpUrl =
+    cpAccountUrl ||
+    process.env.NEXT_PUBLIC_CP_API_URL ||
+    process.env.NEXT_PUBLIC_CP_BASE_URL ||
+    "https://api.synap.live";
+  const accountUrl = cpUrl.replace(/\/+$/, "") + "/account";
+
+  async function handleSignOut() {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      await signOutOfControlPlane();
+      addToast({ title: "Signed out", color: "success" });
+      // Force gate to re-evaluate by reloading; storage listener also
+      // fires across tabs.
+      window.location.reload();
+    } catch (err) {
+      addToast({
+        title: "Couldn't sign out",
+        description: err instanceof Error ? err.message : "Unknown error",
+        color: "danger",
+      });
+      setSigningOut(false);
+    }
+  }
+
+  return (
+    <Popover placement="bottom-end" radius="md" offset={6}>
+      <PopoverTrigger>
+        <button
+          type="button"
+          aria-label="Account menu"
+          className="
+            inline-flex h-8 w-8 shrink-0 items-center justify-center
+            rounded-full
+            bg-foreground/[0.06] ring-1 ring-inset ring-foreground/10
+            text-[11px] font-semibold uppercase tracking-tight text-foreground
+            transition-colors duration-150
+            hover:bg-foreground/[0.10]
+            focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40
+          "
+        >
+          {initials || (
+            <User className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+          )}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="p-0">
+        <div className="w-[260px] flex flex-col">
+          <div className="flex flex-col gap-1 px-4 pt-3.5 pb-3 border-b border-foreground/[0.06]">
+            <div className="flex items-center gap-2">
+              <p className="text-[13.5px] font-medium text-foreground truncate">
+                {display}
+              </p>
+              <span
+                className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.04em] ${
+                  isSelfHosted
+                    ? "bg-warning/15 text-warning"
+                    : "bg-primary/15 text-primary"
+                }`}
+              >
+                {isSelfHosted ? "Self-hosted" : "Synap"}
+              </span>
+            </div>
+            <p className="text-[11.5px] text-foreground/55 truncate">
+              {session.userId
+                ? `User ${session.userId.slice(0, 8)}…`
+                : isSelfHosted
+                  ? "Bound to local pod"
+                  : "Synap account"}
+            </p>
+          </div>
+
+          <div className="py-1">
+            {!isSelfHosted && (
+              <a
+                href={accountUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="
+                  flex items-center justify-between gap-2 px-4 py-2
+                  text-[12.5px] text-foreground
+                  hover:bg-foreground/[0.04]
+                "
+              >
+                <span>Manage account</span>
+                <ExternalLink
+                  className="h-3 w-3 text-foreground/55"
+                  strokeWidth={2}
+                  aria-hidden
+                />
+              </a>
+            )}
+            <button
+              type="button"
+              onClick={() => void handleSignOut()}
+              disabled={signingOut}
+              className="
+                flex w-full items-center justify-between gap-2 px-4 py-2
+                text-[12.5px] text-danger
+                hover:bg-danger/10
+                disabled:opacity-50
+              "
+            >
+              <span>{signingOut ? "Signing out…" : "Sign out"}</span>
+              <LogOut
+                className="h-3 w-3"
+                strokeWidth={2}
+                aria-hidden
+              />
+            </button>
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function computeInitials(displayName: string): string {
+  const trimmed = displayName.trim();
+  if (!trimmed) return "";
+  // If it's an email, use the first two characters of the local-part.
+  if (trimmed.includes("@")) {
+    return trimmed.slice(0, 2).toUpperCase();
+  }
+  const parts = trimmed.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+// Dummy reference so unused imports don't fail when the chip is hidden
+// behind a media query — keeps the bundler from tree-shaking lucide
+// icons we'll need at first paint.
+const _IconRefs = { Circle };
+void _IconRefs;

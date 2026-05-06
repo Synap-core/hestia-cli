@@ -48,6 +48,15 @@ export interface ComponentInfo {
   requires?: string[];
   /** Network identity — only present for HTTP-exposed services. */
   service?: ServiceInfo;
+  /**
+   * When true, the component is superseded by a better alternative.
+   * The component still installs and runs — users who have it keep it.
+   * `deprecationNotice` explains what to use instead and why.
+   */
+  deprecated?: boolean;
+  deprecationNotice?: string;
+  /** Recommended replacement component id, if any. */
+  replacedBy?: string;
 }
 
 export const COMPONENTS: ComponentInfo[] = [
@@ -122,44 +131,46 @@ This is the brain of the brain organ — most of what makes your stack feel inte
     organ: 'arms',
     label: 'OpenClaw',
     emoji: '🦾',
-    description: 'AI action layer. Gives your AI agent the ability to execute commands, access your files, and interact with the world.',
-    longDescription: `OpenClaw turns your AI from a chat companion into an agent that can actually do things. It runs as a sandboxed Linux environment with shell access, a filesystem, network tooling, and a skill system that scopes what an agent is allowed to touch.
+    description: 'AI action layer. Connects your stack to 24+ messaging platforms and executes agent skills. Prefer Hermes for new installs.',
+    longDescription: `OpenClaw turns your AI from a chat companion into an agent that can act across 24+ platforms — Telegram, Discord, WhatsApp, iMessage, Slack, Signal, Matrix, and more. It runs as a sandboxed Node.js gateway with shell access, a filesystem, MCP server mode (exposing channels to Claude Code and other MCP clients), and a skill system backed by the ClawHub registry (5,400+ community skills).
 
-Eve wires OpenClaw against Synap IS as its OpenAI-compatible provider, so the agent's brain can be any provider you've configured (Anthropic, OpenAI, OpenRouter, local Ollama). When the agent reads or writes data, it goes through Synap's Hub Protocol — full audit trail, governance via proposals when permissions don't allow direct writes.
+Eve wires OpenClaw against Synap as its OpenAI-compatible provider, so the agent's brain is any provider you've configured. When the agent reads or writes data it goes through Synap's Hub Protocol — full audit trail, proposals when permissions don't allow direct writes.
 
-This is the heart of the arms organ. Without OpenClaw, your stack can think and store; with it, the stack can act on your behalf.`,
-    homepage: 'https://github.com/synap-core/openclaw',
+**Note:** For new installs, Hermes is the recommended agent. Hermes has a contractual memory plugin that guarantees 100% of conversations sync to your Synap pod, better multi-agent orchestration, and a stronger security record. OpenClaw remains fully supported and is the better choice if you need MCP server mode for Claude Code or iMessage support.`,
+    homepage: 'https://openclaw.ai',
     category: 'agent',
     requires: ['synap'],
+    deprecated: true,
+    deprecationNotice: 'Prefer Hermes for new installs — it has native memory plugin integration with Synap, better security, and true multi-agent orchestration. OpenClaw stays fully functional and is the right choice for MCP bridge or iMessage. See docs/openclaw-vs-hermes.md.',
+    replacedBy: 'hermes',
     service: {
       containerName: 'eve-arms-openclaw',
-      // OpenClaw's gateway/canvas listens on 18789 inside the container —
-      // observable via `[canvas] host mounted at http://0.0.0.0:18789/`
-      // in the startup logs. The earlier 3000 mapping was wrong; it
-      // exposed a port nothing was actually serving, so Traefik routes
-      // for openclaw.<domain> 502'd with "connection refused."
       internalPort: 18789,
       hostPort: 18789,
       subdomain: 'openclaw',
-      // healthPath omitted: OpenClaw's web UI may not respond to GET / with
-      // 2xx (auth-gated, redirects, etc.). Container-running is enough for
-      // the verify step; browser users hit the UI via Traefik directly.
     },
   },
   {
     id: 'hermes',
     organ: 'builder',
     label: 'Hermes',
-    emoji: '🏗️',
-    description: 'AI builder system. Enables the agent to create, deploy, and manage new applications and services automatically.',
-    longDescription: `Hermes is the builder that lets your stack grow itself. It accepts high-level intents ("scaffold a Next.js app for tracking my reading", "deploy a Telegram bot for my notes") and produces real code, real Dockerfiles, real deployments — all through OpenClaw's actions and Synap's data.
+    emoji: '🧠',
+    description: 'AI agent with sovereign memory. Routes all conversations and channel messages to your Synap pod — nothing is lost.',
+    longDescription: `Hermes is the primary AI agent for your Eve stack. It runs as a headless gateway (port 8642) that handles messaging from Telegram, Discord, WhatsApp, Signal, Matrix, Slack, and 14 more platforms. Unlike other agents, Hermes has a contractual memory architecture: a custom Synap plugin (auto-generated by Eve) guarantees that 100% of every conversation turn is synced to your Data Pod.
 
-Hermes runs as a CLI helper rather than a long-running service: the agent invokes it on demand. That's why it has no UI of its own and no port — its surface lives inside the conversations you have with the agent.
+Key capabilities: true multi-agent orchestration (spawn specialised sub-agents), 7 terminal backends (local, Docker, SSH, Modal, Daytona), 61 built-in tools, self-improving skills (the agent creates and refines its own skills during use), and a dashboard on port 9119.
 
-Pair this with Dokploy or OpenCode if you want a full AI-driven development loop on your own server.`,
-    category: 'builder',
+The Synap plugin is the crown jewel: Eve generates \`synap_provider.py\` into the Hermes plugin directory. Hermes loads it on startup and from that point every turn — prefetch (memory context injected before each reply) + sync_turn (conversation written to Synap after each reply) + on_session_end (facts extracted at the end) — all route through Hub Protocol to your pod. Hermes stays stateless; Synap is the brain.`,
+    homepage: 'https://hermes-agent.nousresearch.com',
+    category: 'agent',
     requires: ['synap'],
-    // No service — Hermes is a CLI helper, not a network service
+    service: {
+      containerName: 'eve-builder-hermes',
+      internalPort: 8642,
+      hostPort: 8642,
+      subdomain: 'hermes',
+      healthPath: '/health',
+    },
   },
   {
     id: 'rsshub',

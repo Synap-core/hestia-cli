@@ -129,16 +129,11 @@ export class DockerComposeGenerator {
    * Add builder services: hermes (CLI tools like opencode/openclaude/claudecode have no containers)
    */
   addBuilderServices(): void {
-    // Hermes gets a real container; other builder tools run on the host.
-    // /opt/eve is the installed Eve CLI (mounted read-only from host).
-    // SYNAP_API_KEY + HUB_BASE_URL come from .eve/hermes.env (written by writeHermesEnvFile).
-    this.addService('hermes', {
-      command: [
-        'node', '/app/packages/@eve/builder/dist/index.js',
-        'builder', 'hermes', 'start',
-      ],
-      envFile: ['.eve/hermes.env'],
-    });
+    // Hermes uses the official nousresearch/hermes-agent:latest image — no
+    // command override needed, the image entrypoint handles startup.
+    // AI config + Hub credentials come from ~/.eve/hermes.env (env_file in compose).
+    // The Synap memory plugin is mounted via the HERMES_HOME volume.
+    this.addService('hermes');
   }
 
   /**

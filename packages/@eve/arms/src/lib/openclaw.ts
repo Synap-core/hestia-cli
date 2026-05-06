@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { setTimeout } from 'node:timers/promises';
+import { readEveSecrets } from '@eve/dna';
 
 export interface MCPConfig {
   command: string;
@@ -91,7 +92,11 @@ export class OpenClawService {
   }
 
   /**
-   * Start OpenClaw container
+   * Start OpenClaw container.
+   *
+   * Messaging and voice config are read from Eve secrets at start time so
+   * that env vars always reflect persisted configuration — not just in-memory
+   * state that disappears on restart.
    */
   async start(): Promise<void> {
     const isRunning = await this.isRunning();
@@ -101,6 +106,13 @@ export class OpenClawService {
     }
 
     console.log('🚀 Starting OpenClaw...');
+
+    // Merge persisted secrets over in-memory config so restart always picks
+    // up the saved messaging/voice settings even if configure* was never called
+    // in this process.
+    const secrets = await readEveSecrets().catch(() => null);
+    const messaging = secrets?.arms?.messaging ?? this.config.messaging;
+    const voice = secrets?.arms?.voice ?? this.config.voice;
 
     await this.runDockerCommand([
       'run',
@@ -113,13 +125,13 @@ export class OpenClawService {
       '-e', `SYNAP_API_URL=${this.config.synapApiUrl ?? ''}`,
       '-e', `SYNAP_API_KEY=${this.config.synapApiKey ?? ''}`,
       '-e', `DOKPLOY_API_URL=${this.config.dokployApiUrl ?? ''}`,
-      '-e', `MESSAGING_ENABLED=${this.config.messaging?.enabled ?? false}`,
-      '-e', `MESSAGING_PLATFORM=${this.config.messaging?.platform ?? ''}`,
-      '-e', `MESSAGING_BOT_TOKEN=${this.config.messaging?.botToken ?? ''}`,
-      '-e', `VOICE_ENABLED=${this.config.voice?.enabled ?? false}`,
-      '-e', `VOICE_PROVIDER=${this.config.voice?.provider ?? ''}`,
-      '-e', `VOICE_PHONE_NUMBER=${this.config.voice?.phoneNumber ?? ''}`,
-      '-e', `VOICE_SIP_URI=${this.config.voice?.sipUri ?? ''}`,
+      '-e', `MESSAGING_ENABLED=${messaging?.enabled ?? false}`,
+      '-e', `MESSAGING_PLATFORM=${messaging?.platform ?? ''}`,
+      '-e', `MESSAGING_BOT_TOKEN=${messaging?.botToken ?? ''}`,
+      '-e', `VOICE_ENABLED=${voice?.enabled ?? false}`,
+      '-e', `VOICE_PROVIDER=${voice?.provider ?? ''}`,
+      '-e', `VOICE_PHONE_NUMBER=${voice?.phoneNumber ?? ''}`,
+      '-e', `VOICE_SIP_URI=${voice?.sipUri ?? ''}`,
       '-v', 'eve-arms-openclaw-data:/data',
       '--restart', 'unless-stopped',
       'ghcr.io/openclaw/openclaw:latest',

@@ -18,7 +18,7 @@
 import { Tabs, Tab } from "@heroui/react";
 import { useRouter, usePathname } from "next/navigation";
 import {
-  UserCircle, Boxes, Sparkles, Globe, Stethoscope, Users,
+  UserCircle, Boxes, Sparkles, Globe, Stethoscope, Users, MessageSquare,
   type LucideIcon,
 } from "lucide-react";
 import { PaneHeader } from "../components/pane-header";
@@ -39,6 +39,7 @@ interface TabDef {
 const TABS: TabDef[] = [
   { href: "/settings",            label: "Account",     Icon: UserCircle },
   { href: "/settings/ai",         label: "AI",          Icon: Sparkles },
+  { href: "/settings/channels",   label: "Channels",    Icon: MessageSquare },
   { href: "/settings/components", label: "Components",  Icon: Boxes },
   { href: "/settings/networking", label: "Networking",  Icon: Globe },
   { href: "/settings/members",    label: "Members",     Icon: Users },

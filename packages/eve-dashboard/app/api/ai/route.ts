@@ -43,6 +43,7 @@ export async function GET() {
     defaultProvider: ai.defaultProvider ?? null,
     fallbackProvider: ai.fallbackProvider ?? null,
     serviceProviders: ai.serviceProviders ?? {},
+    serviceModels: ai.serviceModels ?? {},
     providers,
     validProviders: VALID_PROVIDERS,
     // Single source of truth: the client uses this list to filter
@@ -67,6 +68,12 @@ export async function PATCH(req: Request) {
      * Pass `null` for a key to clear that service's override.
      */
     serviceProviders?: Record<string, ProviderId | null>;
+    /**
+     * Per-service model override. `{ openclaw: "claude-sonnet-4-7" }` makes
+     * OpenClaw use that specific model regardless of the provider's defaultModel.
+     * Pass `null` for a key to clear that service's model override.
+     */
+    serviceModels?: Record<string, string | null>;
   };
 
   if (body.defaultProvider && !VALID_PROVIDERS.includes(body.defaultProvider)) {
@@ -91,17 +98,33 @@ export async function PATCH(req: Request) {
   if (body.fallbackProvider !== undefined) next.fallbackProvider = body.fallbackProvider ?? undefined;
   if (body.mode !== undefined) next.mode = body.mode;
 
+  // Read current secrets once for merging both provider and model maps.
+  const currentSecrets = body.serviceProviders || body.serviceModels
+    ? await readEveSecrets()
+    : null;
+
   // Merge serviceProviders: keep existing entries, drop the ones explicitly
   // set to `null`. This way the UI can clear one service without resending
   // the whole map.
   if (body.serviceProviders) {
-    const current = (await readEveSecrets())?.ai?.serviceProviders ?? {};
+    const current = currentSecrets?.ai?.serviceProviders ?? {};
     const merged: Record<string, ProviderId> = { ...current };
     for (const [svc, prov] of Object.entries(body.serviceProviders)) {
       if (prov === null) delete merged[svc];
       else merged[svc] = prov;
     }
     next.serviceProviders = merged;
+  }
+
+  // Merge serviceModels: same null-to-clear pattern.
+  if (body.serviceModels) {
+    const current = currentSecrets?.ai?.serviceModels ?? {};
+    const merged: Record<string, string> = { ...current };
+    for (const [svc, model] of Object.entries(body.serviceModels)) {
+      if (model === null) delete merged[svc];
+      else merged[svc] = model;
+    }
+    next.serviceModels = merged;
   }
 
   await writeEveSecrets({ ai: next as Parameters<typeof writeEveSecrets>[0]["ai"] });
@@ -119,6 +142,7 @@ export async function PATCH(req: Request) {
   const shouldApply =
     body.defaultProvider !== undefined ||
     body.serviceProviders !== undefined ||
+    body.serviceModels !== undefined ||
     body.mode !== undefined;
 
   if (shouldApply) {
@@ -126,7 +150,7 @@ export async function PATCH(req: Request) {
       const installed = await entityStateManager.getInstalledComponents();
       const consumers = installed.filter(id => AI_CONSUMERS.has(id));
       if (consumers.length > 0) {
-        const fresh = await readEveSecrets();
+        const fresh = await readEveSecrets(); // re-read after write
         applyResults = wireAllInstalledComponents(fresh, consumers);
 
         for (const id of AI_CONSUMERS_NEEDING_RECREATE) {
@@ -136,6 +160,7 @@ export async function PATCH(req: Request) {
           // — no need to recreate openclaw).
           const touchesThis =
             body.serviceProviders?.[id] !== undefined ||
+            body.serviceModels?.[id] !== undefined ||
             (body.defaultProvider !== undefined && !body.serviceProviders?.[id]);
           if (!touchesThis) continue;
 

@@ -276,24 +276,34 @@ export const SERVICE_REGISTRY: Record<Service, ServiceConfig> = {
     network: 'eve-network',
     restart: 'no',
   },
-  // Hermes — headless task orchestrator daemon
-  // Runs the Eve builder CLI from the host installation (/opt/eve) inside a
-  // Node container so it gets a clean process environment and restarts on crash.
-  // The host Eve install is mounted read-only; workspace artifacts go to a volume.
+  // Hermes — NousResearch headless AI agent (primary Eve agent provider).
+  // Official image: nousresearch/hermes-agent:latest
+  // HERMES_HOME=/opt/data is the working dir inside the container; we mount
+  // ~/.eve/hermes from the host so config, plugins, and session state persist
+  // across container restarts. The Synap memory provider plugin lives at
+  // ~/.eve/hermes/plugins/memory/synap/ (written by Eve's install flow).
   hermes: {
-    image: 'node:20-alpine',
+    image: 'nousresearch/hermes-agent:latest',
     containerName: 'eve-builder-hermes',
+    ports: ['8642:8642', '9119:9119'],
     volumes: [
-      '/opt/eve:/app:ro',          // Eve CLI from host (read-only)
-      'eve-builder-hermes-data:/data', // Task workspace + artifacts
+      '${HOME}/.eve/hermes:/opt/data', // HERMES_HOME — config + plugins + sessions
     ],
+    environment: {
+      HERMES_HOME: '/opt/data',
+      API_SERVER_ENABLED: 'true',
+      API_SERVER_PORT: '8642',
+      DASHBOARD_PORT: '9119',
+    },
+    envFile: ['${HOME}/.eve/hermes.env'],
     network: 'eve-network',
     restart: 'unless-stopped',
-    environment: {
-      NODE_ENV: 'production',
-      EVE_WORKSPACE_DIR: '/data/workspace',
+    healthCheck: {
+      command: 'curl -sf http://localhost:8642/health || exit 1',
+      interval: '15s',
+      timeout: '5s',
+      retries: 3,
     },
-    // command injected by the compose generator — see addBuilderServices()
   },
   // Eyes Services
   rsshub: {

@@ -27,45 +27,47 @@
  * See: synap-team-docs/content/team/platform/eve-os-home-design.mdx
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@heroui/react";
 import {
   Settings as SettingsIcon,
-  LogIn,
   AlertTriangle,
   RefreshCw,
 } from "lucide-react";
 import { PaneHeader } from "./components/pane-header";
 import {
+  AccountAvatar,
   HomeGreeting,
   HomeStatPills,
+  PodStatusChip,
 } from "./components/home-header-content";
 import { AppGrid } from "./components/app-grid";
 import { SearchBar } from "./components/search-bar";
 import { EmptyState } from "./components/empty-state";
-import {
-  BootstrapAdminCard,
-  ConfigurePodCard,
-} from "./components/bootstrap-admin-card";
 import { useHomeApps } from "./hooks/use-home-apps";
 import { useStats } from "./hooks/use-stats";
-import { useSetupStatus } from "./hooks/use-setup-status";
 import { usePodPairing } from "./hooks/use-pod-pairing";
-import { resolveAuthMethod } from "./lib/cp-auth";
-import { initiateCpOAuth } from "./lib/cp-oauth";
-import { DeviceFlowModal } from "./components/device-flow-modal";
 import { PodPairDialog } from "./components/pod-pair-dialog";
+import { EveAccountGate } from "./components/auth/EveAccountGate";
+import { PodConnectGate } from "./components/auth/PodConnectGate";
 
 export default function HomePage() {
+  return (
+    <EveAccountGate>
+      <PodConnectGate>
+        <HomeContent />
+      </PodConnectGate>
+    </EveAccountGate>
+  );
+}
+
+function HomeContent() {
   const router = useRouter();
   const [query, setQuery] = useState("");
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [isDeviceFlowOpen, setIsDeviceFlowOpen] = useState(false);
   const [isPairDialogOpen, setIsPairDialogOpen] = useState(false);
   const { apps, isLoading, bannerState, refetch } = useHomeApps();
   const { stats } = useStats();
-  const { state: setupState } = useSetupStatus();
   const {
     state: pairingState,
     userEmail: pairedEmail,
@@ -83,38 +85,6 @@ export default function HomePage() {
     );
   }, [query, apps]);
 
-  // Sign-in resolver: loopback Eve uses PKCE (full-page redirect);
-  // anywhere else uses device flow (modal with a user_code). Both
-  // persist the resulting JWT server-side; the browser only triggers
-  // the right machinery for its hostname.
-  const handleSignIn = useCallback(async () => {
-    setAuthError(null);
-    const method = resolveAuthMethod();
-
-    if (method === "device-flow") {
-      setIsDeviceFlowOpen(true);
-      return;
-    }
-
-    // PKCE: full-page redirect. If the navigation doesn't fire within
-    // 1.5s the user is stuck on a dead button — surface a hint.
-    try {
-      await initiateCpOAuth();
-      window.setTimeout(() => {
-        if (document.visibilityState !== "hidden") {
-          setAuthError(
-            "Couldn't reach Synap. Check your network or the CP base URL.",
-          );
-        }
-      }, 1500);
-    } catch (e) {
-      setAuthError(
-        e instanceof Error ? e.message : "Couldn't start sign-in",
-      );
-    }
-  }, []);
-
-  const isSignedOut = bannerState.kind === "signed-out";
   const isErrorBanner = bannerState.kind === "error";
   const noResultsForSearch =
     !isLoading && filtered.length === 0 && query.length > 0;
@@ -130,19 +100,11 @@ export default function HomePage() {
               pairingState={pairingState}
               onPairPod={() => setIsPairDialogOpen(true)}
             />
-            {isSignedOut && (
-              <Button
-                size="sm"
-                radius="full"
-                color="primary"
-                variant="flat"
-                startContent={<LogIn className="h-3.5 w-3.5" />}
-                onPress={() => void handleSignIn()}
-                className="ml-1 font-medium"
-              >
-                Sign in
-              </Button>
-            )}
+            <PodStatusChip
+              pairingState={pairingState}
+              onClick={() => setIsPairDialogOpen(true)}
+            />
+            <AccountAvatar />
             <Button
               isIconOnly
               variant="light"
@@ -163,32 +125,23 @@ export default function HomePage() {
       {/* Body — 20px outer gutter holds the concentric radius rule
           (pane 32 − gutter 20 = inner card radius 12). */}
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pb-5 pt-4 sm:px-6 sm:pt-5">
-        {(isErrorBanner || authError) && (
+        {isErrorBanner && (
           <div className="mb-3">
             <InlineErrorBanner
               message={
-                authError ??
-                (bannerState.kind === "error"
+                bannerState.kind === "error"
                   ? `Couldn't reach marketplace${
                       bannerState.message ? ` — ${bannerState.message}` : ""
                     }`
-                  : "")
+                  : ""
               }
-              onRetry={authError ? () => setAuthError(null) : refetch}
-              retryLabel={authError ? "Dismiss" : "Retry"}
+              onRetry={refetch}
+              retryLabel="Retry"
             />
           </div>
         )}
 
-        {setupState === "needsBootstrap" ? (
-          // Phase 5: pod has zero users — surface the first-admin claim
-          // card instead of the launcher. Keep the search bar hidden so
-          // the operator focuses on the single decision in front of them.
-          <BootstrapAdminCard />
-        ) : setupState === "unconfigured" ? (
-          // Eve doesn't know a pod URL yet — point at /settings.
-          <ConfigurePodCard />
-        ) : showColdEmpty ? (
+        {showColdEmpty ? (
           <EmptyState />
         ) : (
           <div className="min-h-0 flex-1">
@@ -212,20 +165,8 @@ export default function HomePage() {
           </div>
         )}
 
-        {setupState !== "needsBootstrap" && setupState !== "unconfigured" && (
-          <SearchBar value={query} onChange={setQuery} />
-        )}
+        <SearchBar value={query} onChange={setQuery} />
       </div>
-
-      <DeviceFlowModal
-        isOpen={isDeviceFlowOpen}
-        onClose={() => setIsDeviceFlowOpen(false)}
-        onApproved={() => {
-          // Token is on disk now; refetch apps so the catalog upgrades
-          // from public to per-user entitled.
-          refetch();
-        }}
-      />
 
       <PodPairDialog
         isOpen={isPairDialogOpen}

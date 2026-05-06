@@ -23,6 +23,7 @@ import { join, dirname } from 'node:path';
 import type { EveSecrets } from './secrets-contract.js';
 import { readAgentKeyOrLegacySync } from './secrets-contract.js';
 import { COMPONENTS } from './components.js';
+import { writeHermesConfigYaml, generateSynapPlugin } from './builder-hub-wiring.js';
 
 export interface WireAiResult {
   /** Component id this result is for. */
@@ -75,24 +76,37 @@ export function pickPrimaryProvider(
   if (usable.length === 0) return null;
 
   // 1. Per-service override
+  let base = null;
   if (componentId) {
     const override = secrets?.ai?.serviceProviders?.[componentId];
     if (override) {
       const hit = usable.find(p => p.id === override);
-      if (hit) return hit;
-      // Override points at a provider with no key → fall through to default
-      // rather than silently using the wrong one. (Caller can detect by
-      // comparing returned id to the override.)
+      if (hit) base = hit;
+      // Override points at a provider with no key → fall through to default.
     }
   }
 
   // 2. Global default
-  const def = secrets?.ai?.defaultProvider;
-  return (
-    usable.find(p => p.id === def) ??
-    usable.find(p => p.enabled !== false) ??
-    usable[0]
-  );
+  if (!base) {
+    const def = secrets?.ai?.defaultProvider;
+    base = (
+      usable.find(p => p.id === def) ??
+      usable.find(p => p.enabled !== false) ??
+      usable[0]
+    );
+  }
+
+  if (!base) return null;
+
+  // 3. Per-service model override: replace defaultModel without changing provider
+  if (componentId) {
+    const modelOverride = secrets?.ai?.serviceModels?.[componentId];
+    if (modelOverride) {
+      return { ...base, defaultModel: modelOverride };
+    }
+  }
+
+  return base;
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -137,6 +151,15 @@ function wireSynapIs(secrets: EveSecrets | null): WireAiResult {
     if (synapProvider.defaultModel) {
       envLines.push(`DEFAULT_AI_MODEL=${synapProvider.defaultModel}`);
     }
+  }
+
+  // Expose Ollama internal URL so the backend's /v1/models can discover
+  // locally-running models dynamically (no restart needed — env is read once
+  // at boot and cached; model list fetched fresh per /v1/models request).
+  const ollamaProvider = providers.find(p => p.id === 'ollama');
+  if (ollamaProvider) {
+    const ollamaUrl = secrets?.inference?.ollamaUrl ?? 'http://eve-brain-ollama:11434';
+    envLines.push(`OLLAMA_BASE_URL=${ollamaUrl}`);
   }
 
   // Append to existing .env, replacing any prior eve-managed block
@@ -293,12 +316,29 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
   const provider = pickPrimaryProvider(secrets, 'openwebui');
   const preferredModel = provider?.defaultModel;
 
+  // Build multi-provider URL + key lists (semicolon-separated, index-aligned).
+  // 1. Synap IS at port 4000 — always present when this runs.
+  // 2. Hermes gateway at port 8642 — added when installed + has an API key.
+  const apiBaseUrls: string[] = ['http://eve-brain-synap:4000/v1'];
+  const apiKeys: string[] = [synapApiKey];
+
+  const hermesApiServerKey = secrets?.builder?.hermes?.apiServerKey;
+  if (hermesApiServerKey && isContainerRunning('eve-builder-hermes')) {
+    // Inside eve-network, Hermes is reachable by container name.
+    apiBaseUrls.push('http://eve-builder-hermes:8642/v1');
+    apiKeys.push(hermesApiServerKey);
+  }
+
   const block = [
     marker,
     `SYNAP_API_KEY=${synapApiKey}`,
     // synap-backend (eve-brain-synap:4000) hosts /v1/chat/completions + /v1/models.
     // intelligence-hub (port 3001) is internal IS — it has no /v1 endpoints.
     `SYNAP_IS_URL=http://eve-brain-synap:4000`,
+    // Plural form takes precedence when pipelines is also installed.
+    // Hermes appears as a separate model source in the OpenWebUI model picker.
+    `OPENAI_API_BASE_URLS=${apiBaseUrls.join(';')}`,
+    `OPENAI_API_KEYS=${apiKeys.join(';')}`,
     ...(preferredModel ? [`DEFAULT_MODELS=${preferredModel}`] : []),
   ].join('\n');
 
@@ -313,24 +353,96 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
     };
   }
 
-  // Restart so the new env is picked up
-  if (isContainerRunning('hestia-openwebui')) {
-    dockerRestart('hestia-openwebui');
+  // `docker restart` doesn't re-read .env — use compose up -d to pick up
+  // the new OPENAI_API_BASE_URLS without a full teardown.
+  try {
+    execSync('docker compose up -d', { cwd: '/opt/openwebui', stdio: 'ignore' });
+  } catch {
+    // Fallback to restart if compose isn't available (shouldn't happen on a pod)
+    if (isContainerRunning('hestia-openwebui')) dockerRestart('hestia-openwebui');
   }
 
+  const hermesNote = hermesApiServerKey ? ' + Hermes gateway' : '';
   return {
     id: 'openwebui',
     outcome: 'ok',
-    summary: 'Open WebUI wired to Synap IS',
+    summary: `Open WebUI wired to Synap IS${hermesNote}`,
     detail: envPath,
   };
 }
 
 /**
- * Builder organ components (Hermes / OpenCode / OpenClaude) consume AI via
- * the Synap pod (Hub Protocol Bearer SYNAP_API_KEY). They don't talk to
- * upstream providers directly. Their wiring is handled by
- * `builder-hub-wiring.ts` already — this function defers to that.
+ * Hermes headless orchestrator — wires its .eve/hermes.env with AI model
+ * config so it can call the Synap IS endpoint (`eve-brain-synap:4000/v1`)
+ * rather than an upstream provider directly. Complements the Hub Protocol
+ * wiring already written by `writeHermesEnvFile()` in builder-hub-wiring.ts.
+ */
+function wireHermes(secrets: EveSecrets | null): WireAiResult {
+  const eveDir = join(process.cwd(), '.eve');
+  const hermesEnvPath = join(eveDir, 'hermes.env');
+  if (!existsSync(eveDir)) {
+    return { id: 'hermes', outcome: 'skipped', summary: '.eve dir not found — install Hermes first' };
+  }
+
+  const synapApiKey = readAgentKeyOrLegacySync('hermes', secrets);
+  if (!synapApiKey) {
+    return { id: 'hermes', outcome: 'skipped', summary: 'no Hermes Hub API key — run provisioning first' };
+  }
+
+  const provider = pickPrimaryProvider(secrets, 'hermes');
+  const preferredModel = provider?.defaultModel ?? 'synap/balanced';
+
+  // synap-backend (eve-brain-synap:4000) exposes /v1/chat/completions — same
+  // endpoint OpenClaw and OpenWebUI use. Hermes gets its own Hub key for auth.
+  const aiBlock = [
+    '# AI wiring — managed by eve ai apply',
+    `AI_BASE_URL=http://eve-brain-synap:4000/v1`,
+    `AI_API_KEY=${synapApiKey}`,
+    `AI_DEFAULT_MODEL=${preferredModel}`,
+  ].join('\n');
+
+  let existing = '';
+  try { existing = readFileSync(hermesEnvPath, 'utf-8'); } catch { /* missing */ }
+  const marker = '# AI wiring — managed by eve ai apply';
+  const before = existing.includes(marker) ? existing.split(marker)[0].trimEnd() : existing.trimEnd();
+  const merged = (before ? before + '\n\n' : '') + aiBlock + '\n';
+
+  try {
+    writeFileSync(hermesEnvPath, merged, { mode: 0o600 });
+  } catch (err) {
+    return {
+      id: 'hermes',
+      outcome: 'failed',
+      summary: 'could not write hermes.env AI block',
+      detail: err instanceof Error ? err.message : String(err),
+    };
+  }
+
+  // Regenerate config.yaml (memory.provider: synap + model block) and
+  // the Synap memory plugin Python files every time AI is (re)wired.
+  // These are idempotent writes — safe to call on every `eve ai apply`.
+  try {
+    void writeHermesConfigYaml(process.cwd()); // async, fire-and-forget
+    generateSynapPlugin();
+  } catch { /* non-fatal — hermes.env wiring already succeeded */ }
+
+  // Restart Hermes container so the new config is picked up
+  if (isContainerRunning('eve-builder-hermes')) {
+    dockerRestart('eve-builder-hermes');
+  }
+
+  return {
+    id: 'hermes',
+    outcome: 'ok',
+    summary: `Hermes wired → ${preferredModel} (config + plugin regenerated)`,
+    detail: hermesEnvPath,
+  };
+}
+
+/**
+ * Builder organ components (OpenCode / OpenClaude) consume AI via the Synap
+ * pod (Hub Protocol Bearer SYNAP_API_KEY). Their wiring is handled by
+ * `builder-hub-wiring.ts` — this function defers to that.
  */
 function wireBuilder(_secrets: EveSecrets | null, componentId: string): WireAiResult {
   return {
@@ -360,6 +472,7 @@ export const AI_CONSUMERS: ReadonlySet<string> = new Set([
   'synap',
   'openclaw',
   'openwebui',
+  'hermes',
 ]);
 
 /**
@@ -391,7 +504,7 @@ export function wireComponentAi(componentId: string, secrets: EveSecrets | null)
     case 'synap':     return wireSynapIs(secrets);
     case 'openclaw':  return wireOpenclaw(secrets);
     case 'openwebui': return wireOpenwebui(secrets);
-    case 'hermes':
+    case 'hermes':    return wireHermes(secrets);
     case 'opencode':
     case 'openclaude':
       return wireBuilder(secrets, componentId);
@@ -413,8 +526,6 @@ export function wireAllInstalledComponents(
   secrets: EveSecrets | null,
   installedComponents: string[],
 ): WireAiResult[] {
-  // Prevent unused-import warnings while still surfacing pickPrimaryProvider for future helpers.
-  void pickPrimaryProvider;
   return installedComponents.map(id => wireComponentAi(id, secrets));
 }
 

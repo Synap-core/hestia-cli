@@ -104,6 +104,7 @@ export {
   type CodeEngine,
   type PodIssuerKeyPair,
   type PodUserTokenRecord,
+  type CpUserSession,
   DEFAULT_CODE_ENGINE,
   readEveSecrets,
   writeEveSecrets,
@@ -120,6 +121,10 @@ export {
   readPodUserToken,
   writePodUserToken,
   clearPodUserToken,
+  readCpUserSession,
+  writeCpUserSession,
+  clearCpUserSession,
+  isCpSessionStale,
 } from './secrets-contract.js';
 
 // Agent registry — single source of truth for which Synap agents Eve
@@ -214,6 +219,8 @@ export {
   writeBuilderProjectEnv,
   writeSandboxEnvFile,
   writeHermesEnvFile,
+  writeHermesConfigYaml,
+  generateSynapPlugin,
   copySynapSkillIntoClaudeProject,
   writeClaudeCodeSettings,
 } from './builder-hub-wiring.js';

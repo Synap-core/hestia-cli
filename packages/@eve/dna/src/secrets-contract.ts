@@ -27,8 +27,6 @@ const SecretsSchema = z.object({
           }),
         )
         .optional(),
-      /** Sync intent flag used by explicit `eve ai sync --workspace <id>` command. */
-      syncToSynap: z.boolean().optional(),
       /**
        * Per-service provider override. Keys are component ids
        * (e.g. "openclaw", "openwebui"); value is the provider id that
@@ -37,6 +35,14 @@ const SecretsSchema = z.object({
        */
       serviceProviders: z
         .record(z.string(), AiProviderSchema)
+        .optional(),
+      /**
+       * Per-service model override. Keys are component ids; value is a model
+       * string that overrides the provider's `defaultModel` for that service.
+       * E.g. `{ openclaw: "anthropic/claude-sonnet-4-7", hermes: "llama3.1:8b" }`.
+       */
+      serviceModels: z
+        .record(z.string(), z.string())
         .optional(),
     })
     .optional(),
@@ -126,10 +132,90 @@ const SecretsSchema = z.object({
           enabled: z.boolean().optional(),
           pollIntervalMs: z.number().optional(),
           maxConcurrentTasks: z.number().optional(),
+          /**
+           * Bearer token for the Hermes OpenAI-compat gateway (port 8642).
+           * Generated once at install time and stored here so OpenWebUI
+           * and other API consumers can call Hermes without extra config.
+           * Written to hermes.env as `API_SERVER_KEY` and to OpenWebUI's
+           * .env as the third entry in `OPENAI_API_KEYS`.
+           */
+          apiServerKey: z.string().optional(),
         })
         .optional(),
     })
     .optional(),
+  /**
+   * Centralised messaging channel credentials.
+   *
+   * Provider-agnostic: tokens live here once, any agent framework (Hermes,
+   * OpenClaw, a future one) reads from this single source. Switching the
+   * active agent never requires re-entering bot tokens.
+   *
+   * `channels` = credentials + enable flag per platform.
+   * `channelRouting` = which agent handles which platform. Default: 'hermes'.
+   *
+   * Wire path: `writeHermesEnvFile()` reads both objects and injects the
+   * appropriate env vars for the configured agent.
+   */
+  channels: z
+    .object({
+      telegram: z
+        .object({
+          enabled: z.boolean().optional(),
+          botToken: z.string().optional(),
+          webhookSecret: z.string().optional(),
+        })
+        .optional(),
+      discord: z
+        .object({
+          enabled: z.boolean().optional(),
+          botToken: z.string().optional(),
+          guildId: z.string().optional(),
+          applicationId: z.string().optional(),
+        })
+        .optional(),
+      whatsapp: z
+        .object({
+          enabled: z.boolean().optional(),
+          phoneNumberId: z.string().optional(),
+          accessToken: z.string().optional(),
+          verifyToken: z.string().optional(),
+        })
+        .optional(),
+      signal: z
+        .object({
+          enabled: z.boolean().optional(),
+          phoneNumber: z.string().optional(),
+          apiUrl: z.string().optional(),
+        })
+        .optional(),
+      matrix: z
+        .object({
+          enabled: z.boolean().optional(),
+          homeserverUrl: z.string().optional(),
+          accessToken: z.string().optional(),
+          roomId: z.string().optional(),
+        })
+        .optional(),
+      slack: z
+        .object({
+          enabled: z.boolean().optional(),
+          botToken: z.string().optional(),
+          signingSecret: z.string().optional(),
+          appToken: z.string().optional(),
+        })
+        .optional(),
+    })
+    .optional(),
+  /**
+   * Per-channel agent routing. Keys are channel platform ids ('telegram',
+   * 'discord', etc.); values are agent component ids ('hermes', 'openclaw').
+   * Missing key → 'hermes' by default.
+   *
+   * Kept as free-form strings so adding new agents or platforms requires
+   * no schema migration.
+   */
+  channelRouting: z.record(z.string(), z.string()).optional(),
   arms: z
     .object({
       /** OpenClaw bridge config */
@@ -138,7 +224,11 @@ const SecretsSchema = z.object({
           synapApiKey: z.string().optional(),
         })
         .optional(),
-      /** Messaging platform bridges (Telegram, Signal, etc.) */
+      /**
+       * @deprecated Use top-level `channels` instead.
+       * Kept for back-compat with Eve installs that wrote messaging config
+       * before the centralised `channels` schema was introduced.
+       */
       messaging: z
         .object({
           enabled: z.boolean().optional(),
@@ -178,12 +268,43 @@ const SecretsSchema = z.object({
    */
   cp: z
     .object({
-      /** User-scoped JWT from the CP OAuth flow. */
+      /**
+       * @deprecated Legacy single-slot field used by the device-flow
+       * sign-in path. New code mirrors the JWT into `cp.userSession.token`
+       * so the host CLI / daemon has the full session shape (email,
+       * userId, expiry, 2FA bit). Read-only fallback for already-deployed
+       * Eve installs that did device-flow auth and never upgraded.
+       */
       userToken: z.string().optional(),
-      /** ISO-8601 timestamp the token was minted (for audit/debug). */
+      /** ISO-8601 timestamp the legacy token was minted (for audit/debug). */
       issuedAt: z.string().optional(),
       /** Optional expiry hint (server-side decode of JWT exp). */
       expiresAt: z.string().optional(),
+      /**
+       * Persisted CP user session — mirrors the CPSession shape from
+       * `@synap-core/auth`. Written by the dashboard's
+       * `POST /api/auth/sync` route after the browser completes a CP
+       * sign-in. The host CLI / daemon read this to act on the user's
+       * behalf without re-prompting.
+       *
+       * Single-slot, owner-only: only the FIRST signed-in user's session
+       * persists here. Subsequent users in the same browser get a no-op
+       * (their session lives in localStorage in the browser only). This
+       * matches the file-permission model — `~/.eve/secrets.json` is
+       * 0600 and tied to the host owner.
+       */
+      userSession: z
+        .object({
+          token: z.string(),
+          userId: z.string(),
+          email: z.string(),
+          name: z.string().optional(),
+          avatarUrl: z.string().optional(),
+          expiresAt: z.string().optional(),
+          twoFactorEnabled: z.boolean().optional(),
+          issuedAt: z.string(),
+        })
+        .optional(),
       /**
        * In-flight device authorization flows (RFC 8628), keyed by an
        * opaque handle the dashboard server hands to the browser. Each
@@ -677,6 +798,196 @@ export async function writePodUserToken(
     },
     cwd,
   );
+}
+
+// ---------------------------------------------------------------------------
+// CP user-session accessors (dashboard auth Phase 2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Persisted CP user session — mirrors the `CPSession` shape from
+ * `@synap-core/auth` so the host CLI / daemon can act as the user
+ * without re-prompting.
+ *
+ * Persistence rules (owner-only, single slot):
+ *   - Only the FIRST signed-in user gets written to disk. Subsequent
+ *     users keep their session in browser-side storage.
+ *   - `~/.eve/secrets.json` is 0600 — readable only by the host owner.
+ *   - The legacy `cp.userToken` field is kept readable for back-compat
+ *     but new code writes ONLY to `cp.userSession`.
+ */
+export interface CpUserSession {
+  /** Bearer JWT — the actual credential. */
+  token: string;
+  /** Stable CP user id (sub claim). */
+  userId: string;
+  /** Email at the time of mint. */
+  email: string;
+  /** Display name (optional). */
+  name?: string;
+  /** Avatar URL (optional). */
+  avatarUrl?: string;
+  /** ISO-8601 expiry. May be unset for non-expiring tokens. */
+  expiresAt?: string;
+  /** Whether 2FA is enabled on the account (informational). */
+  twoFactorEnabled?: boolean;
+  /** ISO-8601 — when the session was minted. Used for staleness checks. */
+  issuedAt: string;
+}
+
+/** 30 days — matches the CP's default session length. */
+const CP_SESSION_STALE_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Persist a freshly minted CP user session (merge-preserving).
+ *
+ * Always overwrites the slot — caller is responsible for the
+ * "owner-only / first user wins" gate (see `/api/auth/sync` route).
+ */
+export async function writeCpUserSession(
+  session: CpUserSession,
+  cwd: string = defaultEveCwd(),
+): Promise<EveSecrets> {
+  return writeEveSecrets(
+    {
+      cp: {
+        userSession: { ...session },
+      },
+    },
+    cwd,
+  );
+}
+
+/**
+ * Read the cached CP user session.
+ *
+ * Returns `null` when:
+ *   - No session is stored at all.
+ *   - The stored session is stale (see `isCpSessionStale`).
+ *
+ * Falls back to the legacy `cp.userToken` slot when `userSession` is
+ * missing — older Eve installs that did device-flow auth before this
+ * helper landed kept their JWT there. The fallback synthesizes a
+ * partial `CpUserSession` so callers see a uniform shape; `userId`,
+ * `email`, etc. are best-effort decoded from the JWT payload.
+ */
+export async function readCpUserSession(
+  cwd: string = defaultEveCwd(),
+): Promise<CpUserSession | null> {
+  const secrets = await readEveSecrets(cwd);
+  const session = secrets?.cp?.userSession;
+  if (session && session.token && session.userId && session.email && session.issuedAt) {
+    if (isCpSessionStale(session)) return null;
+    return { ...session };
+  }
+
+  // Legacy fallback — synthesize a partial session from `cp.userToken`.
+  // We don't write the synthesized record back; the dashboard's
+  // /api/auth/sync route is the single writer that materializes a
+  // proper `userSession` from a fresh CP sign-in.
+  const legacyToken = secrets?.cp?.userToken?.trim();
+  if (!legacyToken) return null;
+
+  let userId = "";
+  let email = "";
+  let expiresAt = secrets?.cp?.expiresAt;
+  try {
+    const [, payloadB64] = legacyToken.split(".");
+    if (payloadB64) {
+      const payload = JSON.parse(
+        Buffer.from(payloadB64, "base64url").toString("utf-8"),
+      ) as { sub?: string; email?: string; exp?: number };
+      if (typeof payload.sub === "string") userId = payload.sub;
+      if (typeof payload.email === "string") email = payload.email;
+      if (!expiresAt && typeof payload.exp === "number") {
+        expiresAt = new Date(payload.exp * 1000).toISOString();
+      }
+    }
+  } catch {
+    // Malformed JWT — fall through with empty strings; isCpSessionStale
+    // will trigger on the missing issuedAt below.
+  }
+
+  if (!userId || !email) return null;
+
+  const synthesized: CpUserSession = {
+    token: legacyToken,
+    userId,
+    email,
+    expiresAt,
+    issuedAt: secrets?.cp?.issuedAt ?? new Date(0).toISOString(),
+  };
+  if (isCpSessionStale(synthesized)) return null;
+  return synthesized;
+}
+
+/**
+ * Drop the persisted CP session.
+ *
+ * `mergeNested` skips undefined values, so we can't just write
+ * `userSession: undefined` — the cleared field would persist on the
+ * next read. Instead we round-trip the full file with the field
+ * removed (mirrors `clearPodUserToken`).
+ *
+ * Also clears the legacy `cp.userToken` / `cp.issuedAt` / `cp.expiresAt`
+ * fields so a sign-out is total — otherwise `readCpUserSession` would
+ * fall back to the legacy slot and look like the user is still signed in.
+ */
+export async function clearCpUserSession(
+  cwd: string = defaultEveCwd(),
+): Promise<EveSecrets> {
+  const current = await readEveSecrets(cwd);
+  if (!current) {
+    return writeEveSecrets({}, cwd);
+  }
+  const cp = (current.cp ?? {}) as Record<string, unknown>;
+  const stripped: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(cp)) {
+    if (
+      k === "userSession" ||
+      k === "userToken" ||
+      k === "issuedAt" ||
+      k === "expiresAt"
+    ) {
+      continue;
+    }
+    stripped[k] = v;
+  }
+
+  const path = secretsPath(cwd);
+  const next: EveSecrets = {
+    ...current,
+    cp: stripped as EveSecrets["cp"],
+    version: "1",
+    updatedAt: new Date().toISOString(),
+  };
+  await mkdir(join(cwd, ".eve", "secrets"), { recursive: true });
+  await writeFile(path, JSON.stringify(next, null, 2), { mode: 0o600 });
+  return next;
+}
+
+/**
+ * Returns true when the session should NOT be trusted.
+ *
+ * Rules (any one triggers stale):
+ *   1. `expiresAt` set and in the past.
+ *   2. `expiresAt` unset AND `issuedAt` older than 30 days.
+ *   3. `issuedAt` unparseable.
+ *
+ * Callers SHOULD treat a stale session as "must re-sign-in". The
+ * session row is left on disk — `clearCpUserSession()` is the explicit
+ * removal.
+ */
+export function isCpSessionStale(session: CpUserSession, now: Date = new Date()): boolean {
+  const nowMs = now.getTime();
+  if (session.expiresAt) {
+    const expMs = Date.parse(session.expiresAt);
+    if (Number.isNaN(expMs)) return true;
+    return expMs <= nowMs;
+  }
+  const iatMs = Date.parse(session.issuedAt);
+  if (Number.isNaN(iatMs)) return true;
+  return nowMs - iatMs > CP_SESSION_STALE_AFTER_MS;
 }
 
 /**
