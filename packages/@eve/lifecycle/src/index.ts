@@ -523,6 +523,16 @@ async function* runPostUpdateHooks(comp: ComponentInfo): AsyncGenerator<Lifecycl
   if (comp.id === "hermes") {
     yield* postUpdateReconcileHermes();
   }
+  if (comp.id === "openwebui-pipelines") {
+    yield* postUpdateReconcilePipelines();
+  }
+}
+
+async function* postUpdateReconcilePipelines(): AsyncGenerator<LifecycleEvent> {
+  const pipelinesDir = "/opt/openwebui-pipelines";
+  const targetDir = join(pipelinesDir, "pipelines");
+  yield* copyReferencePipelines(targetDir);
+  yield* registerPipelinesInOpenwebui(pipelinesDir);
 }
 
 /**
@@ -1095,7 +1105,7 @@ async function* wireHermesViaOpenwebuiApi(
     return;
   }
 
-  const owAdminUrl = "http://localhost:3000";
+  const owAdminUrl = resolveOpenwebuiAdminUrl();
 
   // Wait up to 30 s for OpenWebUI to be reachable.
   let owReady = false;
@@ -1107,7 +1117,7 @@ async function* wireHermesViaOpenwebuiApi(
     await new Promise(r => setTimeout(r, 5_000));
   }
   if (!owReady) {
-    yield { type: "log", line: "OpenWebUI not reachable — run 'eve update hermes' once it is up" };
+    yield { type: "log", line: `OpenWebUI not reachable at ${owAdminUrl} — run 'eve update hermes' once it is up` };
     return;
   }
 
@@ -1183,6 +1193,13 @@ const HAS_INSTALL_RECIPE: ReadonlySet<string> = new Set([
 ]);
 
 /** True if a container with that name exists (any state). 4s timeout. */
+/** Resolve the host-side base URL for OpenWebUI's admin API. */
+function resolveOpenwebuiAdminUrl(): string {
+  const comp = COMPONENTS.find(c => c.id === "openwebui");
+  const port = comp?.service?.hostPort ?? 3011;
+  return `http://localhost:${port}`;
+}
+
 async function containerExists(name: string): Promise<boolean> {
   return new Promise(resolve => {
     const child = spawn("docker", ["ps", "-a", "--filter", `name=^${name}$`, "--format", "{{.Names}}"], {
@@ -1780,10 +1797,10 @@ async function* registerPipelinesInOpenwebui(deployDir: string): AsyncGenerator<
   }
 
   const pipelinesUrl = "http://eve-openwebui-pipelines:9099";
-  // OpenWebUI's admin API is reachable on the host via localhost:3000.
   // The pipeline sidecar URL uses the Docker network hostname because
   // OpenWebUI itself (inside Docker) needs to reach it.
-  const owAdminUrl = "http://localhost:3000";
+  // Host-side admin calls use the component's actual hostPort.
+  const owAdminUrl = resolveOpenwebuiAdminUrl();
 
   yield { type: "step", label: "Registering pipelines server in OpenWebUI…" };
 
