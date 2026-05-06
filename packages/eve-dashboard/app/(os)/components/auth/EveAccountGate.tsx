@@ -36,7 +36,7 @@
  *   synap-app/packages/core/auth/src/storage/shared-session.ts
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   checkCpSession,
   getAllPodSessions,
@@ -86,6 +86,10 @@ export interface EveAccountGateProps {
 export function EveAccountGate({ children }: EveAccountGateProps) {
   const [localPodUrl, setLocalPodUrl] = useState<string | null>(null);
   const [state, setState] = useState<GateState>(() => resolveStatus(null));
+  // Ref so the CP revalidation effect can read current state values
+  // without them being reactive dependencies (avoids infinite loop).
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   // ── Resolve the local pod URL ─────────────────────────────────────────
   // Used to disambiguate "signed in to local pod" from "signed in to
@@ -121,15 +125,20 @@ export function EveAccountGate({ children }: EveAccountGateProps) {
 
   // ── CP revalidation ───────────────────────────────────────────────────
   // Skip when there's no CP session to check (Mode B or signed-out).
+  // IMPORTANT: read state.cp via stateRef, NOT as a reactive dep.
+  // state.cp is excluded from the dep array on purpose: getSharedSession()
+  // returns a new object reference every time, so including state.cp
+  // would cause setState → new reference → re-run → infinite loop.
   useEffect(() => {
-    if (state.status !== "signed-in" || !state.cp) return;
-    if (isSelfHostedSession(state.cp)) return;
+    const { status, cp } = stateRef.current;
+    if (status !== "signed-in" || !cp) return;
+    if (isSelfHostedSession(cp)) return;
     let cancelled = false;
     void (async () => {
       try {
-        const cp = await checkCpSession();
+        const validCp = await checkCpSession();
         if (cancelled) return;
-        if (!cp) {
+        if (!validCp) {
           // CP session is gone. Re-resolve — if the user still has a
           // pod session for the local pod, they remain signed-in
           // (Mode B). Otherwise they fall back to signed-out.
@@ -142,7 +151,8 @@ export function EveAccountGate({ children }: EveAccountGateProps) {
     return () => {
       cancelled = true;
     };
-  }, [state.status, state.cp, localPodUrl]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.status, localPodUrl]);
 
   // ── Cross-tab sign-in/sign-out (CP + pods) ────────────────────────────
   useEffect(() => {

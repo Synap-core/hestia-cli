@@ -12,6 +12,7 @@ import { promisify } from 'node:util';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { select, isCancel } from '@clack/prompts';
 import {
   entityStateManager,
   readEveSecrets,
@@ -449,16 +450,30 @@ volumes:
         },
       };
     case 'hermes':
+      return {
+        label: 'Installing Hermes AI agent…',
+        async fn() {
+          const { runActionToCompletion } = await import('@eve/lifecycle');
+          const result = await runActionToCompletion('hermes', 'install');
+          if (!result.ok) throw new Error(result.error ?? 'Hermes install failed');
+          for (const line of result.logs) console.log('  ' + line);
+        },
+      };
     case 'dokploy':
     case 'opencode':
-    case 'openclaude': {
-      const info = COMPONENTS.find(c => c.id === componentId);
-      printError(`${info?.label ?? componentId} requires builder organ setup.`);
-      printInfo('  Run "eve builder init" to configure the builder stack.');
-      process.exit(1);
-      // unreachable — satisfies return type
-      return { label: '', fn: async () => {} };
-    }
+    case 'openclaude':
+      // Builders install via the lifecycle recipe (docker run / config write).
+      // The CLI handles them here so interactive edge-cases (missing deps, drift)
+      // surface the right recovery message.
+      return {
+        label: `Installing ${COMPONENTS.find(c => c.id === componentId)?.label ?? componentId}…`,
+        async fn() {
+          const { runActionToCompletion } = await import('@eve/lifecycle');
+          const result = await runActionToCompletion(componentId, 'install');
+          if (!result.ok) throw new Error(result.error ?? 'Install failed');
+          for (const line of result.logs) console.log('  ' + line);
+        },
+      };
     default:
       throw new Error(`No add handler for component: ${componentId}`);
   }
@@ -473,7 +488,7 @@ async function updateStateAfterAdd(componentId: string, finalState: 'ready' | 'e
     synap: 'brain',
     ollama: 'brain',
     openclaw: 'arms',
-    hermes: 'builder',
+    hermes: 'arms',   // Hermes is the primary agent, same organ as OpenClaw
     rsshub: 'eyes',
     traefik: 'legs',
     openwebui: 'eyes',
@@ -504,6 +519,51 @@ async function updateStateAfterAdd(componentId: string, finalState: 'ready' | 'e
 }
 
 // ---------------------------------------------------------------------------
+// Builder picker
+// ---------------------------------------------------------------------------
+
+/** The builders users can pick from. Order matters — shown top-to-bottom. */
+const BUILDER_OPTIONS = [
+  {
+    id: 'opencode',
+    label: 'OpenCode',
+    hint: 'AI-powered code editor running on your server',
+  },
+  {
+    id: 'openclaude',
+    label: 'OpenClaude',
+    hint: 'Claude Code as a service — delegate hard coding tasks to Claude',
+  },
+  {
+    id: 'dokploy',
+    label: 'Dokploy',
+    hint: 'Visual PaaS for deploying apps (like a self-hosted Railway)',
+  },
+] as const;
+
+/**
+ * Show an interactive picker for builder components and return the selected
+ * component ID, or null if the user cancelled.
+ */
+async function pickBuilder(): Promise<string | null> {
+  console.log();
+  const choice = await select({
+    message: 'Which builder would you like to install?',
+    options: BUILDER_OPTIONS.map(b => ({
+      value: b.id,
+      label: b.label,
+      hint: b.hint,
+    })),
+  });
+
+  if (isCancel(choice)) {
+    printInfo('Cancelled.');
+    return null;
+  }
+  return choice as string;
+}
+
+// ---------------------------------------------------------------------------
 // Command
 // ---------------------------------------------------------------------------
 
@@ -511,28 +571,54 @@ export function addCommand(program: Command): void {
   program
     .command('add')
     .description('Add a component to an existing entity')
-    .argument('[component]', 'Component ID to add (traefik, synap, ollama, openclaw, rsshub, openwebui, hermes, dokploy, opencode, openclaude)')
+    .argument('[component]', 'Component ID or category to add (hermes, synap, ollama, openclaw, rsshub, openwebui, builder, opencode, openclaude, dokploy, …)')
     .option('--synap-repo <path>', 'Path to synap-backend checkout (for synap component)')
     .option('--model <model>', 'Ollama model (for ollama component)', 'llama3.1:8b')
     .action(async (component: string | undefined, opts: { synapRepo?: string; model?: string }) => {
+      // "eve add builder" — show picker for which builder to install
+      if (component === 'builder') {
+        const picked = await pickBuilder();
+        if (!picked) process.exit(0);
+        component = picked;
+      }
+
       if (!component) {
         console.log();
         printHeader('Eve — Add Component', emojis.entity);
         console.log();
         printInfo('Usage: eve add <component>');
         console.log();
-        printInfo('Available components:');
-        for (const comp of COMPONENTS) {
-          const installed = await entityStateManager.isComponentInstalled(comp.id);
-          const tag = installed ? colors.success(' [installed]') : colors.muted(`[requires: ${(comp.requires ?? []).join(', ') || 'none'}]`);
-          console.log(`  ${comp.emoji} ${colors.primary.bold(comp.label)}${tag}`);
-          console.log(`    ${comp.description.split('\n')[0]}`);
+
+        // Group components for readability
+        const groups: Array<{ heading: string; ids: string[] }> = [
+          { heading: 'AI agents',      ids: ['hermes', 'openclaw'] },
+          { heading: 'Data & inference', ids: ['synap', 'ollama', 'openwebui', 'openwebui-pipelines', 'rsshub'] },
+          { heading: 'Builders',        ids: ['opencode', 'openclaude', 'dokploy'] },
+          { heading: 'Infrastructure',  ids: ['traefik', 'eve-dashboard'] },
+        ];
+
+        for (const group of groups) {
+          console.log(colors.muted.bold(`\n  ${group.heading}`));
+          for (const id of group.ids) {
+            const comp = COMPONENTS.find(c => c.id === id);
+            if (!comp) continue;
+            const installed = await entityStateManager.isComponentInstalled(id);
+            const tag = installed
+              ? colors.success(' [installed]')
+              : comp.deprecated
+                ? colors.muted(' [deprecated]')
+                : '';
+            console.log(`  ${comp.emoji}  ${colors.primary.bold(comp.label)}${tag}`);
+            console.log(`     ${colors.muted(comp.description.split('\n')[0])}`);
+          }
         }
+
         console.log();
+        printInfo('Tip: `eve add builder` shows a picker for OpenCode / OpenClaude / Dokploy');
         printInfo('Examples:');
-        printInfo('  eve add ollama              # Add local AI inference');
-        printInfo('  eve add openclaw            # Add AI agent layer');
-        printInfo('  eve add rsshub              # Add data perception');
+        printInfo('  eve add hermes              # AI agent with sovereign memory');
+        printInfo('  eve add ollama              # Local AI inference');
+        printInfo('  eve add builder             # Pick a code-execution builder');
         console.log();
         return;
       }
