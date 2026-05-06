@@ -239,6 +239,7 @@ export {
   findPodDeployDir,
   SYNAP_BACKEND_CONTAINERS,
   restartBackendContainer,
+  restartHermesIfRunning,
   connectTraefikToEveNetwork,
   type ConnectTraefikResult,
 } from './docker-helpers.js';

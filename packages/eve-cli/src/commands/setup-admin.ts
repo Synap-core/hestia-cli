@@ -12,6 +12,7 @@ import { Command } from 'commander';
 import {
   checkNeedsAdmin,
   createFirstAdmin,
+  resolveProvisioningToken,
 } from '@eve/lifecycle';
 import {
   readEveSecrets,
@@ -209,17 +210,17 @@ async function runSetupAdmin(opts: SetupAdminOptions): Promise<void> {
     return;
   }
 
-  // Resolve provisioning token
-  const provisioningToken =
-    process.env.EVE_PROVISIONING_TOKEN?.trim() ||
-    process.env.PROVISIONING_TOKEN?.trim() ||
-    '';
+  // Resolve provisioning token — checks env vars, /opt/synap-backend/.env,
+  // /opt/synap-backend/deploy/.env, and docker inspect (in that order).
+  const provisioningToken = resolveProvisioningToken() ?? '';
 
   if (!provisioningToken) {
     printError('PROVISIONING_TOKEN not found.');
     printInfo(
-      '  Set EVE_PROVISIONING_TOKEN=<token> or ensure the pod deploy/.env is readable.\n' +
-        '  The token lives in your pod\'s deploy/.env file.',
+      '  Checked: EVE_PROVISIONING_TOKEN / PROVISIONING_TOKEN env vars,\n' +
+        '           /opt/synap-backend/.env, /opt/synap-backend/deploy/.env,\n' +
+        '           and docker inspect on the running backend container.\n' +
+        '  Fix: set EVE_PROVISIONING_TOKEN=<token>, or ensure the pod .env is readable.',
     );
     process.exitCode = 1;
     return;

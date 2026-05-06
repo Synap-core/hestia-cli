@@ -1918,6 +1918,7 @@ export {
   provisionAllAgents,
   migrateLegacyToAgents,
   ensurePodProvisioningToken,
+  resolveProvisioningToken,
   checkNeedsAdmin,
   createFirstAdmin,
   type AuthStatus,

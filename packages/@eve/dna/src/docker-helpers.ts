@@ -129,6 +129,28 @@ export function restartBackendContainer(deployDir: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Hermes container restart
+// ---------------------------------------------------------------------------
+
+/**
+ * Restart the Hermes agent container if it is currently running.
+ * Used after writing hermes.env to make new channel tokens take effect.
+ * Returns true if the container was restarted, false if not running.
+ */
+export function restartHermesIfRunning(): boolean {
+  try {
+    execSync('docker inspect --format "{{.State.Running}}" eve-builder-hermes', {
+      stdio: 'pipe',
+    });
+    // Container exists; restart it
+    execSync('docker restart eve-builder-hermes', { stdio: 'pipe', timeout: 30_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Traefik → eve-network
 // ---------------------------------------------------------------------------
 

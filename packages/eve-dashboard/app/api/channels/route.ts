@@ -12,7 +12,7 @@
 
 import { NextResponse } from "next/server";
 import {
-  readEveSecrets, writeEveSecrets, writeHermesEnvFile,
+  readEveSecrets, writeEveSecrets, writeHermesEnvFile, restartHermesIfRunning,
 } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
 
@@ -143,10 +143,12 @@ export async function PATCH(req: Request) {
   // Rewire Hermes env so the new channel tokens land in the running container.
   // Fire-and-forget: if Hermes isn't installed, this is a no-op.
   let hermesRewired = false;
+  let hermesRestarted = false;
   try {
     await writeHermesEnvFile();
     hermesRewired = true;
+    hermesRestarted = restartHermesIfRunning();
   } catch { /* hermes not installed */ }
 
-  return NextResponse.json({ ok: true, hermesRewired });
+  return NextResponse.json({ ok: true, hermesRewired, hermesRestarted });
 }

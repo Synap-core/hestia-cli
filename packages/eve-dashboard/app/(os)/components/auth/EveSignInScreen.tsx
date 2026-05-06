@@ -34,7 +34,7 @@
  *   synap-team-docs/content/team/platform/eve-credentials.mdx
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Button,
   Card,
@@ -347,7 +347,7 @@ function SynapAccountPanel({
           autoComplete="one-time-code"
           size="md"
           radius="md"
-          variant="flat"
+          variant="bordered"
           label="Authentication code"
           labelPlacement="outside"
           placeholder="123456"
@@ -410,7 +410,7 @@ function SynapAccountPanel({
             type="email"
             size="md"
             radius="md"
-            variant="flat"
+            variant="bordered"
             label="Email"
             labelPlacement="outside"
             placeholder="you@example.com"
@@ -426,7 +426,7 @@ function SynapAccountPanel({
             type="password"
             size="md"
             radius="md"
-            variant="flat"
+            variant="bordered"
             label="Password"
             labelPlacement="outside"
             placeholder="Your password"
@@ -461,7 +461,7 @@ function SynapAccountPanel({
             type="text"
             size="md"
             radius="md"
-            variant="flat"
+            variant="bordered"
             label="Name"
             labelPlacement="outside"
             placeholder="Your name"
@@ -477,7 +477,7 @@ function SynapAccountPanel({
             type="email"
             size="md"
             radius="md"
-            variant="flat"
+            variant="bordered"
             label="Email"
             labelPlacement="outside"
             placeholder="you@example.com"
@@ -492,7 +492,7 @@ function SynapAccountPanel({
             type="password"
             size="md"
             radius="md"
-            variant="flat"
+            variant="bordered"
             label="Password"
             labelPlacement="outside"
             placeholder="At least 8 characters"
@@ -562,6 +562,34 @@ export function SelfHostedSignInForm({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [missingToken, setMissingToken] = useState(false);
+
+  // Probe whether the pod already has an admin. Three states:
+  //   null  → still loading (show spinner)
+  //   true  → admin exists → show sign-in link, not bootstrap form
+  //   false → no admin yet → show bootstrap form
+  const [podInitialized, setPodInitialized] = useState<boolean | null>(null);
+  const [podUrl, setPodUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/pod/setup-status", { cache: "no-store" });
+        if (!res.ok) { if (!cancelled) setPodInitialized(false); return; }
+        const data = (await res.json().catch(() => null)) as
+          | { initialized?: boolean | null; reason?: string; podUrl?: string }
+          | null;
+        if (cancelled) return;
+        setPodUrl(data?.podUrl ?? null);
+        // When pod is unreachable or not configured, fall back to bootstrap
+        // form — operator can still enter their URL manually.
+        setPodInitialized(data?.initialized ?? false);
+      } catch {
+        if (!cancelled) setPodInitialized(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const emailLooksValid = useMemo(
     () => email.length === 0 || EMAIL_RE.test(email.trim()),
@@ -675,13 +703,61 @@ export function SelfHostedSignInForm({
     }
   }
 
+  // Still checking pod status
+  if (podInitialized === null) {
+    return (
+      <div className="flex items-center justify-center py-6">
+        <Spinner size="sm" />
+      </div>
+    );
+  }
+
+  // Admin already exists → sign-in path, not bootstrap
+  if (podInitialized === true) {
+    const loginUrl = podUrl ? `${podUrl.replace(/\/+$/, "")}/auth/login` : null;
+    return (
+      <div className="flex flex-col gap-3">
+        <div className="flex items-start gap-3 rounded-lg bg-success/10 ring-1 ring-inset ring-success/30 px-3.5 py-3">
+          <Check className="mt-0.5 h-4 w-4 shrink-0 text-success" strokeWidth={2.2} aria-hidden />
+          <div className="min-w-0 flex-1">
+            <p className="text-[13px] font-medium text-foreground">
+              Admin account already set up
+            </p>
+            <p className="mt-0.5 text-[12px] text-foreground/55">
+              Your pod has an admin. Sign in directly at your pod to create a session, then return here.
+            </p>
+          </div>
+        </div>
+        {loginUrl && (
+          <Button
+            as="a"
+            href={loginUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            color="primary"
+            radius="md"
+            size="md"
+            className="font-medium"
+            endContent={<ExternalLink className="h-3.5 w-3.5" strokeWidth={2} />}
+          >
+            Sign in at your pod
+          </Button>
+        )}
+        <p className="text-center text-[11.5px] text-foreground/40">
+          After signing in, come back — Eve will detect your session automatically.
+        </p>
+      </div>
+    );
+  }
+
+  // No admin yet → bootstrap form
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-3" noValidate>
       <Input
         type="email"
         size="md"
         radius="md"
-        variant="flat"
+        variant="bordered"
         label="Email"
         labelPlacement="outside"
         placeholder="you@yourdomain.com"
@@ -707,7 +783,7 @@ export function SelfHostedSignInForm({
         <Input
           size="md"
           radius="md"
-          variant="flat"
+          variant="bordered"
           label="Name"
           labelPlacement="outside"
           placeholder={

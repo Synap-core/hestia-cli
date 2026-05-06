@@ -78,6 +78,7 @@ export async function GET() {
     return NextResponse.json({
       initialized: data.initialized,
       version: data.version ?? null,
+      podUrl: base,
     });
   } catch {
     return NextResponse.json({

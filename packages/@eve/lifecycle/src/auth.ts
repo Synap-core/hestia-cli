@@ -609,6 +609,16 @@ export async function provisionAgent(opts: ProvisionAgentOptions): Promise<Provi
     };
   }
 
+  // Persist the provisioning token under secrets.pod.bootstrapToken so the
+  // Eve dashboard (running inside Docker) can find it via readEveSecrets()
+  // without needing access to the host's deploy/.env.
+  try {
+    await writeEveSecrets({ pod: { bootstrapToken: provisioningToken } }, cwd);
+  } catch {
+    // Non-fatal — agent key is already written; the bootstrap token path is
+    // a convenience cache for the dashboard.
+  }
+
   return { provisioned: true, agentType, record, keyIdPrefix };
 }
 
@@ -834,9 +844,11 @@ interface TokenLookup {
 }
 
 /**
- * Public adapter — keeps the boolean shape some callers depend on.
+ * Resolve the pod PROVISIONING_TOKEN from any known source (env vars,
+ * deploy/.env files, docker inspect). Returns null when unavailable.
+ * Exported so CLI commands can reuse the same lookup without re-implementing it.
  */
-function resolveProvisioningToken(): string | null {
+export function resolveProvisioningToken(): string | null {
   return resolveProvisioningTokenWithDiagnostics().token;
 }
 
