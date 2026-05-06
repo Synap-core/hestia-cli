@@ -1162,7 +1162,6 @@ async function* wireHermesViaOpenwebuiApi(
       return;
     }
     const cfg = JSON.parse(cfgText) as Record<string, unknown>;
-    const cfg = await cfgRes.json() as Record<string, unknown>;
 
     // Upsert Hermes into the openai connections list.
     const openai = (cfg.openai ?? {}) as Record<string, unknown>;
