@@ -557,6 +557,7 @@ export function SelfHostedSignInForm({
   fixedEmail,
   onSuccess,
 }: SelfHostedSignInFormProps) {
+  // Bootstrap form fields
   const [email, setEmail] = useState(fixedEmail ?? "");
   const [name, setName] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -565,10 +566,17 @@ export function SelfHostedSignInForm({
 
   // Probe whether the pod already has an admin. Three states:
   //   null  → still loading (show spinner)
-  //   true  → admin exists → show sign-in + connect flow
+  //   true  → admin exists → show inline Kratos login/registration form
   //   false → no admin yet → show bootstrap form
   const [podInitialized, setPodInitialized] = useState<boolean | null>(null);
   const [podUrl, setPodUrl] = useState<string | null>(null);
+
+  // Kratos inline form state (used when podInitialized === true)
+  const [kratosSub, setKratosSub] = useState<"login" | "registration">("login");
+  const [kratosEmail, setKratosEmail] = useState(fixedEmail ?? "");
+  const [kratosPassword, setKratosPassword] = useState("");
+  const [kratosName, setKratosName] = useState("");
+  const [kratosErrors, setKratosErrors] = useState<string[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -589,47 +597,13 @@ export function SelfHostedSignInForm({
     return () => { cancelled = true; };
   }, []);
 
-  // When pod already has an admin: attempt JWT-Bearer sign-in on window focus
-  // so the operator doesn't have to manually click Connect after returning from
-  // the pod's login page. Defined unconditionally (hooks rules).
+  // Unused callback kept as a no-op to avoid removing the useCallback hook
+  // (hooks must be called unconditionally).
   const tryConnect = useCallback(async () => {
-    if (podInitialized !== true) return;
-    if (submitting) return;
-    const cleanEmail = email.trim().toLowerCase();
-    if (!cleanEmail || !EMAIL_RE.test(cleanEmail)) return;
-    setError(null);
-    setSubmitting(true);
-    try {
-      const res = await fetch("/api/auth/pod-signin", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ email: cleanEmail }),
-      });
-      if (!res.ok) {
-        // Not signed in yet — silently ignore on auto-focus attempts.
-        return;
-      }
-      const data = (await res.json().catch(() => null)) as
-        | { ok?: boolean; token?: string; expiresAt?: string; user?: { id: string; email: string; name: string | null } }
-        | null;
-      if (data?.ok && data.token && podUrl) {
-        storePodSession({
-          podUrl,
-          sessionToken: data.token,
-          userEmail: data.user?.email ?? cleanEmail,
-          userId: data.user?.id ?? "",
-        });
-        onSuccess({ podUrl, email: cleanEmail });
-      }
-    } catch {
-      /* silent — will retry on next focus */
-    } finally {
-      setSubmitting(false);
-    }
-  }, [podInitialized, submitting, email, podUrl, onSuccess]);
+    /* noop — inline Kratos form replaces this flow */
+  }, []);
 
-  // Auto-attempt on window focus when pod already has an admin.
+  // Unused focus listener kept for hook ordering consistency.
   useEffect(() => {
     if (podInitialized !== true) return;
     const onFocus = () => void tryConnect();
@@ -646,6 +620,69 @@ export function SelfHostedSignInForm({
     const at = s.indexOf("@");
     return at > 0 ? s.slice(0, at) : "";
   };
+
+  async function handleKratosAuth(e: React.FormEvent) {
+    e.preventDefault();
+    if (submitting) return;
+    const cleanEmail = kratosEmail.trim().toLowerCase();
+    if (!cleanEmail || !EMAIL_RE.test(cleanEmail)) {
+      setKratosErrors(["Enter a valid email address."]);
+      return;
+    }
+    if (!kratosPassword) {
+      setKratosErrors(["Password is required."]);
+      return;
+    }
+    setKratosErrors([]);
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/pod/kratos-auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          mode: kratosSub,
+          email: cleanEmail,
+          password: kratosPassword,
+          name: kratosName.trim() || undefined,
+        }),
+      });
+      const data = (await res.json().catch(() => null)) as
+        | {
+            ok?: boolean;
+            sessionToken?: string;
+            expiresAt?: string;
+            user?: { id: string; email: string; name: string };
+            error?: string;
+            messages?: string[];
+          }
+        | null;
+
+      if (!res.ok) {
+        const msgs = data?.messages?.length
+          ? data.messages
+          : [data?.error ?? "Authentication failed. Check your credentials."];
+        setKratosErrors(msgs);
+        return;
+      }
+
+      if (data?.ok && data.sessionToken && podUrl) {
+        storePodSession({
+          podUrl,
+          sessionToken: data.sessionToken,
+          userEmail: data.user?.email ?? cleanEmail,
+          userId: data.user?.id ?? "",
+        });
+        onSuccess({ podUrl, email: cleanEmail });
+      }
+    } catch (err) {
+      setKratosErrors([
+        err instanceof Error ? err.message : "Couldn't reach the dashboard API.",
+      ]);
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -750,74 +787,113 @@ export function SelfHostedSignInForm({
     );
   }
 
-  // Admin already exists → show "sign in at pod + connect" flow.
-  // tryConnect + focus listener are wired above (unconditionally).
+  // Admin already exists → inline Kratos login / registration form.
   if (podInitialized === true) {
-    const loginUrl = podUrl ? `${podUrl.replace(/\/+$/, "")}/auth/login` : null;
+    const isLogin = kratosSub === "login";
     return (
       <div className="flex flex-col gap-3">
-        <div className="flex items-start gap-3 rounded-lg bg-success/10 ring-1 ring-inset ring-success/30 px-3.5 py-3">
-          <Check className="mt-0.5 h-4 w-4 shrink-0 text-success" strokeWidth={2.2} aria-hidden />
-          <div className="min-w-0 flex-1">
-            <p className="text-[13px] font-medium text-foreground">
-              Admin account already set up
-            </p>
-            <p className="mt-0.5 text-[12px] text-foreground/55">
-              Sign in at your pod, then return here and click Connect.
-            </p>
-          </div>
+        <div className="flex rounded-lg overflow-hidden ring-1 ring-inset ring-foreground/10 text-[12.5px]">
+          <button
+            type="button"
+            onClick={() => { setKratosSub("login"); setKratosErrors([]); }}
+            className={`flex-1 py-1.5 font-medium transition-colors ${
+              isLogin
+                ? "bg-foreground/10 text-foreground"
+                : "text-foreground/55 hover:text-foreground/80"
+            }`}
+          >
+            Sign in
+          </button>
+          <button
+            type="button"
+            onClick={() => { setKratosSub("registration"); setKratosErrors([]); }}
+            className={`flex-1 py-1.5 font-medium transition-colors ${
+              !isLogin
+                ? "bg-foreground/10 text-foreground"
+                : "text-foreground/55 hover:text-foreground/80"
+            }`}
+          >
+            Create account
+          </button>
         </div>
 
-        <Input
-          type="email"
-          size="md"
-          radius="md"
-          variant="bordered"
-          label="Your email"
-          labelPlacement="outside"
-          placeholder="you@yourdomain.com"
-          value={email}
-          onValueChange={setEmail}
-          autoComplete="email"
-          isDisabled={submitting}
-          spellCheck="false"
-          startContent={
-            <Mail className="h-3.5 w-3.5 text-foreground/55" strokeWidth={2} aria-hidden />
-          }
-        />
-
-        <div className="flex gap-2">
-          {loginUrl && (
-            <Button
-              as="a"
-              href={loginUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              variant="bordered"
-              radius="md"
+        <form onSubmit={handleKratosAuth} className="flex flex-col gap-3" noValidate>
+          {!isLogin && (
+            <Input
+              type="text"
               size="md"
-              className="flex-1 font-medium"
-              endContent={<ExternalLink className="h-3.5 w-3.5" strokeWidth={2} />}
-            >
-              Sign in at pod
-            </Button>
+              radius="md"
+              variant="bordered"
+              label="Name"
+              labelPlacement="outside"
+              placeholder="Optional"
+              value={kratosName}
+              onValueChange={setKratosName}
+              autoComplete="name"
+              spellCheck="false"
+              isDisabled={submitting}
+            />
           )}
+          <Input
+            type="email"
+            size="md"
+            radius="md"
+            variant="bordered"
+            label="Email"
+            labelPlacement="outside"
+            placeholder="you@yourdomain.com"
+            value={kratosEmail}
+            onValueChange={setKratosEmail}
+            autoComplete="email"
+            autoFocus={!fixedEmail}
+            isRequired
+            isReadOnly={!!fixedEmail}
+            spellCheck="false"
+            isDisabled={submitting}
+            startContent={
+              <Mail className="h-3.5 w-3.5 text-foreground/55" strokeWidth={2} aria-hidden />
+            }
+          />
+          <Input
+            type="password"
+            size="md"
+            radius="md"
+            variant="bordered"
+            label="Password"
+            labelPlacement="outside"
+            placeholder={isLogin ? "Your password" : "At least 8 characters"}
+            value={kratosPassword}
+            onValueChange={setKratosPassword}
+            autoComplete={isLogin ? "current-password" : "new-password"}
+            isRequired
+            isDisabled={submitting}
+          />
+
+          {kratosErrors.length > 0 && (
+            <div className="flex flex-col gap-1">
+              {kratosErrors.map((msg, i) => (
+                <ErrorRow key={i} message={msg} accent="danger" />
+              ))}
+            </div>
+          )}
+
           <Button
+            type="submit"
             color="primary"
             radius="md"
             size="md"
-            className="flex-1 font-medium"
             isLoading={submitting}
-            isDisabled={submitting || !email.trim() || !EMAIL_RE.test(email.trim())}
-            onPress={() => void tryConnect()}
+            isDisabled={
+              submitting ||
+              !kratosEmail.trim() ||
+              kratosPassword.length === 0
+            }
+            className="mt-1 font-medium"
+            endContent={!submitting ? <ArrowRight className="h-3.5 w-3.5" /> : undefined}
           >
-            Connect
+            {isLogin ? "Sign in" : "Create account"}
           </Button>
-        </div>
-
-        <p className="text-center text-[11.5px] text-foreground/40">
-          After signing in at your pod, click Connect — or just switch back to this tab.
-        </p>
+        </form>
       </div>
     );
   }

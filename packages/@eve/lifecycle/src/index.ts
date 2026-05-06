@@ -1121,11 +1121,31 @@ async function* wireHermesViaOpenwebuiApi(
     return;
   }
 
+  // OpenWebUI validates the JWT by looking up the user id in its database.
+  // A synthetic id like "eve-lifecycle" always fails — we must use a real
+  // admin user's id + email from the OpenWebUI SQLite DB.
   const { createHmac } = await import("node:crypto");
+  const { execSync: execSyncFn } = await import("node:child_process");
+  let adminId = "";
+  let adminEmail = "";
+  try {
+    // The DB is inside the named volume; query it via docker exec.
+    const row = execSyncFn(
+      `docker exec hestia-openwebui python3 -c "import sqlite3; r=sqlite3.connect('/app/backend/data/webui.db').execute(\\"SELECT id,email FROM user WHERE role='admin' LIMIT 1\\").fetchone(); print(f'{r[0]}|{r[1]}') if r else print('')"`,
+      { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] },
+    ).trim();
+    if (row) [adminId, adminEmail] = row.split("|");
+  } catch { /* container not up or no admin yet */ }
+
+  if (!adminId) {
+    yield { type: "log", line: `No admin user in OpenWebUI yet — add Hermes manually: Admin → Settings → Connections → add URL ${hermesUrl} with your API key` };
+    return;
+  }
+
   const header  = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
   const payload = Buffer.from(JSON.stringify({
-    id: "eve-lifecycle",
-    role: "admin",
+    id: adminId,
+    email: adminEmail,
     iat: Math.floor(Date.now() / 1000),
     exp: Math.floor(Date.now() / 1000) + 300,
   })).toString("base64url");
@@ -1136,10 +1156,12 @@ async function* wireHermesViaOpenwebuiApi(
 
   try {
     const cfgRes = await fetch(`${owAdminUrl}/api/v1/configs/`, { headers: authHeaders });
-    if (!cfgRes.ok) {
-      yield { type: "log", line: `OpenWebUI config read failed (${cfgRes.status}) — manual step: Admin → Connections → add ${hermesUrl}` };
+    const cfgText = await cfgRes.text();
+    if (!cfgRes.ok || cfgText.trimStart().startsWith("<")) {
+      yield { type: "log", line: `OpenWebUI config read failed (${cfgRes.status}) — add Hermes manually: Admin → Settings → Connections → ${hermesUrl}` };
       return;
     }
+    const cfg = JSON.parse(cfgText) as Record<string, unknown>;
     const cfg = await cfgRes.json() as Record<string, unknown>;
 
     // Upsert Hermes into the openai connections list.
@@ -1818,15 +1840,37 @@ async function* registerPipelinesInOpenwebui(deployDir: string): AsyncGenerator<
     return;
   }
 
-  // Dynamic import so the Node.js `crypto` module doesn't inflate the CLI bundle.
+  // OpenWebUI validates the JWT by looking up the user id in its database.
+  // Mint a short-lived token for the first admin user.
   const { createHmac } = await import("node:crypto");
-  // OpenWebUI uses HS256 JWT with WEBUI_SECRET_KEY as the HMAC secret.
+  const { execSync: execSyncFn } = await import("node:child_process");
+  let adminId = "";
+  let adminEmail = "";
+  try {
+    const row = execSyncFn(
+      `docker exec hestia-openwebui python3 -c "import sqlite3; r=sqlite3.connect('/app/backend/data/webui.db').execute(\\"SELECT id,email FROM user WHERE role='admin' LIMIT 1\\").fetchone(); print(f'{r[0]}|{r[1]}') if r else print('')"`,
+      { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] },
+    ).trim();
+    if (row) [adminId, adminEmail] = row.split("|");
+  } catch { /* container not up yet */ }
+
+  if (!adminId) {
+    yield {
+      type: "log",
+      line: [
+        "No admin user in OpenWebUI yet — add pipelines manually:",
+        `Go to Admin Panel → Settings → Pipelines and add: URL=${pipelinesUrl}, Key=${pipelinesKey}`,
+      ].join(" "),
+    };
+    return;
+  }
+
   const header  = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
   const payload = Buffer.from(JSON.stringify({
-    id: "eve-lifecycle",
-    role: "admin",
+    id: adminId,
+    email: adminEmail,
     iat: Math.floor(Date.now() / 1000),
-    exp: Math.floor(Date.now() / 1000) + 300, // 5 min
+    exp: Math.floor(Date.now() / 1000) + 300,
   })).toString("base64url");
   const sig = createHmac("sha256", webuiSecret)
     .update(`${header}.${payload}`)
