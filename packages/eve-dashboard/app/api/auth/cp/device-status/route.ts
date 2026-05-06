@@ -19,7 +19,7 @@
 
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { readEveSecrets, writeEveSecrets } from "@eve/dna";
+import { readEveSecrets, writeEveSecrets, writeCpUserSession } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
 import { CP_BASE_URL } from "@/lib/cp-base-url";
 
@@ -97,29 +97,78 @@ export async function POST(req: Request) {
   // access_denied, expired_token) per RFC 8628.
   if (upstream.ok) {
     const tokens = (await upstream.json()) as TokenResponse;
+    const issuedAt = new Date().toISOString();
 
-    // Decode the JWT exp for the expiresAt hint — purely informational
-    // for the home page; verification happens on the CP side.
+    // Decode the JWT exp for the expiresAt hint.
     let expiresAtIso: string | undefined;
+    let subFromJwt = "";
+    let emailFromJwt = "";
     try {
       const [, payloadB64] = tokens.access_token.split(".");
       const payload = JSON.parse(
         Buffer.from(payloadB64, "base64url").toString("utf-8"),
-      ) as { exp?: number };
+      ) as { exp?: number; sub?: string; email?: string };
       if (typeof payload.exp === "number") {
         expiresAtIso = new Date(payload.exp * 1000).toISOString();
       }
+      if (typeof payload.sub === "string") subFromJwt = payload.sub;
+      if (typeof payload.email === "string") emailFromJwt = payload.email;
     } catch {
-      /* don't surface decode failures — the CP enforces expiry on its side */
+      /* best-effort */
     }
 
-    await writeEveSecrets({
-      cp: {
-        userToken: tokens.access_token,
-        issuedAt: new Date().toISOString(),
+    // Fetch the user's profile from CP so we can write a proper
+    // cp.userSession with email + userId. The device flow access_token
+    // is a marketplace-scoped JWT that typically lacks the `email` claim,
+    // which causes readCpUserSession()'s legacy fallback to return null
+    // and the claim step to fail with cp-session-required.
+    let userId = subFromJwt;
+    let email = emailFromJwt;
+    let name: string | undefined;
+    try {
+      const meRes = await fetch(`${CP_BASE_URL}/auth/get-session`, {
+        headers: {
+          Authorization: `Bearer ${tokens.access_token}`,
+          Accept: "application/json",
+        },
+        cache: "no-store",
+      });
+      if (meRes.ok) {
+        const me = (await meRes.json()) as {
+          user?: { id?: string; email?: string; name?: string };
+        };
+        if (typeof me.user?.id === "string" && me.user.id) userId = me.user.id;
+        if (typeof me.user?.email === "string" && me.user.email) email = me.user.email;
+        if (typeof me.user?.name === "string") name = me.user.name;
+      }
+    } catch {
+      /* network blip — fall back to JWT claims */
+    }
+
+    if (userId && email) {
+      // Write the full cp.userSession so readCpUserSession() finds it
+      // in the primary slot without needing to decode the JWT.
+      await writeCpUserSession({
+        token: tokens.access_token,
+        userId,
+        email,
+        name,
         expiresAt: expiresAtIso,
-      },
-    });
+        issuedAt,
+      });
+    } else {
+      // Fallback: at least write the legacy slot so older callers still
+      // work; the claim route will fail at readCpUserSession() if the JWT
+      // really has no identity claims, but that's an extreme edge case.
+      await writeEveSecrets({
+        cp: {
+          userToken: tokens.access_token,
+          issuedAt,
+          expiresAt: expiresAtIso,
+        },
+      });
+    }
+
     await clearHandle(handle);
     return NextResponse.json({ status: "approved" }, { status: 200 });
   }

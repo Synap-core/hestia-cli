@@ -24,8 +24,9 @@
  */
 
 import { NextResponse } from "next/server";
-import { readEveSecrets, writeEveSecrets } from "@eve/dna";
+import { readEveSecrets, writeEveSecrets, writeCpUserSession } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
+import { CP_BASE_URL } from "@/lib/cp-base-url";
 
 interface PostBody {
   /** The user-scoped JWT minted by the CP OAuth token endpoint. */
@@ -93,13 +94,62 @@ export async function POST(req: Request) {
     );
   }
 
-  await writeEveSecrets({
-    cp: {
-      userToken,
-      issuedAt: body.issuedAt ?? new Date().toISOString(),
+  const issuedAt = body.issuedAt ?? new Date().toISOString();
+
+  // Decode basic claims from the JWT payload (best-effort).
+  let subFromJwt = "";
+  let emailFromJwt = "";
+  try {
+    const payload = JSON.parse(
+      Buffer.from(segments[1], "base64url").toString("utf-8"),
+    ) as { sub?: string; email?: string };
+    if (typeof payload.sub === "string") subFromJwt = payload.sub;
+    if (typeof payload.email === "string") emailFromJwt = payload.email;
+  } catch { /* ignore */ }
+
+  // Fetch user profile from CP so we can write a proper cp.userSession.
+  // A marketplace-scoped token typically lacks the `email` claim in its
+  // JWT payload; fetching GET /auth/get-session resolves the full identity.
+  let userId = subFromJwt;
+  let email = emailFromJwt;
+  let name: string | undefined;
+  try {
+    const meRes = await fetch(`${CP_BASE_URL}/auth/get-session`, {
+      headers: {
+        Authorization: `Bearer ${userToken}`,
+        Accept: "application/json",
+      },
+      cache: "no-store",
+    });
+    if (meRes.ok) {
+      const me = (await meRes.json()) as {
+        user?: { id?: string; email?: string; name?: string };
+      };
+      if (typeof me.user?.id === "string" && me.user.id) userId = me.user.id;
+      if (typeof me.user?.email === "string" && me.user.email) email = me.user.email;
+      if (typeof me.user?.name === "string") name = me.user.name;
+    }
+  } catch { /* fall back to JWT claims */ }
+
+  if (userId && email) {
+    await writeCpUserSession({
+      token: userToken,
+      userId,
+      email,
+      name,
       expiresAt: body.expiresAt,
-    },
-  });
+      issuedAt,
+    });
+  } else {
+    // Fallback to legacy slot if we still can't identify the user.
+    await writeEveSecrets({
+      cp: {
+        userToken,
+        issuedAt,
+        expiresAt: body.expiresAt,
+      },
+    });
+  }
 
   return NextResponse.json({ ok: true }, { status: 200 });
 }
