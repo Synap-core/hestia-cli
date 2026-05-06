@@ -427,11 +427,13 @@ function mergeProviderLists(input: EveSecrets | null): EveSecrets | null {
   if (!input?.ai) return input;
   const ai = input.ai;
 
-  // Access raw fields via index to avoid the removed `customProviders` not being
-  // in the EveSecrets['ai'] type — this is intentional since we're reading
-  // stale on-disk data that still has the legacy field.
+  // `customProviders` was removed from the AI config schema (merged into
+  // a single `providers` list), but stale on-disk secrets may still carry
+  // it. We cast to a legacy interface to read it without TS errors.
+  type LegacyAiConfig = typeof ai & { customProviders?: unknown[] };
+  const legacyAi = ai as LegacyAiConfig;
   const builtInRaw: unknown[] = [...(ai.providers ?? [])];
-  const customRaw: unknown[] = (ai as Record<string, unknown>).customProviders ?? ([] as unknown[]);
+  const customRaw: unknown[] = legacyAi.customProviders ?? [];
 
   // Already merged: no custom list and no custom-prefixed IDs
   const hasCustomList = customRaw.length > 0;
@@ -476,9 +478,9 @@ function mergeProviderLists(input: EveSecrets | null): EveSecrets | null {
   }
 
   const aiOut: Record<string, unknown> = {};
-  for (const key of Object.keys(ai) as Array<keyof typeof ai>) {
+  for (const key of Object.keys(legacyAi)) {
     if (key === 'customProviders') continue; // migrated — drop legacy field
-    aiOut[key] = (ai as Record<string, unknown>)[key];
+    aiOut[key] = legacyAi[key];
   }
   aiOut.providers = merged;
   return {

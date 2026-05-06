@@ -120,7 +120,7 @@ export default function AiProvidersPage() {
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
-  const [editing, setEditing] = useState<Record<string, { apiKey?: string; defaultModel?: string; baseUrl?: string }>>({});
+  const [editing, setEditing] = useState<Record<string, { apiKey?: string; defaultModel?: string; baseUrl?: string; name?: string }>>({});
   const [adding, setAdding] = useState<{
     id?: string;
     isCustom?: boolean;
@@ -379,9 +379,9 @@ export default function AiProvidersPage() {
       {/* -----------------------------------------------------------------
        * Unified providers list
        * -------------------------------------------------------------- */}
-      {builtInProviders.length > 0 && (
+      {(config?.providers ?? []).length > 0 && (
         <div className="space-y-3">
-          {builtInProviders.map(p => {
+          {(config.providers as ProviderEntry[]).map(p => {
             const isEditing = !!editing[p.id];
             const editState = editing[p.id] ?? {};
             const isDefault = config?.defaultProvider === p.id;
@@ -430,7 +430,7 @@ export default function AiProvidersPage() {
                     )}
                     {p.isCustom && (
                       <>
-                        <Input label="Name" labelPlacement="outside" placeholder={p.name ?? "e.g. Local LLaMA"} value={editState.apiKey ?? ""} onValueChange={v => setEditing(prev => ({ ...prev, [p.id]: { ...prev[p.id], apiKey: v }}))} variant="bordered" classNames={{ input: "text-sm" }} />
+                        <Input label="Name" labelPlacement="outside" placeholder={p.name ?? "e.g. Local LLaMA"} value={editState.name ?? ""} onValueChange={v => setEditing(prev => ({ ...prev, [p.id]: { ...prev[p.id], name: v }}))} variant="bordered" classNames={{ input: "text-sm" }} />
                         <Input label="Base URL" labelPlacement="outside" placeholder="https://..." value={editState.baseUrl ?? ""} onValueChange={v => setEditing(prev => ({ ...prev, [p.id]: { ...prev[p.id], baseUrl: v }}))} variant="bordered" classNames={{ input: "font-mono text-sm" }} />
                       </>
                     )}
