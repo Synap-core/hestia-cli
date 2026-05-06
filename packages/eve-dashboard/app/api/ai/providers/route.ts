@@ -104,7 +104,7 @@ export async function POST(req: Request) {
       });
     }
 
-    await writeEveSecrets({ ai: { customProviders: list } });
+    await writeEveSecrets({ ai: { customProviders: list } } as Parameters<typeof writeEveSecrets>[0]);
     const applied = await autoApply({ recreate: true });
     return NextResponse.json({
       ok: true,
@@ -189,7 +189,7 @@ export async function DELETE(req: Request) {
   const hasCustomChanges = customList.length !== (secrets?.ai?.customProviders ?? []).length;
 
   if (hasCustomChanges) {
-    await writeEveSecrets({ ai: { customProviders: customList } });
+    await writeEveSecrets({ ai: { customProviders: customList } } as Parameters<typeof writeEveSecrets>[0]);
     const applied = await autoApply({ recreate: true });
     return NextResponse.json({ ok: true, applied });
   }

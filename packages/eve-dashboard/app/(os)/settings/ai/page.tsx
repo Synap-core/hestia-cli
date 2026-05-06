@@ -91,7 +91,7 @@ const KEY_PLACEHOLDERS: Record<ProviderId, string> = {
 };
 
 // ---------------------------------------------------------------------------
-// Layout primitives — same as dashboard home, kept local for now
+// Layout primitives
 // ---------------------------------------------------------------------------
 
 function Surface({ className = "", children }: { className?: string; children: React.ReactNode }) {
@@ -374,6 +374,9 @@ export default function AiProvidersPage() {
   const availableToAdd = (config?.validProviders ?? []).filter(
     id => !config?.providers.find(p => p.id === id),
   );
+  // Split providers for rendering
+  const builtInProviders = (config?.providers ?? []).filter((p: ProviderEntry) => !p.isCustom);
+  const customProvidersList = config?.customProviders ?? [];
 
   return (
     <div className="space-y-10">
@@ -399,7 +402,7 @@ export default function AiProvidersPage() {
           isDisabled={!hasAnyConfigured}
           onPress={applyWiring}
         >
-          {applying ? "Applying…" : "Apply to components"}
+          {applying ? "Applying..." : "Apply to components"}
         </Button>
       </header>
 
@@ -419,18 +422,18 @@ export default function AiProvidersPage() {
       )}
 
       {/* -----------------------------------------------------------------
-       * Configured providers
+       * Configured built-in providers
        * -------------------------------------------------------------- */}
-      {(config?.providers.length ?? 0) > 0 && (
+      {builtInProviders.length > 0 && (
         <div className="space-y-3">
-          {(config?.providers ?? []).map(p => {
+          {builtInProviders.map(p => {
             const isEditing = !!editing[p.id];
             const editState = editing[p.id] ?? {};
             const isDefault = config?.defaultProvider === p.id;
             const ok = p.id === "ollama" || p.hasApiKey;
+            const pid = p.id as ProviderId;
             return (
               <Surface key={p.id} className="p-5">
-                {/* Row header */}
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="flex items-start gap-3">
                     <span
@@ -442,7 +445,7 @@ export default function AiProvidersPage() {
                     />
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="font-medium text-foreground">{PROVIDER_LABELS[p.id]}</span>
+                        <span className="font-medium text-foreground">{PROVIDER_LABELS[pid]}</span>
                         {isDefault && (
                           <Chip
                             size="sm"
@@ -466,7 +469,7 @@ export default function AiProvidersPage() {
                           </Chip>
                         )}
                       </div>
-                      <p className="mt-0.5 text-xs text-default-500">{PROVIDER_TAGLINE[p.id]}</p>
+                      <p className="mt-0.5 text-xs text-default-500">{PROVIDER_TAGLINE[pid]}</p>
                       {p.id !== "ollama" && (
                         <p className="mt-1 font-mono text-[11px] text-default-400">
                           {p.hasApiKey ? p.apiKeyMasked : "no key set"}
@@ -480,7 +483,7 @@ export default function AiProvidersPage() {
                         size="sm"
                         variant="light"
                         radius="md"
-                        onPress={() => void setDefault(p.id)}
+                        onPress={() => void setDefault(pid)}
                         isLoading={savingId === `default-${p.id}`}
                         className="text-default-600 hover:text-foreground"
                       >
@@ -492,25 +495,22 @@ export default function AiProvidersPage() {
                       variant="light"
                       radius="md"
                       isIconOnly
-                      onPress={() => void removeProvider(p.id)}
+                      onPress={() => void removeProvider(pid)}
                       isDisabled={savingId === p.id}
                       className="text-default-400 hover:text-danger"
-                      aria-label={`Remove ${PROVIDER_LABELS[p.id]}`}
+                      aria-label={`Remove ${PROVIDER_LABELS[pid]}`}
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </div>
                 </div>
 
-                {/* Fields — HeroUI Input with label outside (no wrapper height
-                    override; let HeroUI size things so the label slot is
-                    reserved correctly above the input). */}
                 <div className="mt-7 grid grid-cols-1 gap-4 sm:grid-cols-2">
                   {p.id !== "ollama" && (
                     <Input
                       label="API key"
                       labelPlacement="outside"
-                      placeholder={isEditing ? KEY_PLACEHOLDERS[p.id] : (p.apiKeyMasked ?? "Click edit to set")}
+                      placeholder={isEditing ? KEY_PLACEHOLDERS[pid] : (p.apiKeyMasked ?? "Click edit to set")}
                       value={editState.apiKey ?? ""}
                       onValueChange={v =>
                         setEditing(prev => ({ ...prev, [p.id]: { ...prev[p.id], apiKey: v } }))
@@ -524,13 +524,12 @@ export default function AiProvidersPage() {
                   <Input
                     label="Default model"
                     labelPlacement="outside"
-                    placeholder={DEFAULT_MODEL_PLACEHOLDERS[p.id]}
+                    placeholder={DEFAULT_MODEL_PLACEHOLDERS[pid]}
                     value={editState.defaultModel ?? p.defaultModel ?? ""}
                     onValueChange={v =>
                       setEditing(prev => ({ ...prev, [p.id]: { ...prev[p.id], defaultModel: v } }))
                     }
                     variant="bordered"
-                    isDisabled={!isEditing}
                     description={
                       p.id === "openrouter"
                         ? "Form: provider/model — e.g. anthropic/claude-sonnet-4-7"
@@ -540,12 +539,11 @@ export default function AiProvidersPage() {
                   />
                 </div>
 
-                {/* Footer */}
                 <div className="mt-5 flex items-center justify-between border-t border-divider pt-4">
                   <Switch
                     size="sm"
                     isSelected={p.enabled}
-                    onValueChange={v => void saveProvider(p.id, { enabled: v })}
+                    onValueChange={v => void saveProvider(pid, { enabled: v })}
                   >
                     <span className="text-xs text-default-500">Enabled</span>
                   </Switch>
@@ -567,7 +565,7 @@ export default function AiProvidersPage() {
                         radius="md"
                         startContent={<Save className="h-3.5 w-3.5" />}
                         isLoading={savingId === p.id}
-                        onPress={() => void saveProvider(p.id, {
+                        onPress={() => void saveProvider(pid, {
                           ...(editState.apiKey ? { apiKey: editState.apiKey } : {}),
                           ...(editState.defaultModel ? { defaultModel: editState.defaultModel } : {}),
                         })}
@@ -593,7 +591,7 @@ export default function AiProvidersPage() {
       )}
 
       {/* -----------------------------------------------------------------
-       * Add provider
+       * Add built-in provider
        * -------------------------------------------------------------- */}
       {availableToAdd.length > 0 && (
         <div>
@@ -604,7 +602,7 @@ export default function AiProvidersPage() {
               className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-divider bg-content1/40 px-4 py-4 text-sm text-default-500 transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
             >
               <Plus className="h-4 w-4" />
-              Add a provider
+              Add a built-in provider
             </button>
           ) : (
             <Surface className="p-5">
@@ -682,9 +680,303 @@ export default function AiProvidersPage() {
       )}
 
       {/* -----------------------------------------------------------------
-       * Per-service routing — pick a provider per service or inherit the
-       * global default. Saving auto-applies the wiring (writes config +
-       * restarts the affected container).
+       * Custom providers
+       * -------------------------------------------------------------- */}
+      <div>
+        <div className="flex items-center gap-2 mb-3">
+          <Plug className="h-4 w-4 text-default-400" />
+          <h3 className="font-medium text-foreground">Custom providers</h3>
+          <p className="text-xs text-default-400">
+            OpenAI-compatible endpoints (local servers, proxies, etc.)
+          </p>
+        </div>
+
+        {/* Existing custom provider cards */}
+        {customProvidersList.length > 0 && (
+          <div className="space-y-3 mb-3">
+            {customProvidersList.map(p => {
+              const isEditing = editingCustomId === p.id;
+              const ed = customProviderEdit[p.id] ?? {};
+              const ok = p.hasApiKey || p.baseUrl;
+              return (
+                <Surface key={p.id} className="p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="flex items-start gap-3">
+                      <span
+                        className={
+                          "mt-1 inline-block h-2 w-2 rounded-full " +
+                          (ok ? "bg-primary" : "bg-default-300")
+                        }
+                        aria-hidden
+                      />
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-foreground">
+                            {p.name || p.id}
+                          </span>
+                          <Chip
+                            size="sm"
+                            variant="flat"
+                            radius="sm"
+                            classNames={{ content: "px-1 text-[10px] font-medium uppercase tracking-wider text-default-400" }}
+                          >
+                            custom
+                          </Chip>
+                          {!p.enabled && (
+                            <Chip
+                              size="sm"
+                              variant="flat"
+                              radius="sm"
+                              classNames={{ content: "px-1 text-[10px] font-medium uppercase tracking-wider text-default-500" }}
+                            >
+                              disabled
+                            </Chip>
+                          )}
+                        </div>
+                        {p.baseUrl && (
+                          <p className="mt-0.5 font-mono text-[11px] text-default-400 truncate max-w-sm">
+                            {p.baseUrl}
+                          </p>
+                        )}
+                        {p.hasApiKey && (
+                          <p className="mt-0.5 font-mono text-[11px] text-default-400">
+                            {p.apiKeyMasked}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {isEditing ? (
+                        <Button
+                          size="sm"
+                          color="primary"
+                          variant="light"
+                          radius="md"
+                          startContent={<Check className="h-3.5 w-3.5" />}
+                          isLoading={savingId === p.id}
+                          onPress={() => {
+                            if (!ed.name?.trim() || !ed.baseUrl?.trim()) {
+                              addToast({ title: "Name and base URL required", color: "danger" });
+                              return;
+                            }
+                            void saveCustomProvider({
+                              id: p.id,
+                              name: ed.name,
+                              baseUrl: ed.baseUrl,
+                              apiKey: ed.apiKey,
+                              defaultModel: ed.defaultModel,
+                              enabled: ed.enabled ?? p.enabled,
+                            });
+                          }}
+                        >
+                          Save
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="light"
+                          radius="md"
+                          isIconOnly
+                          onPress={() => {
+                            setEditingCustomId(p.id);
+                            setCustomProviderEdit(prev => ({
+                              ...prev,
+                              [p.id]: { name: p.name, baseUrl: p.baseUrl, defaultModel: p.defaultModel, enabled: p.enabled },
+                            }));
+                          }}
+                        >
+                          <Save className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="light"
+                        radius="md"
+                        isIconOnly
+                        onPress={() => void removeCustomProvider(p.id)}
+                        isDisabled={savingId === p.id}
+                        className="text-default-400 hover:text-danger"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Inline edit fields */}
+                  {isEditing && (
+                    <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <Input
+                        label="Name"
+                        labelPlacement="outside"
+                        placeholder="e.g. Local LLaMA"
+                        value={ed.name ?? ""}
+                        onValueChange={v =>
+                          setCustomProviderEdit(prev => ({ ...prev, [p.id]: { ...prev[p.id], name: v } }))
+                        }
+                        variant="bordered"
+                        classNames={{ input: "text-sm" }}
+                      />
+                      <Input
+                        label="Base URL"
+                        labelPlacement="outside"
+                        placeholder="https://..."
+                        value={ed.baseUrl ?? ""}
+                        onValueChange={v =>
+                          setCustomProviderEdit(prev => ({ ...prev, [p.id]: { ...prev[p.id], baseUrl: v } }))
+                        }
+                        variant="bordered"
+                        classNames={{ input: "font-mono text-sm" }}
+                      />
+                      <Input
+                        label="API key"
+                        labelPlacement="outside"
+                        placeholder="Leave blank to keep existing"
+                        value={ed.apiKey ?? ""}
+                        onValueChange={v =>
+                          setCustomProviderEdit(prev => ({ ...prev, [p.id]: { ...prev[p.id], apiKey: v } }))
+                        }
+                        type="password"
+                        variant="bordered"
+                        classNames={{ input: "font-mono text-sm" }}
+                      />
+                      <Input
+                        label="Default model"
+                        labelPlacement="outside"
+                        placeholder="e.g. llama3.1:8b"
+                        value={ed.defaultModel ?? ""}
+                        onValueChange={v =>
+                          setCustomProviderEdit(prev => ({ ...prev, [p.id]: { ...prev[p.id], defaultModel: v } }))
+                        }
+                        variant="bordered"
+                        classNames={{ input: "font-mono text-sm" }}
+                      />
+                    </div>
+                  )}
+
+                  {/* Footer */}
+                  <div className="mt-5 flex items-center justify-between border-t border-divider pt-4">
+                    <Switch
+                      size="sm"
+                      isSelected={isEditing ? (ed.enabled ?? p.enabled) : p.enabled}
+                      onValueChange={v =>
+                        setCustomProviderEdit(prev => ({
+                          ...prev,
+                          [p.id]: { ...prev[p.id], enabled: v },
+                        }))
+                      }
+                      isDisabled={!isEditing}
+                    >
+                      <span className="text-xs text-default-500">Enabled</span>
+                    </Switch>
+                    {!isEditing && (
+                      <span className="text-xs text-default-400">
+                        {p.defaultModel && `model: ${p.defaultModel}`}
+                      </span>
+                    )}
+                  </div>
+                </Surface>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Add custom provider form */}
+        {!customProviderForm ? (
+          <button
+            type="button"
+            onClick={() => setCustomProviderForm({ name: "", baseUrl: "", apiKey: "", defaultModel: "", enabled: true })}
+            className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-divider bg-content1/40 px-4 py-4 text-sm text-default-500 transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
+          >
+            <Plus className="h-4 w-4" />
+            Add custom OpenAI-compatible provider
+          </button>
+        ) : (
+          <Surface className="p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-medium text-foreground">Custom provider</h3>
+                <p className="mt-0.5 text-xs text-default-500">
+                  Any OpenAI-compatible endpoint (local model servers, proxies, etc.)
+                </p>
+              </div>
+              <Button
+                size="sm"
+                variant="light"
+                radius="md"
+                onPress={() => setCustomProviderForm(null)}
+              >
+                Cancel
+              </Button>
+            </div>
+            <div className="mt-4 space-y-4">
+              <Input
+                label="Name"
+                labelPlacement="outside"
+                placeholder="e.g. Local LLaMA, Proxy name"
+                value={customProviderForm.name}
+                onValueChange={v => setCustomProviderForm({ ...customProviderForm, name: v })}
+                variant="bordered"
+                classNames={{ input: "text-sm" }}
+              />
+              <Input
+                label="Base URL"
+                labelPlacement="outside"
+                placeholder="https://..."
+                value={customProviderForm.baseUrl}
+                onValueChange={v => setCustomProviderForm({ ...customProviderForm, baseUrl: v })}
+                variant="bordered"
+                classNames={{ input: "font-mono text-sm" }}
+              />
+              <Input
+                label="API key"
+                labelPlacement="outside"
+                placeholder="Optional — some endpoints don't require one"
+                value={customProviderForm.apiKey}
+                onValueChange={v => setCustomProviderForm({ ...customProviderForm, apiKey: v })}
+                type="password"
+                variant="bordered"
+                classNames={{ input: "font-mono text-sm" }}
+              />
+              <Input
+                label="Default model"
+                labelPlacement="outside"
+                placeholder="e.g. llama3.1:8b, gpt-4"
+                value={customProviderForm.defaultModel}
+                onValueChange={v => setCustomProviderForm({ ...customProviderForm, defaultModel: v })}
+                variant="bordered"
+                classNames={{ input: "font-mono text-sm" }}
+              />
+            </div>
+            <div className="mt-5 flex justify-end gap-2 border-t border-divider pt-4">
+              <Button
+                size="sm"
+                color="primary"
+                radius="md"
+                isLoading={savingId?.startsWith("custom-")}
+                startContent={<Save className="h-3.5 w-3.5" />}
+                onPress={() => {
+                  if (!customProviderForm.name.trim() || !customProviderForm.baseUrl.trim()) {
+                    addToast({ title: "Name and base URL are required", color: "danger" });
+                    return;
+                  }
+                  void saveCustomProvider({
+                    name: customProviderForm.name,
+                    baseUrl: customProviderForm.baseUrl,
+                    apiKey: customProviderForm.apiKey,
+                    defaultModel: customProviderForm.defaultModel,
+                    enabled: customProviderForm.enabled,
+                  });
+                }}
+              >
+                Add provider
+              </Button>
+            </div>
+          </Surface>
+        )}
+      </div>
+
+      {/* -----------------------------------------------------------------
+       * Per-service routing
        * -------------------------------------------------------------- */}
       {consumers && consumers.length > 0 && (
         <Surface className="p-5">
@@ -701,7 +993,7 @@ export default function AiProvidersPage() {
               const modelOverride = config?.serviceModels?.[c.id];
               const effective = override ?? config?.defaultProvider ?? null;
               const usable = (config?.providers ?? []).filter(
-                p => p.id === "ollama" || p.hasApiKey,
+                (p: ProviderEntry) => !p.isCustom && (p.id === "ollama" || p.hasApiKey),
               );
               const editingModel = editingServiceModels[c.id] ?? modelOverride ?? "";
               const isModelDirty = editingServiceModels[c.id] !== undefined && editingServiceModels[c.id] !== (modelOverride ?? "");
@@ -748,7 +1040,7 @@ export default function AiProvidersPage() {
                         {[
                           <SelectItem key="__default__">Use global default</SelectItem>,
                           ...usable.map(p => (
-                            <SelectItem key={p.id}>{PROVIDER_LABELS[p.id]}</SelectItem>
+                            <SelectItem key={p.id}>{PROVIDER_LABELS[p.id as ProviderId]}</SelectItem>
                           )),
                         ]}
                       </Select>
@@ -798,7 +1090,7 @@ export default function AiProvidersPage() {
       )}
 
       {/* -----------------------------------------------------------------
-       * Help — quiet, last
+       * Help
        * -------------------------------------------------------------- */}
       <section className="rounded-xl border border-divider bg-content1/60 p-5 text-sm text-default-500">
         <p className="font-medium text-foreground">How this works</p>
@@ -808,7 +1100,8 @@ export default function AiProvidersPage() {
         <ul className="mt-2 space-y-1">
           <li className="flex gap-2"><span className="text-default-400">→</span> Synap IS receives upstream provider keys (Anthropic / OpenAI / OpenRouter).</li>
           <li className="flex gap-2"><span className="text-default-400">→</span> OpenClaw is wired to use Synap IS as its OpenAI-compat backend.</li>
-          <li className="flex gap-2"><span className="text-default-400">→</span> Open WebUI and Hermes are wired the same way.</li>
+          <li className="flex gap-2"><span className="text-default-400">→</span> Open WebUI and Hermes are wired to use the configured providers.</li>
+          <li className="flex gap-2"><span className="text-default-400">→</span> Custom OpenAI-compatible providers are appended as additional model sources.</li>
           <li className="flex gap-2"><span className="text-default-400">→</span> Each service can override the provider and model via the per-service routing panel above.</li>
         </ul>
         <p className="mt-3">

@@ -3,27 +3,21 @@
 /**
  * `EveSignInScreen` — full-page auth surface for Eve.
  *
- * Two top-level tabs:
+ * Self-hosted only: connects to the operator's local pod.
  *
- *   1. **Synap account** (default) — sign in / sign up to the Synap
- *      Control Plane (api.synap.live). Inner sub-tabs split between
- *      Sign in and Create account. The shared session that lands in
- *      `localStorage.synap:session` (and the cross-subdomain
- *      `synap-session` cookie) makes the user signed-in across every
- *      Synap surface (hub, studio, crm, marketplace, …).
+ * Two states:
  *
- *      If the user has 2FA enabled, `signInToCP` returns a
- *      `TwoFactorChallenge` marker — we swap to a 6-digit verifier
- *      step and call `verifyTotpLogin(code)`.
+ *   1. **Inline Kratos form** — when the pod already has an admin,
+ *      the user signs in (or registers) via the pod's Kratos flow.
  *
- *   2. **Self-hosted** — bootstrap a local-only Eve. The flow is
- *      identical to the legacy `BootstrapAdminCard` (POST to
- *      `/api/pod/bootstrap-claim`), now wrapped in a shared
- *      `<SelfHostedSignInForm />` so the same component can be reused
- *      from the "Claim this pod" CTA inside `PodConnectGate`.
+ *   2. **Bootstrap form** — when no admin exists yet, the operator
+ *      sets up the first admin by submitting an email; the pod
+ *      creates a user with an invite tied to the email, and we
+ *      return a magic link URL the operator can copy and paste for
+ *      the invitee to complete first-admin setup.
  *
  * Visual rules (Eve standard):
- *   • HeroUI primitives only — Card, Tabs, Input, Button, Spinner.
+ *   • HeroUI primitives only — Card, Input, Button, Spinner.
  *   • visionOS material: `bg-foreground/[0.04] ring-1 ring-inset
  *     ring-foreground/10`. No drop shadows.
  *   • Concentric radii: pane 32 → outer 20 → card 12.
@@ -34,52 +28,38 @@
  *   synap-team-docs/content/team/platform/eve-credentials.mdx
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
   Card,
   Input,
-  Tabs,
-  Tab,
   Spinner,
-  addToast,
 } from "@heroui/react";
 import {
   AlertTriangle,
   ArrowRight,
   Check,
+  Copy,
   ExternalLink,
   KeyRound,
   Mail,
   Server,
-  ShieldCheck,
   Sparkles,
 } from "lucide-react";
-import {
-  signInToControlPlane,
-  signUpToControlPlane,
-  storePodSession,
-  verifyTotpLogin,
-  type CPSession,
-} from "@/lib/synap-auth";
+import { storePodSession } from "@/lib/synap-auth";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export type EveSignInMode =
-  | { kind: "synap"; session: CPSession }
   | { kind: "self-hosted"; podUrl: string; email: string; signupUrl?: string };
 
 export interface EveSignInScreenProps {
   onSuccess: (mode: EveSignInMode) => void;
 }
 
-type TopTab = "synap" | "self-hosted";
-
 // ─── Component ──────────────────────────────────────────────────────────────
 
 export function EveSignInScreen({ onSuccess }: EveSignInScreenProps) {
-  const [tab, setTab] = useState<TopTab>("synap");
-
   return (
     <div className="flex flex-1 items-center justify-center px-4 py-8 overflow-y-auto">
       <div className="w-full max-w-[28rem] flex flex-col items-center gap-6">
@@ -114,414 +94,34 @@ export function EveSignInScreen({ onSuccess }: EveSignInScreenProps) {
             ring-1 ring-inset ring-foreground/10
           "
         >
-          <Tabs
-            selectedKey={tab}
-            onSelectionChange={(k) => setTab(k as TopTab)}
-            fullWidth
-            size="sm"
-            color="primary"
-            radius="md"
-            aria-label="Sign-in mode"
-          >
-            <Tab
-              key="synap"
-              title={
-                <span className="flex items-center gap-1.5">
-                  <Sparkles className="h-3.5 w-3.5" strokeWidth={2} />
-                  Synap account
-                </span>
+          <div className="flex flex-col gap-3 pt-1">
+            <div className="flex items-center gap-2 text-center mx-auto">
+              <Server className="h-3.5 w-3.5 text-foreground/40" strokeWidth={2} />
+              <p className="text-[13px] font-medium text-foreground">
+                Connect to your pod
+              </p>
+            </div>
+            <p className="text-[12.5px] text-foreground/55 text-center">
+              Self-hosted — your data stays on your machine.
+            </p>
+            <SelfHostedSignInForm
+              onSuccess={(claim) =>
+                onSuccess({
+                  kind: "self-hosted",
+                  podUrl: claim.podUrl,
+                  email: claim.email,
+                  signupUrl: claim.signupUrl,
+                })
               }
-            >
-              <div className="flex flex-col gap-3 pt-3">
-                <p className="text-[12.5px] text-foreground/55">
-                  Sign in once, access every Synap app.
-                </p>
-                <SynapAccountPanel onSuccess={onSuccess} />
-              </div>
-            </Tab>
-            <Tab
-              key="self-hosted"
-              title={
-                <span className="flex items-center gap-1.5">
-                  <Server className="h-3.5 w-3.5" strokeWidth={2} />
-                  Self-hosted
-                </span>
-              }
-            >
-              <div className="flex flex-col gap-3 pt-3">
-                <p className="text-[12.5px] text-foreground/55">
-                  Use this Eve without a Synap account.
-                </p>
-                <SelfHostedSignInForm
-                  onSuccess={(claim) =>
-                    onSuccess({
-                      kind: "self-hosted",
-                      podUrl: claim.podUrl,
-                      email: claim.email,
-                      signupUrl: claim.signupUrl,
-                    })
-                  }
-                />
-              </div>
-            </Tab>
-          </Tabs>
+            />
+          </div>
         </Card>
 
         <p className="text-center text-[11.5px] text-foreground/40">
-          Eve never sees your password — it goes straight to the CP or your pod.
+          Eve never sees your password — it goes straight to your pod.
         </p>
       </div>
     </div>
-  );
-}
-
-// ─── Synap account panel (sub-tabs + 2FA) ───────────────────────────────────
-
-type SynapSubTab = "sign-in" | "sign-up";
-type SynapPhase =
-  | { kind: "form" }
-  | { kind: "submitting" }
-  | { kind: "two-factor"; email: string }
-  | { kind: "verifying" };
-
-function SynapAccountPanel({
-  onSuccess,
-}: {
-  onSuccess: (mode: EveSignInMode) => void;
-}) {
-  const [sub, setSub] = useState<SynapSubTab>("sign-in");
-  const [phase, setPhase] = useState<SynapPhase>({ kind: "form" });
-  const [error, setError] = useState<string | null>(null);
-
-  // Sign-in fields
-  const [signInEmail, setSignInEmail] = useState("");
-  const [signInPassword, setSignInPassword] = useState("");
-
-  // Sign-up fields
-  const [signUpName, setSignUpName] = useState("");
-  const [signUpEmail, setSignUpEmail] = useState("");
-  const [signUpPassword, setSignUpPassword] = useState("");
-
-  // 2FA field
-  const [code, setCode] = useState("");
-
-  const submitting =
-    phase.kind === "submitting" || phase.kind === "verifying";
-
-  function mapAuthError(err: unknown, mode: SynapSubTab): string {
-    const raw = err instanceof Error ? err.message : String(err);
-    const lower = raw.toLowerCase();
-    if (
-      lower.includes("invalid") &&
-      (lower.includes("credentials") || lower.includes("password"))
-    ) {
-      return "Wrong email or password.";
-    }
-    if (lower.includes("user_already_exists") || lower.includes("already exists")) {
-      return "An account with that email already exists. Try signing in.";
-    }
-    if (lower.includes("network") || lower.includes("failed to fetch")) {
-      return "Couldn't reach Synap. Check your network.";
-    }
-    if (lower.includes("rate") || lower.includes("too many")) {
-      return "Too many attempts — wait a moment, then try again.";
-    }
-    return mode === "sign-in"
-      ? "Sign-in failed. Double-check your credentials."
-      : "Couldn't create your account.";
-  }
-
-  async function handleSignIn(e: React.FormEvent) {
-    e.preventDefault();
-    if (submitting) return;
-    setError(null);
-    setPhase({ kind: "submitting" });
-    try {
-      const result = await signInToControlPlane(
-        signInEmail.trim(),
-        signInPassword,
-      );
-      if (result.kind === "two-factor-required") {
-        setPhase({ kind: "two-factor", email: result.email });
-        return;
-      }
-      addToast({ title: "Signed in", color: "success" });
-      onSuccess({ kind: "synap", session: result.session });
-    } catch (err) {
-      setError(mapAuthError(err, "sign-in"));
-      setPhase({ kind: "form" });
-    }
-  }
-
-  async function handleSignUp(e: React.FormEvent) {
-    e.preventDefault();
-    if (submitting) return;
-    setError(null);
-    setPhase({ kind: "submitting" });
-    try {
-      const session = await signUpToControlPlane(
-        signUpEmail.trim(),
-        signUpPassword,
-        signUpName.trim() || signUpEmail.trim(),
-      );
-      addToast({ title: "Account created", color: "success" });
-      onSuccess({ kind: "synap", session });
-    } catch (err) {
-      setError(mapAuthError(err, "sign-up"));
-      setPhase({ kind: "form" });
-    }
-  }
-
-  async function handleVerifyTotp(e: React.FormEvent) {
-    e.preventDefault();
-    const trimmed = code.trim();
-    if (!/^\d{6,8}$/.test(trimmed)) {
-      setError("Enter the 6-digit code from your authenticator app.");
-      return;
-    }
-    setError(null);
-    setPhase({ kind: "verifying" });
-    try {
-      const result = await verifyTotpLogin(trimmed);
-      if (!result.ok) {
-        setError(result.error);
-        setPhase({
-          kind: "two-factor",
-          email: phase.kind === "two-factor" ? phase.email : "",
-        });
-        return;
-      }
-      addToast({ title: "Signed in", color: "success" });
-      onSuccess({ kind: "synap", session: result.session });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Verification failed.");
-      setPhase({
-        kind: "two-factor",
-        email: phase.kind === "two-factor" ? phase.email : "",
-      });
-    }
-  }
-
-  // ── 2FA step ──────────────────────────────────────────────────────────────
-
-  if (phase.kind === "two-factor" || phase.kind === "verifying") {
-    return (
-      <form
-        onSubmit={handleVerifyTotp}
-        className="flex flex-col gap-3"
-        noValidate
-      >
-        <div
-          className="
-            flex items-start gap-3
-            rounded-lg
-            bg-foreground/[0.04] ring-1 ring-inset ring-foreground/10
-            px-3.5 py-3
-          "
-        >
-          <ShieldCheck
-            className="mt-0.5 h-4 w-4 shrink-0 text-primary"
-            strokeWidth={2}
-            aria-hidden
-          />
-          <div className="min-w-0 flex-1">
-            <p className="text-[13px] font-medium text-foreground">
-              Two-factor authentication
-            </p>
-            <p className="mt-0.5 text-[12px] text-foreground/55">
-              Enter the 6-digit code from your authenticator app for{" "}
-              <span className="text-foreground/85">
-                {phase.kind === "two-factor"
-                  ? phase.email
-                  : "your account"}
-              </span>
-              .
-            </p>
-          </div>
-        </div>
-
-        <Input
-          type="text"
-          inputMode="numeric"
-          pattern="[0-9]*"
-          autoComplete="one-time-code"
-          size="md"
-          radius="md"
-          variant="bordered"
-          label="Authentication code"
-          labelPlacement="outside"
-          placeholder="123456"
-          value={code}
-          onValueChange={setCode}
-          maxLength={8}
-          autoFocus
-          isDisabled={submitting}
-          isInvalid={!!error}
-          spellCheck="false"
-        />
-
-        {error && <ErrorRow message={error} />}
-
-        <Button
-          type="submit"
-          color="primary"
-          radius="md"
-          size="md"
-          isLoading={submitting}
-          isDisabled={submitting || code.trim().length < 6}
-          className="font-medium"
-        >
-          Verify
-        </Button>
-
-        <button
-          type="button"
-          onClick={() => {
-            setError(null);
-            setCode("");
-            setPhase({ kind: "form" });
-          }}
-          className="text-[12px] text-foreground/55 hover:text-foreground self-center"
-        >
-          Use a different account
-        </button>
-      </form>
-    );
-  }
-
-  // ── Sign-in / sign-up sub-tabs ────────────────────────────────────────────
-
-  return (
-    <Tabs
-      selectedKey={sub}
-      onSelectionChange={(k) => {
-        setSub(k as SynapSubTab);
-        setError(null);
-      }}
-      fullWidth
-      size="sm"
-      variant="underlined"
-      color="primary"
-      aria-label="Synap account mode"
-    >
-      <Tab key="sign-in" title="Sign in">
-        <form onSubmit={handleSignIn} className="flex flex-col gap-3 pt-2" noValidate>
-          <Input
-            type="email"
-            size="md"
-            radius="md"
-            variant="bordered"
-            label="Email"
-            labelPlacement="outside"
-            placeholder="you@example.com"
-            value={signInEmail}
-            onValueChange={setSignInEmail}
-            autoComplete="email"
-            autoFocus
-            isRequired
-            isDisabled={submitting}
-            spellCheck="false"
-          />
-          <Input
-            type="password"
-            size="md"
-            radius="md"
-            variant="bordered"
-            label="Password"
-            labelPlacement="outside"
-            placeholder="Your password"
-            value={signInPassword}
-            onValueChange={setSignInPassword}
-            autoComplete="current-password"
-            isRequired
-            isDisabled={submitting}
-          />
-          {error && <ErrorRow message={error} />}
-          <Button
-            type="submit"
-            color="primary"
-            radius="md"
-            size="md"
-            isLoading={submitting}
-            isDisabled={
-              submitting ||
-              !signInEmail.trim() ||
-              signInPassword.length === 0
-            }
-            className="mt-1 font-medium"
-            endContent={!submitting ? <ArrowRight className="h-3.5 w-3.5" /> : undefined}
-          >
-            Continue
-          </Button>
-        </form>
-      </Tab>
-      <Tab key="sign-up" title="Create account">
-        <form onSubmit={handleSignUp} className="flex flex-col gap-3 pt-2" noValidate>
-          <Input
-            type="text"
-            size="md"
-            radius="md"
-            variant="bordered"
-            label="Name"
-            labelPlacement="outside"
-            placeholder="Your name"
-            value={signUpName}
-            onValueChange={setSignUpName}
-            autoComplete="name"
-            autoFocus
-            isRequired
-            isDisabled={submitting}
-            spellCheck="false"
-          />
-          <Input
-            type="email"
-            size="md"
-            radius="md"
-            variant="bordered"
-            label="Email"
-            labelPlacement="outside"
-            placeholder="you@example.com"
-            value={signUpEmail}
-            onValueChange={setSignUpEmail}
-            autoComplete="email"
-            isRequired
-            isDisabled={submitting}
-            spellCheck="false"
-          />
-          <Input
-            type="password"
-            size="md"
-            radius="md"
-            variant="bordered"
-            label="Password"
-            labelPlacement="outside"
-            placeholder="At least 8 characters"
-            value={signUpPassword}
-            onValueChange={setSignUpPassword}
-            autoComplete="new-password"
-            isRequired
-            isDisabled={submitting}
-          />
-          {error && <ErrorRow message={error} />}
-          <Button
-            type="submit"
-            color="primary"
-            radius="md"
-            size="md"
-            isLoading={submitting}
-            isDisabled={
-              submitting ||
-              !signUpEmail.trim() ||
-              signUpPassword.length < 8 ||
-              !signUpName.trim()
-            }
-            className="mt-1 font-medium"
-          >
-            Create account
-          </Button>
-        </form>
-      </Tab>
-    </Tabs>
   );
 }
 
@@ -531,6 +131,7 @@ interface SelfHostedClaimResult {
   podUrl: string;
   email: string;
   signupUrl?: string;
+  magicLink?: string;
 }
 
 interface SelfHostedSignInFormProps {
@@ -551,6 +152,12 @@ interface BootstrapClaimResponse {
   error?: string;
 }
 
+interface MagicLinkResponse {
+  ok?: boolean;
+  url?: string;
+  error?: string;
+}
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function SelfHostedSignInForm({
@@ -563,6 +170,13 @@ export function SelfHostedSignInForm({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [missingToken, setMissingToken] = useState(false);
+
+  // Post-claim state: show the magic link with copy button.
+  const [claimedEmail, setClaimedEmail] = useState<string | null>(null);
+  const [claimedPodUrl, setClaimedPodUrl] = useState<string | null>(null);
+  const [magicLink, setMagicLink] = useState<string | null>(null);
+  const [manglingLink, setMintingLink] = useState(false);
+  const claimIdRef = useRef(0);
 
   // Probe whether the pod already has an admin. Three states:
   //   null  → still loading (show spinner)
@@ -684,6 +298,36 @@ export function SelfHostedSignInForm({
     }
   }
 
+  async function handlePasswordReset() {
+    if (!kratosEmail.trim()) {
+      setKratosErrors(["Enter an email address first."]);
+      return;
+    }
+    setError(null);
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/pod/recovery-start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: kratosEmail.trim().toLowerCase(), mode: "password" }),
+      });
+      const data = (await res.json().catch(() => null)) as
+        | { ok?: boolean; recoveryLink?: string; error?: string }
+        | null;
+      if (!res.ok || !data?.ok) {
+        setError(data?.error ?? "Couldn't start password reset.");
+        return;
+      }
+      setClaimedEmail(kratosEmail.trim().toLowerCase());
+      setMagicLink(data.recoveryLink ?? null);
+      setClaimedPodUrl(podUrl ?? null);
+    } catch {
+      setError("Couldn't reach the dashboard API.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (submitting) return;
@@ -730,11 +374,12 @@ export function SelfHostedSignInForm({
 
       const claimedPodUrl = data?.podUrl ?? "";
       const claimedEmail = data?.email ?? cleanEmail;
+      const claimId = ++claimIdRef.current;
 
       // Attempt to mint a Kratos session via the JWT-Bearer flow and
       // persist it into `synap:pods`. Succeeds for re-claims / existing
       // users; fails for first-time bootstrap (user doesn't exist on pod
-      // yet). Non-fatal — fall through to the Kratos signup redirect.
+      // yet). Non-fatal — fall through to redirect-based signup.
       try {
         const signinRes = await fetch("/api/auth/pod-signin", {
           method: "POST",
@@ -761,14 +406,31 @@ export function SelfHostedSignInForm({
           }
         }
       } catch {
-        /* non-fatal — fall through to redirect-based signup */
+        /* non-fatal */
       }
 
-      onSuccess({
-        podUrl: claimedPodUrl,
-        email: claimedEmail,
-        signupUrl: data?.signupUrl,
-      });
+      // Mint a magic link the operator can copy-paste to the invitee.
+      try {
+        const magicRes = await fetch("/api/pod/magic-link", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        });
+        const magicData = (await magicRes.json().catch(() => null)) as
+          | MagicLinkResponse
+          | null;
+        if (magicRes.ok && magicData?.ok && magicData.url && claimId === claimIdRef.current) {
+          setMagicLink(magicData.url);
+          setClaimedEmail(claimedEmail);
+          setClaimedPodUrl(claimedPodUrl);
+        } else if (claimId === claimIdRef.current) {
+          setClaimedEmail(claimedEmail);
+          setClaimedPodUrl(claimedPodUrl);
+        }
+      } catch {
+        /* non-fatal */
+      }
+
+      return;
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Couldn't reach the dashboard API.",
@@ -869,6 +531,16 @@ export function SelfHostedSignInForm({
             isDisabled={submitting}
           />
 
+          {isLogin && (
+            <button
+              type="button"
+              onClick={handlePasswordReset}
+              className="self-end text-[12px] font-medium text-foreground/55 hover:text-primary transition-colors"
+            >
+              Forgot password?
+            </button>
+          )}
+
           {kratosErrors.length > 0 && (
             <div className="flex flex-col gap-1">
               {kratosErrors.map((msg, i) => (
@@ -894,6 +566,92 @@ export function SelfHostedSignInForm({
             {isLogin ? "Sign in" : "Create account"}
           </Button>
         </form>
+      </div>
+    );
+  }
+
+  // Post-claim: show magic link or signup URL with copy + continue.
+  if (claimedEmail !== null) {
+    return (
+      <div className="flex flex-col gap-4">
+        <div
+          className="
+            flex items-start gap-3
+            rounded-lg
+            bg-success/10 ring-1 ring-inset ring-success/30
+            px-3.5 py-3
+          "
+        >
+          <Check
+            className="mt-0.5 h-4 w-4 shrink-0 text-success"
+            strokeWidth={2.2}
+            aria-hidden
+          />
+          <div className="min-w-0 flex-1">
+            <p className="text-[13px] font-medium text-foreground">
+              Invite ready for <span className="text-foreground">{claimedEmail}</span>.
+            </p>
+            <p className="mt-1 text-[12px] text-foreground/55">
+              Share this link so the invitee can complete their signup:
+            </p>
+
+            {manglingLink && (
+              <div className="mt-2 flex items-center gap-2 text-[12px] text-foreground/55">
+                <Spinner size="sm" />
+                <span>Minting link…</span>
+              </div>
+            )}
+
+            {!manglingLink && magicLink && (
+              <div className="mt-2 flex items-stretch gap-1.5">
+                <code className="
+                  flex-1
+                  rounded-md
+                  bg-foreground/5
+                  px-2.5 py-2
+                  text-[12px]
+                  text-foreground/70
+                  overflow-hidden
+                  text-ellipsis
+                  whitespace-nowrap
+                ">
+                  {magicLink}
+                </code>
+                <CopyLinkButton text={magicLink} />
+              </div>
+            )}
+
+            {!manglingLink && !magicLink && claimedPodUrl && (
+              <a
+                href={`${claimedPodUrl}/auth/registration?invite=${encodeURIComponent(claimedEmail)}`}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-1.5 inline-flex items-center gap-1 text-[12px] font-medium text-primary hover:underline"
+              >
+                Complete signup at your pod
+                <ExternalLink className="h-3 w-3" strokeWidth={2} />
+              </a>
+            )}
+          </div>
+        </div>
+
+        <Button
+          color="primary"
+          radius="md"
+          size="md"
+          className="font-medium"
+          onPress={() => {
+            onSuccess({
+              podUrl: claimedPodUrl ?? "",
+              email: claimedEmail,
+              signupUrl: claimedPodUrl
+                ? `${claimedPodUrl}/auth/registration?invite=${encodeURIComponent(claimedEmail)}`
+                : undefined,
+            });
+          }}
+        >
+          Continue to dashboard
+        </Button>
       </div>
     );
   }
@@ -993,6 +751,40 @@ function ErrorRow({
       />
       <p className="text-[12.5px] leading-snug text-foreground">{message}</p>
     </div>
+  );
+}
+
+function CopyLinkButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => setCopied(false), 1800);
+    });
+  }, [text]);
+
+  useEffect(() => {
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+  }, []);
+
+  return (
+    <Button
+      isIconOnly
+      radius="md"
+      size="sm"
+      variant="flat"
+      className={`!min-w-0 !w-7 !px-0 bg-foreground/5 text-foreground/55`}
+      onPress={handleCopy}
+    >
+      {copied ? (
+        <Check className="h-3.5 w-3.5 text-success" strokeWidth={2.2} />
+      ) : (
+        <Copy className="h-3.5 w-3.5" strokeWidth={2} />
+      )}
+    </Button>
   );
 }
 

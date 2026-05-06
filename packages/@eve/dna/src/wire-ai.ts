@@ -151,6 +151,7 @@ function wireSynapIs(secrets: EveSecrets | null): WireAiResult {
       envLines.push(`CUSTOM_PROVIDER_${idx}_API_KEY=${cp.apiKey}`);
     }
     envLines.push(`CUSTOM_PROVIDER_${idx}_NAME=${cp.name}`);
+    if (cp.defaultModel) envLines.push(`CUSTOM_PROVIDER_${idx}_DEFAULT_MODEL=${cp.defaultModel}`);
   }
   // Honor per-service override for synap itself: when the user has
   // configured "use Anthropic for Synap IS", DEFAULT_AI_PROVIDER reflects
@@ -568,5 +569,7 @@ export function wireAllInstalledComponents(
  */
 export function hasAnyProvider(secrets: EveSecrets | null): boolean {
   const providers = secrets?.ai?.providers ?? [];
-  return providers.some(p => p.apiKey && p.apiKey.trim().length > 0);
+  const custom = secrets?.ai?.customProviders ?? [];
+  return providers.some(p => p.apiKey && p.apiKey.trim().length > 0)
+      || custom.some(p => p.apiKey && p.apiKey.trim().length > 0);
 }

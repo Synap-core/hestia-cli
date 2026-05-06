@@ -169,39 +169,24 @@ export function EveAccountGate({ children }: EveAccountGateProps) {
 
   const handleSuccess = useCallback(
     (mode: EveSignInMode) => {
-      // The wrapper has already written `localStorage.synap:session`
-      // (CP path) or claimed the pod (self-hosted bootstrap claim).
       // Re-resolve so the gate-managed `state` is the source of truth.
       const resolved = resolveStatus(localPodUrl);
       if (resolved.status === "signed-in") {
         setState(resolved);
         return;
       }
-      // Fallback — synthesise a minimal CP session so the gate doesn't
-      // bounce back to sign-in if the wrapper failed to persist.
-      if (mode.kind === "self-hosted") {
-        setState({
-          status: "signed-in",
-          cp: {
-            podUrl: mode.podUrl,
-            sessionToken: "",
-            workspaceId: null,
-            userId: "",
-            userName: mode.email,
-          } as SharedSession,
-        });
-      } else {
-        setState({
-          status: "signed-in",
-          cp: {
-            podUrl: "",
-            sessionToken: mode.session.token,
-            workspaceId: null,
-            userId: mode.session.userId,
-            userName: mode.session.name ?? "",
-          },
-        });
-      }
+      // Self-hosted path: synthesise a minimal session so the gate
+      // doesn't bounce back to sign-in if the wrapper failed to persist.
+      setState({
+        status: "signed-in",
+        cp: {
+          podUrl: mode.podUrl,
+          sessionToken: "",
+          workspaceId: null,
+          userId: "",
+          userName: mode.email,
+        } as SharedSession,
+      });
     },
     [localPodUrl],
   );
