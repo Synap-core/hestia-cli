@@ -115,10 +115,8 @@ export async function POST(req: Request, _ctx: RouteCtx) {
       );
     }
 
-    const json = (await res.json().catch(() => null)) as
-      | TrpcEnvelope<CreateInviteResult | null>
-      | null;
-    const data = unwrapTrpc<CreateInviteResult>(json);
+    const json = await res.json().catch(() => null);
+    const data = json ? unwrapTrpc<CreateInviteResult>(json as TrpcEnvelope<CreateInviteResult>) : null;
 
     if (!data) {
       return NextResponse.json(

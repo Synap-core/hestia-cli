@@ -404,9 +404,12 @@ export default function AiProvidersPage() {
       {/* -----------------------------------------------------------------
        * Unified providers list
        * -------------------------------------------------------------- */}
-      {(config?.providers ?? []).length > 0 && (
-        <div className="space-y-3">
-          {(config.providers as ProviderEntry[]).map(p => {
+      {(() => {
+        const providers = config?.providers ?? [];
+        if (providers.length === 0) return null;
+        return (
+          <div className="space-y-3">
+            {providers.map(p => {
             const isEditing = !!editing[p.id];
             const editState = editing[p.id] ?? {};
             const isDefault = config?.defaultProvider === p.id;
@@ -531,7 +534,8 @@ export default function AiProvidersPage() {
             );
           })}
         </div>
-      )}
+        );
+      })()}
 
       {/* -----------------------------------------------------------------
        * Add provider (unified)
