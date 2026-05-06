@@ -122,7 +122,8 @@ export function pickPrimaryProvider(
  */
 function wireSynapIs(secrets: EveSecrets | null): WireAiResult {
   const providers = secrets?.ai?.providers ?? [];
-  if (providers.length === 0) {
+  const customProviders = secrets?.ai?.customProviders ?? [];
+  if (providers.length === 0 && customProviders.length === 0) {
     return { id: 'synap', outcome: 'skipped', summary: 'no AI providers configured' };
   }
 
@@ -142,7 +143,6 @@ function wireSynapIs(secrets: EveSecrets | null): WireAiResult {
     if (p.id === 'openrouter') envLines.push(`OPENROUTER_API_KEY=${p.apiKey}`);
   }
   // Custom providers — write them as env vars so Synap IS can list them.
-  const customProviders = secrets?.ai?.customProviders ?? [];
   for (let i = 0; i < customProviders.length; i++) {
     const cp = customProviders[i];
     const idx = i + 1;
@@ -321,6 +321,14 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
   const marker = '# AI wiring — managed by eve ai apply';
   const before = existing.includes(marker) ? existing.split(marker)[0].trimEnd() : existing.trimEnd();
 
+  // Collect custom providers early for both .env writing and admin API upsert.
+  const customProviders: NonNullable<EveSecrets['ai']['customProviders']> = [];
+  for (const cp of secrets?.ai?.customProviders ?? []) {
+    if (cp.enabled && cp.baseUrl) {
+      customProviders.push(cp);
+    }
+  }
+
   // Per-service override: Open WebUI lets users pick models in the UI,
   // but `DEFAULT_MODELS` populates the default selection — so honoring
   // the override here means the user's "use OpenAI for Open WebUI"
@@ -385,11 +393,53 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
   // `docker restart` doesn't re-read .env — use compose up -d to pick up
   // the new OPENAI_API_BASE_URLS without a full teardown.
   try {
-    execSync('docker compose up -d', { cwd: '/opt/openwebui', stdio: 'ignore' });
-  } catch {
-    // Fallback to restart if compose isn't available (shouldn't happen on a pod)
-    if (isContainerRunning('hestia-openwebui')) dockerRestart('hestia-openwebui');
+    execSync('docker compose up -d', {
+      cwd: '/opt/openwebui',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+  } catch (err) {
+    // Log the error for diagnostics (compose may not exist if OpenWebUI
+    // was installed outside the lifecycle flow). Fallback to restart.
+    const errMsg = err instanceof Error
+      ? err.message.split('\n').pop()?.trim() ?? String(err)
+      : String(err);
+    if (isContainerRunning('hestia-openwebui')) {
+      try { dockerRestart('hestia-openwebui'); } catch { /* ignored */ }
+    }
+    return {
+      id: 'openwebui',
+      outcome: 'failed',
+      summary: `docker compose failed (${errMsg})`,
+      detail: errMsg,
+    };
   }
+
+  // Upsert custom providers via OpenWebUI's admin API so model sources
+  // appear immediately without requiring a manual container restart.
+  // OpenWebUI reads env vars on first boot but the DB is authoritative
+  // thereafter. This mirrors the `wireHermesViaOpenwebuiApi` pattern.
+  try {
+    if (customProviders.length > 0) {
+      const customUrls: string[] = [];
+      const customKeys: string[] = [];
+      for (const cp of customProviders) {
+        customUrls.push(`${cp.baseUrl.replace(/\/v1$/, '')}/v1`);
+        customKeys.push(cp.apiKey || '');
+      }
+      const owPort = COMPONENTS.find(c => c.id === 'openwebui')?.port ?? 3002;
+      const owAdminUrl = `http://127.0.0.1:${owPort}/api/v1`;
+      adminUpsertOpenwebuiCustomProviders(owAdminUrl, apiKeys, apiBaseUrls, customUrls, customKeys);
+    }
+  } catch { /* non-fatal — env file is still written */ }
+
+  const hermesNote = hermesApiServerKey ? ' + Hermes gateway' : '';
+  return {
+    id: 'openwebui',
+    outcome: 'ok',
+    summary: `Open WebUI wired to Synap IS${hermesNote}`,
+    detail: envPath,
+  };
+}
 
   const hermesNote = hermesApiServerKey ? ' + Hermes gateway' : '';
   return {
