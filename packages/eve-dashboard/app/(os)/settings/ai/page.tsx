@@ -33,6 +33,8 @@ interface AiConfig {
   serviceProviders: Record<string, string | null>;
   /** Per-service model override: componentId → model string. */
   serviceModels: Record<string, string | null>;
+  /** Per-component wiring status: { [id]: { lastApplied, outcome } }. */
+  wiringStatus: Record<string, { lastApplied: string; outcome: string }>;
   /** Unified list: all providers (built-in + custom). */
   providers: ProviderEntry[];
   /** Component ids that consume the central AI config. Server-driven. */
@@ -90,6 +92,20 @@ const KEY_PLACEHOLDERS: Record<string, string> = {
   openrouter: "sk-or-...",
   ollama:     "(no key needed)",
 };
+
+// ---------------------------------------------------------------------------
+// Utilities
+// ---------------------------------------------------------------------------
+
+function formatTimestamp(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Layout primitives
@@ -645,6 +661,16 @@ export default function AiProvidersPage() {
                           : "No provider — pick one above first"}
                         {modelOverride && ` · model: ${modelOverride}`}
                       </p>
+                      {/* Last applied timestamp */}
+                      {config?.wiringStatus?.[c.id] && (
+                        <p className="mt-0.5 text-[10px] text-default-400">
+                          Last applied: {formatTimestamp(config.wiringStatus[c.id].lastApplied)}
+                          {" · "}
+                          <span className={config.wiringStatus[c.id].outcome === "ok" ? "text-success" : "text-danger"}>
+                            {config.wiringStatus[c.id].outcome}
+                          </span>
+                        </p>
+                      )}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <Select

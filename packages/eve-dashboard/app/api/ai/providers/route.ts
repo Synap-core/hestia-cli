@@ -58,6 +58,17 @@ async function autoApply(opts: { recreate?: boolean } = {}) {
       }
     }
 
+    // Persist wiringStatus so the UI can show "Last applied" in the
+    // per-service routing panel.
+    if (wireResults.length > 0) {
+      const wiringStatus: Record<string, { lastApplied: string; outcome: string }> =
+        wireResults.reduce((acc, r) => {
+          acc[r.id] = { lastApplied: new Date().toISOString(), outcome: r.outcome };
+          return acc;
+        }, {} as Record<string, { lastApplied: string; outcome: string }>);
+      await writeEveSecrets({ ai: { wiringStatus } });
+    }
+
     return wireResults;
   } catch {
     return [];

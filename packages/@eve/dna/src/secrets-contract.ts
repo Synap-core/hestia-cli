@@ -51,6 +51,17 @@ const SecretsSchema = z.object({
       serviceModels: z
         .record(z.string(), z.string())
         .optional(),
+      /**
+       * Per-component wiring status. Keys are component ids; value records
+       * when the AI wiring was last applied and whether it succeeded.
+       * Written by PATCH /api/ai and POST /api/ai/providers auto-apply.
+       */
+      wiringStatus: z
+        .record(z.string(), z.object({
+          lastApplied: z.string(),
+          outcome: z.string(),
+        }))
+        .optional(),
     })
     .optional(),
   synap: z
@@ -401,6 +412,9 @@ const SecretsSchema = z.object({
 });
 
 export type EveSecrets = z.infer<typeof SecretsSchema>;
+
+/** Wiring status map: componentId → { lastApplied, outcome }. */
+export type WiringStatus = Record<string, { lastApplied: string; outcome: string }>;
 
 export type UnifiedProvider = z.infer<typeof UnifiedProviderSchema>;
 

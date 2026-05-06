@@ -264,6 +264,21 @@ export async function runDoctor(): Promise<CheckResult[]> {
   const aiConsumers = new Set(["synap", "openclaw", "openwebui"]);
   const usesAi = installed.some(c => aiConsumers.has(c));
 
+  // Build the integrationIds to tag provider checks with. Since providers
+  // are shared infrastructure, each enabled provider is tagged with the
+  // integrationIds of installed + running AI consumers so the checks appear
+  // in every relevant IntegrationChecklist panel.
+  const providerIntegrationIds: CheckResult["integrationId"][] = [];
+  if (installed.includes("synap") && running.has("synap-backend")) {
+    providerIntegrationIds.push("synap");
+  }
+  if (installed.includes("openclaw") && running.has("eve-arms-openclaw")) {
+    providerIntegrationIds.push("openclaw-synap");
+  }
+  if (installed.includes("openwebui") && running.has("openwebui")) {
+    providerIntegrationIds.push("openwebui-synap");
+  }
+
   const configuredProviders = secrets?.ai?.providers ?? [];
 
   if (configuredProviders.length === 0) {
@@ -275,6 +290,7 @@ export async function runDoctor(): Promise<CheckResult[]> {
         ? "No provider key configured — AI-consuming components will fail"
         : "No provider configured (none needed)",
       fix: usesAi ? "Open the AI page → Add provider" : undefined,
+      integrationId: providerIntegrationIds[0],
     });
   } else {
     // Per-provider connectivity probe.
@@ -288,6 +304,7 @@ export async function runDoctor(): Promise<CheckResult[]> {
           name: `AI provider: ${provider.name || "Ollama"}`,
           status: "pass",
           message: "Local provider configured (no external endpoint)",
+          integrationId: providerIntegrationIds[0],
         });
         continue;
       }
@@ -299,6 +316,7 @@ export async function runDoctor(): Promise<CheckResult[]> {
           message: provider.id === "ollama"
             ? "Ollama has no baseUrl — can't verify connectivity"
             : "No baseUrl set — can't verify connectivity",
+          integrationId: providerIntegrationIds[0],
         });
         continue;
       }
@@ -323,6 +341,7 @@ export async function runDoctor(): Promise<CheckResult[]> {
             status: "fail",
             message: `${res.status} ${res.statusText} (${elapsed}ms)`,
             fix: "Check the provider's baseUrl and API key",
+            integrationId: providerIntegrationIds[0],
           });
         } else {
           const data = await res.json() as { data?: Array<{ id: string }> };
@@ -332,6 +351,7 @@ export async function runDoctor(): Promise<CheckResult[]> {
             name: `AI provider: ${provider.name || provider.id}`,
             status: "pass",
             message: `OK · ${modelCount} model(s) · ${elapsed}ms`,
+            integrationId: providerIntegrationIds[0],
           });
         }
       } catch {
@@ -341,6 +361,7 @@ export async function runDoctor(): Promise<CheckResult[]> {
           status: "fail",
           message: "Unable to reach provider endpoint",
           fix: "Check the provider's baseUrl, network, and API key",
+          integrationId: providerIntegrationIds[0],
         });
       }
     }

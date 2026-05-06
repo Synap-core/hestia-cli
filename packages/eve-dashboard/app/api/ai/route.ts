@@ -46,6 +46,7 @@ export async function GET() {
     fallbackProvider: ai.fallbackProvider ?? null,
     serviceProviders: ai.serviceProviders ?? {},
     serviceModels: ai.serviceModels ?? {},
+    wiringStatus: ai.wiringStatus ?? {},
     providers,
     validProviders: VALID_PROVIDERS,
     // Single source of truth: the client uses this list to filter
@@ -189,6 +190,22 @@ export async function PATCH(req: Request) {
       // state.json missing or wire-ai threw — return ok=true with empty
       // results, the user can still hit Apply manually.
     }
+  }
+
+  // Persist wiringStatus so the UI can show "Last applied" in the
+  // per-service routing panel. Only overwrite the keys we have
+  // results for — leave the rest untouched.
+  if (applyResults.length > 0) {
+    const patch: Parameters<typeof writeEveSecrets>[0]["ai"] = {
+      wiringStatus: applyResults.reduce<Record<string, { lastApplied: string; outcome: string }>>(
+        (acc, r) => {
+          acc[r.id] = { lastApplied: new Date().toISOString(), outcome: r.outcome };
+          return acc;
+        },
+        {},
+      ),
+    };
+    try { await writeEveSecrets({ ai: patch }); } catch { /* non-fatal */ }
   }
 
   return NextResponse.json({ ok: true, applied: applyResults });

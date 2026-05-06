@@ -100,6 +100,7 @@ export { type HardwareFacts, probeHardware, formatHardwareReport } from './hw-pr
 
 export {
   type EveSecrets,
+  type WiringStatus,
   type UnifiedProvider,
   type AgentKeyRecord,
   type CodeEngine,
