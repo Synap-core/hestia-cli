@@ -69,21 +69,21 @@ function getProviderLabel(id: string): string {
   return PROVIDER_LABELS[id] ?? id.split("custom-")[1] ?? id;
 }
 
-const PROVIDER_TAGLINE: Record<ProviderId, string> = {
+const PROVIDER_TAGLINE: Record<string, string> = {
   anthropic:  "Claude family of models.",
   openai:     "GPT family of models.",
   openrouter: "Hundreds of models behind one key.",
   ollama:     "Local models, no key required.",
 };
 
-const DEFAULT_MODEL_PLACEHOLDERS: Record<ProviderId, string> = {
+const DEFAULT_MODEL_PLACEHOLDERS: Record<string, string> = {
   anthropic:  "claude-sonnet-4-7",
   openai:     "gpt-5",
   openrouter: "anthropic/claude-sonnet-4-7",
   ollama:     "llama3.1:8b",
 };
 
-const KEY_PLACEHOLDERS: Record<ProviderId, string> = {
+const KEY_PLACEHOLDERS: Record<string, string> = {
   anthropic:  "sk-ant-...",
   openai:     "sk-...",
   openrouter: "sk-or-...",
@@ -377,7 +377,7 @@ export default function AiProvidersPage() {
       )}
 
       {/* -----------------------------------------------------------------
-       * Configured built-in providers
+       * Unified providers list
        * -------------------------------------------------------------- */}
       {builtInProviders.length > 0 && (
         <div className="space-y-3">
@@ -385,47 +385,25 @@ export default function AiProvidersPage() {
             const isEditing = !!editing[p.id];
             const editState = editing[p.id] ?? {};
             const isDefault = config?.defaultProvider === p.id;
-            const ok = p.id === "ollama" || p.hasApiKey;
-            const pid = p.id as ProviderId;
+            const ok = p.id === "ollama" || p.hasApiKey || (p.baseUrl && p.baseUrl.trim());
+            const pid = p.id;
             return (
               <Surface key={p.id} className="p-5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="flex items-start gap-3">
-                    <span
-                      className={
-                        "mt-1 inline-block h-2 w-2 rounded-full " +
-                        (ok ? "bg-primary" : "bg-default-300")
-                      }
-                      aria-hidden
-                    />
+                    <span className={"mt-1 inline-block h-2 w-2 rounded-full " + (ok ? "bg-primary" : "bg-default-300")} />
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="font-medium text-foreground">{PROVIDER_LABELS[pid]}</span>
-                        {isDefault && (
-                          <Chip
-                            size="sm"
-                            color="primary"
-                            variant="flat"
-                            radius="sm"
-                            startContent={<Check className="h-3 w-3" />}
-                            classNames={{ content: "px-1 text-[10px] font-medium uppercase tracking-wider" }}
-                          >
-                            default
-                          </Chip>
-                        )}
-                        {!p.enabled && (
-                          <Chip
-                            size="sm"
-                            variant="flat"
-                            radius="sm"
-                            classNames={{ content: "px-1 text-[10px] font-medium uppercase tracking-wider text-default-500" }}
-                          >
-                            disabled
-                          </Chip>
-                        )}
+                        <span className="font-medium text-foreground">{getProviderLabel(pid)}</span>
+                        {isDefault && <Chip size="sm" color="primary" variant="flat" radius="sm" startContent={<Check className="h-3 w-3"/>}>default</Chip>}
+                        {p.isCustom && <Chip size="sm" variant="flat" radius="sm" classNames={{content: "px-1 text-[10px] font-medium uppercase tracking-wider text-default-400"}}>custom</Chip>}
+                        {!p.enabled && <Chip size="sm" variant="flat" radius="sm" classNames={{content: "px-1 text-[10px] font-medium uppercase tracking-wider text-default-500"}}>disabled</Chip>}
                       </div>
-                      <p className="mt-0.5 text-xs text-default-500">{PROVIDER_TAGLINE[pid]}</p>
-                      {p.id !== "ollama" && (
+                      {p.isCustom && <p className="mt-0.5 text-xs text-default-500">OpenAI-compatible endpoint</p>}
+                      {p.baseUrl && !p.isCustom && (
+                        <p className="mt-1 font-mono text-[11px] text-default-400">{p.baseUrl}</p>
+                      )}
+                      {!p.isCustom && p.id !== "ollama" && (
                         <p className="mt-1 font-mono text-[11px] text-default-400">
                           {p.hasApiKey ? p.apiKeyMasked : "no key set"}
                         </p>
@@ -433,110 +411,45 @@ export default function AiProvidersPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    {!isDefault && ok && (
-                      <Button
-                        size="sm"
-                        variant="light"
-                        radius="md"
-                        onPress={() => void setDefault(pid)}
-                        isLoading={savingId === `default-${p.id}`}
-                        className="text-default-600 hover:text-foreground"
-                      >
+                    {!isDefault && ok && !p.isCustom && (
+                      <Button size="sm" variant="light" radius="md" onPress={() => void setDefault(pid)} isLoading={savingId === `default-${p.id}`} className="text-default-600 hover:text-foreground">
                         Set default
                       </Button>
                     )}
-                    <Button
-                      size="sm"
-                      variant="light"
-                      radius="md"
-                      isIconOnly
-                      onPress={() => void removeProvider(pid)}
-                      isDisabled={savingId === p.id}
-                      className="text-default-400 hover:text-danger"
-                      aria-label={`Remove ${PROVIDER_LABELS[pid]}`}
-                    >
+                    <Button size="sm" variant="light" radius="md" isIconOnly onPress={() => removeProvider(pid)} isDisabled={!!savingId} className="text-default-400 hover:text-danger">
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </div>
                 </div>
 
-                <div className="mt-7 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  {p.id !== "ollama" && (
-                    <Input
-                      label="API key"
-                      labelPlacement="outside"
-                      placeholder={isEditing ? KEY_PLACEHOLDERS[pid] : (p.apiKeyMasked ?? "Click edit to set")}
-                      value={editState.apiKey ?? ""}
-                      onValueChange={v =>
-                        setEditing(prev => ({ ...prev, [p.id]: { ...prev[p.id], apiKey: v } }))
-                      }
-                      type="password"
-                      variant="bordered"
-                      isDisabled={!isEditing}
-                      classNames={{ input: "font-mono text-sm" }}
-                    />
-                  )}
-                  <Input
-                    label="Default model"
-                    labelPlacement="outside"
-                    placeholder={DEFAULT_MODEL_PLACEHOLDERS[pid]}
-                    value={editState.defaultModel ?? p.defaultModel ?? ""}
-                    onValueChange={v =>
-                      setEditing(prev => ({ ...prev, [p.id]: { ...prev[p.id], defaultModel: v } }))
-                    }
-                    variant="bordered"
-                    description={
-                      p.id === "openrouter"
-                        ? "Form: provider/model — e.g. anthropic/claude-sonnet-4-7"
-                        : undefined
-                    }
-                    classNames={{ input: "font-mono text-sm" }}
-                  />
-                </div>
+                {/* Edit fields */}
+                {isEditing && (
+                  <div className="mt-7 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    {!p.isCustom && p.id !== "ollama" && (
+                      <Input label="API key" labelPlacement="outside" placeholder={p.apiKeyMasked ?? "Click edit to set"} value={editState.apiKey ?? ""} onValueChange={v => setEditing(prev => ({ ...prev, [p.id]: { ...prev[p.id], apiKey: v }}))} type="password" variant="bordered" classNames={{ input: "font-mono text-sm" }} />
+                    )}
+                    {p.isCustom && (
+                      <>
+                        <Input label="Name" labelPlacement="outside" placeholder={p.name ?? "e.g. Local LLaMA"} value={editState.apiKey ?? ""} onValueChange={v => setEditing(prev => ({ ...prev, [p.id]: { ...prev[p.id], apiKey: v }}))} variant="bordered" classNames={{ input: "text-sm" }} />
+                        <Input label="Base URL" labelPlacement="outside" placeholder="https://..." value={editState.baseUrl ?? ""} onValueChange={v => setEditing(prev => ({ ...prev, [p.id]: { ...prev[p.id], baseUrl: v }}))} variant="bordered" classNames={{ input: "font-mono text-sm" }} />
+                      </>
+                    )}
+                    <Input label="Default model" labelPlacement="outside" placeholder="e.g. claude-sonnet-4-7" value={editState.defaultModel ?? p.defaultModel ?? ""} onValueChange={v => setEditing(prev => ({ ...prev, [p.id]: { ...prev[p.id], defaultModel: v }}))} variant="bordered" classNames={{ input: "font-mono text-sm" }} />
+                  </div>
+                )}
 
+                {/* Footer */}
                 <div className="mt-5 flex items-center justify-between border-t border-divider pt-4">
-                  <Switch
-                    size="sm"
-                    isSelected={p.enabled}
-                    onValueChange={v => void saveProvider(pid, { enabled: v })}
-                  >
+                  <Switch size="sm" isSelected={p.enabled} onValueChange={v => void saveProvider(pid, { enabled: v })}>
                     <span className="text-xs text-default-500">Enabled</span>
                   </Switch>
                   {isEditing ? (
                     <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        variant="light"
-                        radius="md"
-                        onPress={() =>
-                          setEditing(prev => { const n = { ...prev }; delete n[p.id]; return n; })
-                        }
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        size="sm"
-                        color="primary"
-                        radius="md"
-                        startContent={<Save className="h-3.5 w-3.5" />}
-                        isLoading={savingId === p.id}
-                        onPress={() => void saveProvider(pid, {
-                          ...(editState.apiKey ? { apiKey: editState.apiKey } : {}),
-                          ...(editState.defaultModel ? { defaultModel: editState.defaultModel } : {}),
-                        })}
-                      >
-                        Save
-                      </Button>
+                      <Button size="sm" variant="light" radius="md" onPress={() => setEditing(prev => { const n = { ...prev }; delete n[p.id]; return n; })}>Cancel</Button>
+                      <Button size="sm" color="primary" radius="md" startContent={<Save className="h-3.5 w-3.5"/>} isLoading={savingId === p.id} onPress={() => void saveProvider(pid, { ...(editState.apiKey ? { apiKey: editState.apiKey } : {}), ...(editState.defaultModel ? { defaultModel: editState.defaultModel } : {}), ...(editState.baseUrl ? { baseUrl: editState.baseUrl } : {}) })}>Save</Button>
                     </div>
                   ) : (
-                    <Button
-                      size="sm"
-                      variant="bordered"
-                      radius="md"
-                      onPress={() => setEditing(prev => ({ ...prev, [p.id]: {} }))}
-                    >
-                      Edit
-                    </Button>
+                    <Button size="sm" variant="bordered" radius="md" onPress={() => setEditing(prev => ({ ...prev, [p.id]: {} }))}>Edit</Button>
                   )}
                 </div>
               </Surface>
@@ -546,389 +459,68 @@ export default function AiProvidersPage() {
       )}
 
       {/* -----------------------------------------------------------------
-       * Add built-in provider
+       * Add provider (unified)
        * -------------------------------------------------------------- */}
-      {availableToAdd.length > 0 && (
-        <div>
-          {!adding ? (
-            <button
-              type="button"
-              onClick={() => setAdding({})}
-              className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-divider bg-content1/40 px-4 py-4 text-sm text-default-500 transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
-            >
-              <Plus className="h-4 w-4" />
-              Add a built-in provider
-            </button>
-          ) : (
-            <Surface className="p-5">
-              <h3 className="font-medium text-foreground">Add a provider</h3>
-              <p className="mt-0.5 text-xs text-default-500">
-                Configure the key, set a default model, then save. You can apply it to components afterwards.
-              </p>
-              <div className="mt-6 space-y-4">
-                <Select
-                  label="Provider"
-                  labelPlacement="outside"
-                  placeholder="Pick a provider"
-                  variant="bordered"
-                  selectedKeys={adding.id ? [adding.id] : []}
-                  onSelectionChange={keys => {
-                    const id = Array.from(keys)[0] as ProviderId | undefined;
-                    setAdding({ id, defaultModel: id ? DEFAULT_MODEL_PLACEHOLDERS[id] : undefined });
-                  }}
-                >
-                  {availableToAdd.map(id => (
-                    <SelectItem key={id}>{PROVIDER_LABELS[id]}</SelectItem>
-                  ))}
-                </Select>
-                {adding.id && adding.id !== "ollama" && (
-                  <Input
-                    label="API key"
-                    labelPlacement="outside"
-                    placeholder={KEY_PLACEHOLDERS[adding.id]}
-                    value={adding.apiKey ?? ""}
-                    onValueChange={v => setAdding(prev => ({ ...prev, apiKey: v }))}
-                    type="password"
-                    variant="bordered"
-                    classNames={{ input: "font-mono text-sm" }}
-                  />
-                )}
-                {adding.id && (
-                  <Input
-                    label="Default model"
-                    labelPlacement="outside"
-                    placeholder={DEFAULT_MODEL_PLACEHOLDERS[adding.id]}
-                    value={adding.defaultModel ?? ""}
-                    onValueChange={v => setAdding(prev => ({ ...prev, defaultModel: v }))}
-                    variant="bordered"
-                    description={
-                      adding.id === "openrouter"
-                        ? "OpenRouter requires the form provider/model."
-                        : undefined
-                    }
-                    classNames={{ input: "font-mono text-sm" }}
-                  />
-                )}
-              </div>
-              <div className="mt-5 flex justify-end gap-2 border-t border-divider pt-4">
-                <Button size="sm" variant="light" radius="md" onPress={() => setAdding(null)}>
-                  Cancel
-                </Button>
-                <Button
-                  size="sm"
-                  color="primary"
-                  radius="md"
-                  isDisabled={!adding.id || (adding.id !== "ollama" && !adding.apiKey)}
-                  isLoading={!!savingId}
-                  startContent={<Save className="h-3.5 w-3.5" />}
-                  onPress={() => void saveProvider(adding.id!, {
-                    apiKey: adding.apiKey,
-                    defaultModel: adding.defaultModel,
-                  })}
-                >
-                  Add provider
-                </Button>
-              </div>
-            </Surface>
-          )}
-        </div>
-      )}
-
-      {/* -----------------------------------------------------------------
-       * Custom providers
-       * -------------------------------------------------------------- */}
-      <div>
-        <div className="flex items-center gap-2 mb-3">
-          <Plug className="h-4 w-4 text-default-400" />
-          <h3 className="font-medium text-foreground">Custom providers</h3>
-          <p className="text-xs text-default-400">
-            OpenAI-compatible endpoints (local servers, proxies, etc.)
+      {!adding ? (
+        <button
+          type="button"
+          onClick={() => setAdding({ isCustom: false })}
+          className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-divider bg-content1/40 px-4 py-4 text-sm text-default-500 transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
+        >
+          <Plus className="h-4 w-4" />
+          Add a provider
+        </button>
+      ) : (
+        <Surface className="p-5">
+          <h3 className="font-medium text-foreground">Add a provider</h3>
+          <p className="mt-0.5 text-xs text-default-500">
+            Configure the key, set a default model, then save. You can apply it to components afterwards.
           </p>
-        </div>
-
-        {/* Existing custom provider cards */}
-        {customProvidersList.length > 0 && (
-          <div className="space-y-3 mb-3">
-            {customProvidersList.map(p => {
-              const isEditing = editingCustomId === p.id;
-              const ed = customProviderEdit[p.id] ?? {};
-              const ok = p.hasApiKey || p.baseUrl;
-              return (
-                <Surface key={p.id} className="p-5">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="flex items-start gap-3">
-                      <span
-                        className={
-                          "mt-1 inline-block h-2 w-2 rounded-full " +
-                          (ok ? "bg-primary" : "bg-default-300")
-                        }
-                        aria-hidden
-                      />
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-foreground">
-                            {p.name || p.id}
-                          </span>
-                          <Chip
-                            size="sm"
-                            variant="flat"
-                            radius="sm"
-                            classNames={{ content: "px-1 text-[10px] font-medium uppercase tracking-wider text-default-400" }}
-                          >
-                            custom
-                          </Chip>
-                          {!p.enabled && (
-                            <Chip
-                              size="sm"
-                              variant="flat"
-                              radius="sm"
-                              classNames={{ content: "px-1 text-[10px] font-medium uppercase tracking-wider text-default-500" }}
-                            >
-                              disabled
-                            </Chip>
-                          )}
-                        </div>
-                        {p.baseUrl && (
-                          <p className="mt-0.5 font-mono text-[11px] text-default-400 truncate max-w-sm">
-                            {p.baseUrl}
-                          </p>
-                        )}
-                        {p.hasApiKey && (
-                          <p className="mt-0.5 font-mono text-[11px] text-default-400">
-                            {p.apiKeyMasked}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      {isEditing ? (
-                        <Button
-                          size="sm"
-                          color="primary"
-                          variant="light"
-                          radius="md"
-                          startContent={<Check className="h-3.5 w-3.5" />}
-                          isLoading={savingId === p.id}
-                          onPress={() => {
-                            if (!ed.name?.trim() || !ed.baseUrl?.trim()) {
-                              addToast({ title: "Name and base URL required", color: "danger" });
-                              return;
-                            }
-                            void saveCustomProvider({
-                              id: p.id,
-                              name: ed.name,
-                              baseUrl: ed.baseUrl,
-                              apiKey: ed.apiKey,
-                              defaultModel: ed.defaultModel,
-                              enabled: ed.enabled ?? p.enabled,
-                            });
-                          }}
-                        >
-                          Save
-                        </Button>
-                      ) : (
-                        <Button
-                          size="sm"
-                          variant="light"
-                          radius="md"
-                          isIconOnly
-                          onPress={() => {
-                            setEditingCustomId(p.id);
-                            setCustomProviderEdit(prev => ({
-                              ...prev,
-                              [p.id]: { name: p.name, baseUrl: p.baseUrl, defaultModel: p.defaultModel, enabled: p.enabled },
-                            }));
-                          }}
-                        >
-                          <Save className="h-3.5 w-3.5" />
-                        </Button>
-                      )}
-                      <Button
-                        size="sm"
-                        variant="light"
-                        radius="md"
-                        isIconOnly
-                        onPress={() => void removeCustomProvider(p.id)}
-                        isDisabled={savingId === p.id}
-                        className="text-default-400 hover:text-danger"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-
-                  {/* Inline edit fields */}
-                  {isEditing && (
-                    <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                      <Input
-                        label="Name"
-                        labelPlacement="outside"
-                        placeholder="e.g. Local LLaMA"
-                        value={ed.name ?? ""}
-                        onValueChange={v =>
-                          setCustomProviderEdit(prev => ({ ...prev, [p.id]: { ...prev[p.id], name: v } }))
-                        }
-                        variant="bordered"
-                        classNames={{ input: "text-sm" }}
-                      />
-                      <Input
-                        label="Base URL"
-                        labelPlacement="outside"
-                        placeholder="https://..."
-                        value={ed.baseUrl ?? ""}
-                        onValueChange={v =>
-                          setCustomProviderEdit(prev => ({ ...prev, [p.id]: { ...prev[p.id], baseUrl: v } }))
-                        }
-                        variant="bordered"
-                        classNames={{ input: "font-mono text-sm" }}
-                      />
-                      <Input
-                        label="API key"
-                        labelPlacement="outside"
-                        placeholder="Leave blank to keep existing"
-                        value={ed.apiKey ?? ""}
-                        onValueChange={v =>
-                          setCustomProviderEdit(prev => ({ ...prev, [p.id]: { ...prev[p.id], apiKey: v } }))
-                        }
-                        type="password"
-                        variant="bordered"
-                        classNames={{ input: "font-mono text-sm" }}
-                      />
-                      <Input
-                        label="Default model"
-                        labelPlacement="outside"
-                        placeholder="e.g. llama3.1:8b"
-                        value={ed.defaultModel ?? ""}
-                        onValueChange={v =>
-                          setCustomProviderEdit(prev => ({ ...prev, [p.id]: { ...prev[p.id], defaultModel: v } }))
-                        }
-                        variant="bordered"
-                        classNames={{ input: "font-mono text-sm" }}
-                      />
-                    </div>
-                  )}
-
-                  {/* Footer */}
-                  <div className="mt-5 flex items-center justify-between border-t border-divider pt-4">
-                    <Switch
-                      size="sm"
-                      isSelected={isEditing ? (ed.enabled ?? p.enabled) : p.enabled}
-                      onValueChange={v =>
-                        setCustomProviderEdit(prev => ({
-                          ...prev,
-                          [p.id]: { ...prev[p.id], enabled: v },
-                        }))
-                      }
-                      isDisabled={!isEditing}
-                    >
-                      <span className="text-xs text-default-500">Enabled</span>
-                    </Switch>
-                    {!isEditing && (
-                      <span className="text-xs text-default-400">
-                        {p.defaultModel && `model: ${p.defaultModel}`}
-                      </span>
-                    )}
-                  </div>
-                </Surface>
-              );
-            })}
+          <div className="mt-4 space-y-4">
+            <Select label="Type" labelPlacement="outside" variant="bordered" selectedKeys={adding.isCustom ? new Set(["custom"]) : new Set(["builtin"])} onSelectionChange={keys => {
+              const isCustom = Array.from(keys).includes("custom");
+              setAdding({ isCustom, apiKey: "", defaultModel: "", baseUrl: "", name: isCustom ? "" : undefined });
+            }}>
+              <SelectItem key="builtin">Built-in provider</SelectItem>
+              <SelectItem key="custom">Custom OpenAI-compatible endpoint</SelectItem>
+            </Select>
+            {adding.isCustom && (
+              <>
+                <Input label="Name" labelPlacement="outside" placeholder="e.g. Local LLaMA" value={adding.name ?? ""} onValueChange={v => setAdding({ ...adding, name: v })} variant="bordered" classNames={{ input: "text-sm" }} />
+                <Input label="Base URL" labelPlacement="outside" placeholder="https://..." value={adding.baseUrl ?? ""} onValueChange={v => setAdding({ ...adding, baseUrl: v })} variant="bordered" classNames={{ input: "font-mono text-sm" }} />
+              </>
+            )}
+            {!adding.isCustom && adding.id && adding.id !== "ollama" && (
+              <Input label="API key" labelPlacement="outside" placeholder="sk-..." value={adding.apiKey ?? ""} onValueChange={v => setAdding({ ...adding, apiKey: v })} type="password" variant="bordered" classNames={{ input: "font-mono text-sm" }} />
+            )}
+            <Input label="Default model" labelPlacement="outside" placeholder={adding.isCustom ? "e.g. llama3.1:8b" : "e.g. claude-sonnet-4-7"} value={adding.defaultModel ?? ""} onValueChange={v => setAdding({ ...adding, defaultModel: v })} variant="bordered" classNames={{ input: "font-mono text-sm" }} />
           </div>
-        )}
-
-        {/* Add custom provider form */}
-        {!customProviderForm ? (
-          <button
-            type="button"
-            onClick={() => setCustomProviderForm({ name: "", baseUrl: "", apiKey: "", defaultModel: "", enabled: true })}
-            className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-divider bg-content1/40 px-4 py-4 text-sm text-default-500 transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
-          >
-            <Plus className="h-4 w-4" />
-            Add custom OpenAI-compatible provider
-          </button>
-        ) : (
-          <Surface className="p-5">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="font-medium text-foreground">Custom provider</h3>
-                <p className="mt-0.5 text-xs text-default-500">
-                  Any OpenAI-compatible endpoint (local model servers, proxies, etc.)
-                </p>
-              </div>
-              <Button
-                size="sm"
-                variant="light"
-                radius="md"
-                onPress={() => setCustomProviderForm(null)}
-              >
-                Cancel
-              </Button>
-            </div>
-            <div className="mt-4 space-y-4">
-              <Input
-                label="Name"
-                labelPlacement="outside"
-                placeholder="e.g. Local LLaMA, Proxy name"
-                value={customProviderForm.name}
-                onValueChange={v => setCustomProviderForm({ ...customProviderForm, name: v })}
-                variant="bordered"
-                classNames={{ input: "text-sm" }}
-              />
-              <Input
-                label="Base URL"
-                labelPlacement="outside"
-                placeholder="https://..."
-                value={customProviderForm.baseUrl}
-                onValueChange={v => setCustomProviderForm({ ...customProviderForm, baseUrl: v })}
-                variant="bordered"
-                classNames={{ input: "font-mono text-sm" }}
-              />
-              <Input
-                label="API key"
-                labelPlacement="outside"
-                placeholder="Optional — some endpoints don't require one"
-                value={customProviderForm.apiKey}
-                onValueChange={v => setCustomProviderForm({ ...customProviderForm, apiKey: v })}
-                type="password"
-                variant="bordered"
-                classNames={{ input: "font-mono text-sm" }}
-              />
-              <Input
-                label="Default model"
-                labelPlacement="outside"
-                placeholder="e.g. llama3.1:8b, gpt-4"
-                value={customProviderForm.defaultModel}
-                onValueChange={v => setCustomProviderForm({ ...customProviderForm, defaultModel: v })}
-                variant="bordered"
-                classNames={{ input: "font-mono text-sm" }}
-              />
-            </div>
-            <div className="mt-5 flex justify-end gap-2 border-t border-divider pt-4">
-              <Button
-                size="sm"
-                color="primary"
-                radius="md"
-                isLoading={savingId?.startsWith("custom-")}
-                startContent={<Save className="h-3.5 w-3.5" />}
-                onPress={() => {
-                  if (!customProviderForm.name.trim() || !customProviderForm.baseUrl.trim()) {
-                    addToast({ title: "Name and base URL are required", color: "danger" });
-                    return;
-                  }
-                  void saveCustomProvider({
-                    name: customProviderForm.name,
-                    baseUrl: customProviderForm.baseUrl,
-                    apiKey: customProviderForm.apiKey,
-                    defaultModel: customProviderForm.defaultModel,
-                    enabled: customProviderForm.enabled,
-                  });
-                }}
-              >
-                Add provider
-              </Button>
-            </div>
-          </Surface>
-        )}
-      </div>
+          <div className="mt-5 flex justify-end gap-2 border-t border-divider pt-4">
+            <Button size="sm" variant="light" radius="md" onPress={() => setAdding(null)}>Cancel</Button>
+            <Button size="sm" color="primary" radius="md" isLoading={!!savingId} startContent={<Save className="h-3.5 w-3.5"/>} onPress={() => {
+              if (adding.isCustom && (!adding.name?.trim() || !adding.baseUrl?.trim())) {
+                addToast({ title: "Name and base URL are required", color: "danger" });
+                return;
+              }
+              const body: Record<string, unknown> = { defaultModel: adding.defaultModel };
+              if (adding.apiKey) body.apiKey = adding.apiKey;
+              if (adding.isCustom) {
+                body.isCustom = true;
+                body.name = adding.name;
+                body.baseUrl = adding.baseUrl;
+              }
+              const id = adding.isCustom
+                ? `custom-${Date.now()}`
+                : (adding.id ?? "");
+              if (!id) {
+                addToast({ title: "Select a provider first", color: "danger" });
+                return;
+              }
+              void saveProvider(id, body);
+            }}>Add provider</Button>
+          </div>
+        </Surface>
+      )}
 
       {/* -----------------------------------------------------------------
        * Per-service routing
@@ -948,7 +540,7 @@ export default function AiProvidersPage() {
               const modelOverride = config?.serviceModels?.[c.id];
               const effective = override ?? config?.defaultProvider ?? null;
               const usable = (config?.providers ?? []).filter(
-                (p: ProviderEntry) => !p.isCustom && (p.id === "ollama" || p.hasApiKey),
+                (p: ProviderEntry) => p.id === "ollama" || p.hasApiKey || (p.baseUrl && p.baseUrl.trim()),
               );
               const editingModel = editingServiceModels[c.id] ?? modelOverride ?? "";
               const isModelDirty = editingServiceModels[c.id] !== undefined && editingServiceModels[c.id] !== (modelOverride ?? "");
@@ -970,7 +562,7 @@ export default function AiProvidersPage() {
                       </div>
                       <p className="mt-0.5 text-[11px] text-default-500">
                         {effective
-                          ? `Routes via ${PROVIDER_LABELS[effective as ProviderId] ?? effective}`
+                          ? `Routes via ${getProviderLabel(effective)}`
                           : "No provider — pick one above first"}
                         {modelOverride && ` · model: ${modelOverride}`}
                       </p>
@@ -987,7 +579,7 @@ export default function AiProvidersPage() {
                           const sel = Array.from(keys)[0] as string | undefined;
                           const next = sel === "__default__" || !sel
                             ? null
-                            : sel as ProviderId;
+                            : sel;
                           if (next === (override ?? null)) return;
                           void setServiceProvider(c.id, next);
                         }}
@@ -995,7 +587,7 @@ export default function AiProvidersPage() {
                         {[
                           <SelectItem key="__default__">Use global default</SelectItem>,
                           ...usable.map(p => (
-                            <SelectItem key={p.id}>{PROVIDER_LABELS[p.id as ProviderId]}</SelectItem>
+                            <SelectItem key={p.id}>{getProviderLabel(p.id)}</SelectItem>
                           )),
                         ]}
                       </Select>

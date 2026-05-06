@@ -78,6 +78,9 @@ export async function PATCH(req: Request) {
     serviceModels?: Record<string, string | null>;
   };
 
+  // Read current secrets for provider validation and later merging.
+  const secrets = await readEveSecrets();
+
   // Validate providers against both built-in enum and the actual configured list.
   if (body.defaultProvider) {
     const allIds = (secrets?.ai?.providers ?? []).map(p => p.id);
@@ -108,17 +111,12 @@ export async function PATCH(req: Request) {
   if (body.fallbackProvider !== undefined) next.fallbackProvider = body.fallbackProvider ?? undefined;
   if (body.mode !== undefined) next.mode = body.mode;
 
-  // Read current secrets once for merging both provider and model maps.
-  const currentSecrets = body.serviceProviders || body.serviceModels
-    ? await readEveSecrets()
-    : null;
-
   // Merge serviceProviders: keep existing entries, drop the ones explicitly
   // set to `null`. This way the UI can clear one service without resending
   // the whole map.
   if (body.serviceProviders) {
-    const current = currentSecrets?.ai?.serviceProviders ?? {};
-    const merged: Record<string, ProviderId> = { ...current };
+    const current = secrets?.ai?.serviceProviders ?? {};
+    const merged: Record<string, string> = { ...current };
     for (const [svc, prov] of Object.entries(body.serviceProviders)) {
       if (prov === null) delete merged[svc];
       else merged[svc] = prov;
@@ -128,7 +126,7 @@ export async function PATCH(req: Request) {
 
   // Merge serviceModels: same null-to-clear pattern.
   if (body.serviceModels) {
-    const current = currentSecrets?.ai?.serviceModels ?? {};
+    const current = secrets?.ai?.serviceModels ?? {};
     const merged: Record<string, string> = { ...current };
     for (const [svc, model] of Object.entries(body.serviceModels)) {
       if (model === null) delete merged[svc];

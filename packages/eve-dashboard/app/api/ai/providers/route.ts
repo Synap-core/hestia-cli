@@ -16,6 +16,20 @@ import { requireAuth } from "@/lib/auth-server";
 type ProviderId = "ollama" | "openrouter" | "anthropic" | "openai";
 const VALID_PROVIDERS: ProviderId[] = ["ollama", "openrouter", "anthropic", "openai"];
 
+const NAME_MAP: Record<ProviderId, string> = {
+  ollama: "Ollama (local)",
+  openrouter: "OpenRouter",
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+};
+
+const DEFAULT_MODELS: Record<ProviderId, string> = {
+  anthropic: "claude-sonnet-4-7",
+  openai: "gpt-5",
+  openrouter: "anthropic/claude-sonnet-4-7",
+  ollama: "llama3.1:8b",
+};
+
 /**
  * Apply AI config changes to running services.
  */
@@ -50,12 +64,21 @@ async function autoApply(opts: { recreate?: boolean } = {}) {
   }
 }
 
-const DEFAULT_MODELS: Record<ProviderId, string> = {
-  anthropic: "claude-sonnet-4-7",
-  openai: "gpt-5",
-  openrouter: "anthropic/claude-sonnet-4-7",
-  ollama: "llama3.1:8b",
-};
+/**
+ * Resolve a provider id: strip `custom-` prefix for display, and check
+ * whether the id refers to a built-in provider.
+ */
+function isBuiltIn(id: string): id is ProviderId {
+  return VALID_PROVIDERS.includes(id as ProviderId);
+}
+
+/**
+ * Ensure a provider entry has a name — derive from id for built-ins,
+ * use the provided name or the id itself for custom providers.
+ */
+function withName(id: string, name: string | undefined): string {
+  return name || NAME_MAP[id as ProviderId] || id;
+}
 
 export async function POST(req: Request) {
   const auth = await requireAuth();
@@ -73,69 +96,63 @@ export async function POST(req: Request) {
     name?: string;
   };
 
-  // Custom provider path
-  if (body.isCustom) {
-    const secrets = await readEveSecrets();
-    const list = [...(secrets?.ai?.customProviders ?? [])];
+  const secrets = await readEveSecrets();
+  const list = [...(secrets?.ai?.providers ?? [])];
 
-    if (body.id) {
-      // Update existing custom provider
-      const idx = list.findIndex(p => p.id === body.id);
-      if (idx >= 0) {
-        list[idx] = {
-          ...list[idx],
-          name: body.name ?? list[idx].name,
-          baseUrl: body.baseUrl ?? list[idx].baseUrl,
-          apiKey: body.apiKey ?? list[idx].apiKey,
-          defaultModel: body.defaultModel ?? list[idx].defaultModel,
-          enabled: body.enabled ?? list[idx].enabled ?? true,
-        };
-      }
-    } else {
-      // Create new custom provider
-      const id = `custom-${Date.now()}`;
-      list.push({
-        id,
-        name: body.name || id,
-        baseUrl: body.baseUrl ?? '',
-        apiKey: body.apiKey ?? '',
-        defaultModel: body.defaultModel ?? '',
-        enabled: body.enabled ?? true,
-      });
+  // Determine the canonical id and whether this is a custom entry.
+  let resolvedId: string;
+  let isCustom: boolean;
+
+  if (body.isCustom || body.id?.startsWith('custom-')) {
+    isCustom = true;
+    resolvedId = body.id ?? `custom-${Date.now()}`;
+  } else if (body.id && VALID_PROVIDERS.includes(body.id as ProviderId)) {
+    isCustom = false;
+    resolvedId = body.id as ProviderId;
+  } else {
+    return NextResponse.json({ error: "Invalid provider id" }, { status: 400 });
+  }
+
+  const idx = list.findIndex((p) => p.id === resolvedId);
+  const existing = idx >= 0 ? list[idx] : undefined;
+
+  // Built-in cloud providers require an API key.
+  if (!isCustom && isBuiltIn(resolvedId)) {
+    const apiKey = body.apiKey ?? existing?.apiKey;
+    if (!apiKey || apiKey.trim().length === 0) {
+      return NextResponse.json({ error: `${resolvedId} requires an API key` }, { status: 400 });
     }
 
-    await writeEveSecrets({ ai: { customProviders: list } } as Parameters<typeof writeEveSecrets>[0]);
+    const next = {
+      id: resolvedId,
+      name: withName(resolvedId, body.name),
+      enabled: body.enabled ?? existing?.enabled ?? true,
+      apiKey: apiKey ?? undefined,
+      baseUrl: body.baseUrl ?? existing?.baseUrl,
+      defaultModel: body.defaultModel ?? existing?.defaultModel ?? DEFAULT_MODELS[resolvedId],
+    };
+
+    if (idx >= 0) list[idx] = next;
+    else list.push(next);
+
+    await writeEveSecrets({ ai: { providers: list } });
     const applied = await autoApply({ recreate: true });
     return NextResponse.json({
       ok: true,
-      provider: list.find(p => p.id === body.id) ?? list[list.length - 1],
+      provider: { ...next, apiKey: undefined },
       applied,
     });
   }
 
-  // Built-in provider path
-  if (!body.id || !VALID_PROVIDERS.includes(body.id as ProviderId)) {
-    return NextResponse.json({ error: "Invalid provider id" }, { status: 400 });
-  }
-  const id = body.id as ProviderId;
-
-  const secrets = await readEveSecrets();
-  const list = [...(secrets?.ai?.providers ?? [])];
-  const idx = list.findIndex((p) => p.id === id);
-  const existing = idx >= 0 ? list[idx] : undefined;
-
+  // Custom provider path.
   const apiKey = body.apiKey ?? existing?.apiKey;
-  const isCloud = id !== "ollama";
-  if (isCloud && (!apiKey || apiKey.trim().length === 0)) {
-    return NextResponse.json({ error: `${id} requires an API key` }, { status: 400 });
-  }
-
   const next = {
-    id,
+    id: resolvedId,
+    name: withName(resolvedId, body.name ?? existing?.name),
     enabled: body.enabled ?? existing?.enabled ?? true,
     apiKey: apiKey ?? undefined,
-    baseUrl: body.baseUrl ?? existing?.baseUrl,
-    defaultModel: body.defaultModel ?? existing?.defaultModel ?? DEFAULT_MODELS[id],
+    baseUrl: body.baseUrl ?? existing?.baseUrl ?? '',
+    defaultModel: body.defaultModel ?? existing?.defaultModel ?? '',
   };
 
   if (idx >= 0) list[idx] = next;
@@ -161,38 +178,29 @@ export async function DELETE(req: Request) {
   }
 
   const secrets = await readEveSecrets();
+  const existingList = secrets?.ai?.providers ?? [];
 
-  // Check built-in provider
-  if (VALID_PROVIDERS.includes(id as ProviderId)) {
-    const list = (secrets?.ai?.providers ?? []).filter(p => p.id !== id);
-
-    const aiUpdate: Parameters<typeof writeEveSecrets>[0]["ai"] = { providers: list };
-    if (secrets?.ai?.defaultProvider === id) aiUpdate.defaultProvider = undefined;
-    if (secrets?.ai?.fallbackProvider === id) aiUpdate.fallbackProvider = undefined;
-
-    const currentSvc = secrets?.ai?.serviceProviders ?? {};
-    const cleanedSvc: Record<string, ProviderId> = {};
-    for (const [svc, prov] of Object.entries(currentSvc)) {
-      if (prov !== id) cleanedSvc[svc] = prov as ProviderId;
-    }
-    if (Object.keys(cleanedSvc).length !== Object.keys(currentSvc).length) {
-      aiUpdate.serviceProviders = cleanedSvc;
-    }
-
-    await writeEveSecrets({ ai: aiUpdate });
-    const applied = await autoApply({ recreate: true });
-    return NextResponse.json({ ok: true, applied });
+  const targetIdx = existingList.findIndex(p => p.id === id);
+  if (targetIdx < 0) {
+    return NextResponse.json({ error: "Provider not found" }, { status: 404 });
   }
 
-  // Custom provider path
-  const customList = (secrets?.ai?.customProviders ?? []).filter(p => p.id !== id);
-  const hasCustomChanges = customList.length !== (secrets?.ai?.customProviders ?? []).length;
+  const list = existingList.filter(p => p.id !== id);
 
-  if (hasCustomChanges) {
-    await writeEveSecrets({ ai: { customProviders: customList } } as Parameters<typeof writeEveSecrets>[0]);
-    const applied = await autoApply({ recreate: true });
-    return NextResponse.json({ ok: true, applied });
+  const aiUpdate: Parameters<typeof writeEveSecrets>[0]["ai"] = { providers: list };
+  if (secrets?.ai?.defaultProvider === id) aiUpdate.defaultProvider = undefined;
+  if (secrets?.ai?.fallbackProvider === id) aiUpdate.fallbackProvider = undefined;
+
+  const currentSvc = secrets?.ai?.serviceProviders ?? {};
+  const cleanedSvc: Record<string, string> = {};
+  for (const [svc, prov] of Object.entries(currentSvc)) {
+    if (prov !== id) cleanedSvc[svc] = prov;
+  }
+  if (Object.keys(cleanedSvc).length !== Object.keys(currentSvc).length) {
+    aiUpdate.serviceProviders = cleanedSvc;
   }
 
-  return NextResponse.json({ error: "Provider not found" }, { status: 404 });
+  await writeEveSecrets({ ai: aiUpdate });
+  const applied = await autoApply({ recreate: true });
+  return NextResponse.json({ ok: true, applied });
 }

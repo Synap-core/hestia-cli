@@ -430,7 +430,7 @@ function mergeProviderLists(input: EveSecrets | null): EveSecrets | null {
   // Access raw fields via index to avoid the removed `customProviders` not being
   // in the EveSecrets['ai'] type — this is intentional since we're reading
   // stale on-disk data that still has the legacy field.
-  const builtInRaw: unknown[] = ai.providers ?? [];
+  const builtInRaw: unknown[] = [...(ai.providers ?? [])];
   const customRaw: unknown[] = (ai as Record<string, unknown>).customProviders ?? ([] as unknown[]);
 
   // Already merged: no custom list and no custom-prefixed IDs
@@ -475,13 +475,15 @@ function mergeProviderLists(input: EveSecrets | null): EveSecrets | null {
     });
   }
 
+  const aiOut: Record<string, unknown> = {};
+  for (const key of Object.keys(ai) as Array<keyof typeof ai>) {
+    if (key === 'customProviders') continue; // migrated — drop legacy field
+    aiOut[key] = (ai as Record<string, unknown>)[key];
+  }
+  aiOut.providers = merged;
   return {
     ...input,
-    ai: {
-      ...ai,
-      providers: merged,
-      customProviders: undefined, // migrated — clear the field
-    },
+    ai: aiOut as typeof input.ai,
   };
 }
 
