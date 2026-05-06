@@ -2,7 +2,7 @@
  * AI providers CRUD.
  *
  * POST   /api/ai/providers          → add or update a provider entry
- * DELETE /api/ai/providers?id=...   → remove a provider
+ * DELETE /api/ai/providers?id=...   → remove a provider (built-in or custom)
  */
 
 import { NextResponse } from "next/server";
@@ -18,17 +18,6 @@ const VALID_PROVIDERS: ProviderId[] = ["ollama", "openrouter", "anthropic", "ope
 
 /**
  * Apply AI config changes to running services.
- *
- * - Wire path: per-component file/exec writes + dockerRestart.
- *   Sufficient when the affected config lives in compose `.env` or
- *   in a mounted volume the container reads on boot.
- * - Recreate path: for components in `AI_CONSUMERS_NEEDING_RECREATE`
- *   (currently `openclaw`) whose env is fixed at `docker run` time —
- *   restart-only would leave stale env. The lifecycle `recreate`
- *   action does `docker rm -f` + re-run with current secrets.
- *
- * Pass `recreate: true` to engage the recreate path. Defaulting to
- * false keeps key-only edits cheap.
  */
 async function autoApply(opts: { recreate?: boolean } = {}) {
   try {
@@ -78,14 +67,58 @@ export async function POST(req: Request) {
     baseUrl?: string;
     defaultModel?: string;
     enabled?: boolean;
+    /** Whether this is a custom provider (vs built-in) */
+    isCustom?: boolean;
+    /** Display name for custom providers */
+    name?: string;
   };
 
+  // Custom provider path
+  if (body.isCustom) {
+    const secrets = await readEveSecrets();
+    const list = [...(secrets?.ai?.customProviders ?? [])];
+
+    if (body.id) {
+      // Update existing custom provider
+      const idx = list.findIndex(p => p.id === body.id);
+      if (idx >= 0) {
+        list[idx] = {
+          ...list[idx],
+          name: body.name ?? list[idx].name,
+          baseUrl: body.baseUrl ?? list[idx].baseUrl,
+          apiKey: body.apiKey ?? list[idx].apiKey,
+          defaultModel: body.defaultModel ?? list[idx].defaultModel,
+          enabled: body.enabled ?? list[idx].enabled ?? true,
+        };
+      }
+    } else {
+      // Create new custom provider
+      const id = `custom-${Date.now()}`;
+      list.push({
+        id,
+        name: body.name || id,
+        baseUrl: body.baseUrl ?? '',
+        apiKey: body.apiKey ?? '',
+        defaultModel: body.defaultModel ?? '',
+        enabled: body.enabled ?? true,
+      });
+    }
+
+    await writeEveSecrets({ ai: { customProviders: list } });
+    const applied = await autoApply({ recreate: true });
+    return NextResponse.json({
+      ok: true,
+      provider: list.find(p => p.id === body.id) ?? list[list.length - 1],
+      applied,
+    });
+  }
+
+  // Built-in provider path
   if (!body.id || !VALID_PROVIDERS.includes(body.id as ProviderId)) {
     return NextResponse.json({ error: "Invalid provider id" }, { status: 400 });
   }
   const id = body.id as ProviderId;
 
-  // Cloud providers require an API key (either in this body or already saved)
   const secrets = await readEveSecrets();
   const list = [...(secrets?.ai?.providers ?? [])];
   const idx = list.findIndex((p) => p.id === id);
@@ -109,9 +142,6 @@ export async function POST(req: Request) {
   else list.push(next);
 
   await writeEveSecrets({ ai: { providers: list } });
-  // Auto-apply so a freshly added/edited key lands on running services.
-  // Recreate openclaw because changing a provider's `defaultModel` would
-  // otherwise leave OpenClaw's `DEFAULT_MODEL` env stale.
   const applied = await autoApply({ recreate: true });
   return NextResponse.json({
     ok: true,
@@ -126,33 +156,43 @@ export async function DELETE(req: Request) {
 
   const { searchParams } = new URL(req.url);
   const id = searchParams.get("id");
-  if (!id || !VALID_PROVIDERS.includes(id as ProviderId)) {
-    return NextResponse.json({ error: "Invalid provider id" }, { status: 400 });
+  if (!id) {
+    return NextResponse.json({ error: "Missing provider id" }, { status: 400 });
   }
 
   const secrets = await readEveSecrets();
-  const list = (secrets?.ai?.providers ?? []).filter(p => p.id !== id);
 
-  // Clean up every reference to the removed provider — leaving dangling
-  // ids in defaultProvider/fallbackProvider/serviceProviders would cause
-  // pickPrimaryProvider to silently fall through to "first usable" while
-  // the dashboard UI keeps showing the deleted name.
-  const aiUpdate: Parameters<typeof writeEveSecrets>[0]["ai"] = { providers: list };
-  if (secrets?.ai?.defaultProvider === id) aiUpdate.defaultProvider = undefined;
-  if (secrets?.ai?.fallbackProvider === id) aiUpdate.fallbackProvider = undefined;
+  // Check built-in provider
+  if (VALID_PROVIDERS.includes(id as ProviderId)) {
+    const list = (secrets?.ai?.providers ?? []).filter(p => p.id !== id);
 
-  // serviceProviders entries pointing at the deleted provider must be
-  // dropped too. Rebuild the map without them.
-  const currentSvc = secrets?.ai?.serviceProviders ?? {};
-  const cleanedSvc: Record<string, ProviderId> = {};
-  for (const [svc, prov] of Object.entries(currentSvc)) {
-    if (prov !== id) cleanedSvc[svc] = prov as ProviderId;
+    const aiUpdate: Parameters<typeof writeEveSecrets>[0]["ai"] = { providers: list };
+    if (secrets?.ai?.defaultProvider === id) aiUpdate.defaultProvider = undefined;
+    if (secrets?.ai?.fallbackProvider === id) aiUpdate.fallbackProvider = undefined;
+
+    const currentSvc = secrets?.ai?.serviceProviders ?? {};
+    const cleanedSvc: Record<string, ProviderId> = {};
+    for (const [svc, prov] of Object.entries(currentSvc)) {
+      if (prov !== id) cleanedSvc[svc] = prov as ProviderId;
+    }
+    if (Object.keys(cleanedSvc).length !== Object.keys(currentSvc).length) {
+      aiUpdate.serviceProviders = cleanedSvc;
+    }
+
+    await writeEveSecrets({ ai: aiUpdate });
+    const applied = await autoApply({ recreate: true });
+    return NextResponse.json({ ok: true, applied });
   }
-  if (Object.keys(cleanedSvc).length !== Object.keys(currentSvc).length) {
-    aiUpdate.serviceProviders = cleanedSvc;
+
+  // Custom provider path
+  const customList = (secrets?.ai?.customProviders ?? []).filter(p => p.id !== id);
+  const hasCustomChanges = customList.length !== (secrets?.ai?.customProviders ?? []).length;
+
+  if (hasCustomChanges) {
+    await writeEveSecrets({ ai: { customProviders: customList } });
+    const applied = await autoApply({ recreate: true });
+    return NextResponse.json({ ok: true, applied });
   }
 
-  await writeEveSecrets({ ai: aiUpdate });
-  const applied = await autoApply({ recreate: true });
-  return NextResponse.json({ ok: true, applied });
+  return NextResponse.json({ error: "Provider not found" }, { status: 404 });
 }

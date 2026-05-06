@@ -141,6 +141,17 @@ function wireSynapIs(secrets: EveSecrets | null): WireAiResult {
     if (p.id === 'anthropic') envLines.push(`ANTHROPIC_API_KEY=${p.apiKey}`);
     if (p.id === 'openrouter') envLines.push(`OPENROUTER_API_KEY=${p.apiKey}`);
   }
+  // Custom providers — write them as env vars so Synap IS can list them.
+  const customProviders = secrets?.ai?.customProviders ?? [];
+  for (let i = 0; i < customProviders.length; i++) {
+    const cp = customProviders[i];
+    const idx = i + 1;
+    envLines.push(`CUSTOM_PROVIDER_${idx}_BASE_URL=${cp.baseUrl}`);
+    if (cp.apiKey && cp.apiKey.trim()) {
+      envLines.push(`CUSTOM_PROVIDER_${idx}_API_KEY=${cp.apiKey}`);
+    }
+    envLines.push(`CUSTOM_PROVIDER_${idx}_NAME=${cp.name}`);
+  }
   // Honor per-service override for synap itself: when the user has
   // configured "use Anthropic for Synap IS", DEFAULT_AI_PROVIDER reflects
   // that choice. Keeps the resolution rule consistent across all
@@ -319,6 +330,7 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
   // Build multi-provider URL + key lists (semicolon-separated, index-aligned).
   // 1. Synap IS at port 4000 — always present when this runs.
   // 2. Hermes gateway at port 8642 — added when installed + has an API key.
+  // 3. Custom providers (OpenAI-compatible endpoints registered by the user).
   const apiBaseUrls: string[] = ['http://eve-brain-synap:4000/v1'];
   const apiKeys: string[] = [synapApiKey];
 
@@ -327,6 +339,22 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
     // Inside eve-network, Hermes is reachable by container name.
     apiBaseUrls.push('http://eve-builder-hermes:8642/v1');
     apiKeys.push(hermesApiServerKey);
+  }
+
+  // Append enabled custom providers.
+  for (const cp of secrets?.ai?.customProviders ?? []) {
+    if (!cp.enabled) continue;
+    if (!cp.baseUrl) continue;
+    // Normalise: strip trailing /v1 so we don't end up with /v1/v1
+    const url = cp.baseUrl.replace(/\/v1$/, '');
+    apiBaseUrls.push(`${url}/v1`);
+    if (cp.apiKey && cp.apiKey.trim()) {
+      apiKeys.push(cp.apiKey);
+    } else {
+      // No key for this custom provider — use a placeholder.
+      // OpenWebUI accepts empty entries in the semicolon list.
+      apiKeys.push('');
+    }
   }
 
   const block = [

@@ -7,6 +7,14 @@ import { z } from 'zod';
 
 const AiProviderSchema = z.enum(['ollama', 'openrouter', 'anthropic', 'openai']);
 const AiModeSchema = z.enum(['local', 'provider', 'hybrid']);
+const CustomProviderSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  baseUrl: z.string(),
+  apiKey: z.string().optional(),
+  defaultModel: z.string().optional(),
+  enabled: z.boolean().optional(),
+});
 
 const SecretsSchema = z.object({
   version: z.literal('1'),
@@ -27,6 +35,8 @@ const SecretsSchema = z.object({
           }),
         )
         .optional(),
+      /** OpenAI-compatible providers with custom URLs (e.g. self-hosted, proxy, etc.) */
+      customProviders: z.array(CustomProviderSchema).optional(),
       /**
        * Per-service provider override. Keys are component ids
        * (e.g. "openclaw", "openwebui"); value is the provider id that
@@ -394,6 +404,8 @@ const SecretsSchema = z.object({
 });
 
 export type EveSecrets = z.infer<typeof SecretsSchema>;
+
+export type CustomProvider = z.infer<typeof CustomProviderSchema>;
 
 /**
  * Resolve the directory that contains `.eve/`.

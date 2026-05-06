@@ -16,12 +16,14 @@ import {
 type ProviderId = "anthropic" | "openai" | "openrouter" | "ollama";
 
 interface ProviderEntry {
-  id: ProviderId;
+  id: string;
   enabled: boolean;
   hasApiKey: boolean;
   apiKeyMasked?: string;
   baseUrl?: string;
   defaultModel?: string;
+  isCustom?: boolean;
+  name?: string;
 }
 
 interface AiConfig {
@@ -36,6 +38,8 @@ interface AiConfig {
   validProviders: ProviderId[];
   /** Component ids that consume the central AI config. Server-driven. */
   aiConsumers: string[];
+  /** OpenAI-compatible custom providers. */
+  customProviders: ProviderEntry[];
 }
 
 interface MessagingConfig {
@@ -119,6 +123,16 @@ export default function AiProvidersPage() {
   const [editing, setEditing] = useState<Record<string, { apiKey?: string; defaultModel?: string }>>({});
   const [adding, setAdding] = useState<{ id?: ProviderId; apiKey?: string; defaultModel?: string } | null>(null);
   const [editingServiceModels, setEditingServiceModels] = useState<Record<string, string>>({});
+  // Custom provider state
+  const [customProviderForm, setCustomProviderForm] = useState<{
+    name: string;
+    baseUrl: string;
+    apiKey: string;
+    defaultModel: string;
+    enabled: boolean;
+  } | null>(null);
+  const [editingCustomId, setEditingCustomId] = useState<string | null>(null);
+  const [customProviderEdit, setCustomProviderEdit] = useState<Record<string, { name?: string; baseUrl?: string; apiKey?: string; defaultModel?: string; enabled?: boolean }>>({});
 
   const fetchConfig = useCallback(async () => {
     try {
@@ -181,6 +195,42 @@ export default function AiProvidersPage() {
       const res = await fetch(`/api/ai/providers?id=${id}`, { method: "DELETE", credentials: "include" });
       if (res.ok) {
         addToast({ title: "Provider removed", color: "success" });
+        await fetchConfig();
+      }
+    } finally { setSavingId(null); }
+  }
+
+  async function saveCustomProvider(body: { id?: string; name: string; baseUrl: string; apiKey?: string; defaultModel?: string; enabled?: boolean }) {
+    setSavingId(`custom-${body.id ?? 'new'}`);
+    try {
+      const res = await fetch("/api/ai/providers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ ...body, isCustom: true }),
+      });
+      if (res.ok) {
+        addToast({ title: body.id ? "Custom provider updated" : "Custom provider added", color: "success" });
+        setCustomProviderForm(null);
+        if (body.id) setEditingCustomId(null);
+        await fetchConfig();
+      } else {
+        const err = await res.json() as { error?: string };
+        addToast({ title: err.error ?? "Save failed", color: "danger" });
+      }
+    } catch {
+      addToast({ title: "Save failed", color: "danger" });
+    } finally { setSavingId(null); }
+  }
+
+  async function removeCustomProvider(id: string) {
+    if (!confirm("Remove this custom provider?")) return;
+    setSavingId(id);
+    try {
+      const res = await fetch(`/api/ai/providers?id=${id}`, { method: "DELETE", credentials: "include" });
+      if (res.ok) {
+        addToast({ title: "Custom provider removed", color: "success" });
+        setEditingCustomId(null);
         await fetchConfig();
       }
     } finally { setSavingId(null); }

@@ -36,7 +36,23 @@ export async function GET() {
     apiKeyMasked: maskKey(p.apiKey),
     baseUrl: p.baseUrl,
     defaultModel: p.defaultModel,
+    isCustom: false as const,
   }));
+
+  const customProviders = (ai.customProviders ?? []).map(p => ({
+    id: p.id,
+    enabled: p.enabled !== false,
+    hasApiKey: !!(p.apiKey && p.apiKey.trim().length > 0),
+    apiKeyMasked: maskKey(p.apiKey),
+    baseUrl: p.baseUrl,
+    defaultModel: p.defaultModel,
+    isCustom: true as const,
+    name: p.name,
+  }));
+
+  // Merge into a single providers list for the UI — built-in first, then custom.
+  // The UI can use `isCustom` to decide how to render each entry.
+  const allProviders = [...providers, ...customProviders];
 
   return NextResponse.json({
     mode: ai.mode ?? null,
@@ -44,8 +60,9 @@ export async function GET() {
     fallbackProvider: ai.fallbackProvider ?? null,
     serviceProviders: ai.serviceProviders ?? {},
     serviceModels: ai.serviceModels ?? {},
-    providers,
+    providers: allProviders,
     validProviders: VALID_PROVIDERS,
+    customProviders,
     // Single source of truth: the client uses this list to filter
     // components for the per-service routing panel. Avoids drift
     // between the hardcoded list on the page and `@eve/dna`.
