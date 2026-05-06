@@ -974,8 +974,14 @@ async function* installHermes(): AsyncGenerator<LifecycleEvent> {
 
 /**
  * Patch `/opt/openwebui/.env` to add the Hermes OpenAI-compat gateway
- * as a model source. Safe to call multiple times — rewrites the same
- * managed block.  No-op when OpenWebUI is not installed.
+ * as a model source. Safe to call multiple times — rewrites its own
+ * managed block without touching the pipelines block.
+ *
+ * Design:
+ *  - Uses a Hermes-specific marker so it doesn't clobber the pipelines block.
+ *  - Always rewrites (doesn't bail out early) so a missing key is fixed on re-run.
+ *  - Falls back to reading the key directly from hermes.env when secrets.json
+ *    hasn't been updated yet (e.g. first run after manual key regeneration).
  */
 async function* wireHermesIntoOpenwebui(): AsyncGenerator<LifecycleEvent> {
   const owEnv = "/opt/openwebui/.env";
@@ -984,41 +990,80 @@ async function* wireHermesIntoOpenwebui(): AsyncGenerator<LifecycleEvent> {
     return;
   }
 
+  // Resolve the Hermes API key — prefer secrets.json, fall back to hermes.env.
   const secrets = await readEveSecrets();
-  const hermesApiKey = secrets?.builder?.hermes?.apiServerKey ?? "";
-
-  const cur = readFileSync(owEnv, "utf-8");
-  const lines = cur.split("\n");
-
-  // Parse existing OPENAI_API_BASE_URLS and OPENAI_API_KEYS — they may be
-  // in the managed block or elsewhere in the file.
-  const getVal = (key: string) =>
-    lines.find(l => l.startsWith(`${key}=`))?.slice(key.length + 1).trim() ?? "";
-
-  const hermesUrl = "http://eve-builder-hermes:8642/v1";
-
-  let baseUrls = getVal("OPENAI_API_BASE_URLS");
-  let apiKeys  = getVal("OPENAI_API_KEYS");
-
-  // Append Hermes if not already present.
-  if (!baseUrls.includes(hermesUrl)) {
-    baseUrls = baseUrls ? `${baseUrls};${hermesUrl}` : hermesUrl;
-    apiKeys  = apiKeys  ? `${apiKeys};${hermesApiKey}` : hermesApiKey;
-  } else {
-    yield { type: "log", line: "Hermes already in OpenWebUI model sources — no change needed" };
-    return;
+  let hermesApiKey = secrets?.builder?.hermes?.apiServerKey ?? "";
+  if (!hermesApiKey) {
+    const hermesEnvPath = join(homedir(), ".eve", "hermes.env");
+    if (existsSync(hermesEnvPath)) {
+      const hermesEnv = readFileSync(hermesEnvPath, "utf-8");
+      hermesApiKey = hermesEnv.split("\n")
+        .find(l => l.startsWith("API_SERVER_KEY="))?.split("=", 2)[1]?.trim() ?? "";
+    }
   }
 
-  const marker = "# Pipelines wiring — managed by @eve/lifecycle";
-  // Preserve everything before the managed block (static user config).
-  const stripped = cur.includes(marker) ? cur.split(marker)[0].trimEnd() : cur.trimEnd();
-  const block = [marker, `OPENAI_API_BASE_URLS=${baseUrls}`, `OPENAI_API_KEYS=${apiKeys}`].join("\n");
-  writeFileSync(owEnv, (stripped ? stripped + "\n\n" : "") + block + "\n", { mode: 0o600 });
+  if (!hermesApiKey) {
+    yield {
+      type: "log",
+      line: "Warning: Hermes API key not found — OpenWebUI connection may fail. Run `eve update hermes` after setting the key.",
+    };
+  }
+
+  const hermesUrl = "http://eve-builder-hermes:8642/v1";
+  const hermesMarker = "# Hermes model-source — managed by @eve/lifecycle";
+  const pipelinesMarker = "# Pipelines wiring — managed by @eve/lifecycle";
+
+  // Read the current file. Strip only the Hermes block; leave the pipelines
+  // block intact so both wiring layers co-exist.
+  const cur = readFileSync(owEnv, "utf-8");
+  let base = cur;
+  if (base.includes(hermesMarker)) {
+    // Remove just the Hermes block (everything from marker to next blank line or EOF).
+    base = base.replace(new RegExp(`\n*${hermesMarker}[^\n]*(\n[^\n]+)*`, "g"), "").trimEnd();
+  }
+
+  // Read OPENAI_API_BASE_URLS / OPENAI_API_KEYS from the remainder (pipelines
+  // block or user config) so we can stitch them together properly.
+  const getFromText = (text: string, key: string) =>
+    text.split("\n").find(l => l.startsWith(`${key}=`))?.slice(key.length + 1).trim() ?? "";
+
+  const existingUrls = getFromText(base, "OPENAI_API_BASE_URLS");
+  const existingKeys = getFromText(base, "OPENAI_API_KEYS");
+
+  // Build the combined lists (Hermes appended after pipelines/IS, deduped).
+  const allUrls = existingUrls && !existingUrls.includes(hermesUrl)
+    ? `${existingUrls};${hermesUrl}`
+    : existingUrls || hermesUrl;
+  const urlCount = allUrls.split(";").length;
+  const existingKeyList = existingKeys ? existingKeys.split(";") : [];
+  // Pad key list to match URL count — Hermes key goes at the end.
+  while (existingKeyList.length < urlCount - 1) existingKeyList.push("");
+  if (existingKeyList.length < urlCount) existingKeyList.push(hermesApiKey);
+  const allKeys = existingKeyList.join(";");
+
+  // Strip the existing combined lines from the base if they're there (the
+  // pipelines block writes them; we'll re-write them in the Hermes block).
+  const stripped = base
+    .split("\n")
+    .filter(l => !l.startsWith("OPENAI_API_BASE_URLS=") && !l.startsWith("OPENAI_API_KEYS="))
+    .join("\n")
+    .replace(new RegExp(`${pipelinesMarker}\n*`), pipelinesMarker + "\n")
+    .trimEnd();
+
+  const hermesBlock = [
+    hermesMarker,
+    `OPENAI_API_BASE_URLS=${allUrls}`,
+    `OPENAI_API_KEYS=${allKeys}`,
+  ].join("\n");
+
+  writeFileSync(owEnv, (stripped ? stripped + "\n\n" : "") + hermesBlock + "\n", { mode: 0o600 });
+
+  yield { type: "log", line: `OpenWebUI env updated — ${urlCount} model source(s) wired` };
 
   // Restart OpenWebUI so it picks up the new env.
-  yield { type: "step", label: "Restarting OpenWebUI to apply Hermes model source…" };
+  yield { type: "step", label: "Restarting OpenWebUI to apply model sources…" };
   yield* runCommand("docker", ["compose", "up", "-d"], { cwd: "/opt/openwebui" });
-  yield { type: "log", line: "Hermes wired into OpenWebUI ✓ — select 'Hermes' model in the UI" };
+  yield { type: "log", line: "Hermes wired into OpenWebUI ✓ — open a new chat and select a model" };
 }
 
 /**
@@ -1593,52 +1638,122 @@ async function* installPipelinesSidecar(): AsyncGenerator<LifecycleEvent> {
   );
   if (code !== 0) throw new Error(`docker compose up exited ${code}`);
 
-  // Tell Open WebUI to call us — append to its env if present.
-  //
-  // Open WebUI's plural URL/key vars are SEMICOLON-separated and must align
-  // by index: each base URL needs its own key (no fallback to the singular
-  // OPENAI_API_KEY). Without this, requests to the pipelines URL go out
-  // with the wrong bearer token and 401.
-  //
-  // We write LITERAL values (not `${SYNAP_API_KEY}` substitution syntax)
-  // because compose `.env` files are mostly literal — interpolation
-  // semantics vary across compose versions, and the OpenWebUI compose
-  // file's `env_file: .env` directive ALSO needs literal values to pass
-  // them straight to the container. Read the pipelines key back from
-  // the sidecar's own .env so it stays in sync if regenerated.
+  // Register the pipelines server in OpenWebUI so filter pipelines activate.
+  // This is separate from OPENAI_API_BASE_URLS (which is for model sources).
+  // Filter pipelines need to be registered via OpenWebUI's /api/v1/pipelines/add
+  // endpoint — without this step the sidecar runs but OpenWebUI never calls it.
+  yield* registerPipelinesInOpenwebui(deployDir);
+}
+
+/**
+ * Register the pipelines sidecar in OpenWebUI via its admin API.
+ *
+ * OpenWebUI distinguishes two roles for the pipelines server:
+ *   1. Model source (OPENAI_API_BASE_URLS) — manifold pipelines that expose
+ *      new models in the selector.
+ *   2. Pipeline server (Admin → Pipelines) — filter pipelines that run for
+ *      every chat, regardless of model. This is the Synap integration path.
+ *
+ * We register as role #2. OpenWebUI then polls the sidecar for the list of
+ * pipelines and activates filters globally. No UI interaction required.
+ *
+ * Requires OpenWebUI to be running. Retries for up to 60 s to handle the
+ * case where openwebui-pipelines starts while OpenWebUI is still booting.
+ */
+async function* registerPipelinesInOpenwebui(deployDir: string): AsyncGenerator<LifecycleEvent> {
   const owEnv = "/opt/openwebui/.env";
-  if (existsSync(owEnv)) {
-    const pipelinesEnvPath = join(deployDir, ".env");
-    const pipelinesEnv = readFileSync(pipelinesEnvPath, "utf-8");
-    const pipelinesKey = pipelinesEnv
-      .split("\n")
-      .find(l => l.startsWith("PIPELINES_API_KEY="))?.split("=", 2)[1] ?? "";
-    const pipelinesSynapKey = pipelinesEnv
-      .split("\n")
-      .find(l => l.startsWith("SYNAP_API_KEY="))?.split("=", 2)[1] ?? "";
+  if (!existsSync(owEnv)) {
+    yield { type: "log", line: "OpenWebUI not found — skipping pipelines registration" };
+    return;
+  }
 
-    const cur = readFileSync(owEnv, "utf-8");
-    // Read the synap key already stored in OpenWebUI's .env so we can
-    // emit it as a literal in OPENAI_API_KEYS — no compose-time
-    // interpolation, no env_file passthrough surprises.
-    const synapKeyFromEnv = cur
-      .split("\n")
-      .find(l => l.startsWith("SYNAP_API_KEY="))?.split("=", 2)[1] ?? pipelinesSynapKey;
+  // Read the pipelines API key and the OpenWebUI secret key.
+  const pipelinesEnv = readFileSync(join(deployDir, ".env"), "utf-8");
+  const pipelinesKey = pipelinesEnv.split("\n")
+    .find(l => l.startsWith("PIPELINES_API_KEY="))?.split("=", 2)[1]?.trim() ?? "";
+  const owEnvContent = readFileSync(owEnv, "utf-8");
+  const webuiSecret = owEnvContent.split("\n")
+    .find(l => l.startsWith("WEBUI_SECRET_KEY="))?.split("=", 2)[1]?.trim() ?? "";
 
-    const marker = "# Pipelines wiring — managed by @eve/lifecycle";
-    const stripped = cur.includes(marker) ? cur.split(marker)[0].trimEnd() : cur.trimEnd();
-    const block = [
-      marker,
-      "OPENAI_API_BASE_URLS=http://eve-openwebui-pipelines:9099;http://intelligence-hub:3001/v1",
-      `OPENAI_API_KEYS=${pipelinesKey};${synapKeyFromEnv}`,
-    ].join("\n");
-    writeFileSync(owEnv, (stripped ? stripped + "\n\n" : "") + block + "\n", { mode: 0o600 });
+  if (!pipelinesKey) {
+    yield { type: "log", line: "No PIPELINES_API_KEY found — skipping registration" };
+    return;
+  }
 
-    // `docker restart` doesn't re-read .env — only `compose up -d` does.
-    yield* runCommand(
-      "docker", ["compose", "up", "-d"],
-      { cwd: "/opt/openwebui" },
-    );
+  const pipelinesUrl = "http://eve-openwebui-pipelines:9099";
+  // OpenWebUI's admin API is reachable on the host via localhost:3000.
+  // The pipeline sidecar URL uses the Docker network hostname because
+  // OpenWebUI itself (inside Docker) needs to reach it.
+  const owAdminUrl = "http://localhost:3000";
+
+  yield { type: "step", label: "Registering pipelines server in OpenWebUI…" };
+
+  // Mint an admin JWT using the WEBUI_SECRET_KEY. OpenWebUI's API accepts
+  // a signed JWT with {"role":"admin"} in place of a session token.
+  // If we can't mint (no secret key), fall back to a hint for manual setup.
+  if (!webuiSecret) {
+    yield {
+      type: "log",
+      line: [
+        "Manual step needed — OpenWebUI WEBUI_SECRET_KEY not found.",
+        `Go to Admin Panel → Settings → Pipelines and add: URL=${pipelinesUrl}, Key=${pipelinesKey}`,
+      ].join(" "),
+    };
+    return;
+  }
+
+  // Dynamic import so the Node.js `crypto` module doesn't inflate the CLI bundle.
+  const { createHmac } = await import("node:crypto");
+  // OpenWebUI uses HS256 JWT with WEBUI_SECRET_KEY as the HMAC secret.
+  const header  = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({
+    id: "eve-lifecycle",
+    role: "admin",
+    iat: Math.floor(Date.now() / 1000),
+    exp: Math.floor(Date.now() / 1000) + 300, // 5 min
+  })).toString("base64url");
+  const sig = createHmac("sha256", webuiSecret)
+    .update(`${header}.${payload}`)
+    .digest("base64url");
+  const jwt = `${header}.${payload}.${sig}`;
+
+  // Wait for OpenWebUI to be ready (up to 60 s).
+  let owReady = false;
+  for (let i = 0; i < 12; i++) {
+    try {
+      const r = await fetch(`${owAdminUrl}/health`);
+      if (r.ok) { owReady = true; break; }
+    } catch { /* not ready yet */ }
+    await new Promise(r => setTimeout(r, 5_000));
+  }
+  if (!owReady) {
+    yield {
+      type: "log",
+      line: `OpenWebUI not reachable at ${owAdminUrl} — run 'eve update openwebui-pipelines' after it starts`,
+    };
+    return;
+  }
+
+  try {
+    const res = await fetch(`${owAdminUrl}/api/v1/pipelines/add`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${jwt}` },
+      body: JSON.stringify({ url: pipelinesUrl, key: pipelinesKey }),
+    });
+    const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+    if (res.ok || String(body.detail ?? "").includes("already")) {
+      yield { type: "log", line: "Pipelines server registered in OpenWebUI ✓ — filter pipelines now active for all models" };
+    } else {
+      yield {
+        type: "log",
+        line: `Pipelines registration returned ${res.status}: ${JSON.stringify(body)} — try Admin → Pipelines in OpenWebUI manually`,
+      };
+    }
+  } catch (err) {
+    yield {
+      type: "log",
+      line: `Pipelines registration failed (${err instanceof Error ? err.message : String(err)}) — add manually in OpenWebUI Admin → Pipelines`,
+    };
   }
 }
 
