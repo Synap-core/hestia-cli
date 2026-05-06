@@ -260,7 +260,10 @@ export async function writeHermesEnvFile(cwd: string = process.cwd()): Promise<s
     });
   }
 
-  const eveDir = join(cwd, '.eve');
+  // Output always goes to ~/.eve/hermes.env — the same location docker run
+  // expects (join(homedir(), '.eve', 'hermes.env')). cwd is only used above
+  // for reading secrets, not for the output path.
+  const eveDir = join(homedir(), '.eve');
   mkdirSync(eveDir, { recursive: true });
   const path = join(eveDir, 'hermes.env');
 
@@ -271,7 +274,7 @@ export async function writeHermesEnvFile(cwd: string = process.cwd()): Promise<s
     `HERMES_ENABLED=${hermesConfig?.enabled ?? true}`,
     `HERMES_POLL_INTERVAL_MS=${hermesConfig?.pollIntervalMs ?? 30000}`,
     `HERMES_MAX_CONCURRENT_TASKS=${hermesConfig?.maxConcurrentTasks ?? 1}`,
-    `EVE_WORKSPACE_DIR=${secrets?.builder?.workspaceDir ?? join(cwd, '.eve', 'workspace')}`,
+    `EVE_WORKSPACE_DIR=${secrets?.builder?.workspaceDir ?? join(homedir(), '.eve', 'workspace')}`,
     // API server key — clients (OpenWebUI, LobeChat, etc.) use this to call
     // the Hermes OpenAI-compat gateway at port 8642.
     `API_SERVER_ENABLED=true`,

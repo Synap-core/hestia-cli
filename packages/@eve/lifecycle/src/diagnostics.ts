@@ -380,8 +380,8 @@ function failureToDiagnostic(
         id: "hub-protocol-openapi",
         name: AUTH_NAME,
         status: "fail",
-        message: "No bearer key sent — internal probe bug or missing secrets.synap.apiKey",
-        fix: "Check ~/.eve/secrets/secrets.json has synap.apiKey set",
+        message: "No bearer key sent — internal probe bug or missing agents.eve.hubApiKey",
+        fix: "Run: eve auth provision  (or check ~/.eve/secrets/secrets.json has agents.eve.hubApiKey set)",
         durationMs,
       };
     case "missing_scope":
