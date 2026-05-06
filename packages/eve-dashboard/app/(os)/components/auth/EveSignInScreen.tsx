@@ -34,7 +34,7 @@
  *   synap-team-docs/content/team/platform/eve-credentials.mdx
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Button,
   Card,
@@ -565,7 +565,7 @@ export function SelfHostedSignInForm({
 
   // Probe whether the pod already has an admin. Three states:
   //   null  → still loading (show spinner)
-  //   true  → admin exists → show sign-in link, not bootstrap form
+  //   true  → admin exists → show sign-in + connect flow
   //   false → no admin yet → show bootstrap form
   const [podInitialized, setPodInitialized] = useState<boolean | null>(null);
   const [podUrl, setPodUrl] = useState<string | null>(null);
@@ -581,8 +581,6 @@ export function SelfHostedSignInForm({
           | null;
         if (cancelled) return;
         setPodUrl(data?.podUrl ?? null);
-        // When pod is unreachable or not configured, fall back to bootstrap
-        // form — operator can still enter their URL manually.
         setPodInitialized(data?.initialized ?? false);
       } catch {
         if (!cancelled) setPodInitialized(false);
@@ -590,6 +588,54 @@ export function SelfHostedSignInForm({
     })();
     return () => { cancelled = true; };
   }, []);
+
+  // When pod already has an admin: attempt JWT-Bearer sign-in on window focus
+  // so the operator doesn't have to manually click Connect after returning from
+  // the pod's login page. Defined unconditionally (hooks rules).
+  const tryConnect = useCallback(async () => {
+    if (podInitialized !== true) return;
+    if (submitting) return;
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail || !EMAIL_RE.test(cleanEmail)) return;
+    setError(null);
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/auth/pod-signin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ email: cleanEmail }),
+      });
+      if (!res.ok) {
+        // Not signed in yet — silently ignore on auto-focus attempts.
+        return;
+      }
+      const data = (await res.json().catch(() => null)) as
+        | { ok?: boolean; token?: string; expiresAt?: string; user?: { id: string; email: string; name: string | null } }
+        | null;
+      if (data?.ok && data.token && podUrl) {
+        storePodSession({
+          podUrl,
+          sessionToken: data.token,
+          userEmail: data.user?.email ?? cleanEmail,
+          userId: data.user?.id ?? "",
+        });
+        onSuccess({ podUrl, email: cleanEmail });
+      }
+    } catch {
+      /* silent — will retry on next focus */
+    } finally {
+      setSubmitting(false);
+    }
+  }, [podInitialized, submitting, email, podUrl, onSuccess]);
+
+  // Auto-attempt on window focus when pod already has an admin.
+  useEffect(() => {
+    if (podInitialized !== true) return;
+    const onFocus = () => void tryConnect();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [podInitialized, tryConnect]);
 
   const emailLooksValid = useMemo(
     () => email.length === 0 || EMAIL_RE.test(email.trim()),
@@ -649,17 +695,9 @@ export function SelfHostedSignInForm({
       const claimedEmail = data?.email ?? cleanEmail;
 
       // Attempt to mint a Kratos session via the JWT-Bearer flow and
-      // persist it into `synap:pods`. This succeeds when the user
-      // already exists on the pod (legacy installs, re-claims, or
-      // racy reloads after Kratos signup completes elsewhere). When
-      // it fails — the common case for first-claim — we fall through
-      // to the existing redirect-to-pod-Kratos flow; the operator
-      // completes signup at `signupUrl`, comes back, and the next
-      // load (or pair dialog) signs them in.
-      //
-      // Either way the gate doesn't bounce the user: success persists
-      // a pod session for the local pod; failure leaves the existing
-      // bootstrap-claim notice + signup link path unchanged.
+      // persist it into `synap:pods`. Succeeds for re-claims / existing
+      // users; fails for first-time bootstrap (user doesn't exist on pod
+      // yet). Non-fatal — fall through to the Kratos signup redirect.
       try {
         const signinRes = await fetch("/api/auth/pod-signin", {
           method: "POST",
@@ -712,7 +750,8 @@ export function SelfHostedSignInForm({
     );
   }
 
-  // Admin already exists → sign-in path, not bootstrap
+  // Admin already exists → show "sign in at pod + connect" flow.
+  // tryConnect + focus listener are wired above (unconditionally).
   if (podInitialized === true) {
     const loginUrl = podUrl ? `${podUrl.replace(/\/+$/, "")}/auth/login` : null;
     return (
@@ -724,27 +763,60 @@ export function SelfHostedSignInForm({
               Admin account already set up
             </p>
             <p className="mt-0.5 text-[12px] text-foreground/55">
-              Your pod has an admin. Sign in directly at your pod to create a session, then return here.
+              Sign in at your pod, then return here and click Connect.
             </p>
           </div>
         </div>
-        {loginUrl && (
+
+        <Input
+          type="email"
+          size="md"
+          radius="md"
+          variant="bordered"
+          label="Your email"
+          labelPlacement="outside"
+          placeholder="you@yourdomain.com"
+          value={email}
+          onValueChange={setEmail}
+          autoComplete="email"
+          isDisabled={submitting}
+          spellCheck="false"
+          startContent={
+            <Mail className="h-3.5 w-3.5 text-foreground/55" strokeWidth={2} aria-hidden />
+          }
+        />
+
+        <div className="flex gap-2">
+          {loginUrl && (
+            <Button
+              as="a"
+              href={loginUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              variant="bordered"
+              radius="md"
+              size="md"
+              className="flex-1 font-medium"
+              endContent={<ExternalLink className="h-3.5 w-3.5" strokeWidth={2} />}
+            >
+              Sign in at pod
+            </Button>
+          )}
           <Button
-            as="a"
-            href={loginUrl}
-            target="_blank"
-            rel="noopener noreferrer"
             color="primary"
             radius="md"
             size="md"
-            className="font-medium"
-            endContent={<ExternalLink className="h-3.5 w-3.5" strokeWidth={2} />}
+            className="flex-1 font-medium"
+            isLoading={submitting}
+            isDisabled={submitting || !email.trim() || !EMAIL_RE.test(email.trim())}
+            onPress={() => void tryConnect()}
           >
-            Sign in at your pod
+            Connect
           </Button>
-        )}
+        </div>
+
         <p className="text-center text-[11.5px] text-foreground/40">
-          After signing in, come back — Eve will detect your session automatically.
+          After signing in at your pod, click Connect — or just switch back to this tab.
         </p>
       </div>
     );
@@ -798,7 +870,7 @@ export function SelfHostedSignInForm({
         />
       )}
 
-      {error && <ErrorRow message={error} accent={missingToken ? "warning" : "warning"} />}
+      {error && <ErrorRow message={error} accent={missingToken ? "warning" : "danger"} />}
 
       <Button
         type="submit"

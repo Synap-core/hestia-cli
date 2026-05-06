@@ -47,6 +47,16 @@ export function DeviceFlowModal({
   const [state, setState] = useState<DeviceFlowState>({ kind: "starting" });
   const [copied, setCopied] = useState(false);
   const controllerRef = useRef<DeviceFlowController | null>(null);
+  const closeTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current !== null) {
+        window.clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = null;
+      }
+    };
+  }, []);
 
   // Start the flow on open; cancel + reset on close.
   useEffect(() => {
@@ -65,7 +75,8 @@ export function DeviceFlowModal({
         setState(next);
         if (next.kind === "approved") {
           // Small delay so the user sees the success state.
-          window.setTimeout(() => {
+          closeTimerRef.current = window.setTimeout(() => {
+            closeTimerRef.current = null;
             if (!active) return;
             onApproved();
             onClose();
@@ -91,7 +102,8 @@ export function DeviceFlowModal({
       const controller = await startDeviceFlow((next) => {
         setState(next);
         if (next.kind === "approved") {
-          window.setTimeout(() => {
+          closeTimerRef.current = window.setTimeout(() => {
+            closeTimerRef.current = null;
             onApproved();
             onClose();
           }, 800);

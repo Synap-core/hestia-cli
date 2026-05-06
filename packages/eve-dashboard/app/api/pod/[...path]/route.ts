@@ -72,10 +72,10 @@ const HOP_BY_HOP_HEADERS = new Set([
  */
 function buildUpstreamUrl(podUrl: string, path: string[], req: NextRequest): string {
   const base = podUrl.replace(/\/+$/, "");
-  const joined = path.map(encodeURIComponent).join("/");
-  // Decode only the path separator so callers that supply pre-encoded
-  // segments keep working. The encodeURIComponent above is the source
-  // of truth for safety.
+  // Next.js App Router already URL-decodes dynamic segments before populating
+  // params.path, so we must NOT re-encode them — that would double-encode any
+  // already-percent-encoded characters (e.g. `foo%2Fbar` → `foo%252Fbar`).
+  const joined = path.join("/");
   const search = req.nextUrl.search; // includes leading `?` if non-empty
   return `${base}/${joined}${search}`;
 }

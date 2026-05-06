@@ -174,7 +174,7 @@ function CallbackInner() {
 
       let tokenRes: Response;
       try {
-        tokenRes = await fetch(`${CP_BASE_URL}/oauth/token`, {
+        tokenRes = await fetch("/api/auth/cp/oauth/token", {
           method: "POST",
           headers: {
             "Content-Type": "application/x-www-form-urlencoded",

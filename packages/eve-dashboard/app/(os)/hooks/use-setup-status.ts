@@ -20,7 +20,7 @@
  * See: synap-team-docs/content/team/platform/eve-auth-architecture.mdx
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export type SetupStatusState =
   | "loading"
@@ -37,16 +37,24 @@ interface SetupStatusResponse {
 
 interface UseSetupStatusResult {
   state: SetupStatusState;
+  /** True only during a background refetch — the last known state is still exposed. */
+  isRefreshing: boolean;
   version: string | null;
   refetch: () => void;
 }
 
 export function useSetupStatus(): UseSetupStatusResult {
   const [state, setState] = useState<SetupStatusState>("loading");
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [version, setVersion] = useState<string | null>(null);
+  const initialLoadDone = useRef(false);
 
   const load = useCallback(async () => {
-    setState("loading");
+    if (initialLoadDone.current) {
+      setIsRefreshing(true);
+    } else {
+      setState("loading");
+    }
     try {
       const res = await fetch("/api/pod/setup-status", {
         cache: "no-store",
@@ -76,6 +84,9 @@ export function useSetupStatus(): UseSetupStatusResult {
       }
     } catch {
       setState("unreachable");
+    } finally {
+      initialLoadDone.current = true;
+      setIsRefreshing(false);
     }
   }, []);
 
@@ -83,5 +94,5 @@ export function useSetupStatus(): UseSetupStatusResult {
     void load();
   }, [load]);
 
-  return { state, version, refetch: load };
+  return { state, isRefreshing, version, refetch: load };
 }

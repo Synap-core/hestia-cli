@@ -27,30 +27,13 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { unwrapTrpc, type TrpcEnvelope } from "@/lib/trpc-utils";
 
 const STORAGE_KEY = "eve.activeWorkspaceId";
 const CHANGE_EVENT = "eve:active-workspace-changed";
 
 interface WireWorkspace {
   id: string;
-}
-
-/**
- * tRPC + superjson envelope shape (mirrors the `unwrapTrpc` in
- * `proposals-panel.tsx`). Centralising the helper inside this hook
- * keeps it dependency-free; the inbox helpers live in `inbox/lib/`.
- */
-interface TrpcEnvelope<T> {
-  result?: { data?: { json?: T } | T };
-}
-
-function unwrapTrpc<T>(env: TrpcEnvelope<T> | null): T | null {
-  if (!env) return null;
-  const data = env.result?.data;
-  if (data && typeof data === "object" && "json" in data) {
-    return (data as { json?: T }).json ?? null;
-  }
-  return (data as T) ?? null;
 }
 
 function readStored(): string | null {

@@ -53,6 +53,20 @@ export class PodSigninError extends Error {
   }
 }
 
+/** Returns true for any address in the loopback range (RFC 5735 / RFC 6761). */
+function isPodLoopback(podUrl: string): boolean {
+  let hostname: string;
+  try {
+    hostname = new URL(podUrl).hostname;
+  } catch {
+    return false;
+  }
+  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1") {
+    return true;
+  }
+  return /^127\.\d+\.\d+\.\d+$/.test(hostname);
+}
+
 /**
  * Eve's external URL — the value we put in the JWT `iss` claim AND the
  * URL the pod will fetch JWKS from.
@@ -61,14 +75,18 @@ export class PodSigninError extends Error {
  *   1. `secrets.dashboard?.publicUrl` (if we ever start storing it).
  *   2. Derived `https://eve.${secrets.domain.primary}` when we have a
  *      domain. The standard install puts Eve at this subdomain.
- *   3. Loopback fallback `http://127.0.0.1:${port}` — only viable when
- *      the pod is also on the same loopback (single-machine dev).
+ *   3. Loopback fallback `http://127.0.0.1:${port}` — ONLY when the pod
+ *      is also on the same loopback (single-machine dev). If the pod is
+ *      remote, returning a loopback issuer guarantees the JWKS fetch
+ *      will fail, so we return `null` instead and force the operator to
+ *      configure a public URL.
  *
  * Returns `null` when none of these are usable; the caller should error
  * with a clear "configure dashboard URL" hint.
  */
 export function resolveEveExternalUrl(
   secrets: Awaited<ReturnType<typeof readEveSecrets>>,
+  podUrl?: string,
 ): string | null {
   const dash = secrets?.dashboard as { publicUrl?: string; port?: number } | undefined;
   const explicit = dash?.publicUrl?.trim();
@@ -80,10 +98,12 @@ export function resolveEveExternalUrl(
     return `${ssl ? "https" : "http"}://eve.${domain}`;
   }
 
-  // Loopback dev — only useful when the pod runs on the same host.
-  // The pod's JWKS fetch still has to resolve this URL, so an
-  // out-of-host pod will fail until the operator configures a public
-  // URL.
+  // Only fall back to loopback when the pod itself is also loopback.
+  // A remote pod cannot reach http://localhost:N to fetch JWKS.
+  if (podUrl && !isPodLoopback(podUrl)) {
+    return null;
+  }
+
   const port = dash?.port ?? 7979;
   return `http://localhost:${port}`;
 }
@@ -144,10 +164,10 @@ async function mintPodUserTokenInternal(
       503,
     );
   }
-  const eveUrl = resolveEveExternalUrl(secrets);
+  const eveUrl = resolveEveExternalUrl(secrets, podUrl);
   if (!eveUrl) {
     throw new PodSigninError(
-      "Eve external URL not configured",
+      "Eve external URL not configured — set dashboard.publicUrl in ~/.eve/secrets.json so the pod can reach the JWKS endpoint",
       "no-eve-url",
       503,
     );

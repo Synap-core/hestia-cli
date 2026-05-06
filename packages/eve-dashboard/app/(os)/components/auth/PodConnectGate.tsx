@@ -158,6 +158,7 @@ export function PodConnectGate({ children }: PodConnectGateProps) {
             ok?: boolean;
             podUrl?: string;
             podSessionExpiresAt?: string;
+            sessionToken?: string;
             error?: string;
             detail?: string;
             message?: string;
@@ -177,21 +178,17 @@ export function PodConnectGate({ children }: PodConnectGateProps) {
         });
         return;
       }
-      // Mirror into `synap:pods` so the gate flips without waiting on
-      // a refetch. The disk slot was already written by the route.
+      // Mirror into `synap:pods` so the gate flips without a refetch.
+      // Use the real session token returned by the route — a blank
+      // token would break other Synap surfaces that read synap:pods.
       const session = getSharedSession();
-      if (data.podUrl && session) {
+      if (data.podUrl && data.sessionToken && session) {
         storePodSession({
           podUrl: data.podUrl,
-          // The route doesn't echo the Kratos session token — the
-          // pod-pair flow does. We store a minimal entry so the
-          // gate's "is local pod paired" check passes; the actual
-          // server-side proxy uses `pod.userToken` from disk.
-          sessionToken: "",
+          sessionToken: data.sessionToken,
           userEmail: session.userName?.includes("@") ? session.userName : "",
           userId: session.userId,
         });
-        // Persist the resolved pod URL so subsequent secrets checks pass.
         if (!localPodUrl) setLocalPodUrl(data.podUrl);
       }
       setPaired(true);
@@ -224,9 +221,10 @@ export function PodConnectGate({ children }: PodConnectGateProps) {
   }
 
   // Loading the setup probe — render children optimistically so the
-  // OS doesn't flicker. The probe is fast enough that the right state
-  // settles within 1-2 frames.
-  if (setupState === "loading" || setupState === "ready") {
+  // OS doesn't flicker during the initial fetch. Only "loading" gets
+  // the optimistic pass; "ready" falls through so the claim CTA is
+  // shown when the operator hasn't completed the CP→pod handshake yet.
+  if (setupState === "loading") {
     return <>{children}</>;
   }
 
@@ -278,9 +276,6 @@ export function PodConnectGate({ children }: PodConnectGateProps) {
         defaultEmail={
           session?.userName?.includes("@") ? session.userName : undefined
         }
-        onClaim={handleClaim}
-        claimInFlight={claimInFlight}
-        claimError={claimError}
         onSuccess={(result) => {
           setClaim(result);
           // Refetch so the next mount of `useSetupStatus()` sees `ready`.
@@ -314,9 +309,6 @@ export function PodConnectGate({ children }: PodConnectGateProps) {
 
 interface ClaimPodCardProps {
   defaultEmail?: string;
-  onClaim: () => void;
-  claimInFlight: boolean;
-  claimError: string | null;
   onSuccess: (result: SelfHostedClaimResult) => void;
 }
 

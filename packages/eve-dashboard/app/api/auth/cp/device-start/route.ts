@@ -72,7 +72,13 @@ export async function POST() {
   const expiresAt = Date.now() + body.expires_in * 1000;
 
   const secrets = await readEveSecrets();
-  const existing = secrets?.cp?.deviceFlow ?? {};
+  const now = Date.now();
+  // Drop expired handles on every write to avoid accumulating stale entries.
+  const existing = Object.fromEntries(
+    Object.entries(secrets?.cp?.deviceFlow ?? {}).filter(
+      ([, v]) => (v as { expiresAt: number }).expiresAt > now,
+    ),
+  );
   await writeEveSecrets({
     cp: {
       deviceFlow: {

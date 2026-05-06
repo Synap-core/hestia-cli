@@ -27,16 +27,11 @@
  */
 
 import { readActiveWorkspaceId } from "../../hooks/use-active-workspace";
+import { unwrapTrpc } from "@/lib/trpc-utils";
+import type { TrpcEnvelope } from "@/lib/trpc-utils";
 
-/**
- * Standard tRPC + superjson envelope. Shared with `proposals-panel.tsx`
- * and `use-stats.ts` — keep the unwrap logic identical here so the
- * fallback shapes match.
- */
-export interface TrpcEnvelope<T> {
-  result?: { data?: { json?: T } | T };
-  error?: { message?: string; code?: string; data?: { code?: string } };
-}
+/** Re-export for callers that import TrpcEnvelope from this module. */
+export type { TrpcEnvelope };
 
 export class PodTrpcError extends Error {
   constructor(
@@ -55,19 +50,6 @@ export interface PodTrpcFetchOptions {
   workspaceId?: string | null;
   /** AbortSignal for cancellation. */
   signal?: AbortSignal;
-}
-
-/**
- * Internal: peel the superjson envelope. Mirrors the helper in
- * `proposals-panel.tsx` so behaviour is consistent across the inbox.
- */
-function unwrapTrpc<T>(env: TrpcEnvelope<T> | null): T | null {
-  if (!env) return null;
-  const data = env.result?.data;
-  if (data && typeof data === "object" && "json" in data) {
-    return (data as { json?: T }).json ?? null;
-  }
-  return (data as T) ?? null;
 }
 
 /**

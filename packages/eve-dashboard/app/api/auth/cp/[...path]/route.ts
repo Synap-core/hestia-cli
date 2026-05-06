@@ -81,10 +81,16 @@ async function proxy(req: NextRequest, path: string[]): Promise<NextResponse> {
       forwardHeaders[key] = value;
     }
   });
-  // Identify ourselves as an Eve proxy. The CP's trustedOrigins function
-  // trusts any HTTPS Origin that arrives with this header, so custom Eve
-  // domains pass Better Auth's CSRF guard without individual enrollment.
-  forwardHeaders["x-forwarded-by"] = "eve-dashboard";
+  // Identify ourselves as an Eve proxy so the CP's trustedOrigins function
+  // can trust requests from custom Eve domains without individual enrollment.
+  // Only set on requests that are actually coming from this dashboard origin
+  // — spoofing this header from an arbitrary third party would allow them
+  // to bypass CSRF; we only trust it when the Origin matches ourselves.
+  const requestOrigin = req.headers.get("origin") ?? "";
+  const dashboardOrigin = req.nextUrl.origin;
+  if (!requestOrigin || requestOrigin === dashboardOrigin) {
+    forwardHeaders["x-forwarded-by"] = "eve-dashboard";
+  }
 
   let body: BodyInit | undefined;
   if (req.method !== "GET" && req.method !== "HEAD") {

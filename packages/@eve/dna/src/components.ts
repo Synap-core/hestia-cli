@@ -152,7 +152,7 @@ Eve wires OpenClaw against Synap as its OpenAI-compatible provider, so the agent
   },
   {
     id: 'hermes',
-    organ: 'builder',
+    organ: 'arms',
     label: 'Hermes',
     emoji: '🧠',
     description: 'AI agent with sovereign memory. Routes all conversations and channel messages to your Synap pod — nothing is lost.',

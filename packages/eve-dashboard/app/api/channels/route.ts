@@ -8,6 +8,10 @@
  * `secrets.channelRouting` maps platform → agent slug (default: "hermes").
  * Any agent install flow reads from this single source, so switching agent
  * providers requires only a routing change — credentials never need to move.
+ *
+ * Hermes restart policy: only when actual credential values change (not
+ * `enabled` toggles, not routing updates). Compared field-by-field against
+ * the stored secrets before deciding to restart.
  */
 
 import { NextResponse } from "next/server";
@@ -19,6 +23,17 @@ import { requireAuth } from "@/lib/auth-server";
 type Platform = "telegram" | "discord" | "whatsapp" | "signal" | "matrix" | "slack";
 const PLATFORMS: Platform[] = ["telegram", "discord", "whatsapp", "signal", "matrix", "slack"];
 
+// Credential keys that, when changed, require Hermes to restart so it can
+// re-read the new tokens from the env file.
+const CRED_KEYS: Record<Platform, string[]> = {
+  telegram:  ["botToken", "webhookSecret"],
+  discord:   ["botToken"],
+  whatsapp:  ["accessToken", "verifyToken"],
+  signal:    [],
+  matrix:    ["accessToken"],
+  slack:     ["botToken", "signingSecret", "appToken"],
+};
+
 function mask(token?: string): string | undefined {
   if (!token) return undefined;
   if (token.length <= 8) return "***";
@@ -27,6 +42,20 @@ function mask(token?: string): string | undefined {
 
 function hasToken(token?: string): boolean {
   return !!(token && token.trim().length > 0);
+}
+
+/** True if the patch contains at least one credential key with a new value. */
+function hasCredentialChange(
+  platform: Platform,
+  existing: Record<string, unknown> | undefined,
+  patch: Record<string, unknown> | undefined,
+): boolean {
+  if (!patch) return false;
+  return CRED_KEYS[platform].some(k => {
+    const v = patch[k];
+    if (v === undefined || v === null || v === "") return false;
+    return v !== existing?.[k];
+  });
 }
 
 export async function GET() {
@@ -86,7 +115,6 @@ export async function PATCH(req: Request) {
   if ("error" in auth) return auth.error;
 
   const body = await req.json().catch(() => ({})) as {
-    /** Override the routing for one or more platforms. null = reset to default (hermes). */
     routing?: Partial<Record<Platform, string | null>>;
     telegram?: { enabled?: boolean; botToken?: string | null; webhookSecret?: string | null };
     discord?: { enabled?: boolean; botToken?: string | null; guildId?: string | null; applicationId?: string | null };
@@ -100,7 +128,7 @@ export async function PATCH(req: Request) {
   const existingChannels = current?.channels ?? {};
   const existingRouting = current?.channelRouting ?? {};
 
-  // Merge routing (null = delete key → falls back to default "hermes")
+  // Routing: null = reset to default (hermes)
   let newRouting = existingRouting;
   if (body.routing) {
     const merged: Record<string, string> = { ...existingRouting };
@@ -111,7 +139,6 @@ export async function PATCH(req: Request) {
     newRouting = merged;
   }
 
-  // Deep-merge each platform config (null values clear the field)
   function mergePlatform<T extends Record<string, unknown>>(
     existing: T | undefined,
     patch: Partial<Record<keyof T, unknown>> | undefined,
@@ -119,7 +146,7 @@ export async function PATCH(req: Request) {
     if (!patch) return existing;
     const result = { ...(existing ?? {}) } as T;
     for (const [k, v] of Object.entries(patch)) {
-      if (v === null) delete (result as Record<string, unknown>)[k];
+      if (v === null || v === "") delete (result as Record<string, unknown>)[k];
       else if (v !== undefined) (result as Record<string, unknown>)[k] = v;
     }
     return result;
@@ -128,11 +155,11 @@ export async function PATCH(req: Request) {
   const newChannels = {
     ...existingChannels,
     ...(body.telegram ? { telegram: mergePlatform(existingChannels.telegram, body.telegram) } : {}),
-    ...(body.discord ? { discord: mergePlatform(existingChannels.discord, body.discord) } : {}),
+    ...(body.discord  ? { discord:  mergePlatform(existingChannels.discord,  body.discord)  } : {}),
     ...(body.whatsapp ? { whatsapp: mergePlatform(existingChannels.whatsapp, body.whatsapp) } : {}),
-    ...(body.signal ? { signal: mergePlatform(existingChannels.signal, body.signal) } : {}),
-    ...(body.matrix ? { matrix: mergePlatform(existingChannels.matrix, body.matrix) } : {}),
-    ...(body.slack ? { slack: mergePlatform(existingChannels.slack, body.slack) } : {}),
+    ...(body.signal   ? { signal:   mergePlatform(existingChannels.signal,   body.signal)   } : {}),
+    ...(body.matrix   ? { matrix:   mergePlatform(existingChannels.matrix,   body.matrix)   } : {}),
+    ...(body.slack    ? { slack:    mergePlatform(existingChannels.slack,    body.slack)    } : {}),
   };
 
   await writeEveSecrets({
@@ -140,15 +167,20 @@ export async function PATCH(req: Request) {
     channelRouting: newRouting,
   });
 
-  // Rewire Hermes env so the new channel tokens land in the running container.
-  // Fire-and-forget: if Hermes isn't installed, this is a no-op.
+  // Only restart Hermes when actual credentials changed — not for enable/routing-only patches.
+  const credentialsChanged = PLATFORMS.some(p =>
+    hasCredentialChange(p, existingChannels[p as keyof typeof existingChannels] as Record<string, unknown>, body[p as keyof typeof body] as Record<string, unknown>),
+  );
+
   let hermesRewired = false;
   let hermesRestarted = false;
-  try {
-    await writeHermesEnvFile();
-    hermesRewired = true;
-    hermesRestarted = restartHermesIfRunning();
-  } catch { /* hermes not installed */ }
+  if (credentialsChanged) {
+    try {
+      await writeHermesEnvFile();
+      hermesRewired = true;
+      hermesRestarted = restartHermesIfRunning();
+    } catch { /* hermes not installed */ }
+  }
 
-  return NextResponse.json({ ok: true, hermesRewired, hermesRestarted });
+  return NextResponse.json({ ok: true, credentialsChanged, hermesRewired, hermesRestarted });
 }

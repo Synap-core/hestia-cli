@@ -27,6 +27,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { unwrapTrpc, type TrpcEnvelope } from "@/lib/trpc-utils";
 
 export interface StatCardData {
   agentsRunning: number;
@@ -76,24 +77,6 @@ interface WireProposal {
   status?: string;
 }
 
-/**
- * tRPC + superjson envelope. The transformer wraps payload as
- * `result.data.json`. Some procedures return raw data when superjson
- * has nothing to enrich — we accept either shape.
- */
-interface TrpcEnvelope<T> {
-  result?: { data?: { json?: T } | T };
-}
-
-function unwrapTrpc<T>(env: TrpcEnvelope<T> | null): T | null {
-  if (!env) return null;
-  const data = env.result?.data;
-  if (data && typeof data === "object" && "json" in data) {
-    return (data as { json?: T }).json ?? null;
-  }
-  return (data as T) ?? null;
-}
-
 function startOfTodayIso(): string {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
@@ -108,12 +91,11 @@ export function useStats(): UseStatsResult {
     setIsLoading(true);
 
     const since = startOfTodayIso();
-    // tRPC: events.since takes `{ since: Date }`. Superjson encodes
-    // dates as `{ $type: "Date", value }` — easier here to use
-    // events.list (which doesn't take a date) and filter client-side.
-    // The list response is small enough (max 50) that this is fine.
+    // Fetch events with a generous limit so the "today" count isn't
+    // silently truncated on busy pods. 500 events in a single day is
+    // an extreme edge case for a personal pod.
     const eventsListInput = encodeURIComponent(
-      JSON.stringify({ json: { limit: 50 } }),
+      JSON.stringify({ json: { limit: 500 } }),
     );
     const proposalsListInput = encodeURIComponent(
       JSON.stringify({ json: { status: "pending" } }),

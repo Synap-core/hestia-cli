@@ -907,6 +907,7 @@ async function* postUpdateReconcileHermes(): AsyncGenerator<LifecycleEvent> {
       line: `Warning: could not regenerate Hermes config — ${err instanceof Error ? err.message : String(err)}`,
     };
   }
+  yield* wireHermesIntoOpenwebui();
 }
 
 /**
@@ -966,6 +967,58 @@ async function* installHermes(): AsyncGenerator<LifecycleEvent> {
   if (runCode !== 0) throw new Error(`docker run exited ${runCode}`);
 
   yield { type: "log", line: "Hermes container running — gateway: :8642, dashboard: :9119, MCP: :9120" };
+
+  // Wire Hermes as a model source in OpenWebUI if it is installed.
+  yield* wireHermesIntoOpenwebui();
+}
+
+/**
+ * Patch `/opt/openwebui/.env` to add the Hermes OpenAI-compat gateway
+ * as a model source. Safe to call multiple times — rewrites the same
+ * managed block.  No-op when OpenWebUI is not installed.
+ */
+async function* wireHermesIntoOpenwebui(): AsyncGenerator<LifecycleEvent> {
+  const owEnv = "/opt/openwebui/.env";
+  if (!existsSync(owEnv)) {
+    yield { type: "log", line: "OpenWebUI not found — skipping Hermes model-source wiring" };
+    return;
+  }
+
+  const secrets = await readEveSecrets();
+  const hermesApiKey = secrets?.builder?.hermes?.apiServerKey ?? "";
+
+  const cur = readFileSync(owEnv, "utf-8");
+  const lines = cur.split("\n");
+
+  // Parse existing OPENAI_API_BASE_URLS and OPENAI_API_KEYS — they may be
+  // in the managed block or elsewhere in the file.
+  const getVal = (key: string) =>
+    lines.find(l => l.startsWith(`${key}=`))?.slice(key.length + 1).trim() ?? "";
+
+  const hermesUrl = "http://eve-builder-hermes:8642/v1";
+
+  let baseUrls = getVal("OPENAI_API_BASE_URLS");
+  let apiKeys  = getVal("OPENAI_API_KEYS");
+
+  // Append Hermes if not already present.
+  if (!baseUrls.includes(hermesUrl)) {
+    baseUrls = baseUrls ? `${baseUrls};${hermesUrl}` : hermesUrl;
+    apiKeys  = apiKeys  ? `${apiKeys};${hermesApiKey}` : hermesApiKey;
+  } else {
+    yield { type: "log", line: "Hermes already in OpenWebUI model sources — no change needed" };
+    return;
+  }
+
+  const marker = "# Pipelines wiring — managed by @eve/lifecycle";
+  // Preserve everything before the managed block (static user config).
+  const stripped = cur.includes(marker) ? cur.split(marker)[0].trimEnd() : cur.trimEnd();
+  const block = [marker, `OPENAI_API_BASE_URLS=${baseUrls}`, `OPENAI_API_KEYS=${apiKeys}`].join("\n");
+  writeFileSync(owEnv, (stripped ? stripped + "\n\n" : "") + block + "\n", { mode: 0o600 });
+
+  // Restart OpenWebUI so it picks up the new env.
+  yield { type: "step", label: "Restarting OpenWebUI to apply Hermes model source…" };
+  yield* runCommand("docker", ["compose", "up", "-d"], { cwd: "/opt/openwebui" });
+  yield { type: "log", line: "Hermes wired into OpenWebUI ✓ — select 'Hermes' model in the UI" };
 }
 
 /**

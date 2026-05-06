@@ -227,5 +227,9 @@ export async function POST(req: Request) {
     ok: true,
     podUrl: podBase,
     podSessionExpiresAt: expiresAt,
+    // Echo the session token so the browser can store it in synap:pods.
+    // This lets the gate see a real (non-blank) token immediately after
+    // claim, so other Synap surfaces reading synap:pods get a usable Bearer.
+    sessionToken,
   });
 }

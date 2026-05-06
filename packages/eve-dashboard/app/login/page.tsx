@@ -30,7 +30,7 @@ export default function LoginPage() {
 
       if (res.ok) {
         // No success toast — the page transition is the confirmation.
-        router.push("/dashboard");
+        router.push("/");
       } else {
         const data = await res.json() as { error?: string };
         setError(data.error ?? "Invalid key");

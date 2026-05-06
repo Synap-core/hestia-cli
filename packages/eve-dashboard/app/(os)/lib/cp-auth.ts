@@ -94,10 +94,15 @@ export async function startDeviceFlow(
   onState: (state: DeviceFlowState) => void,
 ): Promise<DeviceFlowController> {
   let cancelled = false;
+  let pendingTimer: number | null = null;
   const controller: DeviceFlowController = {
     state: { kind: "starting" },
     cancel: () => {
       cancelled = true;
+      if (pendingTimer !== null) {
+        window.clearTimeout(pendingTimer);
+        pendingTimer = null;
+      }
     },
   };
   onState(controller.state);
@@ -206,7 +211,10 @@ export async function startDeviceFlow(
       nextDelay = interval;
     }
 
-    window.setTimeout(() => void poll(), nextDelay * 1000);
+    pendingTimer = window.setTimeout(() => {
+      pendingTimer = null;
+      void poll();
+    }, nextDelay * 1000);
   };
 
   // First poll immediately (handles the rare case where the user

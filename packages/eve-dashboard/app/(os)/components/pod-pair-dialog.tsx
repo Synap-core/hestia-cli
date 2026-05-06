@@ -41,7 +41,7 @@
  *   synap-team-docs/content/team/platform/eve-os-home-design.mdx
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Modal,
   ModalContent,
@@ -111,6 +111,18 @@ export function PodPairDialog({
   const [email, setEmail] = useState<string>(defaultEmail ?? "");
   const [phase, setPhase] = useState<DialogPhase>({ kind: "idle" });
   const [issuerInfo, setIssuerInfo] = useState<IssuerInfoResponse | null>(null);
+  const closeTimerRef = useRef<number | null>(null);
+
+  // Clear any pending close-timer on unmount to avoid calling onClose on
+  // a component that is no longer mounted.
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current !== null) {
+        window.clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = null;
+      }
+    };
+  }, []);
 
   // Reset state every time the dialog opens — modals are re-used by
   // the parent, so closing+reopening shouldn't carry stale errors.
@@ -233,7 +245,8 @@ export function PodPairDialog({
       onSuccess?.();
       // Brief pause so the operator sees the success state before the
       // dialog disappears.
-      window.setTimeout(() => {
+      closeTimerRef.current = window.setTimeout(() => {
+        closeTimerRef.current = null;
         onClose();
       }, 700);
     } catch (err) {
