@@ -13,7 +13,9 @@ import {
   provisionAllAgents,
   checkNeedsAdmin,
 } from '@eve/lifecycle';
-import { findPodDeployDir, entityStateManager } from '@eve/dna';
+import { findPodDeployDir, entityStateManager, readEveSecrets } from '@eve/dna';
+import { installDashboardContainer, dashboardIsRunning } from '@eve/legs';
+import { randomBytes } from 'node:crypto';
 import {
   printInfo,
   printSuccess,
@@ -169,8 +171,14 @@ async function tryPostUpdateProvision(_deployDir: string): Promise<{ subLines: s
   return { subLines };
 }
 
-function buildUpdateTargets(deployDir: string | undefined): UpdateTarget[] {
+async function buildUpdateTargets(deployDir: string | undefined): Promise<UpdateTarget[]> {
   const targets: UpdateTarget[] = [];
+
+  // Read installed component set once — guards all optional targets below.
+  // Falls back to empty on any read error so a corrupt state file never
+  // blocks updates of components the user explicitly names.
+  const installed = await entityStateManager.getInstalledComponents().catch(() => [] as string[]);
+  const has = (id: string) => installed.includes(id);
 
   // Eve CLI self-update — runs scripts/self-update.sh which does:
   //   git pull + pnpm install + build + re-link /usr/local/bin/eve
@@ -220,15 +228,15 @@ function buildUpdateTargets(deployDir: string | undefined): UpdateTarget[] {
     });
   }
 
-  // Everything else delegates to the lifecycle's UPDATE_PLAN. Order
-  // matters only cosmetically here (spinner output) — there are no
-  // cross-component update dependencies.
-  targets.push(lifecycleUpdate('ollama', '🤖 Ollama'));
-  targets.push(lifecycleUpdate('openclaw', '🦾 OpenClaw'));
-  targets.push(lifecycleUpdate('rsshub', '👁️  RSSHub'));
-  targets.push(lifecycleUpdate('traefik', '🦿 Traefik'));
-  targets.push(lifecycleUpdate('openwebui', '💬 Open WebUI'));
-  targets.push(lifecycleUpdate('openwebui-pipelines', '🪈 Pipelines'));
+  // Optional components — only added when they were part of the user's
+  // setup. `has(id)` checks state.json's setupProfile.components[] so we
+  // never attempt to update a service that was never installed.
+  if (has('ollama'))              targets.push(lifecycleUpdate('ollama', '🤖 Ollama'));
+  if (has('openclaw'))            targets.push(lifecycleUpdate('openclaw', '🦾 OpenClaw'));
+  if (has('rsshub'))              targets.push(lifecycleUpdate('rsshub', '👁️  RSSHub'));
+  if (has('traefik'))             targets.push(lifecycleUpdate('traefik', '🦿 Traefik'));
+  if (has('openwebui'))           targets.push(lifecycleUpdate('openwebui', '💬 Open WebUI'));
+  if (has('openwebui-pipelines')) targets.push(lifecycleUpdate('openwebui-pipelines', '🪈 Pipelines'));
 
   // Traefik can recreate its container on update; reconnect synap to
   // eve-network afterwards so cross-container DNS keeps working. (Done
@@ -242,6 +250,27 @@ function buildUpdateTargets(deployDir: string | undefined): UpdateTarget[] {
       const name = getSynapBackendContainer();
       if (name) connectToEveNetwork(name);
     };
+  }
+
+  // Eve Dashboard — rebuild the container image so UI changes from the
+  // Eve CLI git pull land. Only added when the dashboard container is
+  // currently running (i.e. it was installed with `eve add eve-dashboard`).
+  if (dashboardIsRunning()) {
+    targets.push({
+      id: 'eve-dashboard',
+      label: '📊 Eve Dashboard',
+      update: async () => {
+        const secrets = await readEveSecrets(process.cwd());
+        const secret = secrets?.dashboard?.secret
+          ?? randomBytes(24).toString('hex');
+        installDashboardContainer({
+          workspaceRoot: process.cwd(),
+          secret,
+          rebuild: true,
+        });
+        return { subLines: ['image rebuilt from updated source'] };
+      },
+    });
   }
 
   return targets;
@@ -303,7 +332,7 @@ export function backupUpdateCommands(program: Command): void {
       // subdirectory layout and couldn't be overridden without changing code.
       const deployDir = findPodDeployDir() ?? undefined;
 
-      const targets = buildUpdateTargets(deployDir);
+      const targets = await buildUpdateTargets(deployDir);
 
       // Positional args take precedence over `--only`. If the user passes
       // both, positional wins (more specific intent).

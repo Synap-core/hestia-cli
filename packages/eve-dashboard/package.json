@@ -17,7 +17,7 @@
     "@eve/legs": "workspace:*",
     "@eve/lifecycle": "workspace:*",
     "@heroui/react": "^2.4.0",
-    "@synap-core/auth": "^1.0.0",
+    "@synap-core/auth": "^1.1.0",
     "@heroui/theme": "^2.4.0",
     "@types/qrcode": "^1.5.0",
     "@xterm/addon-fit": "^0.10.0",

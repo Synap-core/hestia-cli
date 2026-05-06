@@ -7,74 +7,73 @@
  * — it accepts an explicit email, runs the JWT-Bearer exchange, and
  * (for the host owner) persists the token + email in
  * `~/.eve/secrets.json`. For non-owners the token is returned in the
- * response body; the browser stores it client-side. See "Multi-user
- * model" below.
+ * response body; the browser stores it in `localStorage.synap:pods`.
  *
- * Body: `{ "email": "alice@example.com", "cpToken"?: string }`
+ * Body: `{ "email": "alice@example.com" }`
  *
- *   • `email`    — the operator email to mint a pod session for. Must
- *                  exist on the pod as a human user with a Kratos identity.
- *   • `cpToken`  — optional CP bearer JWT. When present, used to
- *                  identify the requester for the multi-user gate (see
- *                  below). When absent we fall back to the legacy
- *                  "host owner only" path — the request is treated as
- *                  the owner.
+ *   • `email` — the operator email to mint a pod session for. Must
+ *               exist on the pod as a human user with a Kratos
+ *               identity.
  *
  * Returns:
- *   200 `{ ok: true, role: "owner", expiresAt, user }`        — owner path,
- *                                                              token persisted to disk.
+ *   200 `{ ok: true, role: "owner",  token, expiresAt, user }` — owner path,
+ *                                                                token persisted to disk.
  *   200 `{ ok: true, role: "member", token, expiresAt, user }` — non-owner,
- *                                                              token in body only.
- *   400 invalid email / cpToken
+ *                                                                token in body only.
+ *   400 invalid email
  *   401 not signed in to local Eve dashboard
- *   401 cpToken provided but invalid (CP rejected it)
  *   503 misconfigured (no pod URL or no Eve external URL)
  *   <upstream-status> exchange failed (issuer not approved, user not
  *   found, JWT signature failure, etc.)
  *
  * ──────────────────────────────────────────────────────────────────────
- * Multi-user model
+ * First-write-wins disk model
  * ──────────────────────────────────────────────────────────────────────
  *
- * `~/.eve/secrets.json` is mode 0600 and tied to the host owner.
+ * `~/.eve/secrets.json` is mode 0600 and tied to the host owner — the
+ * uid that owns the file is the only one that can read it. The
+ * dashboard process runs as that uid, so anything we write to disk is
+ * effectively shared with the on-host CLI under the same uid.
+ *
  * Persisting another user's pod token there would silently grant the
- * owner access to that user's pod session. So we split:
+ * host owner access to that user's pod session. So we split:
  *
- *   • Host owner   → token persists to disk (`pod.userToken` slot).
- *                    Subsequent `/api/pod/*` calls auto-renew from disk.
- *   • Other user   → token lives in the response body only. The browser
- *                    stores it client-side (e.g. in-memory + localStorage)
- *                    and presents it on subsequent requests.
+ *   • First sign-in on this Eve (no `pod.userToken` on disk yet) →
+ *     this user becomes the host owner. Token persists to disk
+ *     (`pod.userToken` slot). Subsequent `/api/pod/*` calls auto-renew
+ *     from disk.
+ *   • Any subsequent sign-in (slot already populated) → token lives in
+ *     the response body only. The browser stores it in the
+ *     `localStorage.synap:pods` map keyed by pod URL. The disk slot is
+ *     NOT touched.
  *
- * "Owner" detection rule:
- *   1. Read `cp.userSession.userId` (the persisted host-owner identity).
- *   2. Verify the request's `cpToken` against CP's `/auth/get-session`
- *      to learn the requester's userId.
- *   3. If they match → owner path. Otherwise → member path.
+ * This is intentionally **orthogonal to CP identity**. A user may have
+ * a CP account, no CP account, or be the host owner without a CP
+ * account at all. Disk ownership is about who first claimed the slot
+ * on this Eve install — nothing more. CP auth state is a separate
+ * concern owned by `cp.userSession` and managed by `/api/auth/sync`.
  *
- * Backward compatibility: when `cpToken` is absent, the owner path is
- * taken (preserves single-user installs that haven't adopted the new
- * dashboard auth). New surfaces SHOULD pass `cpToken` so the gate can
- * actually fire when a different user signs in to the same browser.
+ * Backward compatibility: pre-1.1 installs that signed in on a freshly
+ * provisioned Eve correctly land on the owner path (the slot is empty,
+ * so the first signer wins). Multi-user installs that wrongly
+ * persisted a second user's token under the old `cpToken` gate are
+ * unaffected — the slot is already populated, so nothing changes.
  *
  * See: synap-team-docs/content/team/platform/eve-credentials.mdx §4
  */
 
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { readCpUserSession } from "@eve/dna";
+import { readPodUserToken } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
-import { CP_BASE_URL } from "@/lib/cp-base-url";
 import {
   mintAndStorePodUserToken,
   mintPodUserToken,
   PodSigninError,
-  verifyCpTokenAgainstControlPlane,
 } from "../../pod/_lib";
 
 const BodySchema = z.object({
   email: z.string().min(1),
-  cpToken: z.string().min(1).optional(),
 });
 
 export async function POST(req: Request) {
@@ -100,28 +99,20 @@ export async function POST(req: Request) {
     );
   }
 
-  // ── Owner detection ──────────────────────────────────────────────────
-  // Default = owner (back-compat with installs that don't pass cpToken).
-  // Once cpToken is provided we do a real check.
+  // ── First-write-wins ownership detection ─────────────────────────────
+  // Owner = whichever user first signed in on this Eve. We detect that
+  // by reading the disk slot directly — if it's empty, this signer is
+  // claiming it; otherwise we treat this as a member browser-only
+  // sign-in and never touch disk.
   let isHostOwner = true;
-  if (parsed.data.cpToken) {
-    const verified = await verifyCpTokenAgainstControlPlane(
-      parsed.data.cpToken,
-      CP_BASE_URL,
-    );
-    if (!verified) {
-      return NextResponse.json(
-        { error: "cp_token_invalid" },
-        { status: 401 },
-      );
-    }
-    const owner = await readCpUserSession();
-    // No persisted owner yet → the requester effectively becomes one.
-    // The actual ownership write is the /api/auth/sync route's job;
-    // here we just mint the pod session for them.
-    if (owner && owner.userId && owner.userId !== verified.userId) {
+  try {
+    const existing = await readPodUserToken();
+    if (existing && existing.token) {
       isHostOwner = false;
     }
+  } catch {
+    // Treat read failure as "no existing token" — the next write will
+    // surface a real error if the disk is broken.
   }
 
   try {
@@ -132,8 +123,9 @@ export async function POST(req: Request) {
     return NextResponse.json({
       ok: true,
       role: isHostOwner ? "owner" : "member",
-      // Owner path: token already on disk; we still echo it so callers
-      // that want to seed an in-memory cache can do so without a re-mint.
+      // Owner path: token already on disk; we still echo it so the
+      // browser can mirror it into `localStorage.synap:pods` without a
+      // re-mint round-trip.
       token: minted.token,
       expiresAt: minted.expiresAt,
       user: minted.user,

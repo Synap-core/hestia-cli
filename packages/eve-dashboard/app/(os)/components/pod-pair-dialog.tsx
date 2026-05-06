@@ -54,6 +54,7 @@ import {
   Chip,
   addToast,
 } from "@heroui/react";
+import { storePodSession } from "@synap-core/auth";
 import {
   AlertTriangle,
   Check,
@@ -65,8 +66,11 @@ import {
 
 interface PodSigninSuccess {
   ok: true;
+  role?: "owner" | "member";
+  token?: string;
   expiresAt: string;
   user: { id: string; email: string; name: string | null };
+  podUrl?: string;
 }
 
 interface PodSigninFailure {
@@ -162,6 +166,9 @@ export function PodPairDialog({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
+        // First-write-wins ownership is decided server-side by
+        // inspecting `~/.eve/secrets.json` — the browser doesn't pass
+        // `cpToken` anymore. CP and pod auth are orthogonal layers.
         body: JSON.stringify({ email: trimmedEmail }),
       });
       const data = (await res.json().catch(() => null)) as
@@ -181,6 +188,42 @@ export function PodPairDialog({
       }
 
       const success = data as PodSigninSuccess;
+
+      // Persist into the cross-app `synap:pods` map so other Synap
+      // surfaces on this domain pick it up automatically. The map is
+      // independent of the CP `synap:session` cookie — pod state is
+      // its own layer.
+      try {
+        // Pod URL — the pod-signin route doesn't echo it back today,
+        // so we resolve it from `secrets-summary` (cheap, cached) when
+        // missing. Failure here is non-fatal: the on-disk slot still
+        // works for server-side proxying.
+        let podUrl = success.podUrl;
+        if (!podUrl) {
+          const summary = await fetch("/api/secrets-summary", {
+            credentials: "include",
+            cache: "no-store",
+          })
+            .then((r) => (r.ok ? r.json() : null))
+            .catch(() => null);
+          podUrl =
+            (summary as { synap?: { apiUrl?: string } } | null)?.synap
+              ?.apiUrl ?? "";
+        }
+        if (podUrl && success.token) {
+          storePodSession({
+            podUrl,
+            sessionToken: success.token,
+            userEmail: success.user.email,
+            userId: success.user.id,
+          });
+        }
+      } catch {
+        // Non-fatal — server-side disk slot is the authoritative
+        // record for the host owner; member-mode browsers will retry
+        // on next dialog open.
+      }
+
       setPhase({ kind: "success", user: success.user });
       addToast({
         title: "Signed in to pod",

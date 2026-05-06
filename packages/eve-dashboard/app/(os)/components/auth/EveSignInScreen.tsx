@@ -58,6 +58,7 @@ import {
 import {
   signInToControlPlane,
   signUpToControlPlane,
+  storePodSession,
   verifyTotpLogin,
   type CPSession,
 } from "@/lib/synap-auth";
@@ -616,9 +617,53 @@ export function SelfHostedSignInForm({
         return;
       }
 
+      const claimedPodUrl = data?.podUrl ?? "";
+      const claimedEmail = data?.email ?? cleanEmail;
+
+      // Attempt to mint a Kratos session via the JWT-Bearer flow and
+      // persist it into `synap:pods`. This succeeds when the user
+      // already exists on the pod (legacy installs, re-claims, or
+      // racy reloads after Kratos signup completes elsewhere). When
+      // it fails — the common case for first-claim — we fall through
+      // to the existing redirect-to-pod-Kratos flow; the operator
+      // completes signup at `signupUrl`, comes back, and the next
+      // load (or pair dialog) signs them in.
+      //
+      // Either way the gate doesn't bounce the user: success persists
+      // a pod session for the local pod; failure leaves the existing
+      // bootstrap-claim notice + signup link path unchanged.
+      try {
+        const signinRes = await fetch("/api/auth/pod-signin", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ email: claimedEmail }),
+        });
+        if (signinRes.ok) {
+          const signin = (await signinRes.json().catch(() => null)) as
+            | {
+                ok?: boolean;
+                token?: string;
+                expiresAt?: string;
+                user?: { id: string; email: string; name: string | null };
+              }
+            | null;
+          if (signin?.ok && signin.token && claimedPodUrl) {
+            storePodSession({
+              podUrl: claimedPodUrl,
+              sessionToken: signin.token,
+              userEmail: signin.user?.email ?? claimedEmail,
+              userId: signin.user?.id ?? "",
+            });
+          }
+        }
+      } catch {
+        /* non-fatal — fall through to redirect-based signup */
+      }
+
       onSuccess({
-        podUrl: data?.podUrl ?? "",
-        email: data?.email ?? cleanEmail,
+        podUrl: claimedPodUrl,
+        email: claimedEmail,
         signupUrl: data?.signupUrl,
       });
     } catch (err) {

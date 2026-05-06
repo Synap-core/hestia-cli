@@ -1,21 +1,35 @@
 /**
  * `synap-auth` — Eve dashboard wrapper around `@synap-core/auth`.
  *
- * Single module-level `AuthClient` configured for the CP this Eve points
- * at. Mirrors `apps/hub/lib/auth.ts` shape but writes the resulting
- * session into BOTH:
- *   • shared cross-app storage (`storeSharedSession`) so other Synap
- *     surfaces on `.synap.live` (or `localhost`) pick it up automatically.
- *   • Eve's host secrets file via `POST /api/auth/sync` so the
- *     dashboard's server-side routes can build authenticated requests
- *     without re-prompting the user.
+ * Two ORTHOGONAL auth layers, each with its own state:
  *
- * The browser holds the CP Bearer token only as long as the tab is
- * alive — the host file is the durable record. Sign-out clears both.
+ *   • **CP layer** — Synap account (`synap:session` localStorage +
+ *     `.synap.live` cookie). Bearer token issued by the Control Plane.
+ *     Optional. Cleared via `signOutOfControlPlane()`.
+ *   • **Pod layer** — Per-pod Kratos session (`synap:pods` map keyed by
+ *     pod URL). One entry per pod the user has connected to. Cleared
+ *     per-pod via `signOutOfPod(podUrl)`.
  *
- * NOTE: `@synap-core/auth` is published to npm. Until the user runs
- * `pnpm install` after publishing, the import will fail to resolve.
- * That single error is expected and acceptable.
+ * A user may have CP only, pod only, both, or neither. Sign-out from
+ * one layer **does not** affect the other.
+ *
+ * Disk persistence (`~/.eve/secrets.json`) is a third concern:
+ *   • `cp.userSession` — host owner's CP token (for the `eve` CLI).
+ *     Single-writer, owner-only. Synced via `POST /api/auth/sync`.
+ *   • `pod.userToken`  — host owner's Kratos session on the local pod.
+ *     Single-writer, owner-only. Synced via `POST /api/auth/pod-signin`
+ *     (first-write-wins). Other users' pod tokens live in their browser
+ *     `synap:pods` map only — never on disk.
+ *
+ * The browser never writes pod sessions to disk via this module. Disk
+ * writes happen exclusively through the pod-signin route's
+ * first-write-wins logic.
+ *
+ * NOTE: `@synap-core/auth` is published to npm. Until v1.1.0 is
+ * published + installed, the new pod-session helpers
+ * (`storePodSession`, `getAllPodSessions`, `signOutOfPod`,
+ * `signOutOfAllPods`, `connectDirectLogin`) won't resolve. That
+ * type-check error is expected and acceptable.
  */
 
 import {
@@ -26,11 +40,20 @@ import {
   storeSharedSession,
   getSharedSession,
   clearSharedSession,
+  // 1.1.0 pod-session helpers
+  storePodSession,
+  getPodSession,
+  getAllPodSessions,
+  signOutOfPod as signOutOfPodCore,
+  signOutOfAllPods,
 } from "@synap-core/auth";
 import type {
   CPSession,
   PodInfo,
+  PodSession,
+  PodSessionMap,
   SharedSession,
+  StoredPodSession,
 } from "@synap-core/auth";
 
 // ─── Configuration ──────────────────────────────────────────────────────────
@@ -70,21 +93,16 @@ export const authClient = createAuthClient({
       : createSessionStorage(),
 });
 
-// ─── Auth-sync bridge ──────────────────────────────────────────────────────
+// ─── CP-only host bridge ────────────────────────────────────────────────────
+//
+// `syncSessionToHost` is the CP-only persistence path. It writes the
+// CP user-session into `~/.eve/secrets.json` so the on-host CLI can
+// act as the user. Pod sessions DO NOT flow through here — they are
+// persisted by the pod-signin route's first-write-wins logic.
 
-/**
- * Persist the CP session into Eve's host secrets file so server-side
- * routes can build authenticated requests without re-prompting. The
- * route hashes the bearer token and stores it scoped to the dashboard
- * cookie, matching how OAuth/device-flow tokens are persisted.
- */
 async function syncSessionToHost(session: CPSession): Promise<void> {
   try {
-    // Wire shape mirrors `app/api/auth/sync/route.ts` Zod schema:
-    // `{ token, userId, email, name?, avatarUrl?, expiresAt?,
-    //   twoFactorEnabled?, issuedAt? }`. Stripping unrelated fields
-    // keeps the payload minimal — anything extra would be rejected
-    // by `safeParse`.
+    // Wire shape mirrors `app/api/auth/sync/route.ts` Zod schema.
     await fetch("/api/auth/sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -133,7 +151,7 @@ function toSharedSession(session: CPSession): SharedSession {
   };
 }
 
-// ─── Public API (mirrors apps/hub/lib/auth.ts) ─────────────────────────────
+// ─── CP layer (sign in / sign up / sign out) ───────────────────────────────
 
 export type CPSignInResult =
   | { kind: "signed-in"; session: CPSession }
@@ -180,6 +198,11 @@ export async function verifyTotpLogin(
   return { ok: true, session };
 }
 
+/**
+ * Sign out of the Control Plane only. Pod sessions are NOT touched —
+ * a user may stay signed into their pod after dropping their CP
+ * account (Mode B / self-hosted).
+ */
 export async function signOutOfControlPlane(): Promise<void> {
   try {
     await authClient.signOutOfCP();
@@ -198,14 +221,99 @@ export async function fetchUserPods(): Promise<PodInfo[]> {
   return authClient.fetchPodsForConnect();
 }
 
-export async function handshakeToPod(
-  podUrl: string,
-): Promise<{ podUrl: string; sessionToken: string; workspaceId: string }> {
+// ─── Pod layer (per-pod Kratos sessions) ────────────────────────────────────
+
+/**
+ * Connect to `podUrl` using the user's CP session. Triggers the CP
+ * handshake → pod handshake flow and persists the resulting Kratos
+ * session into the `synap:pods` map (handled inside `@synap-core/auth`
+ * 1.1.0+).
+ *
+ * Requires a CP session — call after `signInToControlPlane` succeeds.
+ */
+export async function connectToPodWithCP(podUrl: string): Promise<PodSession> {
   const base = podUrl.replace(/\/+$/, "");
   if (base.startsWith("http://") && !/localhost|127\.0\.0\.1/.test(base)) {
     throw new Error("Refusing insecure pod connection. Pod URL must use HTTPS.");
   }
-  const session = await authClient.connectViaCPHandshake(base);
+  // `connectViaCPHandshake` in 1.1.0 auto-persists into `synap:pods`.
+  return authClient.connectViaCPHandshake(base);
+}
+
+// NOTE: a `connectToPodDirect()` helper used to live here, wrapping
+// `connectDirectLogin` from `@synap-core/auth`. That symbol is not
+// exported from the 1.1.0 barrel — direct-Kratos signups for Eve go
+// through `POST /api/pod/bootstrap-claim` (server-side) instead, and
+// the JWT-Bearer flow handles re-signin. So this helper has been
+// removed; callers that need a direct-Kratos browser-side login
+// should add a thin wrapper around `authClient.connectViaCPHandshake`
+// or a new server route.
+
+/**
+ * Read the current pod session for `podUrl` from the `synap:pods` map,
+ * or `null` if not connected. Returns a `StoredPodSession` (storage
+ * record), not the auth-client `PodSession`.
+ */
+export function getCurrentPodSession(podUrl: string): StoredPodSession | null {
+  if (typeof window === "undefined") return null;
+  return getPodSession(podUrl);
+}
+
+/**
+ * Sign out of `podUrl`. Removes the entry from `synap:pods` AND, if
+ * this URL matches the local Eve pod (i.e. this browser is the host
+ * owner), clears the disk slot via the existing `pod-signout` route
+ * (which calls `clearPodUserToken` from `@eve/dna`).
+ *
+ * Idempotent — safe to call when no session exists.
+ */
+export async function signOutOfPod(podUrl: string): Promise<void> {
+  // Browser-side: drop the entry from `synap:pods` immediately so the
+  // gate state updates in this tab.
+  signOutOfPodCore(podUrl);
+
+  // Server-side: ask the dashboard to clear the disk slot. The route
+  // is a no-op if the disk slot doesn't match this pod URL — the
+  // existing `clearPodUserToken` helper just nukes the slot
+  // unconditionally (which is fine because owner-mode browsers should
+  // only ever sign out of "their" local pod via this path).
+  try {
+    await fetch("/api/auth/pod-signout", {
+      method: "POST",
+      credentials: "include",
+    });
+  } catch {
+    /* non-fatal — browser state is already updated */
+  }
+}
+
+/**
+ * Wrapper around `@synap-core/auth`'s `signOutOfAllPods()` that also
+ * tells Eve to clear the disk slot. Use for "sign out everywhere".
+ */
+export async function signOutOfAllPodsAndClearDisk(): Promise<void> {
+  signOutOfAllPods();
+  try {
+    await fetch("/api/auth/pod-signout", {
+      method: "POST",
+      credentials: "include",
+    });
+  } catch {
+    /* non-fatal */
+  }
+}
+
+/**
+ * Legacy alias preserved for callers that still expect the old
+ * `handshakeToPod` shape. Returns the data the `pod-pair` flow needs
+ * (podUrl + sessionToken + workspaceId).
+ *
+ * @deprecated use `connectToPodWithCP` directly when possible.
+ */
+export async function handshakeToPod(
+  podUrl: string,
+): Promise<{ podUrl: string; sessionToken: string; workspaceId: string }> {
+  const session = await connectToPodWithCP(podUrl);
   return {
     podUrl: session.podUrl,
     sessionToken: session.sessionToken,
@@ -215,14 +323,34 @@ export async function handshakeToPod(
 
 // ─── Re-exports & helpers ───────────────────────────────────────────────────
 
-export { getSharedSession, clearSharedSession, isTwoFactorRequired };
-export type { CPSession, PodInfo, SharedSession };
+export {
+  getSharedSession,
+  clearSharedSession,
+  isTwoFactorRequired,
+  storePodSession,
+  getPodSession,
+  getAllPodSessions,
+};
+export type {
+  CPSession,
+  PodInfo,
+  PodSession,
+  PodSessionMap,
+  SharedSession,
+  StoredPodSession,
+};
 
 /**
  * "Self-hosted mode" marker. When the operator authenticates via the
  * pod-local Kratos flow (no CP account), we still want
  * `EveAccountGate` to let them through. We piggy-back on the shared
  * session shape with an explicit marker so the gate can detect it.
+ *
+ * NOTE: with the orthogonal-layer model, this marker is now mostly
+ * historical — the gate also accepts "no CP, has pod session for
+ * local pod" as Mode B. We keep the marker for back-compat with
+ * legacy installs that wrote `mode: "self-hosted"` into the shared
+ * session before the split.
  */
 export interface SelfHostedSession extends SharedSession {
   mode: "self-hosted";

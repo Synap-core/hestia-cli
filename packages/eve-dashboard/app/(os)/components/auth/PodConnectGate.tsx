@@ -3,33 +3,32 @@
 /**
  * `PodConnectGate` — second auth layer (sits inside `EveAccountGate`).
  *
- * Sequences pod-side bootstrap state for an already-CP-signed-in
- * operator:
+ * Sequences pod-side state for an already-authenticated operator
+ * (CP-signed-in OR pod-signed-in OR both — see `EveAccountGate`).
  *
- *   1. **Self-hosted session** — already paired by the bootstrap flow.
- *      Render children immediately.
- *   2. **Pod URL not configured** — render the legacy
+ *   1. **Local pod already paired** (entry exists in `synap:pods` for
+ *      the local pod URL) → render children. Covers Mode B
+ *      (self-hosted) AND Mode A+B (CP user who already claimed).
+ *   2. **CP-signed-in but local pod NOT in `synap:pods`** → show the
+ *      "Claim this Eve as your pod" CTA. The card primary action
+ *      calls `POST /api/pod/claim` (CP handshake → pod handshake →
+ *      `pod.userToken` written + `synap:pods` updated). Falls back to
+ *      the email-prompt bootstrap flow if the pod hasn't been
+ *      bootstrapped yet (`needsBootstrap` from setup probe).
+ *   3. **Pod URL not configured** — render the legacy
  *      `ConfigurePodCard` linking to settings.
- *   3. **Pod has no users yet** (`needsBootstrap`) AND CP user is
- *      signed in → show a "Claim this Eve as your pod" CTA card. The
- *      card embeds `<SelfHostedSignInForm fixedEmail={…} />` so the
- *      operator only confirms the bootstrap.
- *   4. **Pod paired** → render children. (Unpaired-but-initialized
- *      pods are handled by the existing pair dialog from the home
- *      header — we don't block on that here so the rest of the OS
- *      stays interactive.)
  *
  * This component intentionally does NOT show a sign-in form for the
  * pod's user-channel (that's `PodPairDialog` from the home header).
- * The two gates compose: `EveAccountGate` proves the operator owns the
- * Eve dashboard; `PodConnectGate` proves the local pod is in a usable
- * state. Anything beyond that is on-demand.
+ * The two gates compose: `EveAccountGate` proves the operator is
+ * authenticated through SOMETHING; `PodConnectGate` ensures the local
+ * pod is in a usable state before the OS lights up.
  *
  * See: synap-team-docs/content/team/platform/eve-auth-architecture.mdx
  */
 
-import { useCallback, useState } from "react";
-import { Button, Card } from "@heroui/react";
+import { useCallback, useEffect, useState } from "react";
+import { Button, Card, Spinner, addToast } from "@heroui/react";
 import { Plug, Server, Sparkles } from "lucide-react";
 import { useSetupStatus } from "../../hooks/use-setup-status";
 import { ConfigurePodCard } from "../bootstrap-admin-card";
@@ -39,19 +38,153 @@ import {
   type SelfHostedClaimResult,
 } from "./EveSignInScreen";
 import {
+  getAllPodSessions,
   getSharedSession,
   isSelfHostedSession,
+  storePodSession,
 } from "@/lib/synap-auth";
 
 export interface PodConnectGateProps {
   children: React.ReactNode;
 }
 
+/**
+ * Read-only check for a pod session targeting the local pod URL.
+ * SSR-safe — returns `false` on the server.
+ */
+function hasLocalPodSession(localPodUrl: string | null): boolean {
+  if (typeof window === "undefined" || !localPodUrl) return false;
+  const normalized = localPodUrl.replace(/\/+$/, "");
+  return Object.values(getAllPodSessions()).some(
+    (s) => s.podUrl.replace(/\/+$/, "") === normalized,
+  );
+}
+
 export function PodConnectGate({ children }: PodConnectGateProps) {
   const { state: setupState, refetch } = useSetupStatus();
   const [claim, setClaim] = useState<SelfHostedClaimResult | null>(null);
+  const [localPodUrl, setLocalPodUrl] = useState<string | null>(null);
+  const [paired, setPaired] = useState<boolean>(false);
+  const [claimInFlight, setClaimInFlight] = useState(false);
+  const [claimError, setClaimError] = useState<string | null>(null);
 
-  // Self-hosted mode — already bootstrapped via the sign-in flow.
+  // Resolve the local pod URL once on mount; we need it to know which
+  // entry of `synap:pods` "this" Eve cares about.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/secrets-summary", {
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (!res.ok) return;
+        const data = (await res.json().catch(() => null)) as
+          | { synap?: { apiUrl?: string | null } }
+          | null;
+        const url = data?.synap?.apiUrl ?? null;
+        if (!cancelled) {
+          setLocalPodUrl(url);
+          setPaired(hasLocalPodSession(url));
+        }
+      } catch {
+        /* leave defaults — falls through to "configure pod" branch */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Cross-tab listener — re-evaluate `paired` when `synap:pods` changes.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    function onStorage(e: StorageEvent) {
+      if (e.key !== "synap:pods") return;
+      setPaired(hasLocalPodSession(localPodUrl));
+    }
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [localPodUrl]);
+
+  // ── Claim CTA handler — wired to `POST /api/pod/claim` ────────────────
+  // CP-signed-in path: ask the dashboard to run the CP→pod handshake
+  // chain and persist the resulting Kratos session. Then mirror it
+  // into `synap:pods` so the gate state flips locally.
+  const handleClaim = useCallback(async () => {
+    if (claimInFlight) return;
+    setClaimInFlight(true);
+    setClaimError(null);
+    try {
+      const res = await fetch("/api/pod/claim", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({}),
+      });
+      const data = (await res.json().catch(() => null)) as
+        | {
+            ok?: boolean;
+            podUrl?: string;
+            podSessionExpiresAt?: string;
+            error?: string;
+            detail?: string;
+            message?: string;
+          }
+        | null;
+      if (!res.ok || !data?.ok) {
+        const reason =
+          data?.detail ||
+          data?.message ||
+          data?.error ||
+          `Pod returned ${res.status}`;
+        setClaimError(reason);
+        addToast({
+          title: "Couldn't claim this pod",
+          description: reason,
+          color: "danger",
+        });
+        return;
+      }
+      // Mirror into `synap:pods` so the gate flips without waiting on
+      // a refetch. The disk slot was already written by the route.
+      const session = getSharedSession();
+      if (data.podUrl && session) {
+        storePodSession({
+          podUrl: data.podUrl,
+          // The route doesn't echo the Kratos session token — the
+          // pod-pair flow does. We store a minimal entry so the
+          // gate's "is local pod paired" check passes; the actual
+          // server-side proxy uses `pod.userToken` from disk.
+          sessionToken: "",
+          userEmail: session.userName?.includes("@") ? session.userName : "",
+          userId: session.userId,
+        });
+      }
+      setPaired(true);
+      addToast({ title: "Pod claimed", color: "success" });
+      refetch();
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : "Network error";
+      setClaimError(reason);
+      addToast({
+        title: "Couldn't claim this pod",
+        description: reason,
+        color: "danger",
+      });
+    } finally {
+      setClaimInFlight(false);
+    }
+  }, [claimInFlight, refetch]);
+
+  // ── Already paired (Mode B or post-claim) → render OS ─────────────────
+  if (paired) {
+    return <>{children}</>;
+  }
+
+  // Legacy `mode: "self-hosted"` shared-session marker — still treated
+  // as paired for back-compat with installs that pre-date the
+  // orthogonal-layer refactor.
   const session = typeof window !== "undefined" ? getSharedSession() : null;
   if (session && isSelfHostedSession(session)) {
     return <>{children}</>;
@@ -97,6 +230,7 @@ export function PodConnectGate({ children }: PodConnectGateProps) {
               onPress={() => {
                 setClaim(null);
                 refetch();
+                setPaired(hasLocalPodSession(localPodUrl));
               }}
               className="font-medium"
             >
@@ -108,7 +242,12 @@ export function PodConnectGate({ children }: PodConnectGateProps) {
     }
     return (
       <ClaimPodCard
-        defaultEmail={session?.userName?.includes("@") ? session.userName : undefined}
+        defaultEmail={
+          session?.userName?.includes("@") ? session.userName : undefined
+        }
+        onClaim={handleClaim}
+        claimInFlight={claimInFlight}
+        claimError={claimError}
         onSuccess={(result) => {
           setClaim(result);
           // Refetch so the next mount of `useSetupStatus()` sees `ready`.
@@ -118,19 +257,39 @@ export function PodConnectGate({ children }: PodConnectGateProps) {
     );
   }
 
+  // CP-signed-in but local pod IS bootstrapped — operator just hasn't
+  // run the CP handshake yet. Show the claim CTA without the
+  // bootstrap email form (the pod doesn't need a new admin).
+  if (session && !isSelfHostedSession(session)) {
+    return (
+      <ClaimExistingPodCard
+        email={session.userName?.includes("@") ? session.userName : undefined}
+        onClaim={handleClaim}
+        claimInFlight={claimInFlight}
+        claimError={claimError}
+      />
+    );
+  }
+
   // Unreachable / network error — let children render so the user can
   // open settings or retry; the home page surfaces its own banner.
   return <>{children}</>;
 }
 
-// ─── "Claim this pod" card ────────────────────────────────────────────────
+// ─── "Claim this pod" card (bootstrap-needed variant) ─────────────────────
 
 interface ClaimPodCardProps {
   defaultEmail?: string;
+  onClaim: () => void;
+  claimInFlight: boolean;
+  claimError: string | null;
   onSuccess: (result: SelfHostedClaimResult) => void;
 }
 
-function ClaimPodCard({ defaultEmail, onSuccess }: ClaimPodCardProps) {
+function ClaimPodCard({
+  defaultEmail,
+  onSuccess,
+}: ClaimPodCardProps) {
   // Stable identity check — the CP-signed-in user's email is what the
   // pod will tie the bootstrap invite to. When we have it, lock the
   // input so the form is a one-click confirm.
@@ -216,6 +375,111 @@ function ClaimPodCard({ defaultEmail, onSuccess }: ClaimPodCardProps) {
           fixedEmail={fixedEmail}
           onSuccess={onSuccess}
         />
+      </Card>
+    </div>
+  );
+}
+
+// ─── "Claim this pod" card (already-bootstrapped variant) ─────────────────
+//
+// CP user signed in, pod already has admin (so bootstrap-claim won't
+// run), but `synap:pods` doesn't have an entry for the local pod yet
+// — i.e. the user hasn't completed the CP→pod handshake on this
+// browser. One-click CTA does that.
+
+interface ClaimExistingPodCardProps {
+  email?: string;
+  onClaim: () => void;
+  claimInFlight: boolean;
+  claimError: string | null;
+}
+
+function ClaimExistingPodCard({
+  email,
+  onClaim,
+  claimInFlight,
+  claimError,
+}: ClaimExistingPodCardProps) {
+  return (
+    <div className="flex min-h-[calc(100vh-3rem)] items-center justify-center px-4 py-8">
+      <Card
+        isBlurred
+        shadow="none"
+        radius="md"
+        className="
+          flex w-full max-w-[28rem] flex-col gap-5 p-6 sm:p-7
+          bg-foreground/[0.04]
+          ring-1 ring-inset ring-foreground/10
+        "
+      >
+        <header className="flex items-start gap-3">
+          <span
+            aria-hidden
+            className="
+              flex h-10 w-10 shrink-0 items-center justify-center
+              rounded-lg
+              bg-primary/10 ring-1 ring-inset ring-primary/20
+              text-primary
+            "
+          >
+            <Plug className="h-5 w-5" strokeWidth={2} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 className="font-heading text-[20px] font-medium leading-tight tracking-tight text-foreground">
+              Connect to your pod
+            </h2>
+            <p className="mt-1 text-[13px] leading-snug text-foreground/65">
+              {email ? (
+                <>
+                  Sign{" "}
+                  <span className="font-medium text-foreground">{email}</span>{" "}
+                  into the local Eve pod via the Synap handshake.
+                </>
+              ) : (
+                <>
+                  Sign your Synap account into the local Eve pod via the
+                  handshake.
+                </>
+              )}
+            </p>
+          </div>
+        </header>
+
+        {claimError && (
+          <div
+            role="alert"
+            className="
+              flex items-start gap-2 rounded-lg
+              bg-warning/10 ring-1 ring-inset ring-warning/30
+              px-3 py-2
+            "
+          >
+            <p className="text-[12.5px] leading-snug text-foreground">
+              {claimError}
+            </p>
+          </div>
+        )}
+
+        <Button
+          color="primary"
+          radius="md"
+          size="md"
+          isLoading={claimInFlight}
+          onPress={onClaim}
+          startContent={
+            !claimInFlight ? <Plug className="h-3.5 w-3.5" /> : undefined
+          }
+          className="font-medium"
+        >
+          {claimInFlight ? "Claiming…" : "Claim this Eve as your pod"}
+        </Button>
+
+        {claimInFlight && (
+          <div className="flex items-center justify-center gap-2 text-[12px] text-foreground/55">
+            <Spinner size="sm" />
+            <span>Running CP → pod handshake…</span>
+          </div>
+        )}
       </Card>
     </div>
   );

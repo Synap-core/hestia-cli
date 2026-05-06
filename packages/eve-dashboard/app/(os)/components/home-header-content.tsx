@@ -33,6 +33,7 @@ import {
   ExternalLink,
   LogOut,
   Plug,
+  Server,
   Sparkles,
   User,
 } from "lucide-react";
@@ -40,9 +41,13 @@ import { useStats } from "../hooks/use-stats";
 import { useMemberCount } from "../hooks/use-member-count";
 import { usePodPairing, type PairingState } from "../hooks/use-pod-pairing";
 import {
+  getAllPodSessions,
   getSharedSession,
   isSelfHostedSession,
   signOutOfControlPlane,
+  signOutOfPod,
+  signOutOfAllPodsAndClearDisk,
+  type StoredPodSession,
 } from "@/lib/synap-auth";
 
 // ─── Greeting (header-left) ──────────────────────────────────────────────────
@@ -346,65 +351,133 @@ export function PodStatusChip({ pairingState, onClick }: PodStatusChipProps) {
 
 // ─── Account avatar + popover ────────────────────────────────────────────────
 //
-// Right-most cluster element. 32px circle with initials (or image),
-// click → popover with name/email/mode + Manage account + Sign out.
+// Right-most cluster element. 32px circle with initials, click →
+// popover with two layered sections reflecting the orthogonal auth
+// model:
+//
+//   • CP identity      — name, email, "Manage account" → Hub. Hidden
+//                        when no CP session.
+//   • Pod sessions     — one row per entry in `synap:pods`, each with
+//                        its own "Sign out" action. Hidden when none.
+//   • Sign out actions — CP-only, plus an optional "everywhere" that
+//                        clears CP + every pod (and the disk slot).
+//
+// "Manage account" points at the Hub's profile settings — Hub is the
+// canonical CP web surface for account management. Falls back to
+// `NEXT_PUBLIC_HUB_URL`, then the public production hub.
 
 export interface AccountAvatarProps {
   /**
-   * Optional override for the CP origin used by "Manage account". Falls
-   * back to `NEXT_PUBLIC_CP_API_URL` then `https://synap.live`.
+   * Optional override for the Hub origin used by "Manage account".
+   * Falls back to `NEXT_PUBLIC_HUB_URL`, then `https://hub.synap.live`.
    */
-  cpAccountUrl?: string;
+  hubAccountUrl?: string;
 }
 
-export function AccountAvatar({ cpAccountUrl }: AccountAvatarProps) {
-  const [session, setSession] = useState<ReturnType<
+export function AccountAvatar({ hubAccountUrl }: AccountAvatarProps) {
+  const [cpSession, setCpSession] = useState<ReturnType<
     typeof getSharedSession
   > | null>(null);
-  const [signingOut, setSigningOut] = useState(false);
+  const [podSessions, setPodSessions] = useState<StoredPodSession[]>([]);
+  const [signingOutCp, setSigningOutCp] = useState(false);
+  const [signingOutAll, setSigningOutAll] = useState(false);
+  const [signingOutPod, setSigningOutPod] = useState<string | null>(null);
 
   useEffect(() => {
-    setSession(getSharedSession());
+    setCpSession(getSharedSession());
+    setPodSessions(Object.values(getAllPodSessions()));
     function onStorage(e: StorageEvent) {
-      if (e.key !== "synap:session") return;
-      setSession(getSharedSession());
+      if (e.key === "synap:session") {
+        setCpSession(getSharedSession());
+      } else if (e.key === "synap:pods") {
+        setPodSessions(Object.values(getAllPodSessions()));
+      }
     }
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
 
-  if (!session) {
+  // Render nothing until at least one layer is present. The gate
+  // handles signed-out states; this avatar is only meaningful when
+  // SOME identity exists.
+  if (!cpSession && podSessions.length === 0) {
     return null;
   }
 
-  const isSelfHosted = isSelfHostedSession(session);
-  const display = session.userName || "—";
+  const isSelfHosted = cpSession ? isSelfHostedSession(cpSession) : false;
+  const display = cpSession?.userName || podSessions[0]?.userEmail || "—";
   const initials = computeInitials(display);
 
-  // For Manage account — point at the CP web account page.
-  const cpUrl =
-    cpAccountUrl ||
-    process.env.NEXT_PUBLIC_CP_API_URL ||
-    process.env.NEXT_PUBLIC_CP_BASE_URL ||
-    "https://api.synap.live";
-  const accountUrl = cpUrl.replace(/\/+$/, "") + "/account";
+  const accountUrl =
+    (hubAccountUrl ||
+      process.env.NEXT_PUBLIC_HUB_URL ||
+      "https://hub.synap.live").replace(/\/+$/, "") + "/settings/profile";
 
-  async function handleSignOut() {
-    if (signingOut) return;
-    setSigningOut(true);
+  async function handleSignOutCp() {
+    if (signingOutCp) return;
+    setSigningOutCp(true);
     try {
       await signOutOfControlPlane();
-      addToast({ title: "Signed out", color: "success" });
-      // Force gate to re-evaluate by reloading; storage listener also
-      // fires across tabs.
-      window.location.reload();
+      addToast({
+        title: "Signed out of Synap account",
+        description: "Your pod sessions are still active.",
+        color: "success",
+      });
     } catch (err) {
       addToast({
         title: "Couldn't sign out",
         description: err instanceof Error ? err.message : "Unknown error",
         color: "danger",
       });
-      setSigningOut(false);
+    } finally {
+      setSigningOutCp(false);
+    }
+  }
+
+  async function handleSignOutPod(podUrl: string) {
+    if (signingOutPod) return;
+    setSigningOutPod(podUrl);
+    try {
+      await signOutOfPod(podUrl);
+      setPodSessions(Object.values(getAllPodSessions()));
+      addToast({ title: "Signed out of pod", color: "success" });
+    } catch (err) {
+      addToast({
+        title: "Couldn't sign out of pod",
+        description: err instanceof Error ? err.message : "Unknown error",
+        color: "danger",
+      });
+    } finally {
+      setSigningOutPod(null);
+    }
+  }
+
+  async function handleSignOutEverywhere() {
+    if (signingOutAll) return;
+    setSigningOutAll(true);
+    try {
+      await Promise.allSettled([
+        signOutOfControlPlane(),
+        signOutOfAllPodsAndClearDisk(),
+      ]);
+      addToast({ title: "Signed out everywhere", color: "success" });
+      // Both layers cleared — reload so the gate flips to signed-out.
+      window.location.reload();
+    } catch (err) {
+      addToast({
+        title: "Couldn't sign out everywhere",
+        description: err instanceof Error ? err.message : "Unknown error",
+        color: "danger",
+      });
+      setSigningOutAll(false);
+    }
+  }
+
+  function shortPodLabel(url: string): string {
+    try {
+      return new URL(url).host;
+    } catch {
+      return url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
     }
   }
 
@@ -430,69 +503,155 @@ export function AccountAvatar({ cpAccountUrl }: AccountAvatarProps) {
         </button>
       </PopoverTrigger>
       <PopoverContent className="p-0">
-        <div className="w-[260px] flex flex-col">
-          <div className="flex flex-col gap-1 px-4 pt-3.5 pb-3 border-b border-foreground/[0.06]">
-            <div className="flex items-center gap-2">
-              <p className="text-[13.5px] font-medium text-foreground truncate">
-                {display}
-              </p>
-              <span
-                className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.04em] ${
-                  isSelfHosted
-                    ? "bg-warning/15 text-warning"
-                    : "bg-primary/15 text-primary"
-                }`}
-              >
-                {isSelfHosted ? "Self-hosted" : "Synap"}
-              </span>
-            </div>
-            <p className="text-[11.5px] text-foreground/55 truncate">
-              {session.userId
-                ? `User ${session.userId.slice(0, 8)}…`
-                : isSelfHosted
-                  ? "Bound to local pod"
-                  : "Synap account"}
-            </p>
-          </div>
+        <div className="w-[280px] flex flex-col">
+          {/* CP identity section — hidden when no CP session */}
+          {cpSession && (
+            <>
+              <div className="flex flex-col gap-1 px-4 pt-3.5 pb-3 border-b border-foreground/[0.06]">
+                <div className="flex items-center gap-2">
+                  <p className="text-[13.5px] font-medium text-foreground truncate">
+                    {cpSession.userName || "Synap account"}
+                  </p>
+                  <span
+                    className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.04em] ${
+                      isSelfHosted
+                        ? "bg-warning/15 text-warning"
+                        : "bg-primary/15 text-primary"
+                    }`}
+                  >
+                    {isSelfHosted ? "Self-hosted" : "Synap"}
+                  </span>
+                </div>
+                <p className="text-[11.5px] text-foreground/55 truncate">
+                  {cpSession.userId
+                    ? `User ${cpSession.userId.slice(0, 8)}…`
+                    : "Synap account"}
+                </p>
+              </div>
+              {!isSelfHosted && (
+                <div className="py-1 border-b border-foreground/[0.06]">
+                  <a
+                    href={accountUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="
+                      flex items-center justify-between gap-2 px-4 py-2
+                      text-[12.5px] text-foreground
+                      hover:bg-foreground/[0.04]
+                    "
+                  >
+                    <span>Manage account</span>
+                    <ExternalLink
+                      className="h-3 w-3 text-foreground/55"
+                      strokeWidth={2}
+                      aria-hidden
+                    />
+                  </a>
+                </div>
+              )}
+            </>
+          )}
 
-          <div className="py-1">
-            {!isSelfHosted && (
-              <a
-                href={accountUrl}
-                target="_blank"
-                rel="noreferrer"
+          {/* Pod sessions section — hidden when none */}
+          {podSessions.length > 0 && (
+            <div className="flex flex-col">
+              <div className="px-4 pt-3 pb-1.5">
+                <p className="text-[10.5px] uppercase tracking-[0.05em] text-foreground/55 font-medium">
+                  Signed into pods
+                </p>
+              </div>
+              <div className="pb-1">
+                {podSessions.map((p) => {
+                  const label = shortPodLabel(p.podUrl);
+                  const busy = signingOutPod === p.podUrl;
+                  return (
+                    <div
+                      key={p.podUrl}
+                      className="flex items-center gap-2 px-4 py-1.5"
+                    >
+                      <Server
+                        className="h-3 w-3 shrink-0 text-foreground/55"
+                        strokeWidth={2}
+                        aria-hidden
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[12px] text-foreground truncate">
+                          {label}
+                        </p>
+                        {p.userEmail && (
+                          <p className="text-[10.5px] text-foreground/55 truncate">
+                            {p.userEmail}
+                          </p>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleSignOutPod(p.podUrl)}
+                        disabled={busy}
+                        className="
+                          shrink-0 rounded-md px-2 py-1
+                          text-[10.5px] font-medium uppercase tracking-[0.04em] text-foreground/55
+                          hover:bg-danger/10 hover:text-danger
+                          disabled:opacity-50
+                        "
+                      >
+                        {busy ? "…" : "Sign out"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Bottom action group */}
+          <div className="py-1 border-t border-foreground/[0.06]">
+            {cpSession && (
+              <button
+                type="button"
+                onClick={() => void handleSignOutCp()}
+                disabled={signingOutCp}
                 className="
-                  flex items-center justify-between gap-2 px-4 py-2
+                  flex w-full items-center justify-between gap-2 px-4 py-2
                   text-[12.5px] text-foreground
                   hover:bg-foreground/[0.04]
+                  disabled:opacity-50
                 "
               >
-                <span>Manage account</span>
-                <ExternalLink
+                <span>
+                  {signingOutCp
+                    ? "Signing out…"
+                    : "Sign out of Synap account"}
+                </span>
+                <LogOut
                   className="h-3 w-3 text-foreground/55"
                   strokeWidth={2}
                   aria-hidden
                 />
-              </a>
+              </button>
             )}
-            <button
-              type="button"
-              onClick={() => void handleSignOut()}
-              disabled={signingOut}
-              className="
-                flex w-full items-center justify-between gap-2 px-4 py-2
-                text-[12.5px] text-danger
-                hover:bg-danger/10
-                disabled:opacity-50
-              "
-            >
-              <span>{signingOut ? "Signing out…" : "Sign out"}</span>
-              <LogOut
-                className="h-3 w-3"
-                strokeWidth={2}
-                aria-hidden
-              />
-            </button>
+            {(cpSession || podSessions.length > 0) && (
+              <button
+                type="button"
+                onClick={() => void handleSignOutEverywhere()}
+                disabled={signingOutAll}
+                className="
+                  flex w-full items-center justify-between gap-2 px-4 py-2
+                  text-[12.5px] text-danger
+                  hover:bg-danger/10
+                  disabled:opacity-50
+                "
+              >
+                <span>
+                  {signingOutAll ? "Signing out…" : "Sign out everywhere"}
+                </span>
+                <LogOut
+                  className="h-3 w-3"
+                  strokeWidth={2}
+                  aria-hidden
+                />
+              </button>
+            )}
           </div>
         </div>
       </PopoverContent>

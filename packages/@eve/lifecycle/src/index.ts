@@ -940,26 +940,32 @@ async function* installHermes(): AsyncGenerator<LifecycleEvent> {
   const hermesHome = join(homedir(), ".eve", "hermes");
   mkdirSync(hermesHome, { recursive: true });
   const hermesEnv = join(homedir(), ".eve", "hermes.env");
+  const skillsDir = join(homedir(), ".eve", "skills");
+  mkdirSync(skillsDir, { recursive: true });
 
   const args = [
     "run", "-d",
     "--name", "eve-builder-hermes",
     "--network", "eve-network",
     "--restart", "unless-stopped",
-    "-p", "8642:8642",
-    "-p", "9119:9119",
+    "-p", "8642:8642",   // OpenAI-compat gateway
+    "-p", "9119:9119",   // Hermes dashboard
+    "-p", "9120:9120",   // MCP server for Claude Code / Cursor
     "-v", `${hermesHome}:/opt/data`,
+    "-v", `${skillsDir}:/opt/data/skills:ro`,   // Synap skill packages
     "--env-file", hermesEnv,
     "-e", "HERMES_HOME=/opt/data",
     "-e", "API_SERVER_ENABLED=true",
     "-e", "API_SERVER_PORT=8642",
     "-e", "DASHBOARD_PORT=9119",
+    "-e", "MCP_SERVER_ENABLED=true",
+    "-e", "MCP_SERVER_PORT=9120",
     "nousresearch/hermes-agent:latest",
   ];
   const runCode = yield* runCommand("docker", args);
   if (runCode !== 0) throw new Error(`docker run exited ${runCode}`);
 
-  yield { type: "log", line: "Hermes container running — gateway: :8642, dashboard: :9119" };
+  yield { type: "log", line: "Hermes container running — gateway: :8642, dashboard: :9119, MCP: :9120" };
 }
 
 /**

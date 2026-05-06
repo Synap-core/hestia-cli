@@ -14,12 +14,129 @@
  * clear handle (the daemon settings file) the user can manage from here.
  */
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, type ReactNode } from "react";
 import {
-  Input, Button, Spinner, Switch, addToast,
+  Input, Button, Spinner, Switch, Chip, addToast,
 } from "@heroui/react";
-import { Bot, Terminal } from "lucide-react";
+import { Bot, Terminal, RefreshCw } from "lucide-react";
 import { IntegrationChecklist } from "../integration-checklist";
+
+// ---------------------------------------------------------------------------
+// Hermes health card
+// ---------------------------------------------------------------------------
+
+interface HermesStatus {
+  running: boolean;
+  model?: string;
+  memoryProvider?: string;
+  activeSessions?: number;
+  mcpEnabled?: boolean;
+}
+
+function HermesHealthCard() {
+  const [status, setStatus] = useState<HermesStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const fetch_ = useCallback(async () => {
+    setLoading(true);
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 3_000);
+      const res = await fetch("/api/components/hermes/status", {
+        signal: controller.signal,
+        credentials: "include",
+      }).finally(() => clearTimeout(timeout));
+      setStatus(res.ok ? ((await res.json()) as HermesStatus) : { running: false });
+    } catch {
+      setStatus({ running: false });
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void fetch_(); }, [fetch_]);
+
+  return (
+    <div className="rounded-lg border border-divider bg-content2/40 p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-medium uppercase tracking-wider text-foreground/40">
+          Runtime status
+        </div>
+        <Button
+          size="sm"
+          variant="light"
+          radius="md"
+          isIconOnly
+          isLoading={loading}
+          onPress={() => void fetch_()}
+          aria-label="Refresh Hermes status"
+        >
+          {!loading && <RefreshCw className="h-3.5 w-3.5" />}
+        </Button>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-2"><Spinner size="sm" /></div>
+      ) : !status?.running ? (
+        <div className="flex items-center gap-2">
+          <Chip size="sm" color="danger" variant="flat">Hermes is not running</Chip>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          <StatusItem
+            label="Gateway"
+            value={<Chip size="sm" color="success" variant="flat">Up</Chip>}
+          />
+          <StatusItem
+            label="Model"
+            value={
+              <Chip size="sm" color="default" variant="flat">
+                {status.model ?? "—"}
+              </Chip>
+            }
+          />
+          <StatusItem
+            label="Memory"
+            value={
+              <Chip size="sm" color="default" variant="flat">
+                {status.memoryProvider ?? "—"}
+              </Chip>
+            }
+          />
+          <StatusItem
+            label="Sessions"
+            value={
+              <Chip size="sm" color="default" variant="flat">
+                {String(status.activeSessions ?? 0)}
+              </Chip>
+            }
+          />
+          <StatusItem
+            label="MCP"
+            value={
+              <Chip
+                size="sm"
+                color={status.mcpEnabled ? "success" : "default"}
+                variant="flat"
+              >
+                {status.mcpEnabled ? "Enabled" : "Disabled"}
+              </Chip>
+            }
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StatusItem({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-[11px] text-foreground/40">{label}</span>
+      {value}
+    </div>
+  );
+}
 
 interface HermesConfig {
   enabled: boolean;
@@ -60,6 +177,10 @@ export function HermesConfigPanel() {
 
   return (
     <div className="space-y-4">
+      {/* Runtime health — shown at top so the user knows immediately
+          whether the daemon is live before tweaking settings. */}
+      <HermesHealthCard />
+
       {/* Daemon model explainer */}
       <div className="rounded-lg border border-divider bg-content2/40 p-4 text-sm text-default-700 leading-relaxed">
         <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-default-500 mb-2">

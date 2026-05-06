@@ -19,6 +19,7 @@ import { Tabs, Tab } from "@heroui/react";
 import { useRouter, usePathname } from "next/navigation";
 import {
   UserCircle, Boxes, Sparkles, Globe, Stethoscope, Users, MessageSquare,
+  Brain,
   type LucideIcon,
 } from "lucide-react";
 import { PaneHeader } from "../components/pane-header";
@@ -37,13 +38,14 @@ interface TabDef {
 // HeroUI's flat <Tabs> doesn't render group headers, so we rely on
 // ordering: Account first, then the four System tabs.
 const TABS: TabDef[] = [
-  { href: "/settings",            label: "Account",     Icon: UserCircle },
-  { href: "/settings/ai",         label: "AI",          Icon: Sparkles },
-  { href: "/settings/channels",   label: "Channels",    Icon: MessageSquare },
-  { href: "/settings/components", label: "Components",  Icon: Boxes },
-  { href: "/settings/networking", label: "Networking",  Icon: Globe },
-  { href: "/settings/members",    label: "Members",     Icon: Users },
-  { href: "/settings/doctor",     label: "Doctor",      Icon: Stethoscope },
+  { href: "/settings",                  label: "Account",      Icon: UserCircle },
+  { href: "/settings/ai",               label: "AI",           Icon: Sparkles },
+  { href: "/settings/intelligence",     label: "Intelligence", Icon: Brain },
+  { href: "/settings/channels",         label: "Channels",     Icon: MessageSquare },
+  { href: "/settings/components",       label: "Components",   Icon: Boxes },
+  { href: "/settings/networking",       label: "Networking",   Icon: Globe },
+  { href: "/settings/members",          label: "Members",      Icon: Users },
+  { href: "/settings/doctor",           label: "Doctor",       Icon: Stethoscope },
 ];
 
 const EXACT_ONLY = new Set<string>(["/settings"]);

@@ -22,29 +22,82 @@ export function defaultSkillsDir(): string {
   return join(homedir(), '.eve', 'skills');
 }
 
-const SYNAP_SKILL_MD = `---
-name: synap-hub
-description: Call the Synap Data Pod via Hub Protocol (Bearer SYNAP_API_KEY). Use for memory, entities, and agent tools — not for raw SQL unless explicitly allowed.
+/**
+ * Fetches the bundled skill packages from the pod and writes them into
+ * the local skills directory (~/.eve/skills/).
+ *
+ * If the pod is unreachable, falls back to the embedded stub so
+ * Hermes / Claude Code always have at least a minimal Hub reference.
+ *
+ * Directory layout written:
+ *   ~/.eve/skills/synap/SKILL.md            ← core data + memory + channels
+ *   ~/.eve/skills/synap/governance.md
+ *   ~/.eve/skills/synap/linking.md
+ *   ~/.eve/skills/synap/capture.md
+ *   ~/.eve/skills/synap-schema/SKILL.md     ← profiles + property defs
+ *   ~/.eve/skills/synap-schema/property-types.md
+ *   ~/.eve/skills/synap-ui/SKILL.md         ← views + dashboards
+ */
+export async function ensureEveSkillsLayout(
+  skillsDir: string = defaultSkillsDir(),
+  hubBaseUrl?: string,
+  apiKey?: string,
+): Promise<void> {
+  // Always ensure the synap dir exists as a fallback
+  mkdirSync(join(skillsDir, 'synap'), { recursive: true });
+
+  if (hubBaseUrl && apiKey) {
+    try {
+      const res = await fetch(`${hubBaseUrl}/skills/system`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (res.ok) {
+        const packages = await res.json() as Array<{
+          slug: string;
+          files: Array<{ path: string; content: string }>;
+        }>;
+        for (const pkg of packages) {
+          const pkgDir = join(skillsDir, pkg.slug);
+          mkdirSync(pkgDir, { recursive: true });
+          for (const file of pkg.files) {
+            writeFileSync(join(pkgDir, file.path), file.content, 'utf-8');
+          }
+        }
+        return;
+      }
+    } catch {
+      // pod unreachable — fall through to stub
+    }
+  }
+
+  // Fallback stub: minimal Hub Protocol reference
+  const stubPath = join(skillsDir, 'synap', 'SKILL.md');
+  if (!existsSync(stubPath)) {
+    writeFileSync(stubPath, `---
+name: synap
+description: Use for memory, entities, channels, search, and governance via the Synap Hub Protocol.
 ---
 
-# Synap Hub (Eve)
+# Synap Hub Protocol
 
-- **Base URL:** use environment variable \`HUB_BASE_URL\` (must include path, e.g. \`https://pod.example.com/api/hub\`).
-- **Auth:** \`Authorization: Bearer\` + value from \`SYNAP_API_KEY\` (same key as OpenClaw / pod API key).
-- **Docs:** see Synap Hub Protocol REST in your pod documentation.
+Base URL: $HUB_BASE_URL
+Auth: Authorization: Bearer $SYNAP_API_KEY
 
-Prefer small, idempotent requests. Do not exfiltrate keys.
-`;
+Key endpoints:
+  GET  /memory?query=...          full-text search facts
+  POST /memory                    store a fact
+  GET  /entities/search?q=...     search entities
+  POST /entities                  create entity
+  GET  /entities/:id
+  PUT  /entities/:id              update entity (merges)
+  GET  /channels?workspaceId=...  list channels
+  POST /skills/:id/execute        run a user skill
+  GET  /skills/system             list system skill docs
+  GET  /profiles                  list entity types
 
-/**
- * Ensures ~/.eve/skills/synap/SKILL.md exists (OpenClaw-style layout; Claude Code can symlink into .claude/skills).
- */
-export function ensureEveSkillsLayout(skillsDir: string = defaultSkillsDir()): void {
-  const synapDir = join(skillsDir, 'synap');
-  mkdirSync(synapDir, { recursive: true });
-  const skillPath = join(synapDir, 'SKILL.md');
-  if (!existsSync(skillPath)) {
-    writeFileSync(skillPath, SYNAP_SKILL_MD, 'utf-8');
+Run GET /users/me + GET /workspaces on startup to orient yourself.
+`, 'utf-8');
   }
 }
 
@@ -60,7 +113,8 @@ export async function writeBuilderProjectEnv(projectDir: string, cwd: string = p
   const secrets = await readEveSecrets(cwd);
   const hub = resolveHubBaseUrl(secrets);
   const skillsDir = secrets?.builder?.skillsDir ?? defaultSkillsDir();
-  ensureEveSkillsLayout(skillsDir);
+  const synapApiKeyForSkills = await readAgentKeyOrLegacy('coder', cwd);
+  await ensureEveSkillsLayout(skillsDir, hub, synapApiKeyForSkills);
 
   const synapApiKey = await readAgentKeyOrLegacy('coder', cwd);
 
@@ -91,7 +145,8 @@ export async function writeSandboxEnvFile(cwd: string = process.cwd()): Promise<
   const hub = resolveHubBaseUrl(secrets);
   const skillsDir = secrets?.builder?.skillsDir ?? defaultSkillsDir();
   const workspaceDir = secrets?.builder?.workspaceDir ?? join(cwd, '.eve', 'workspace');
-  ensureEveSkillsLayout(skillsDir);
+  const synapApiKeyForSkills = await readAgentKeyOrLegacy('eve', cwd);
+  await ensureEveSkillsLayout(skillsDir, hub, synapApiKeyForSkills);
 
   const synapApiKey = await readAgentKeyOrLegacy('eve', cwd);
 
@@ -111,16 +166,28 @@ export async function writeSandboxEnvFile(cwd: string = process.cwd()): Promise<
 }
 
 /**
- * Claude Code loads skills from `<project>/.claude/skills/<name>/SKILL.md` (see code.claude.com docs).
- * Copies the Eve synap stub into the project (portable; no symlink privileges).
+ * Claude Code loads skills from `<project>/.claude/skills/<name>/SKILL.md`.
+ * Copies all Synap skill packages (synap, synap-schema, synap-ui) into the project.
+ * Call after ensureEveSkillsLayout() has already written files to skillsDir.
  */
 export function copySynapSkillIntoClaudeProject(projectDir: string, skillsDir: string = defaultSkillsDir()): void {
-  ensureEveSkillsLayout(skillsDir);
-  const src = join(skillsDir, 'synap', 'SKILL.md');
-  const destDir = join(projectDir, '.claude', 'skills', 'synap');
-  mkdirSync(destDir, { recursive: true });
-  const dest = join(destDir, 'SKILL.md');
-  copyFileSync(src, dest);
+  const { readdirSync: _readdirSync, statSync: _statSync } = require('node:fs') as typeof import('node:fs');
+  const skillPkgs = ['synap', 'synap-schema', 'synap-ui'];
+  for (const pkg of skillPkgs) {
+    const srcDir = join(skillsDir, pkg);
+    const destDir = join(projectDir, '.claude', 'skills', pkg);
+    try {
+      const files = _readdirSync(srcDir);
+      mkdirSync(destDir, { recursive: true });
+      for (const file of files) {
+        if (file.endsWith('.md')) {
+          copyFileSync(join(srcDir, file), join(destDir, file));
+        }
+      }
+    } catch {
+      // skill package not yet fetched — skip silently
+    }
+  }
 }
 
 /**
@@ -135,17 +202,34 @@ export async function writeClaudeCodeSettings(projectDir: string, cwd: string = 
   const secrets = await readEveSecrets(cwd);
   const hub = resolveHubBaseUrl(secrets);
   const synapApiKey = await readAgentKeyOrLegacy('coder', cwd);
+  const skillsDir = secrets?.builder?.skillsDir ?? defaultSkillsDir();
   const dir = join(projectDir, '.claude');
   mkdirSync(dir, { recursive: true });
+
   const settings = {
     env: {
       SYNAP_API_URL: resolveSynapUrl(secrets),
       SYNAP_API_KEY: synapApiKey,
       HUB_BASE_URL: hub ?? '',
-      EVE_SKILLS_DIR: secrets?.builder?.skillsDir ?? defaultSkillsDir(),
+      EVE_SKILLS_DIR: skillsDir,
     },
   };
   writeFileSync(join(dir, 'settings.json'), JSON.stringify(settings, null, 2), 'utf-8');
+
+  // If Hermes is installed, register its MCP server so Claude Code can call Hermes tools
+  const hermesApiKey = secrets?.builder?.hermes?.apiServerKey;
+  if (hermesApiKey) {
+    const mcpServersDir = join(dir, 'mcp-servers');
+    mkdirSync(mcpServersDir, { recursive: true });
+    const hermesMcp = {
+      type: 'http',
+      url: 'http://localhost:9120',
+      name: 'hermes',
+      description: 'Hermes agent — memory, channels, skills via Synap Hub Protocol',
+      headers: { Authorization: `Bearer ${hermesApiKey}` },
+    };
+    writeFileSync(join(mcpServersDir, 'hermes.json'), JSON.stringify(hermesMcp, null, 2), 'utf-8');
+  }
 }
 
 /**
@@ -272,7 +356,7 @@ model:
   api_key: ${apiKey}
 
 # OpenAI-compat API gateway — OpenWebUI, LobeChat, LibreChat connect here.
-# Port 8642 is exposed by docker-compose; clients reach it at hermes.${`<your-domain>`}
+# Port 8642 is exposed by docker-compose; clients reach it at hermes.<your-domain>
 # or directly at http://eve-builder-hermes:8642 from within eve-network.
 api_server:
   enabled: true
@@ -280,9 +364,21 @@ api_server:
   key: ${apiServerKey}
   host: 0.0.0.0
 
+# MCP server — exposes Hermes tools to Claude Code, Cursor, and any MCP client.
+# Connect at http://localhost:9120 (host) or http://eve-builder-hermes:9120 (docker network).
+mcp:
+  server:
+    enabled: true
+    port: 9120
+    host: 0.0.0.0
+
 # Hermes dashboard — admin UI
 dashboard:
   port: 9119
+
+# Skills — Synap Hub Protocol reference docs (mounted from ~/.eve/skills)
+skills:
+  dir: /opt/data/skills
 `;
 
 /**
