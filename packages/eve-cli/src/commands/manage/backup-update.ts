@@ -237,6 +237,7 @@ async function buildUpdateTargets(deployDir: string | undefined): Promise<Update
   if (has('traefik'))             targets.push(lifecycleUpdate('traefik', '🦿 Traefik'));
   if (has('openwebui'))           targets.push(lifecycleUpdate('openwebui', '💬 Open WebUI'));
   if (has('openwebui-pipelines')) targets.push(lifecycleUpdate('openwebui-pipelines', '🪈 Pipelines'));
+  if (has('hermes'))              targets.push(lifecycleUpdate('hermes', '🧠 Hermes'));
 
   // Traefik can recreate its container on update; reconnect synap to
   // eve-network afterwards so cross-container DNS keeps working. (Done
@@ -458,7 +459,7 @@ export function backupUpdateCommands(program: Command): void {
     .argument('[components...]', 'Component ids to restart (omit to restart all). E.g. `eve restart synap openwebui`')
     .description('Restart one or more Eve components without pulling new images.')
     .action(async (components: string[]) => {
-      const knownIds = ['synap', 'ollama', 'openclaw', 'rsshub', 'traefik', 'openwebui', 'openwebui-pipelines'];
+      const knownIds = ['synap', 'ollama', 'openclaw', 'rsshub', 'traefik', 'openwebui', 'openwebui-pipelines', 'hermes'];
 
       const toRestart = components.length > 0 ? components : knownIds;
 
