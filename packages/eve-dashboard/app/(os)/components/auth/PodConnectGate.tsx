@@ -27,9 +27,9 @@
  * See: synap-team-docs/content/team/platform/eve-auth-architecture.mdx
  */
 
-import { useCallback, useEffect, useState } from "react";
-import { Button, Card, Spinner, addToast } from "@heroui/react";
-import { Plug, Server, Sparkles } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Button, Card, Input, Spinner, addToast } from "@heroui/react";
+import { ExternalLink, Mail, Plug, Server, Sparkles } from "lucide-react";
 import { useSetupStatus } from "../../hooks/use-setup-status";
 import { ConfigurePodCard } from "../bootstrap-admin-card";
 import {
@@ -432,10 +432,70 @@ function ClaimExistingPodCard({
   claimInFlight,
   claimError,
 }: ClaimExistingPodCardProps) {
+  const [inviteInput, setInviteInput] = useState("");
+  const [inviteLoading, setInviteLoading] = useState(false);
+  const [inviteResult, setInviteResult] = useState<{ email: string; signupUrl: string; podUrl: string } | null>(null);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const inviteIdRef = useRef(0);
+
   // Display just the hostname for readability (strip protocol + trailing slash).
   const podDisplay = podUrl
     ? podUrl.replace(/^https?:\/\//, "").replace(/\/+$/, "")
     : null;
+
+  // Parse invite URL or bare token from user input.
+  function parseInviteInput(raw: string): { token: string; email?: string } | null {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    // Extract token from full invite URL: /invite/[token]
+    const urlMatch = trimmed.match(/\/invite\/([A-Za-z0-9_-]+)/);
+    if (urlMatch) return { token: urlMatch[1] };
+    // Bare token
+    if (/^[A-Za-z0-9_-]{20,}$/.test(trimmed)) return { token: trimmed };
+    return null;
+  }
+
+  const handleInviteAccept = useCallback(async () => {
+    const parsed = parseInviteInput(inviteInput);
+    if (!parsed) {
+      setInviteError("Paste the full invitation link or the token.");
+      return;
+    }
+    const { token } = parsed;
+    const id = ++inviteIdRef.current;
+    setInviteLoading(true);
+    setInviteError(null);
+    try {
+      const res = await fetch(`/api/invite/${encodeURIComponent(token)}/accept`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ email: email ?? "" }),
+      });
+      if (id !== inviteIdRef.current) return;
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { error?: string } | null;
+        setInviteError(data?.error ?? `Pod returned ${res.status}`);
+        return;
+      }
+      const data = (await res.json().catch(() => null)) as
+        | { signupUrl?: string; podUrl?: string }
+        | null;
+      if (!data?.signupUrl) {
+        setInviteError("Invalid response from pod.");
+        return;
+      }
+      setInviteResult({ email: email ?? "", signupUrl: data.signupUrl, podUrl: data.podUrl ?? "" });
+    } catch {
+      if (id === inviteIdRef.current) {
+        setInviteError("Couldn't reach the dashboard API.");
+      }
+    } finally {
+      if (id === inviteIdRef.current) {
+        setInviteLoading(false);
+      }
+    }
+  }, [inviteInput, email]);
 
   return (
     <div className="flex min-h-[calc(100vh-3rem)] items-center justify-center px-4 py-8">
@@ -501,6 +561,97 @@ function ClaimExistingPodCard({
             </p>
           </div>
         )}
+
+        {/* ─── Invitation link section ─────────────────────────────── */}
+        <div
+          className="
+            rounded-lg
+            bg-foreground/[0.02] ring-1 ring-inset ring-foreground/8
+            px-4 py-3.5
+          "
+        >
+          <p className="text-[12px] font-medium text-foreground/45 mb-2">
+            Or use an invitation link
+          </p>
+          {inviteResult ? (
+            <div className="flex flex-col gap-3">
+              <div
+                className="
+                  flex items-start gap-2
+                  rounded-lg
+                  bg-foreground/[0.03] ring-1 ring-inset ring-foreground/10
+                  px-3 py-2.5
+                "
+              >
+                <Mail
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground/55"
+                  strokeWidth={2}
+                  aria-hidden
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[12.5px] text-foreground/55">
+                    Invite ready for{" "}
+                    <span className="font-medium text-foreground">{inviteResult.email}</span>.
+                  </p>
+                  <a
+                    href={inviteResult.signupUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-1 inline-flex items-center gap-1 text-[12px] font-medium text-primary hover:underline"
+                  >
+                    Complete signup at your pod
+                    <ExternalLink className="h-3 w-3" strokeWidth={2} />
+                  </a>
+                </div>
+              </div>
+              <Button
+                color="primary"
+                radius="md"
+                size="sm"
+                onPress={() => {
+                  setInviteInput("");
+                  setInviteResult(null);
+                }}
+                variant="flat"
+                className="font-medium self-start"
+              >
+                Use another invite
+              </Button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <div className="flex gap-2">
+                <Input
+                  size="sm"
+                  radius="md"
+                  variant="bordered"
+                  placeholder="Paste invitation link or token"
+                  value={inviteInput}
+                  onValueChange={setInviteInput}
+                  isClearable
+                  isDisabled={inviteLoading}
+                  classNames={{
+                    input: "text-[12.5px]",
+                  }}
+                />
+                <Button
+                  color="primary"
+                  size="sm"
+                  radius="md"
+                  isLoading={inviteLoading}
+                  isDisabled={!inviteInput.trim()}
+                  onPress={handleInviteAccept}
+                  className="font-medium whitespace-nowrap"
+                >
+                  Accept
+                </Button>
+              </div>
+              {inviteError && (
+                <p className="text-[11.5px] text-danger">{inviteError}</p>
+              )}
+            </div>
+          )}
+        </div>
 
         {claimError && (
           <div

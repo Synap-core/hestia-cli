@@ -74,9 +74,12 @@ export function pickPrimaryProvider(
   secrets: EveSecrets | null,
   componentId?: string,
 ) {
-  const all = secrets?.ai?.providers ?? [];
+  // All providers unified — built-in + custom merged
+  const all = (secrets?.ai?.providers ?? [])
+    .filter(p => p.enabled !== false);
   const usable = all.filter(p =>
-    p.id === 'ollama' || (p.apiKey && p.apiKey.trim().length > 0),
+    p.id === 'ollama' || (p.apiKey && p.apiKey.trim().length > 0) ||
+    (p.baseUrl && p.baseUrl.trim().length > 0),  // custom providers may not have API keys
   );
   if (usable.length === 0) return null;
 
@@ -127,8 +130,7 @@ export function pickPrimaryProvider(
  */
 function wireSynapIs(secrets: EveSecrets | null): WireAiResult {
   const providers = secrets?.ai?.providers ?? [];
-  const customProviders = secrets?.ai?.customProviders ?? [];
-  if (providers.length === 0 && customProviders.length === 0) {
+  if (providers.length === 0) {
     return { id: 'synap', outcome: 'skipped', summary: 'no AI providers configured' };
   }
 
@@ -137,26 +139,24 @@ function wireSynapIs(secrets: EveSecrets | null): WireAiResult {
     return { id: 'synap', outcome: 'skipped', summary: `deploy dir not found: ${deployDir}` };
   }
 
-  // Build env additions for each provider that has a key. Synap IS still
-  // gets ALL upstream keys so it can route across providers — only the
-  // *default* changes per-service.
+  // Build env additions for each provider that has a key.
   const envLines: string[] = ['# AI provider keys — managed by eve ai apply'];
   for (const p of providers) {
     if (!p.apiKey) continue;
+    // Built-in provider keys (by id)
     if (p.id === 'openai') envLines.push(`OPENAI_API_KEY=${p.apiKey}`);
     if (p.id === 'anthropic') envLines.push(`ANTHROPIC_API_KEY=${p.apiKey}`);
     if (p.id === 'openrouter') envLines.push(`OPENROUTER_API_KEY=${p.apiKey}`);
-  }
-  // Custom providers — write them as env vars so Synap IS can list them.
-  for (let i = 0; i < customProviders.length; i++) {
-    const cp = customProviders[i];
-    const idx = i + 1;
-    envLines.push(`CUSTOM_PROVIDER_${idx}_BASE_URL=${cp.baseUrl}`);
-    if (cp.apiKey && cp.apiKey.trim()) {
-      envLines.push(`CUSTOM_PROVIDER_${idx}_API_KEY=${cp.apiKey}`);
+    // Custom provider keys — write as generic env vars
+    if (p.id.startsWith('custom-') || !['ollama', 'openai', 'anthropic', 'openrouter'].includes(p.id)) {
+      const idx = providers.filter(x => x.id.startsWith('custom-')).indexOf(p) + 1;
+      if (idx > 0) {
+        envLines.push(`CUSTOM_PROVIDER_${idx}_BASE_URL=${p.baseUrl ?? ''}`);
+        envLines.push(`CUSTOM_PROVIDER_${idx}_API_KEY=${p.apiKey}`);
+        envLines.push(`CUSTOM_PROVIDER_${idx}_NAME=${p.name ?? p.id}`);
+        if (p.defaultModel) envLines.push(`CUSTOM_PROVIDER_${idx}_DEFAULT_MODEL=${p.defaultModel}`);
+      }
     }
-    envLines.push(`CUSTOM_PROVIDER_${idx}_NAME=${cp.name}`);
-    if (cp.defaultModel) envLines.push(`CUSTOM_PROVIDER_${idx}_DEFAULT_MODEL=${cp.defaultModel}`);
   }
   // Honor per-service override for synap itself: when the user has
   // configured "use Anthropic for Synap IS", DEFAULT_AI_PROVIDER reflects
@@ -429,6 +429,7 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
     return { id: 'openwebui', outcome: 'skipped', summary: 'no Synap pod API key — install Synap first' };
   }
 
+  const providers = secrets?.ai?.providers ?? [];
   const deployDir = '/opt/openwebui';
   const envPath = join(deployDir, '.env');
   if (!existsSync(deployDir)) {
@@ -444,12 +445,11 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
   const marker = '# AI wiring — managed by eve ai apply';
   const before = existing.includes(marker) ? existing.split(marker)[0].trimEnd() : existing.trimEnd();
 
-  // Collect custom providers early for both .env writing and admin API upsert.
-  const cpList = secrets?.ai?.customProviders ?? [];
-  const customProviders: typeof cpList = [];
-  for (const cp of cpList) {
-    if (cp.enabled && cp.baseUrl) {
-      customProviders.push(cp);
+  // Collect custom-enabled providers early for both .env writing and admin API upsert.
+  const customProviders: typeof providers = [];
+  for (const p of providers) {
+    if (p.enabled && p.baseUrl && p.id.startsWith('custom-')) {
+      customProviders.push(p);
     }
   }
 
@@ -474,15 +474,15 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
     apiKeys.push(hermesApiServerKey);
   }
 
-  // Append enabled custom providers.
-  for (const cp of secrets?.ai?.customProviders ?? []) {
-    if (!cp.enabled) continue;
-    if (!cp.baseUrl) continue;
+  // Append enabled custom providers (now in unified list).
+  for (const p of providers) {
+    if (!p.enabled || !p.id.startsWith('custom-')) continue;
+    if (!p.baseUrl) continue;
     // Normalise: strip trailing /v1 so we don't end up with /v1/v1
-    const url = cp.baseUrl.replace(/\/v1$/, '');
+    const url = p.baseUrl.replace(/\/v1$/, '');
     apiBaseUrls.push(`${url}/v1`);
-    if (cp.apiKey && cp.apiKey.trim()) {
-      apiKeys.push(cp.apiKey);
+    if (p.apiKey && p.apiKey.trim()) {
+      apiKeys.push(p.apiKey);
     } else {
       // No key for this custom provider — use a placeholder.
       // OpenWebUI accepts empty entries in the semicolon list.
@@ -547,6 +547,7 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
       const customUrls: string[] = [];
       const customKeys: string[] = [];
       for (const cp of customProviders) {
+        if (!cp.baseUrl) continue;
         customUrls.push(`${cp.baseUrl.replace(/\/v1$/, '')}/v1`);
         customKeys.push(cp.apiKey || '');
       }
@@ -740,7 +741,5 @@ export function wireAllInstalledComponents(
  */
 export function hasAnyProvider(secrets: EveSecrets | null): boolean {
   const providers = secrets?.ai?.providers ?? [];
-  const custom = secrets?.ai?.customProviders ?? [];
-  return providers.some(p => p.apiKey && p.apiKey.trim().length > 0)
-      || custom.some(p => p.apiKey && p.apiKey.trim().length > 0);
+  return providers.some(p => p.apiKey && p.apiKey.trim().length > 0);
 }

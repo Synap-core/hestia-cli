@@ -13,8 +13,6 @@ import {
 // Types
 // ---------------------------------------------------------------------------
 
-type ProviderId = "anthropic" | "openai" | "openrouter" | "ollama";
-
 interface ProviderEntry {
   id: string;
   enabled: boolean;
@@ -28,18 +26,16 @@ interface ProviderEntry {
 
 interface AiConfig {
   mode: string | null;
-  defaultProvider: ProviderId | null;
-  fallbackProvider: ProviderId | null;
+  defaultProvider: string | null;
+  fallbackProvider: string | null;
   /** Per-service override: componentId → providerId. Missing = use default. */
-  serviceProviders: Partial<Record<string, ProviderId>>;
+  serviceProviders: Record<string, string | null>;
   /** Per-service model override: componentId → model string. */
-  serviceModels: Partial<Record<string, string>>;
+  serviceModels: Record<string, string | null>;
+  /** Unified list: all providers (built-in + custom). */
   providers: ProviderEntry[];
-  validProviders: ProviderId[];
   /** Component ids that consume the central AI config. Server-driven. */
   aiConsumers: string[];
-  /** OpenAI-compatible custom providers. */
-  customProviders: ProviderEntry[];
 }
 
 interface MessagingConfig {
@@ -62,12 +58,16 @@ interface ApplyResult {
   }>;
 }
 
-const PROVIDER_LABELS: Record<ProviderId, string> = {
+const PROVIDER_LABELS: Record<string, string> = {
   anthropic:  "Anthropic",
   openai:     "OpenAI",
   openrouter: "OpenRouter",
   ollama:     "Ollama (local)",
 };
+
+function getProviderLabel(id: string): string {
+  return PROVIDER_LABELS[id] ?? id.split("custom-")[1] ?? id;
+}
 
 const PROVIDER_TAGLINE: Record<ProviderId, string> = {
   anthropic:  "Claude family of models.",
@@ -120,19 +120,16 @@ export default function AiProvidersPage() {
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
-  const [editing, setEditing] = useState<Record<string, { apiKey?: string; defaultModel?: string }>>({});
-  const [adding, setAdding] = useState<{ id?: ProviderId; apiKey?: string; defaultModel?: string } | null>(null);
-  const [editingServiceModels, setEditingServiceModels] = useState<Record<string, string>>({});
-  // Custom provider state
-  const [customProviderForm, setCustomProviderForm] = useState<{
-    name: string;
-    baseUrl: string;
-    apiKey: string;
-    defaultModel: string;
-    enabled: boolean;
+  const [editing, setEditing] = useState<Record<string, { apiKey?: string; defaultModel?: string; baseUrl?: string }>>({});
+  const [adding, setAdding] = useState<{
+    id?: string;
+    isCustom?: boolean;
+    apiKey?: string;
+    defaultModel?: string;
+    name?: string;
+    baseUrl?: string;
   } | null>(null);
-  const [editingCustomId, setEditingCustomId] = useState<string | null>(null);
-  const [customProviderEdit, setCustomProviderEdit] = useState<Record<string, { name?: string; baseUrl?: string; apiKey?: string; defaultModel?: string; enabled?: boolean }>>({});
+  const [editingServiceModels, setEditingServiceModels] = useState<Record<string, string>>({});
 
   const fetchConfig = useCallback(async () => {
     try {
@@ -165,7 +162,7 @@ export default function AiProvidersPage() {
 
   useEffect(() => { void fetchConfig(); }, [fetchConfig]);
 
-  async function saveProvider(id: ProviderId, body: Record<string, unknown>) {
+  async function saveProvider(id: string, body: Record<string, unknown>) {
     setSavingId(id);
     try {
       const res = await fetch("/api/ai/providers", {
@@ -175,7 +172,7 @@ export default function AiProvidersPage() {
         body: JSON.stringify({ id, ...body }),
       });
       if (res.ok) {
-        addToast({ title: `${PROVIDER_LABELS[id]} saved`, color: "success" });
+        addToast({ title: `${getProviderLabel(id)} saved`, color: "success" });
         setEditing(prev => { const n = { ...prev }; delete n[id]; return n; });
         setAdding(null);
         await fetchConfig();
@@ -188,8 +185,8 @@ export default function AiProvidersPage() {
     } finally { setSavingId(null); }
   }
 
-  async function removeProvider(id: ProviderId) {
-    if (!confirm(`Remove ${PROVIDER_LABELS[id]}? This won't auto-revert installed components.`)) return;
+  async function removeProvider(id: string) {
+    if (!confirm(`Remove ${getProviderLabel(id)}? This won't auto-revert installed components.`)) return;
     setSavingId(id);
     try {
       const res = await fetch(`/api/ai/providers?id=${id}`, { method: "DELETE", credentials: "include" });
@@ -200,43 +197,7 @@ export default function AiProvidersPage() {
     } finally { setSavingId(null); }
   }
 
-  async function saveCustomProvider(body: { id?: string; name: string; baseUrl: string; apiKey?: string; defaultModel?: string; enabled?: boolean }) {
-    setSavingId(`custom-${body.id ?? 'new'}`);
-    try {
-      const res = await fetch("/api/ai/providers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ ...body, isCustom: true }),
-      });
-      if (res.ok) {
-        addToast({ title: body.id ? "Custom provider updated" : "Custom provider added", color: "success" });
-        setCustomProviderForm(null);
-        if (body.id) setEditingCustomId(null);
-        await fetchConfig();
-      } else {
-        const err = await res.json() as { error?: string };
-        addToast({ title: err.error ?? "Save failed", color: "danger" });
-      }
-    } catch {
-      addToast({ title: "Save failed", color: "danger" });
-    } finally { setSavingId(null); }
-  }
-
-  async function removeCustomProvider(id: string) {
-    if (!confirm("Remove this custom provider?")) return;
-    setSavingId(id);
-    try {
-      const res = await fetch(`/api/ai/providers?id=${id}`, { method: "DELETE", credentials: "include" });
-      if (res.ok) {
-        addToast({ title: "Custom provider removed", color: "success" });
-        setEditingCustomId(null);
-        await fetchConfig();
-      }
-    } finally { setSavingId(null); }
-  }
-
-  async function setDefault(id: ProviderId) {
+  async function setDefault(id: string) {
     setSavingId(`default-${id}`);
     try {
       const res = await fetch("/api/ai", {
@@ -249,15 +210,15 @@ export default function AiProvidersPage() {
       const okCount = (data.applied ?? []).filter(r => r.outcome === "ok").length;
       addToast({
         title: okCount > 0
-          ? `${PROVIDER_LABELS[id]} set · ${okCount} service(s) re-wired`
-          : `${PROVIDER_LABELS[id]} set as default`,
+          ? `${getProviderLabel(id)} set · ${okCount} service(s) re-wired`
+          : `${getProviderLabel(id)} set as default`,
         color: "success",
       });
       await fetchConfig();
     } finally { setSavingId(null); }
   }
 
-  async function setServiceProvider(componentId: string, providerId: ProviderId | null) {
+  async function setServiceProvider(componentId: string, providerId: string | null) {
     setSavingId(`svc-${componentId}`);
     try {
       const res = await fetch("/api/ai", {
@@ -273,7 +234,7 @@ export default function AiProvidersPage() {
       addToast({
         title: providerId === null
           ? `${componentId} reverted to default${wired?.outcome === "ok" ? " · re-wired" : ""}`
-          : `${componentId} now routes via ${PROVIDER_LABELS[providerId]}${wired?.outcome === "ok" ? " · re-wired" : ""}`,
+          : `${componentId} now routes via ${getProviderLabel(providerId)}${wired?.outcome === "ok" ? " · re-wired" : ""}`,
         color: "success",
       });
       await fetchConfig();
@@ -371,12 +332,6 @@ export default function AiProvidersPage() {
   }
 
   const hasAnyConfigured = (config?.providers ?? []).some(p => p.hasApiKey || p.id === "ollama");
-  const availableToAdd = (config?.validProviders ?? []).filter(
-    id => !config?.providers.find(p => p.id === id),
-  );
-  // Split providers for rendering
-  const builtInProviders = (config?.providers ?? []).filter((p: ProviderEntry) => !p.isCustom);
-  const customProvidersList = config?.customProviders ?? [];
 
   return (
     <div className="space-y-10">

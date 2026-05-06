@@ -5,15 +5,19 @@ import { randomBytes } from 'node:crypto';
 import { exportJWK, generateKeyPair } from 'jose';
 import { z } from 'zod';
 
-const AiProviderSchema = z.enum(['ollama', 'openrouter', 'anthropic', 'openai']);
 const AiModeSchema = z.enum(['local', 'provider', 'hybrid']);
-const CustomProviderSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  baseUrl: z.string(),
-  apiKey: z.string().optional(),
-  defaultModel: z.string().optional(),
+
+/**
+ * Unified provider schema — single source for all providers (built-in + custom).
+ * Replaces the former `AiProviderSchema` (enum) and `CustomProviderSchema`.
+ */
+const UnifiedProviderSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1).optional(),
   enabled: z.boolean().optional(),
+  apiKey: z.string().optional(),
+  baseUrl: z.string().optional(),
+  defaultModel: z.string().optional(),
 });
 
 const SecretsSchema = z.object({
@@ -22,30 +26,23 @@ const SecretsSchema = z.object({
   ai: z
     .object({
       mode: AiModeSchema.optional(),
-      defaultProvider: AiProviderSchema.optional(),
-      fallbackProvider: AiProviderSchema.optional(),
-      providers: z
-        .array(
-          z.object({
-            id: AiProviderSchema,
-            enabled: z.boolean().optional(),
-            apiKey: z.string().optional(),
-            baseUrl: z.string().optional(),
-            defaultModel: z.string().optional(),
-          }),
-        )
-        .optional(),
-      /** OpenAI-compatible providers with custom URLs (e.g. self-hosted, proxy, etc.) */
-      customProviders: z.array(CustomProviderSchema).optional(),
+      /** Default AI provider (any provider id string — built-in or custom). */
+      defaultProvider: z.string().optional(),
+      /** Fallback provider when the default is unavailable. */
+      fallbackProvider: z.string().optional(),
+      /**
+       * Single unified list of providers — merged from built-in + custom at
+       * write time. Each entry has an `id`, optional `name` (derived for
+       * built-in), plus optional config (apiKey, baseUrl, defaultModel, enabled).
+       */
+      providers: z.array(UnifiedProviderSchema).optional(),
       /**
        * Per-service provider override. Keys are component ids
        * (e.g. "openclaw", "openwebui"); value is the provider id that
        * service should default to. Missing or null = use the global
        * `defaultProvider`.
        */
-      serviceProviders: z
-        .record(z.string(), AiProviderSchema)
-        .optional(),
+      serviceProviders: z.record(z.string(), z.string()).optional(),
       /**
        * Per-service model override. Keys are component ids; value is a model
        * string that overrides the provider's `defaultModel` for that service.
@@ -405,7 +402,7 @@ const SecretsSchema = z.object({
 
 export type EveSecrets = z.infer<typeof SecretsSchema>;
 
-export type CustomProvider = z.infer<typeof CustomProviderSchema>;
+export type UnifiedProvider = z.infer<typeof UnifiedProviderSchema>;
 
 /**
  * Resolve the directory that contains `.eve/`.
@@ -420,6 +417,78 @@ export function secretsPath(cwd: string = defaultEveCwd()): string {
   return join(cwd, '.eve', 'secrets', 'secrets.json');
 }
 
+/**
+ * Migrate existing data: merge built-in `providers[]` and `customProviders[]`
+ * into a single unified list. Idempotent — if already merged, returns unchanged.
+ *
+ * Returns the merged secrets, or null if input is null.
+ */
+function mergeProviderLists(input: EveSecrets | null): EveSecrets | null {
+  if (!input?.ai) return input;
+  const ai = input.ai;
+
+  // Access raw fields via index to avoid the removed `customProviders` not being
+  // in the EveSecrets['ai'] type — this is intentional since we're reading
+  // stale on-disk data that still has the legacy field.
+  const builtInRaw: unknown[] = ai.providers ?? [];
+  const customRaw: unknown[] = (ai as Record<string, unknown>).customProviders ?? ([] as unknown[]);
+
+  // Already merged: no custom list and no custom-prefixed IDs
+  const hasCustomList = customRaw.length > 0;
+  const hasCustomIds = builtInRaw.some((p) => {
+    if (typeof p !== 'object' || p === null) return false;
+    const rec = p as Record<string, unknown>;
+    if (typeof rec.id !== 'string') return false;
+    return rec.id.startsWith('custom-');
+  });
+  if (!hasCustomList && !hasCustomIds) return input;
+
+  const nameMap: Record<string, string> = {
+    ollama: 'Ollama (local)',
+    openrouter: 'OpenRouter',
+    anthropic: 'Anthropic',
+    openai: 'OpenAI',
+  };
+
+  const merged: UnifiedProvider[] = builtInRaw.map((p) => {
+    const entry = p as Record<string, unknown>;
+    const id = entry.id as string;
+    return {
+      id,
+      name: nameMap[id] ?? undefined,
+      enabled: entry.enabled as boolean | undefined,
+      apiKey: entry.apiKey as string | undefined,
+      baseUrl: entry.baseUrl as string | undefined,
+      defaultModel: entry.defaultModel as string | undefined,
+    };
+  });
+
+  for (const cp of customRaw) {
+    const entry = cp as Record<string, unknown>;
+    merged.push({
+      id: entry.id as string,
+      name: entry.name as string | undefined,
+      enabled: entry.enabled as boolean | undefined,
+      apiKey: entry.apiKey as string | undefined,
+      baseUrl: entry.baseUrl as string | undefined,
+      defaultModel: entry.defaultModel as string | undefined,
+    });
+  }
+
+  return {
+    ...input,
+    ai: {
+      ...ai,
+      providers: merged,
+      customProviders: undefined, // migrated — clear the field
+    },
+  };
+}
+
+/**
+ * Read secrets from disk, normalizing any legacy dual-list shape
+ * (`providers` + `customProviders`) into a single unified `providers` list.
+ */
 export async function readEveSecrets(cwd: string = defaultEveCwd()): Promise<EveSecrets | null> {
   const path = secretsPath(cwd);
   if (!existsSync(path)) return null;
@@ -504,7 +573,11 @@ export async function writeEveSecrets(
     version: '1',
     updatedAt: new Date().toISOString(),
   };
-  const parsed = SecretsSchema.parse(next);
+  // Run migration: merge providers + customProviders into a single list,
+  // then strip customProviders from the blob. Idempotent — no-op if
+  // already unified.
+  const migrated = mergeProviderLists(next);
+  const parsed = SecretsSchema.parse(migrated);
   const path = secretsPath(cwd);
   await mkdir(join(cwd, '.eve', 'secrets'), { recursive: true });
   await writeFile(path, JSON.stringify(parsed, null, 2), { mode: 0o600 });

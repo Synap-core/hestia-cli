@@ -100,7 +100,7 @@ export { type HardwareFacts, probeHardware, formatHardwareReport } from './hw-pr
 
 export {
   type EveSecrets,
-  type CustomProvider,
+  type UnifiedProvider,
   type AgentKeyRecord,
   type CodeEngine,
   type PodIssuerKeyPair,

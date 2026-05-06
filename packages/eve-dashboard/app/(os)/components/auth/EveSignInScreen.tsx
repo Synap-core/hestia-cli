@@ -186,10 +186,8 @@ export function SelfHostedSignInForm({
   const [podUrl, setPodUrl] = useState<string | null>(null);
 
   // Kratos inline form state (used when podInitialized === true)
-  const [kratosSub, setKratosSub] = useState<"login" | "registration">("login");
   const [kratosEmail, setKratosEmail] = useState(fixedEmail ?? "");
   const [kratosPassword, setKratosPassword] = useState("");
-  const [kratosName, setKratosName] = useState("");
   const [kratosErrors, setKratosErrors] = useState<string[]>([]);
 
   useEffect(() => {
@@ -210,20 +208,6 @@ export function SelfHostedSignInForm({
     })();
     return () => { cancelled = true; };
   }, []);
-
-  // Unused callback kept as a no-op to avoid removing the useCallback hook
-  // (hooks must be called unconditionally).
-  const tryConnect = useCallback(async () => {
-    /* noop — inline Kratos form replaces this flow */
-  }, []);
-
-  // Unused focus listener kept for hook ordering consistency.
-  useEffect(() => {
-    if (podInitialized !== true) return;
-    const onFocus = () => void tryConnect();
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, [podInitialized, tryConnect]);
 
   const emailLooksValid = useMemo(
     () => email.length === 0 || EMAIL_RE.test(email.trim()),
@@ -255,10 +239,9 @@ export function SelfHostedSignInForm({
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
-          mode: kratosSub,
+          mode: "login",
           email: cleanEmail,
           password: kratosPassword,
-          name: kratosName.trim() || undefined,
         }),
       });
       const data = (await res.json().catch(() => null)) as
@@ -449,53 +432,13 @@ export function SelfHostedSignInForm({
     );
   }
 
-  // Admin already exists → inline Kratos login / registration form.
+  // Admin already exists → inline Kratos login form.
+  // Self-registration is not available from the UI — new users need an
+  // invitation from the pod admin (see bootstrap claim flow).
   if (podInitialized === true) {
-    const isLogin = kratosSub === "login";
     return (
       <div className="flex flex-col gap-3">
-        <div className="flex rounded-lg overflow-hidden ring-1 ring-inset ring-foreground/10 text-[12.5px]">
-          <button
-            type="button"
-            onClick={() => { setKratosSub("login"); setKratosErrors([]); }}
-            className={`flex-1 py-1.5 font-medium transition-colors ${
-              isLogin
-                ? "bg-foreground/10 text-foreground"
-                : "text-foreground/55 hover:text-foreground/80"
-            }`}
-          >
-            Sign in
-          </button>
-          <button
-            type="button"
-            onClick={() => { setKratosSub("registration"); setKratosErrors([]); }}
-            className={`flex-1 py-1.5 font-medium transition-colors ${
-              !isLogin
-                ? "bg-foreground/10 text-foreground"
-                : "text-foreground/55 hover:text-foreground/80"
-            }`}
-          >
-            Create account
-          </button>
-        </div>
-
         <form onSubmit={handleKratosAuth} className="flex flex-col gap-3" noValidate>
-          {!isLogin && (
-            <Input
-              type="text"
-              size="md"
-              radius="md"
-              variant="bordered"
-              label="Name"
-              labelPlacement="outside"
-              placeholder="Optional"
-              value={kratosName}
-              onValueChange={setKratosName}
-              autoComplete="name"
-              spellCheck="false"
-              isDisabled={submitting}
-            />
-          )}
           <Input
             type="email"
             size="md"
@@ -523,23 +466,21 @@ export function SelfHostedSignInForm({
             variant="bordered"
             label="Password"
             labelPlacement="outside"
-            placeholder={isLogin ? "Your password" : "At least 8 characters"}
+            placeholder="Your password"
             value={kratosPassword}
             onValueChange={setKratosPassword}
-            autoComplete={isLogin ? "current-password" : "new-password"}
+            autoComplete="current-password"
             isRequired
             isDisabled={submitting}
           />
 
-          {isLogin && (
-            <button
-              type="button"
-              onClick={handlePasswordReset}
-              className="self-end text-[12px] font-medium text-foreground/55 hover:text-primary transition-colors"
-            >
-              Forgot password?
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={handlePasswordReset}
+            className="self-end text-[12px] font-medium text-foreground/55 hover:text-primary transition-colors"
+          >
+            Forgot password?
+          </button>
 
           {kratosErrors.length > 0 && (
             <div className="flex flex-col gap-1">
@@ -563,9 +504,13 @@ export function SelfHostedSignInForm({
             className="mt-1 font-medium"
             endContent={!submitting ? <ArrowRight className="h-3.5 w-3.5" /> : undefined}
           >
-            {isLogin ? "Sign in" : "Create account"}
+            Sign in
           </Button>
         </form>
+
+        <p className="text-center text-[11.5px] text-foreground/40">
+          New users: contact your admin for an invitation.
+        </p>
       </div>
     );
   }

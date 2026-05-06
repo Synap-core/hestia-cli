@@ -36,23 +36,9 @@ export async function GET() {
     apiKeyMasked: maskKey(p.apiKey),
     baseUrl: p.baseUrl,
     defaultModel: p.defaultModel,
-    isCustom: false as const,
-  }));
-
-  const customProviders = (ai.customProviders ?? []).map(p => ({
-    id: p.id,
-    enabled: p.enabled !== false,
-    hasApiKey: !!(p.apiKey && p.apiKey.trim().length > 0),
-    apiKeyMasked: maskKey(p.apiKey),
-    baseUrl: p.baseUrl,
-    defaultModel: p.defaultModel,
-    isCustom: true as const,
+    isCustom: p.id.startsWith('custom-'),
     name: p.name,
   }));
-
-  // Merge into a single providers list for the UI — built-in first, then custom.
-  // The UI can use `isCustom` to decide how to render each entry.
-  const allProviders = [...providers, ...customProviders];
 
   return NextResponse.json({
     mode: ai.mode ?? null,
@@ -60,9 +46,8 @@ export async function GET() {
     fallbackProvider: ai.fallbackProvider ?? null,
     serviceProviders: ai.serviceProviders ?? {},
     serviceModels: ai.serviceModels ?? {},
-    providers: allProviders,
+    providers,
     validProviders: VALID_PROVIDERS,
-    customProviders,
     // Single source of truth: the client uses this list to filter
     // components for the per-service routing panel. Avoids drift
     // between the hardcoded list on the page and `@eve/dna`.
@@ -93,15 +78,23 @@ export async function PATCH(req: Request) {
     serviceModels?: Record<string, string | null>;
   };
 
-  if (body.defaultProvider && !VALID_PROVIDERS.includes(body.defaultProvider)) {
-    return NextResponse.json({ error: "Invalid defaultProvider" }, { status: 400 });
+  // Validate providers against both built-in enum and the actual configured list.
+  if (body.defaultProvider) {
+    const allIds = (secrets?.ai?.providers ?? []).map(p => p.id);
+    if (!VALID_PROVIDERS.includes(body.defaultProvider) && !allIds.includes(body.defaultProvider)) {
+      return NextResponse.json({ error: "Invalid defaultProvider" }, { status: 400 });
+    }
   }
-  if (body.fallbackProvider && !VALID_PROVIDERS.includes(body.fallbackProvider)) {
-    return NextResponse.json({ error: "Invalid fallbackProvider" }, { status: 400 });
+  if (body.fallbackProvider) {
+    const allIds = (secrets?.ai?.providers ?? []).map(p => p.id);
+    if (!VALID_PROVIDERS.includes(body.fallbackProvider) && !allIds.includes(body.fallbackProvider)) {
+      return NextResponse.json({ error: "Invalid fallbackProvider" }, { status: 400 });
+    }
   }
   if (body.serviceProviders) {
+    const allIds = (secrets?.ai?.providers ?? []).map(p => p.id);
     for (const [svc, prov] of Object.entries(body.serviceProviders)) {
-      if (prov !== null && !VALID_PROVIDERS.includes(prov)) {
+      if (prov !== null && !VALID_PROVIDERS.includes(prov) && !allIds.includes(prov)) {
         return NextResponse.json(
           { error: `Invalid provider "${prov}" for service "${svc}"` },
           { status: 400 },
