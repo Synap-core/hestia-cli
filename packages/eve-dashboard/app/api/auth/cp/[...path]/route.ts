@@ -95,14 +95,7 @@ async function proxy(req: NextRequest, path: string[]): Promise<NextResponse> {
 
   let body: BodyInit | undefined;
   if (req.method !== "GET" && req.method !== "HEAD") {
-    const rawBody = await req.arrayBuffer();
-    body = await injectReturnToken(path, req.method, rawBody);
-    // If the body was rewritten (JSON injection), update Content-Type and
-    // drop Content-Length — the proxy sets it from the new body length.
-    if (body !== rawBody) {
-      forwardHeaders["content-type"] = "application/json";
-      delete forwardHeaders["content-length"];
-    }
+    body = await req.arrayBuffer();
   }
 
   let upstream: Response;
@@ -125,18 +118,35 @@ async function proxy(req: NextRequest, path: string[]): Promise<NextResponse> {
     );
   }
 
-  // Stream the upstream body back to the browser.
-  const responseBody = await upstream.arrayBuffer();
+  // Collect Set-Cookie directives before building the response.
+  const setCookies = (upstream.headers as Headers & { getSetCookie?(): string[] }).getSetCookie?.()
+    ?? (upstream.headers.get("set-cookie") ? [upstream.headers.get("set-cookie")!] : []);
+
+  // Read the upstream body and optionally inject the session token into the
+  // JSON response for sign-in/sign-up calls (see injectTokenIntoResponseBody).
+  const rawResponseBody = await upstream.arrayBuffer();
+  const responseBody = await injectTokenIntoResponseBody(
+    path,
+    req.method,
+    upstream.status,
+    setCookies,
+    rawResponseBody,
+  );
 
   const resHeaders = new Headers();
   for (const header of PASSTHROUGH_RESPONSE_HEADERS) {
     const value = upstream.headers.get(header);
     if (value) resHeaders.set(header, value);
   }
-  // Forward all Set-Cookie directives individually.
-  const cookies = (upstream.headers as Headers & { getSetCookie?(): string[] }).getSetCookie?.()
-    ?? (upstream.headers.get("set-cookie") ? [upstream.headers.get("set-cookie")!] : []);
-  for (const cookie of cookies) {
+  // Recalculate content-length if the body was rewritten.
+  if (responseBody !== rawResponseBody) {
+    resHeaders.set(
+      "content-length",
+      String(typeof responseBody === "string" ? new TextEncoder().encode(responseBody).byteLength : (responseBody as ArrayBuffer).byteLength),
+    );
+  }
+  // Forward all Set-Cookie directives individually (Headers.set() would collapse them).
+  for (const cookie of setCookies) {
     resHeaders.append("set-cookie", cookie);
   }
 
@@ -146,42 +156,77 @@ async function proxy(req: NextRequest, path: string[]): Promise<NextResponse> {
   });
 }
 
-// ─── Sign-in / sign-up body injection ────────────────────────────────────────
+// ─── Token extraction from Set-Cookie ────────────────────────────────────────
 //
-// Better Auth sets a session cookie on browser-based sign-in, but only
-// includes the bearer token in the response body when `returnToken: true`
-// is passed in the request. Without it, `data.token` is `undefined` on the
-// client, which means `CPSession.token = ""` — an empty string that causes
-// `readCpUserSession()` to return null (it requires a truthy token) and the
-// pod claim flow to fail with `cp-session-required`.
+// Better Auth uses cookie-based sessions for browser clients. The bearer token
+// is the value of the `better-auth.session_token` (or its `__Secure-` variant)
+// Set-Cookie header — it's the exact same string you would pass as `Authorization:
+// Bearer`. Passing `returnToken: true` in the request body instead causes 403
+// because Better Auth treats it as an API-mode request with stricter auth
+// requirements.
 //
-// We inject the flag server-side so the CP always echoes the token in the
-// JSON response, regardless of whether the caller remembered to include it.
+// Instead we let the CP respond naturally (cookie path, no extra body fields),
+// then extract the token from the Set-Cookie header server-side and inject it
+// into the response JSON as `token`. The browser client reads `data.token` from
+// the body and stores it as `CPSession.token`, enabling server-side claim calls
+// that never touch the browser's cookie jar.
 
-const TOKEN_INJECT_PATHS = new Set([
+const TOKEN_EXTRACT_PATHS = new Set([
   "auth/sign-in/email",
   "auth/sign-up/email",
 ]);
 
-async function injectReturnToken(
+/** Better Auth session cookie names (with and without `__Secure-` prefix). */
+const SESSION_COOKIE_NAMES = [
+  "__Secure-better-auth.session_token",
+  "better-auth.session_token",
+];
+
+/**
+ * For sign-in/sign-up 200 responses, extract the session token from the
+ * Set-Cookie header and inject it into the JSON body as `token` so the
+ * `@synap-core/auth` client receives it without needing `returnToken: true`.
+ */
+async function injectTokenIntoResponseBody(
   path: string[],
   method: string,
-  rawBody: ArrayBuffer,
-): Promise<BodyInit> {
+  upstreamStatus: number,
+  setCookieHeaders: string[],
+  responseBody: ArrayBuffer,
+): Promise<ArrayBuffer | string> {
   const upstreamPath = path.join("/");
-  if (method !== "POST" || !TOKEN_INJECT_PATHS.has(upstreamPath)) {
-    return rawBody;
+  if (
+    method !== "POST" ||
+    !TOKEN_EXTRACT_PATHS.has(upstreamPath) ||
+    upstreamStatus !== 200
+  ) {
+    return responseBody;
   }
+
+  // Find the session token in any Set-Cookie directive.
+  let sessionToken: string | undefined;
+  for (const cookieStr of setCookieHeaders) {
+    for (const name of SESSION_COOKIE_NAMES) {
+      const prefix = `${name}=`;
+      if (cookieStr.startsWith(prefix)) {
+        // Cookie value ends at the first `;`
+        sessionToken = cookieStr.slice(prefix.length).split(";")[0].trim();
+        break;
+      }
+    }
+    if (sessionToken) break;
+  }
+
+  if (!sessionToken) return responseBody; // no session cookie — pass through
+
   try {
-    const text = new TextDecoder().decode(rawBody);
-    if (!text) return rawBody;
+    const text = new TextDecoder().decode(responseBody);
     const json = JSON.parse(text) as Record<string, unknown>;
-    if (json.returnToken === true) return rawBody; // already set
-    json.returnToken = true;
+    if (json.token) return responseBody; // already present
+    json.token = sessionToken;
     return JSON.stringify(json);
   } catch {
-    // Not JSON — forward as-is. CP will reject it with a proper error.
-    return rawBody;
+    return responseBody; // not JSON — pass through unchanged
   }
 }
 

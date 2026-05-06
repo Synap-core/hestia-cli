@@ -205,14 +205,58 @@ select:focus-visible {
   box-shadow: none;
 }
 
+/* ----------------------------------------------------------------------
+ * HeroUI outside-label positioning fix.
+ *
+ * HeroUI renders `labelPlacement="outside"` with `position: absolute` on
+ * the label element (negative top offset) and compensates via a Tailwind
+ * arbitrary-value class on the base wrapper:
+ *   data-[label-placement=outside]:mt-[calc(theme(fontSize.small)+10px)]
+ *
+ * That class can silently fail to generate when the Tailwind JIT scanner
+ * de-duplicates or misses the calc() variant in @heroui/theme's dist
+ * files, leaving the label overlapping the element above.
+ *
+ * We enforce the same margin explicitly so it never depends on JIT
+ * generation, and set z-index so labels always render above sibling borders.
+ * ------------------------------------------------------------------- */
+[data-slot="base"][data-label-placement="outside"],
+[data-slot="base"][data-label-placement="outside-left"] {
+  /* calc matches HeroUI's own formula: fontSize.small (0.875rem) + 10px */
+  margin-top: calc(0.875rem + 10px) !important;
+}
+
+/* Labels that are part of outside-placement use absolute positioning; they
+   must sit above sibling input wrappers in the stacking order. */
+[data-slot="base"][data-label-placement="outside"] [data-slot="label"],
+[data-slot="base"][data-label-placement="outside-left"] [data-slot="label"] {
+  position: absolute;
+  z-index: 1;
+}
+
 input:-webkit-autofill,
 input:-webkit-autofill:hover,
 input:-webkit-autofill:focus,
 input:-webkit-autofill:active {
   -webkit-text-fill-color: hsl(var(--heroui-foreground)) !important;
-  -webkit-box-shadow: 0 0 0 1000px transparent inset !important;
+  /* Paint the autofill background with the actual surface color instead of
+     transparent. `transparent` lets the browser/extension autofill tint
+     (yellow in Chrome, blue in Safari) bleed through, which combined with
+     dark-mode surfaces produces near-black text on a dark tinted background.
+     Using the real content1 token here covers both Dashlane JS injection and
+     native :-webkit-autofill triggered by the browser. */
+  -webkit-box-shadow: 0 0 0 1000px hsl(var(--heroui-content1)) inset !important;
+  background-color: hsl(var(--heroui-content1)) !important;
   caret-color: hsl(var(--heroui-foreground)) !important;
   transition: background-color 9999s ease-in-out 0s;
+}
+
+/* Dashlane and other JS-based password managers set value via JS and may
+   trigger a browser autofill style even without the :-webkit-autofill match.
+   Force the foreground color on all inputs unconditionally so JS-injected
+   values never inherit black from a third-party overlay. */
+input {
+  color: hsl(var(--heroui-foreground)) !important;
 }
 
 /* ----------------------------------------------------------------------

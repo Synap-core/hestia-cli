@@ -455,7 +455,7 @@ export default function AiProvidersPage() {
                 {/* Fields — HeroUI Input with label outside (no wrapper height
                     override; let HeroUI size things so the label slot is
                     reserved correctly above the input). */}
-                <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="mt-7 grid grid-cols-1 gap-4 sm:grid-cols-2">
                   {p.id !== "ollama" && (
                     <Input
                       label="API key"
@@ -562,7 +562,7 @@ export default function AiProvidersPage() {
               <p className="mt-0.5 text-xs text-default-500">
                 Configure the key, set a default model, then save. You can apply it to components afterwards.
               </p>
-              <div className="mt-4 space-y-4">
+              <div className="mt-6 space-y-4">
                 <Select
                   label="Provider"
                   labelPlacement="outside"
