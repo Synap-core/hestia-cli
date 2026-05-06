@@ -264,7 +264,9 @@ export async function runDoctor(): Promise<CheckResult[]> {
   const aiConsumers = new Set(["synap", "openclaw", "openwebui"]);
   const usesAi = installed.some(c => aiConsumers.has(c));
 
-  if (!hasAnyProvider(secrets)) {
+  const configuredProviders = secrets?.ai?.providers ?? [];
+
+  if (configuredProviders.length === 0) {
     checks.push({
       group: "ai",
       name: "AI provider",
@@ -275,12 +277,73 @@ export async function runDoctor(): Promise<CheckResult[]> {
       fix: usesAi ? "Open the AI page → Add provider" : undefined,
     });
   } else {
-    checks.push({
-      group: "ai",
-      name: "AI provider",
-      status: "pass",
-      message: "Provider key configured in secrets.json",
-    });
+    // Per-provider connectivity probe.
+    for (const provider of configuredProviders) {
+      if (!provider.enabled) continue;
+      // Ollama without baseUrl is local-only — treated as pass if
+      // it's the only provider; the caller decides.
+      if (provider.id === "ollama" && !provider.baseUrl) {
+        checks.push({
+          group: "ai",
+          name: `AI provider: ${provider.name || "Ollama"}`,
+          status: "pass",
+          message: "Local provider configured (no external endpoint)",
+        });
+        continue;
+      }
+      if (!provider.baseUrl) {
+        checks.push({
+          group: "ai",
+          name: `AI provider: ${provider.name || provider.id}`,
+          status: provider.id === "ollama" ? "warn" : "fail",
+          message: provider.id === "ollama"
+            ? "Ollama has no baseUrl — can't verify connectivity"
+            : "No baseUrl set — can't verify connectivity",
+        });
+        continue;
+      }
+
+      const baseUrl = provider.baseUrl.replace(/\/v1$/, "");
+      const testUrl = provider.id === "ollama"
+        ? `${baseUrl}/api/tags`
+        : `${baseUrl}/v1/models`;
+
+      try {
+        const start = Date.now();
+        const res = await fetch(testUrl, {
+          headers: provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {},
+          signal: AbortSignal.timeout(8_000),
+        });
+        const elapsed = Date.now() - start;
+
+        if (!res.ok) {
+          checks.push({
+            group: "ai",
+            name: `AI provider: ${provider.name || provider.id}`,
+            status: "fail",
+            message: `${res.status} ${res.statusText} (${elapsed}ms)`,
+            fix: "Check the provider's baseUrl and API key",
+          });
+        } else {
+          const data = await res.json() as { data?: Array<{ id: string }> };
+          const modelCount = data.data?.length ?? 0;
+          checks.push({
+            group: "ai",
+            name: `AI provider: ${provider.name || provider.id}`,
+            status: "pass",
+            message: `OK · ${modelCount} model(s) · ${elapsed}ms`,
+          });
+        }
+      } catch {
+        checks.push({
+          group: "ai",
+          name: `AI provider: ${provider.name || provider.id}`,
+          status: "fail",
+          message: "Unable to reach provider endpoint",
+          fix: "Check the provider's baseUrl, network, and API key",
+        });
+      }
+    }
 
     if (installed.includes("openclaw") && running.has("eve-arms-openclaw")) {
       checks.push(await checkOpenclawWiring());

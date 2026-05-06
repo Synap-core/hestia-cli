@@ -431,7 +431,7 @@ function mergeProviderLists(input: EveSecrets | null): EveSecrets | null {
   // a single `providers` list), but stale on-disk secrets may still carry
   // it. We cast to a legacy interface to read it without TS errors.
   type LegacyAiConfig = typeof ai & { customProviders?: unknown[] };
-  const legacyAi = ai as LegacyAiConfig;
+  const legacyAi = ai as unknown as LegacyAiConfig & Record<string, unknown>;
   const builtInRaw: unknown[] = [...(ai.providers ?? [])];
   const customRaw: unknown[] = legacyAi.customProviders ?? [];
 

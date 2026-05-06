@@ -7,6 +7,7 @@ import {
 } from "@heroui/react";
 import {
   Plus, Trash2, RefreshCw, Save, Check, AlertCircle, Plug, MessageSquare, ExternalLink,
+  Beaker, CheckCircle2, XCircle, Loader2,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -119,6 +120,8 @@ export default function AiProvidersPage() {
   const [savingMessaging, setSavingMessaging] = useState(false);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [testingId, setTestingId] = useState<string | null>(null);
+  const [testResults, setTestResults] = useState<Record<string, { ok: boolean; latency: number; modelCount: number; models: string[]; error?: string }>>({});
   const [applying, setApplying] = useState(false);
   const [editing, setEditing] = useState<Record<string, { apiKey?: string; defaultModel?: string; baseUrl?: string; name?: string }>>({});
   const [adding, setAdding] = useState<{
