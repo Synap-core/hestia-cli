@@ -22,7 +22,18 @@ import { NextResponse } from "next/server";
 import { readEveSecrets, resolveSynapUrl } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
 
-export async function GET() {
+/** Whether the dashboard request itself came over HTTPS. */
+function isHttpsRequest(req: Request): boolean {
+  // The dashboard may be behind a reverse proxy (e.g. Traefik) that strips
+  // TLS, so check both the request protocol and the standard forwarding
+  // headers.
+  if (req.headers.get("x-forwarded-proto") === "https") return true;
+  if (req.headers.get("origin")?.startsWith("https://")) return true;
+  if (req.headers.get("referer")?.startsWith("https://")) return true;
+  return false;
+}
+
+export async function GET(req: Request) {
   const auth = await requireAuth();
   if ("error" in auth) return auth.error;
 
@@ -47,17 +58,20 @@ export async function GET() {
   let realtimeUrl: string;
   try {
     const u = new URL(podUrl);
-    // If the pod URL is on a real https domain, realtime traffic uses wss://
-    // on the same hostname and the platform-handler-mapped port. For the
-    // managed CP setup that's the same hostname on default 443.
-    if (u.protocol === "https:") {
+    // Always prefer wss when the dashboard is served over HTTPS (or behind
+    // a TLS-terminating proxy).  This prevents mixed-content errors when
+    // the stored podUrl happens to use http:// (e.g. user typed the bare
+    // IP + port during setup).
+    if (isHttpsRequest(req) || u.protocol === "https:") {
       realtimeUrl = `wss://${u.hostname}`;
     } else {
       // Local dev — explicit port 4001.
       realtimeUrl = `ws://${u.hostname}:4001`;
     }
   } catch {
-    realtimeUrl = podUrl;
+    realtimeUrl = isHttpsRequest(req)
+      ? `wss://${podUrl}`
+      : podUrl;
   }
 
   return NextResponse.json(

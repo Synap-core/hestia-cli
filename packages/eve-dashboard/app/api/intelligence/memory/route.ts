@@ -7,19 +7,23 @@
 
 import { NextResponse } from "next/server";
 import { loadPodAuth, podNotPairedResponse, passthrough, upstreamUnreachable } from "../../hub/_lib";
+import { requireAuth } from "@/lib/auth-server";
 
 export async function GET(req: Request) {
-  const auth = await loadPodAuth();
-  if (!auth) return podNotPairedResponse();
+  const auth = await requireAuth();
+  if ("error" in auth) return auth.error;
+
+  const serviceAuth = await loadPodAuth();
+  if (!serviceAuth) return podNotPairedResponse();
 
   const { searchParams } = new URL(req.url);
   const limit = searchParams.get("limit") ?? "50";
 
   try {
     const upstream = await fetch(
-      `${auth.podUrl}/api/hub/memory?limit=${limit}`,
+      `${serviceAuth.podUrl}/api/hub/memory?limit=${limit}`,
       {
-        headers: { Authorization: `Bearer ${auth.apiKey}` },
+        headers: { Authorization: `Bearer ${serviceAuth.apiKey}` },
         cache: "no-store",
       },
     );

@@ -198,9 +198,11 @@ export default function AiProvidersPage() {
       } else {
         const err = await res.json() as { error?: string };
         addToast({ title: err.error ?? "Save failed", color: "danger" });
+        setAdding(null);
       }
     } catch {
       addToast({ title: "Save failed", color: "danger" });
+      setAdding(null);
     } finally { setSavingId(null); }
   }
 
@@ -595,6 +597,11 @@ export default function AiProvidersPage() {
             <Button size="sm" color="primary" radius="md" isLoading={!!savingId} startContent={<Save className="h-3.5 w-3.5"/>} onPress={() => {
               if (adding.isCustom && (!adding.name?.trim() || !adding.baseUrl?.trim())) {
                 addToast({ title: "Name and base URL are required", color: "danger" });
+                return;
+              }
+              // Built-in providers (except Ollama) require an API key.
+              if (!adding.isCustom && adding.id !== "ollama" && (!adding.apiKey || adding.apiKey.trim().length === 0)) {
+                addToast({ title: "API key is required for this provider", color: "danger" });
                 return;
               }
               const body: Record<string, unknown> = { defaultModel: adding.defaultModel };
