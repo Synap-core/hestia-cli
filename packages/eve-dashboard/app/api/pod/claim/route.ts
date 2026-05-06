@@ -56,7 +56,7 @@ interface PodHandshakeResponse {
   };
 }
 
-export async function POST(_req: Request) {
+export async function POST(req: Request) {
   const auth = await requireAuth();
   if ("error" in auth) return auth.error;
 
@@ -68,8 +68,33 @@ export async function POST(_req: Request) {
     );
   }
 
+  // Caller may supply a candidate pod URL when secrets don't have one
+  // (e.g. auto-detected from the Eve hostname). Fall back to secrets.
+  let bodyPodUrl: string | undefined;
+  try {
+    const body = (await req.json().catch(() => null)) as
+      | { podUrl?: unknown }
+      | null;
+    if (typeof body?.podUrl === "string" && body.podUrl.trim()) {
+      bodyPodUrl = body.podUrl.trim();
+      // Security: only HTTPS or loopback
+      const u = new URL(bodyPodUrl);
+      if (
+        u.protocol !== "https:" &&
+        !/^(localhost|127\.0\.0\.1|::1)$/.test(u.hostname)
+      ) {
+        return NextResponse.json(
+          { error: "insecure-pod-url" },
+          { status: 400 },
+        );
+      }
+    }
+  } catch {
+    /* malformed URL — ignored, falls through to secrets lookup */
+  }
+
   const secrets = await readEveSecrets();
-  const podUrl = resolveSynapUrl(secrets);
+  const podUrl = bodyPodUrl ?? resolveSynapUrl(secrets);
   if (!podUrl) {
     return NextResponse.json(
       { error: "pod-url-not-configured" },

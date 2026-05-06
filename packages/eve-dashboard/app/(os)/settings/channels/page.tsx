@@ -5,7 +5,7 @@ import {
   Button, Input, Switch, Chip, addToast, Select, SelectItem,
 } from "@heroui/react";
 import {
-  MessageSquare, Save, Eye, EyeOff, RefreshCw,
+  MessageSquare, Save, Eye, EyeOff, RefreshCw, ExternalLink, Zap,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -91,6 +91,42 @@ const PLATFORM_META: Record<Platform, { label: string; emoji: string; descriptio
   slack:     { label: "Slack",     emoji: "💼",  description: "Bolt app · socket mode" },
 };
 
+// Per-platform setup guidance shown in every card
+const PLATFORM_HELP: Record<Platform, { tip: string; link?: string; linkLabel?: string; testable?: boolean }> = {
+  telegram: {
+    tip: "Create a bot with @BotFather on Telegram to get your token. Hermes uses long polling — no webhook URL configuration needed.",
+    link: "https://t.me/BotFather",
+    linkLabel: "Open BotFather",
+    testable: true,
+  },
+  discord: {
+    tip: "Create an application, add a Bot, and copy the token from the Bot tab. Enable the Message Content Intent for Hermes to read messages.",
+    link: "https://discord.com/developers/applications",
+    linkLabel: "Discord Developer Portal",
+  },
+  whatsapp: {
+    tip: "Cloud API (Meta) requires Business verification (1–4 weeks). For personal use without verification, use the WhatsApp tab in Agents instead.",
+    link: "/agents",
+    linkLabel: "Go to Agents → WhatsApp",
+  },
+  signal: {
+    tip: "Requires a self-hosted signal-cli REST bridge running on your network. Register your phone number with signal-cli first.",
+    link: "https://github.com/bbernhard/signal-cli-rest-api",
+    linkLabel: "signal-cli REST API",
+  },
+  matrix: {
+    tip: "Create a bot account on your homeserver. Copy its access token from Element → Settings → Help & About → Access Token.",
+  },
+  slack: {
+    tip: "Create a Slack app, add Bot Token Scopes, and enable Socket Mode to get an App Token. Both tokens are required.",
+    link: "https://api.slack.com/apps",
+    linkLabel: "Slack API Console",
+  },
+};
+
+// Platforms for which a test-connection API call is supported
+const TESTABLE_PLATFORMS = new Set<Platform>(["telegram"]);
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -136,6 +172,7 @@ export default function ChannelsPage() {
   // Draft edit state per platform
   const [drafts, setDrafts] = useState<Partial<Record<Platform, Record<string, string>>>>({});
   const [saving, setSaving] = useState<Partial<Record<Platform | "routing", boolean>>>({});
+  const [testing, setTesting] = useState<Partial<Record<Platform, boolean>>>({});
 
   // ---------------------------------------------------------------------------
   // Fetch
@@ -171,13 +208,44 @@ export default function ChannelsPage() {
         body: JSON.stringify({ [platform]: patch }),
       });
       if (!res.ok) throw new Error("Save failed");
-      addToast({ title: `${PLATFORM_META[platform].label} saved`, color: "success" });
+      const { hermesRestarted } = await res.json() as { ok: boolean; hermesRestarted?: boolean };
+      addToast({
+        title: `${PLATFORM_META[platform].label} saved`,
+        description: hermesRestarted
+          ? "Hermes restarted — new credentials active"
+          : "Saved (start Hermes to apply)",
+        color: "success",
+      });
       setDrafts(d => { const n = { ...d }; delete n[platform]; return n; });
       await fetchConfig();
     } catch {
       addToast({ title: "Save failed", color: "danger" });
     } finally {
       setSaving(s => ({ ...s, [platform]: false }));
+    }
+  }
+
+  async function testPlatform(platform: Platform) {
+    setTesting(t => ({ ...t, [platform]: true }));
+    try {
+      const res = await fetch("/api/channels/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platform }),
+      });
+      const data = await res.json() as { ok: boolean; name?: string; username?: string; error?: string };
+      if (data.ok) {
+        addToast({
+          title: `Connected as @${data.username ?? data.name ?? "bot"}`,
+          color: "success",
+        });
+      } else {
+        addToast({ title: `Connection failed: ${data.error ?? "unknown"}`, color: "danger" });
+      }
+    } catch {
+      addToast({ title: "Test failed — could not reach server", color: "danger" });
+    } finally {
+      setTesting(t => ({ ...t, [platform]: false }));
     }
   }
 
@@ -247,9 +315,13 @@ export default function ChannelsPage() {
       {/* Per-platform cards */}
       {(Object.keys(PLATFORM_META) as Platform[]).map(platform => {
         const meta = PLATFORM_META[platform];
+        const help = PLATFORM_HELP[platform];
         const isEnabled = config[platform].enabled;
         const routingAgent = config.routing[platform] ?? "hermes";
         const savingThis = saving[platform] ?? false;
+        const testingThis = testing[platform] ?? false;
+        const platformCfg = config[platform] as unknown as Record<string, unknown>;
+        const canTest = TESTABLE_PLATFORMS.has(platform) && (platformCfg.hasToken === true) && !hasDraft(platform);
 
         return (
           <section
@@ -265,7 +337,19 @@ export default function ChannelsPage() {
                   <p className="text-[11px] text-foreground/40">{meta.description}</p>
                 </div>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                {canTest && (
+                  <Button
+                    size="sm"
+                    variant="flat"
+                    isLoading={testingThis}
+                    startContent={!testingThis && <Zap className="h-3 w-3" />}
+                    onPress={() => void testPlatform(platform)}
+                    className="h-6 min-w-0 px-2 text-[11px]"
+                  >
+                    Test
+                  </Button>
+                )}
                 {isEnabled && (
                   <Chip size="sm" variant="flat" color="success" classNames={{ base: "h-5", content: "text-[10px] px-1.5" }}>
                     Active
@@ -307,6 +391,22 @@ export default function ChannelsPage() {
                 draftVal={(k) => draftVal(platform, k)}
                 draft={(k, v) => draft(platform, k, v)}
               />
+
+              {/* Setup help */}
+              <div className="rounded-lg bg-content2/60 px-3 py-2 space-y-1">
+                <p className="text-[11px] text-foreground/50 leading-relaxed">{help.tip}</p>
+                {help.link && (
+                  <a
+                    href={help.link}
+                    target={help.link.startsWith("http") ? "_blank" : undefined}
+                    rel={help.link.startsWith("http") ? "noopener noreferrer" : undefined}
+                    className="text-[11px] text-primary hover:underline inline-flex items-center gap-1"
+                  >
+                    {help.linkLabel}
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                )}
+              </div>
 
               {/* Save button (only when there are draft changes) */}
               {hasDraft(platform) && (

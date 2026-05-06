@@ -60,10 +60,27 @@ function hasLocalPodSession(localPodUrl: string | null): boolean {
   );
 }
 
+/**
+ * Infer the local pod URL from the Eve dashboard hostname.
+ * Convention: `eve.DOMAIN` → `pod.DOMAIN`.
+ * Returns null when the hostname doesn't follow the convention
+ * (e.g. localhost, IP, or an already-configured URL from secrets).
+ */
+function inferPodUrlFromHostname(): string | null {
+  if (typeof window === "undefined") return null;
+  const { hostname, protocol } = window.location;
+  if (hostname.startsWith("eve.")) {
+    return `${protocol}//pod.${hostname.slice(4)}`;
+  }
+  return null;
+}
+
 export function PodConnectGate({ children }: PodConnectGateProps) {
   const { state: setupState, refetch } = useSetupStatus();
   const [claim, setClaim] = useState<SelfHostedClaimResult | null>(null);
   const [localPodUrl, setLocalPodUrl] = useState<string | null>(null);
+  // Candidate pod URL when secrets don't have one — inferred from hostname.
+  const [candidatePodUrl, setCandidatePodUrl] = useState<string | null>(null);
   const [paired, setPaired] = useState<boolean>(false);
   const [claimInFlight, setClaimInFlight] = useState(false);
   const [claimError, setClaimError] = useState<string | null>(null);
@@ -78,7 +95,12 @@ export function PodConnectGate({ children }: PodConnectGateProps) {
           credentials: "include",
           cache: "no-store",
         });
-        if (!res.ok) return;
+        if (!res.ok) {
+          // Secrets not readable — still try hostname inference.
+          const inferred = inferPodUrlFromHostname();
+          if (!cancelled) setCandidatePodUrl(inferred);
+          return;
+        }
         const data = (await res.json().catch(() => null)) as
           | { synap?: { apiUrl?: string | null } }
           | null;
@@ -86,9 +108,13 @@ export function PodConnectGate({ children }: PodConnectGateProps) {
         if (!cancelled) {
           setLocalPodUrl(url);
           setPaired(hasLocalPodSession(url));
+          // When secrets don't have a configured pod URL, try to infer
+          // one from the Eve hostname (eve.X → pod.X).
+          if (!url) setCandidatePodUrl(inferPodUrlFromHostname());
         }
       } catch {
-        /* leave defaults — falls through to "configure pod" branch */
+        const inferred = inferPodUrlFromHostname();
+        if (!cancelled) setCandidatePodUrl(inferred);
       }
     })();
     return () => {
@@ -115,12 +141,17 @@ export function PodConnectGate({ children }: PodConnectGateProps) {
     if (claimInFlight) return;
     setClaimInFlight(true);
     setClaimError(null);
+    // Pass the candidate pod URL when secrets don't have a configured URL.
+    // The route validates it's HTTPS before using it.
+    const claimBody = candidatePodUrl && !localPodUrl
+      ? { podUrl: candidatePodUrl }
+      : {};
     try {
       const res = await fetch("/api/pod/claim", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({}),
+        body: JSON.stringify(claimBody),
       });
       const data = (await res.json().catch(() => null)) as
         | {
@@ -160,6 +191,8 @@ export function PodConnectGate({ children }: PodConnectGateProps) {
           userEmail: session.userName?.includes("@") ? session.userName : "",
           userId: session.userId,
         });
+        // Persist the resolved pod URL so subsequent secrets checks pass.
+        if (!localPodUrl) setLocalPodUrl(data.podUrl);
       }
       setPaired(true);
       addToast({ title: "Pod claimed", color: "success" });
@@ -175,7 +208,7 @@ export function PodConnectGate({ children }: PodConnectGateProps) {
     } finally {
       setClaimInFlight(false);
     }
-  }, [claimInFlight, refetch]);
+  }, [claimInFlight, refetch, candidatePodUrl, localPodUrl]);
 
   // ── Already paired (Mode B or post-claim) → render OS ─────────────────
   if (paired) {
@@ -264,6 +297,7 @@ export function PodConnectGate({ children }: PodConnectGateProps) {
     return (
       <ClaimExistingPodCard
         email={session.userName?.includes("@") ? session.userName : undefined}
+        podUrl={localPodUrl ?? candidatePodUrl ?? undefined}
         onClaim={handleClaim}
         claimInFlight={claimInFlight}
         claimError={claimError}
@@ -389,6 +423,8 @@ function ClaimPodCard({
 
 interface ClaimExistingPodCardProps {
   email?: string;
+  /** The pod URL that will be claimed — shown to the user for confirmation. */
+  podUrl?: string;
   onClaim: () => void;
   claimInFlight: boolean;
   claimError: string | null;
@@ -396,10 +432,16 @@ interface ClaimExistingPodCardProps {
 
 function ClaimExistingPodCard({
   email,
+  podUrl,
   onClaim,
   claimInFlight,
   claimError,
 }: ClaimExistingPodCardProps) {
+  // Display just the hostname for readability (strip protocol + trailing slash).
+  const podDisplay = podUrl
+    ? podUrl.replace(/^https?:\/\//, "").replace(/\/+$/, "")
+    : null;
+
   return (
     <div className="flex min-h-[calc(100vh-3rem)] items-center justify-center px-4 py-8">
       <Card
@@ -433,17 +475,37 @@ function ClaimExistingPodCard({
                 <>
                   Sign{" "}
                   <span className="font-medium text-foreground">{email}</span>{" "}
-                  into the local Eve pod via the Synap handshake.
+                  into your pod via the Synap handshake.
                 </>
               ) : (
                 <>
-                  Sign your Synap account into the local Eve pod via the
-                  handshake.
+                  Sign your Synap account into your pod via the handshake.
                 </>
               )}
             </p>
           </div>
         </header>
+
+        {podDisplay && (
+          <div
+            className="
+              flex items-center gap-2.5
+              rounded-lg
+              bg-foreground/[0.03] ring-1 ring-inset ring-foreground/10
+              px-3.5 py-2.5
+            "
+          >
+            <Server
+              className="h-3.5 w-3.5 shrink-0 text-foreground/55"
+              strokeWidth={2}
+              aria-hidden
+            />
+            <p className="min-w-0 truncate text-[12.5px] text-foreground/65">
+              <span className="text-foreground/40">Pod detected: </span>
+              <span className="font-medium text-foreground">{podDisplay}</span>
+            </p>
+          </div>
+        )}
 
         {claimError && (
           <div

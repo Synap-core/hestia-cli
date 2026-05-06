@@ -34,7 +34,7 @@
 
 import {
   createAuthClient,
-  createFetchTransport,
+  createProxyTransport,
   createSessionStorage,
   isTwoFactorRequired,
   storeSharedSession,
@@ -64,24 +64,26 @@ const CP_URL =
   "https://api.synap.live";
 
 /**
- * Origin sent on Better Auth requests. Eve dashboards run anywhere
- * (loopback, custom domain, behind a tunnel) so we read it dynamically
- * at call time. The value must be in the CP's `trustedOrigins` list —
- * Eve loopback origins are allow-listed by default.
- */
-function appOrigin(): string | undefined {
-  if (typeof window === "undefined") return undefined;
-  return window.location.origin;
-}
-
-/**
- * Single CP auth client. Uses `sessionStorage` so the token doesn't
- * survive a tab close (the host secrets file is the durable record).
+ * Single CP auth client.
+ *
+ * Transport: `createProxyTransport` routes all CP calls through Eve's own
+ * Next.js server (`/api/auth/cp/…` → `https://api.synap.live/…`).
+ * This avoids CORS: Eve dashboards run on arbitrary custom domains
+ * (e.g. eve.team.thearchitech.xyz) that are not in the CP's
+ * `trustedOrigins` list. Server-to-server has no CORS constraint.
+ *
+ * Pod calls are proxied through `/api/pod/…` using the same pattern.
+ *
+ * Storage: sessionStorage — token doesn't survive a tab close.
+ * The host secrets file (`~/.eve/secrets.json` → `cp.userSession`) is
+ * the durable record written by `POST /api/auth/sync` after sign-in.
  */
 export const authClient = createAuthClient({
   cpUrl: CP_URL,
-  origin: appOrigin(),
-  transport: createFetchTransport(),
+  transport: createProxyTransport({
+    cpProxyBase: "/api/auth/cp",
+    podProxyBase: "/api/pod",
+  }),
   storage:
     typeof window === "undefined"
       ? // Server-render fallback — never actually written to.
