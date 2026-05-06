@@ -84,6 +84,7 @@ export function PodConnectGate({ children }: PodConnectGateProps) {
   const [paired, setPaired] = useState<boolean>(false);
   const [claimInFlight, setClaimInFlight] = useState(false);
   const [claimError, setClaimError] = useState<string | null>(null);
+  const [claimSuccess, setClaimSuccess] = useState<{ podUrl: string } | null>(null);
 
   // Resolve the local pod URL once on mount; we need it to know which
   // entry of `synap:pods` "this" Eve cares about.
@@ -168,15 +169,13 @@ export function PodConnectGate({ children }: PodConnectGateProps) {
           }
         | null;
       if (!res.ok || !data?.ok) {
-        const reason =
-          data?.detail ||
-          data?.message ||
-          data?.error ||
-          `Pod returned ${res.status}`;
-        setClaimError(reason);
+        const code = data?.error;
+        const rawDetail = data?.detail || data?.message;
+        const userMessage = _translateClaimError(code, rawDetail);
+        setClaimError(userMessage);
         addToast({
           title: "Couldn't claim this pod",
-          description: reason,
+          description: userMessage,
           color: "danger",
         });
         return;
@@ -194,8 +193,9 @@ export function PodConnectGate({ children }: PodConnectGateProps) {
         });
         if (!localPodUrl) setLocalPodUrl(data.podUrl);
       }
-      setPaired(true);
-      addToast({ title: "Pod claimed", color: "success" });
+      // Show a brief success state before auto-entering.
+      setClaimSuccess({ podUrl: data.podUrl ?? "" });
+      addToast({ title: "Pod connected", color: "success" });
       refetch();
     } catch (err) {
       const reason = err instanceof Error ? err.message : "Network error";
@@ -285,6 +285,64 @@ export function PodConnectGate({ children }: PodConnectGateProps) {
           refetch();
         }}
       />
+    );
+  }
+
+  // Post-claim success — show a brief "pod connected" card before
+  // auto-entering. Mirrors the bootstrap success flow.
+  if (claimSuccess) {
+    return (
+      <div className="flex min-h-[calc(100vh-3rem)] items-center justify-center px-4 py-8">
+        <Card
+          isBlurred
+          shadow="none"
+          radius="md"
+          className="
+            flex w-full max-w-[28rem] flex-col gap-4 p-6
+            bg-foreground/[0.04]
+            ring-1 ring-inset ring-foreground/10
+          "
+        >
+          <header className="flex items-start gap-3">
+            <span
+              aria-hidden
+              className="
+                flex h-10 w-10 shrink-0 items-center justify-center
+                rounded-lg
+                bg-success/10 ring-1 ring-inset ring-success/20
+                text-success
+              "
+            >
+              <Plug className="h-5 w-5" strokeWidth={2} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <h2 className="font-heading text-[20px] font-medium leading-tight tracking-tight text-foreground">
+                Pod connected
+              </h2>
+              <p className="mt-1 text-[13px] leading-snug text-foreground/65">
+                Your Synap account is now signed into{" "}
+                <span className="font-medium text-foreground">
+                  {claimSuccess.podUrl.replace(/^https?:\/\//, "").replace(/\/+$/, "")}
+                </span>
+                .
+              </p>
+            </div>
+          </header>
+          <Button
+            color="primary"
+            size="md"
+            radius="md"
+            onPress={() => {
+              setClaimSuccess(null);
+              refetch();
+              setPaired(hasLocalPodSession(localPodUrl));
+            }}
+            className="font-medium"
+          >
+            Continue to Eve
+          </Button>
+        </Card>
+      </div>
     );
   }
 
@@ -691,6 +749,45 @@ function ClaimExistingPodCard({
       </Card>
     </div>
   );
+}
+
+/**
+ * Translate technical error codes from the claim endpoint into
+ * user-friendly explanations. The claim route returns machine-readable
+ * error identifiers; this maps them to language operators understand.
+ */
+function _translateClaimError(
+  code: string | undefined | null,
+  rawDetail: string | undefined | null,
+): string {
+  if (!code) return rawDetail ?? "The claim failed. Please try again.";
+
+  switch (code) {
+    case "handshake-failed":
+      return (
+        rawDetail ??
+        "The handshake between the dashboard and your pod failed. Make sure the pod is running and accessible."
+      );
+    case "pod-exchange-failed":
+      return (
+        rawDetail ??
+        "The pod didn't accept the session. The pod may be misconfigured or unreachable."
+      );
+    case "claim_failed":
+      return (
+        rawDetail ??
+        "The pod rejected the claim. You may already be paired with this pod, or the pod may require a different sign-in method."
+      );
+    case "cp-session-required":
+      return "Your Synap session expired. Please sign in again.";
+    case "pod-url-not-configured":
+      return (
+        rawDetail ??
+        "No pod URL is configured. Set your pod URL in Settings before claiming."
+      );
+    default:
+      return rawDetail ?? `Claim failed (${code}). Please try again.`;
+  }
 }
 
 // Best-effort email guess from the shared session — not all sessions

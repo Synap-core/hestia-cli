@@ -1897,7 +1897,7 @@ async function* registerPipelinesInOpenwebui(deployDir: string): AsyncGenerator<
     const res = await fetch(`${owAdminUrl}/api/v1/pipelines/add`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${jwt}` },
-      body: JSON.stringify({ url: pipelinesUrl, key: pipelinesKey }),
+      body: JSON.stringify({ url: pipelinesUrl, key: pipelinesKey, urlIdx: "1" }),
     });
     const body = await res.json().catch(() => ({})) as Record<string, unknown>;
     if (res.ok || String(body.detail ?? "").includes("already")) {
