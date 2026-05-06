@@ -63,11 +63,12 @@ const STRIP_REQUEST_HEADERS = new Set([
 const PASSTHROUGH_RESPONSE_HEADERS = [
   "content-type",
   "cache-control",
-  "set-cookie",
   "www-authenticate",
   "retry-after",
   "x-request-id",
 ];
+// set-cookie is handled separately via getSetCookie() — Headers.set() collapses
+// multiple Set-Cookie directives into one (violating RFC 6265).
 
 async function proxy(req: NextRequest, path: string[]): Promise<NextResponse> {
   const upstreamPath = path.join("/");
@@ -94,7 +95,14 @@ async function proxy(req: NextRequest, path: string[]): Promise<NextResponse> {
 
   let body: BodyInit | undefined;
   if (req.method !== "GET" && req.method !== "HEAD") {
-    body = await req.arrayBuffer();
+    const rawBody = await req.arrayBuffer();
+    body = await injectReturnToken(path, req.method, rawBody);
+    // If the body was rewritten (JSON injection), update Content-Type and
+    // drop Content-Length — the proxy sets it from the new body length.
+    if (body !== rawBody) {
+      forwardHeaders["content-type"] = "application/json";
+      delete forwardHeaders["content-length"];
+    }
   }
 
   let upstream: Response;
@@ -125,11 +133,56 @@ async function proxy(req: NextRequest, path: string[]): Promise<NextResponse> {
     const value = upstream.headers.get(header);
     if (value) resHeaders.set(header, value);
   }
+  // Forward all Set-Cookie directives individually.
+  const cookies = (upstream.headers as Headers & { getSetCookie?(): string[] }).getSetCookie?.()
+    ?? (upstream.headers.get("set-cookie") ? [upstream.headers.get("set-cookie")!] : []);
+  for (const cookie of cookies) {
+    resHeaders.append("set-cookie", cookie);
+  }
 
   return new NextResponse(responseBody, {
     status: upstream.status,
     headers: resHeaders,
   });
+}
+
+// ─── Sign-in / sign-up body injection ────────────────────────────────────────
+//
+// Better Auth sets a session cookie on browser-based sign-in, but only
+// includes the bearer token in the response body when `returnToken: true`
+// is passed in the request. Without it, `data.token` is `undefined` on the
+// client, which means `CPSession.token = ""` — an empty string that causes
+// `readCpUserSession()` to return null (it requires a truthy token) and the
+// pod claim flow to fail with `cp-session-required`.
+//
+// We inject the flag server-side so the CP always echoes the token in the
+// JSON response, regardless of whether the caller remembered to include it.
+
+const TOKEN_INJECT_PATHS = new Set([
+  "auth/sign-in/email",
+  "auth/sign-up/email",
+]);
+
+async function injectReturnToken(
+  path: string[],
+  method: string,
+  rawBody: ArrayBuffer,
+): Promise<BodyInit> {
+  const upstreamPath = path.join("/");
+  if (method !== "POST" || !TOKEN_INJECT_PATHS.has(upstreamPath)) {
+    return rawBody;
+  }
+  try {
+    const text = new TextDecoder().decode(rawBody);
+    if (!text) return rawBody;
+    const json = JSON.parse(text) as Record<string, unknown>;
+    if (json.returnToken === true) return rawBody; // already set
+    json.returnToken = true;
+    return JSON.stringify(json);
+  } catch {
+    // Not JSON — forward as-is. CP will reject it with a proper error.
+    return rawBody;
+  }
 }
 
 // ─── Route handlers ──────────────────────────────────────────────────────────
