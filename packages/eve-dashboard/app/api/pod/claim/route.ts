@@ -60,20 +60,15 @@ export async function POST(req: Request) {
   const auth = await requireAuth();
   if ("error" in auth) return auth.error;
 
-  const cpSession = await readCpUserSession();
-  if (!cpSession) {
-    return NextResponse.json(
-      { error: "cp-session-required" },
-      { status: 401 },
-    );
-  }
-
   // Caller may supply a candidate pod URL when secrets don't have one
-  // (e.g. auto-detected from the Eve hostname). Fall back to secrets.
+  // (e.g. auto-detected from the Eve hostname), and/or a cpToken
+  // carried from the in-memory browser session (avoids relying on the
+  // async disk sync having completed before the claim fires).
   let bodyPodUrl: string | undefined;
+  let bodyToken: string | undefined;
   try {
     const body = (await req.json().catch(() => null)) as
-      | { podUrl?: unknown }
+      | { podUrl?: unknown; cpToken?: unknown }
       | null;
     if (typeof body?.podUrl === "string" && body.podUrl.trim()) {
       bodyPodUrl = body.podUrl.trim();
@@ -89,8 +84,24 @@ export async function POST(req: Request) {
         );
       }
     }
+    if (typeof body?.cpToken === "string" && body.cpToken.trim()) {
+      bodyToken = body.cpToken.trim();
+    }
   } catch {
-    /* malformed URL — ignored, falls through to secrets lookup */
+    /* malformed body — ignored */
+  }
+
+  // Prefer the in-body token (freshest); fall back to the persisted disk
+  // session (written by syncSessionToHost after sign-in, also by the
+  // device-flow route). One of the two must be present.
+  const cpSession = bodyToken
+    ? { token: bodyToken, userId: "", email: "" }
+    : await readCpUserSession();
+  if (!cpSession) {
+    return NextResponse.json(
+      { error: "cp-session-required" },
+      { status: 401 },
+    );
   }
 
   const secrets = await readEveSecrets();

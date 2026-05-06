@@ -143,9 +143,12 @@ export function PodConnectGate({ children }: PodConnectGateProps) {
     setClaimError(null);
     // Pass the candidate pod URL when secrets don't have a configured URL.
     // The route validates it's HTTPS before using it.
-    const claimBody = candidatePodUrl && !localPodUrl
-      ? { podUrl: candidatePodUrl }
-      : {};
+    // Also send the in-memory CP token so the server doesn't need it on
+    // disk — the disk sync happens async and may lag behind.
+    const sharedSession = getSharedSession();
+    const claimBody: Record<string, unknown> = {};
+    if (candidatePodUrl && !localPodUrl) claimBody.podUrl = candidatePodUrl;
+    if (sharedSession?.sessionToken) claimBody.cpToken = sharedSession.sessionToken;
     try {
       const res = await fetch("/api/pod/claim", {
         method: "POST",
