@@ -10,7 +10,7 @@ const workspaceRoot = join(here, "..", "..");
 const nextConfig: NextConfig = {
   output: "standalone",
   outputFileTracingRoot: workspaceRoot,
-  transpilePackages: ["@eve/dna"],
+  transpilePackages: ["@eve/dna", "@synap-core/auth"],
   // Phase 2 OS Home rebuild (2026-05-05). Legacy paths from the
   // pre-shell era either move into Settings as tabs or roll back to
   // the new Home. All redirects are 308 (permanent) so old bookmarks

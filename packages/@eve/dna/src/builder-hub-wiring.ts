@@ -279,6 +279,17 @@ export async function writeHermesEnvFile(cwd: string = process.cwd()): Promise<s
     `API_SERVER_KEY=${apiServerKey}`,
   ];
 
+  // Embedding model for semantic memory search. Only set for providers whose
+  // models produce 1536-d vectors via the OpenAI-compat gateway — which is
+  // the dimension the knowledge_facts pgvector column expects. Ollama
+  // embedding models are typically 768–1024-d so we leave it empty there
+  // and the plugin falls back to full-text search automatically.
+  const hermesProvider =
+    secrets?.ai?.serviceProviders?.['hermes'] ?? secrets?.ai?.defaultProvider;
+  if (hermesProvider === 'openai' || hermesProvider === 'openrouter') {
+    lines.push(`SYNAP_EMBED_MODEL=text-embedding-3-small`);
+  }
+
   // Inject centralised channel credentials for each platform routed to hermes
   // (or defaulting to hermes when no routing entry is set).
   const routing = secrets?.channels ? buildChannelRouting(secrets) : {};
@@ -437,8 +448,12 @@ constraint so every conversation turn, session summary, and memory write
 lands in Synap — no local SQLite divergence.
 
 Env vars read at runtime (injected by Eve into hermes.env):
-  SYNAP_API_KEY   — Hub Protocol bearer token (hermes agent identity)
-  HUB_BASE_URL    — e.g. https://pod.example.com/api/hub
+  SYNAP_API_KEY      — Hub Protocol bearer token (hermes agent identity)
+  HUB_BASE_URL       — e.g. https://pod.example.com/api/hub
+  API_SERVER_KEY     — Hermes gateway auth key (used for embedding calls)
+  SYNAP_EMBED_MODEL  — OpenAI-compat embedding model (empty = full-text only)
+                       Set to text-embedding-3-small for openai/openrouter providers.
+                       Left empty for ollama (models are not 1536-d).
 """
 import os
 import json
@@ -460,19 +475,10 @@ def _headers() -> dict[str, str]:
     }
 
 
-def _post(path: str, payload: dict) -> dict | None:
+def _post(path: str, payload: dict) -> Any:
     try:
         data = json.dumps(payload).encode()
         req = urllib.request.Request(_hub_url(path), data=data, headers=_headers(), method="POST")
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read())
-    except (urllib.error.URLError, Exception):
-        return None
-
-
-def _get(path: str) -> dict | None:
-    try:
-        req = urllib.request.Request(_hub_url(path), headers=_headers(), method="GET")
         with urllib.request.urlopen(req, timeout=10) as resp:
             return json.loads(resp.read())
     except (urllib.error.URLError, Exception):
@@ -491,18 +497,57 @@ class SynapMemoryProvider:
     def initialize(self, session_id: str, **kwargs) -> None:
         self._session_id = session_id
 
-    def prefetch(self, query: str) -> list[dict]:
-        """Return relevant memories from Synap for the given query.
+    def _embed(self, text: str) -> list[float] | None:
+        """Get a 1536-d embedding via the Hermes internal gateway.
 
-        Uses GET /memory?query=X — full-text search backed by knowledge_facts.
-        userId is resolved from the Bearer token (SYNAP_API_KEY = hermes agent).
+        Calls http://127.0.0.1:8642/v1/embeddings (OpenAI-compat) using
+        the model set in SYNAP_EMBED_MODEL. Returns None when the model
+        is unset, unavailable, or returns a non-1536-d vector — callers
+        degrade to full-text search without interrupting the session.
+
+        The 1536-d constraint matches the knowledge_facts pgvector column.
+        Ollama embedding models (768–1024-d) are intentionally excluded.
+        """
+        model = os.environ.get("SYNAP_EMBED_MODEL", "")
+        if not model:
+            return None
+        try:
+            payload = json.dumps({"model": model, "input": text}).encode()
+            key = os.environ.get("API_SERVER_KEY", "")
+            req = urllib.request.Request(
+                "http://127.0.0.1:8642/v1/embeddings",
+                data=payload,
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                body = json.loads(resp.read())
+                vec = body["data"][0]["embedding"]
+                if isinstance(vec, list) and len(vec) == 1536:
+                    return vec
+        except Exception:
+            pass
+        return None
+
+    def prefetch(self, query: str) -> list[dict]:
+        """Return relevant memories for the given query.
+
+        Prefers semantic search (POST /memory/search with pgvector) when
+        SYNAP_EMBED_MODEL is set and the gateway returns a valid 1536-d
+        embedding. Falls back to full-text (GET /memory?query=) otherwise.
         """
         if not query:
             return []
+        # Semantic path — try embedding via Hermes gateway
+        embedding = self._embed(query)
+        if embedding:
+            results = _post("/memory/search", {"embedding": embedding, "limit": 10})
+            if isinstance(results, list) and results:
+                return results
+        # Full-text fallback
         try:
-            encoded_query = urllib.parse.quote(query)
-            encoded_session = urllib.parse.quote(self._session_id or "")
-            url = _hub_url(f"/memory?query={encoded_query}&limit=10&sessionId={encoded_session}")
+            encoded = urllib.parse.quote(query)
+            url = _hub_url(f"/memory?query={encoded}&limit=10")
             req = urllib.request.Request(url, headers=_headers(), method="GET")
             with urllib.request.urlopen(req, timeout=10) as resp:
                 items = json.loads(resp.read())
@@ -513,15 +558,29 @@ class SynapMemoryProvider:
         return []
 
     def sync_turn(self, user: str, assistant: str) -> None:
-        """Persist a conversation turn as two memory facts."""
+        """Persist a conversation turn as two memory facts.
+
+        Includes embeddings when SYNAP_EMBED_MODEL is set so facts are
+        discoverable via semantic search in future prefetch() calls.
+        """
         session_tag = f"[session:{self._session_id}]" if self._session_id else ""
         if user:
-            _post("/memory", {"fact": f"{session_tag}[user] {user}"})
+            fact = f"{session_tag}[user] {user}"
+            payload: dict = {"fact": fact}
+            emb = self._embed(fact)
+            if emb:
+                payload["embedding"] = emb
+            _post("/memory", payload)
         if assistant:
-            _post("/memory", {"fact": f"{session_tag}[assistant] {assistant}"})
+            fact = f"{session_tag}[assistant] {assistant}"
+            payload = {"fact": fact}
+            emb = self._embed(fact)
+            if emb:
+                payload["embedding"] = emb
+            _post("/memory", payload)
 
     def on_session_end(self, messages: list[dict]) -> None:
-        """Summarise the session as a single memory fact."""
+        """Summarise the session as a single memory fact with embedding."""
         if not messages:
             return
         parts = []
@@ -531,12 +590,21 @@ class SynapMemoryProvider:
             parts.append(f"{role}: {content}")
         summary = " | ".join(parts)
         session_tag = f"[session:{self._session_id}] " if self._session_id else ""
-        _post("/memory", {"fact": f"{session_tag}[summary] {summary}", "confidence": 0.9})
+        fact = f"{session_tag}[summary] {summary}"
+        payload: dict = {"fact": fact, "confidence": 0.9}
+        emb = self._embed(fact)
+        if emb:
+            payload["embedding"] = emb
+        _post("/memory", payload)
 
     def on_memory_write(self, action: str, target: str, content: str) -> None:
-        """Intercept explicit remember/update commands — store as facts."""
+        """Intercept explicit remember/update commands — store as high-confidence facts."""
         if action in ("remember", "add", "update", "replace"):
-            _post("/memory", {"fact": content, "confidence": 1.0})
+            payload: dict = {"fact": content, "confidence": 1.0}
+            emb = self._embed(content)
+            if emb:
+                payload["embedding"] = emb
+            _post("/memory", payload)
 
     def get_tool_schemas(self) -> list[dict]:
         return []
