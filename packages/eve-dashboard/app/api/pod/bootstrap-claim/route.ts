@@ -11,10 +11,13 @@
  * Body: `{ email, name?, role? }`
  *
  * Token resolution order (first match wins):
- *   1. `secrets.pod?.bootstrapToken`     (typed slot — populated by `eve install`)
- *   2. `secrets.synap?.bootstrapToken`   (back-compat, not in schema; tolerated)
+ *   1. `secrets.pod?.bootstrapToken`           (typed slot — populated by `eve install`)
+ *   2. `secrets.synap?.bootstrapToken`         (back-compat alias; tolerated)
  *   3. `process.env.ADMIN_BOOTSTRAP_TOKEN`
- *   4. `process.env.EVE_PROVISIONING_TOKEN` (back-compat)
+ *   4. `process.env.EVE_PROVISIONING_TOKEN`    (back-compat)
+ *   5. `resolveProvisioningToken()` from @eve/lifecycle — probes env vars,
+ *      `/opt/synap-backend/.env`, and `docker inspect` on the backend
+ *      container. Same discovery logic as `eve setup admin`.
  *
  * Returns:
  *   • Whatever the upstream returned (status + JSON), with the token
@@ -30,6 +33,7 @@
 
 import { NextResponse } from "next/server";
 import { readEveSecrets, resolveSynapUrl } from "@eve/dna";
+import { resolveProvisioningToken } from "@eve/lifecycle";
 import { requireAuth } from "@/lib/auth-server";
 
 interface ClaimBody {
@@ -39,23 +43,28 @@ interface ClaimBody {
 }
 
 function resolveBootstrapToken(secrets: Awaited<ReturnType<typeof readEveSecrets>>): string {
-  // `pod.bootstrapToken` is typed in the schema (`@eve/dna` SecretsSchema).
-  // `synap.bootstrapToken` is NOT in the schema — tolerated as a back-compat
-  // alias from older `.eve/secrets.json` shapes; we fish it out with a cast.
+  // 1. `pod.bootstrapToken` — typed slot populated by `eve install`/`eve setup admin`.
   const fromPod = secrets?.pod?.bootstrapToken?.trim() ?? "";
   if (fromPod) return fromPod;
 
+  // 2. Legacy back-compat alias (`synap.bootstrapToken` from old secrets shape).
   const legacy = secrets as unknown as {
     synap?: { bootstrapToken?: string };
   } | null;
   const fromSynap = legacy?.synap?.bootstrapToken?.trim() ?? "";
   if (fromSynap) return fromSynap;
 
-  return (
+  // 3. Direct env vars.
+  const fromEnv =
     process.env.ADMIN_BOOTSTRAP_TOKEN?.trim() ||
     process.env.EVE_PROVISIONING_TOKEN?.trim() ||
-    ""
-  );
+    "";
+  if (fromEnv) return fromEnv;
+
+  // 4. Rich resolver: probes env vars → .env files → docker inspect.
+  //    Mirrors what `eve setup admin` does in the CLI so the dashboard
+  //    always has the same discovery power as the CLI.
+  return resolveProvisioningToken() ?? "";
 }
 
 export async function POST(req: Request) {

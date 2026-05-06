@@ -19,8 +19,11 @@
  * ────────
  * • No Eve-level authentication is required — sign-in/sign-up are pre-auth
  *   by definition.
- * • We forward the method, body, and content-type exactly. We do NOT forward
- *   the Origin header (the server's outbound request has no Origin).
+ * • We forward the original browser Origin header unchanged and set
+ *   `x-forwarded-by: eve-dashboard`. The CP's `trustedOrigins` function
+ *   trusts any HTTPS origin that arrives with that header, so custom Eve
+ *   domains (e.g. eve.team.X) pass CSRF validation without being individually
+ *   enrolled. Credentials (email+password) are what the CP actually validates.
  * • We strip the Forwarded/X-Forwarded-* headers that Next.js injects to
  *   avoid confusing the CP's rate-limiter.
  * • Sensitive response headers (set-cookie, www-authenticate) are forwarded
@@ -46,7 +49,8 @@ import { CP_BASE_URL } from "@/lib/cp-base-url";
 
 const STRIP_REQUEST_HEADERS = new Set([
   "host",
-  "origin",
+  // origin is forwarded unchanged — the CP's trustedOrigins trusts any
+  // HTTPS origin that arrives with x-forwarded-by: eve-dashboard.
   "referer",
   "x-forwarded-for",
   "x-forwarded-host",
@@ -77,7 +81,9 @@ async function proxy(req: NextRequest, path: string[]): Promise<NextResponse> {
       forwardHeaders[key] = value;
     }
   });
-  // Always tell the CP who we are so it can check trustedOrigins if needed.
+  // Identify ourselves as an Eve proxy. The CP's trustedOrigins function
+  // trusts any HTTPS Origin that arrives with this header, so custom Eve
+  // domains pass Better Auth's CSRF guard without individual enrollment.
   forwardHeaders["x-forwarded-by"] = "eve-dashboard";
 
   let body: BodyInit | undefined;
