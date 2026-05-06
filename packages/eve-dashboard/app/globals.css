@@ -178,6 +178,44 @@ body {
 }
 
 /* ----------------------------------------------------------------------
+ * Input chrome reset — strip native OS border/outline that leaks through
+ * HeroUI's flat-variant inputWrapper as a sharp inner rectangle on focus.
+ * Same fix applied in @synap-core/heroui-preset/styles/heroui-base.css
+ * for all other Synap apps.
+ * ------------------------------------------------------------------- */
+input,
+textarea,
+select {
+  color: hsl(var(--heroui-foreground));
+  caret-color: hsl(var(--heroui-foreground));
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  border: 0;
+  outline: none;
+}
+
+input:focus,
+input:focus-visible,
+textarea:focus,
+textarea:focus-visible,
+select:focus,
+select:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+  -webkit-text-fill-color: hsl(var(--heroui-foreground)) !important;
+  -webkit-box-shadow: 0 0 0 1000px transparent inset !important;
+  caret-color: hsl(var(--heroui-foreground)) !important;
+  transition: background-color 9999s ease-in-out 0s;
+}
+
+/* ----------------------------------------------------------------------
  * Reduced motion — wallpaper holds a static intentional position,
  * pane swap collapses to a hard cut, no overshoot pops.
  * ------------------------------------------------------------------- */

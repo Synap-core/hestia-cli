@@ -81,7 +81,7 @@ export function EveSignInScreen({ onSuccess }: EveSignInScreenProps) {
   const [tab, setTab] = useState<TopTab>("synap");
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 py-8 bg-background">
+    <div className="flex flex-1 items-center justify-center px-4 py-8 overflow-y-auto">
       <div className="w-full max-w-[28rem] flex flex-col items-center gap-6">
         {/* Brand */}
         <div className="flex flex-col items-center gap-2 text-center">
