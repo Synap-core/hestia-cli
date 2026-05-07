@@ -402,6 +402,31 @@ export function isLoopbackUrl(url: string | undefined | null): boolean {
 export const SYNAP_BACKEND_INTERNAL_URL = 'http://eve-brain-synap:4000';
 
 /**
+ * URL the Eve dashboard container uses to reach the Synap backend directly.
+ *
+ * The dashboard runs on `eve-network`. To call backend routes that Traefik
+ * doesn't proxy (`/trpc/*`, `/.ory/kratos/public/*`), we connect the
+ * dashboard to `synap-net` (the Docker network the Synap pod creates) and
+ * hit the backend by its Docker DNS name — same container, sub-millisecond,
+ * no TLS, no cert, no DNS probe.
+ *
+ * Same pattern as `SYNAP_BACKEND_INTERNAL_URL` — just a different service
+ * name for the sidecar deployment path.
+ */
+export const SYNAP_BACKEND_DOCKER_URL = 'http://backend:4000';
+
+/**
+ * Return the URL the dashboard container should use for direct backend calls.
+ *
+ * Currently always returns `SYNAP_BACKEND_DOCKER_URL` — the dashboard must
+ * be connected to `synap-net` for this to work (see
+ * `@eve/legs/src/lib/dashboard-container.ts`).
+ */
+export function resolveBackendUrl(): string {
+  return SYNAP_BACKEND_DOCKER_URL;
+}
+
+/**
  * TCP port on the host's loopback that maps to synap-backend:4000 when
  * Eve's `docker-compose.override.yml` is in place. The on-host CLI
  * prefers this URL over the public Traefik route — same protocol, no

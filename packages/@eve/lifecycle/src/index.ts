@@ -38,6 +38,12 @@ import {
   writeHermesEnvFile,
   writeHermesConfigYaml,
   generateSynapPlugin,
+  getStatus,
+  getAdminJwt,
+  upsertModelSource,
+  registerPipeline as registerPipelineApi,
+  listPipelines,
+  type OpenwebuiStatus,
   type ComponentInfo,
   type EnsureOverrideResult,
 } from "@eve/dna";
@@ -1085,114 +1091,48 @@ async function* wireHermesIntoOpenwebui(): AsyncGenerator<LifecycleEvent> {
 /**
  * Register (or update) the Hermes model source via OpenWebUI's admin API.
  *
- * OpenWebUI's env var OPENAI_API_BASE_URLS is only read on first boot.
- * On every subsequent run, the DB is authoritative — so we must use the
- * POST /api/v1/configs/ endpoint to add/update the entry.
+ * OpenWebUI's env vars are only read on first boot. On subsequent runs the
+ * DB is authoritative — delegated to @eve/dna openwebui-admin module which
+ * handles JWT forging, SQLite queries, and config CRUD.
  */
 async function* wireHermesViaOpenwebuiApi(
   hermesUrl: string,
   hermesApiKey: string,
 ): AsyncGenerator<LifecycleEvent> {
-  const owEnv = "/opt/openwebui/.env";
-  const webuiSecret = readFileSync(owEnv, "utf-8").split("\n")
-    .find(l => l.startsWith("WEBUI_SECRET_KEY="))?.split("=", 2)[1]?.trim() ?? "";
+  const status = await getStatus();
 
-  if (!webuiSecret) {
-    // No secret key — fall back to restart so the env file at least applies
-    // on the next fresh install.
+  if (status.status === 'not-reachable') {
+    yield { type: "log", line: `OpenWebUI not reachable — run 'eve update hermes' once it is up` };
+    return;
+  }
+
+  if (status.status === 'no-secret-key') {
     yield { type: "step", label: "Restarting OpenWebUI (no WEBUI_SECRET_KEY — API wiring skipped)…" };
     yield* runCommand("docker", ["compose", "up", "-d"], { cwd: "/opt/openwebui" });
     return;
   }
 
-  const owAdminUrl = resolveOpenwebuiAdminUrl();
-
-  // Wait up to 30 s for OpenWebUI to be reachable.
-  let owReady = false;
-  for (let i = 0; i < 6; i++) {
-    try {
-      const r = await fetch(`${owAdminUrl}/health`);
-      if (r.ok) { owReady = true; break; }
-    } catch { /* not up yet */ }
-    await new Promise(r => setTimeout(r, 5_000));
-  }
-  if (!owReady) {
-    yield { type: "log", line: `OpenWebUI not reachable at ${owAdminUrl} — run 'eve update hermes' once it is up` };
-    return;
-  }
-
-  // OpenWebUI validates the JWT by looking up the user id in its database.
-  // A synthetic id like "eve-lifecycle" always fails — we must use a real
-  // admin user's id + email from the OpenWebUI SQLite DB.
-  const { createHmac } = await import("node:crypto");
-  const { execSync: execSyncFn } = await import("node:child_process");
-  let adminId = "";
-  let adminEmail = "";
-  try {
-    // The DB is inside the named volume; query it via docker exec.
-    const row = execSyncFn(
-      `docker exec hestia-openwebui python3 -c "import sqlite3; r=sqlite3.connect('/app/backend/data/webui.db').execute(\\"SELECT id,email FROM user WHERE role='admin' LIMIT 1\\").fetchone(); print(f'{r[0]}|{r[1]}') if r else print('')"`,
-      { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] },
-    ).trim();
-    if (row) [adminId, adminEmail] = row.split("|");
-  } catch { /* container not up or no admin yet */ }
-
-  if (!adminId) {
+  if (status.status === 'no-admin-user') {
     yield { type: "log", line: `No admin user in OpenWebUI yet — add Hermes manually: Admin → Settings → Connections → add URL ${hermesUrl} with your API key` };
     return;
   }
 
-  const header  = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
-  const payload = Buffer.from(JSON.stringify({
-    id: adminId,
-    email: adminEmail,
-    iat: Math.floor(Date.now() / 1000),
-    exp: Math.floor(Date.now() / 1000) + 300,
-  })).toString("base64url");
-  const sig = createHmac("sha256", webuiSecret).update(`${header}.${payload}`).digest("base64url");
-  const jwt = `${header}.${payload}.${sig}`;
+  if (status.status === 'html-response') {
+    yield { type: "log", line: `OpenWebUI still booting — add Hermes manually once fully started` };
+    return;
+  }
 
-  const authHeaders = { "Authorization": `Bearer ${jwt}`, "Content-Type": "application/json" };
+  const jwt = await getAdminJwt();
+  if (!jwt) {
+    yield { type: "log", line: `OpenWebUI admin auth unavailable — add Hermes manually: Admin → Settings → Connections → ${hermesUrl}` };
+    return;
+  }
 
-  try {
-    const cfgRes = await fetch(`${owAdminUrl}/api/v1/configs/`, { headers: authHeaders });
-    const cfgText = await cfgRes.text();
-    if (!cfgRes.ok || cfgText.trimStart().startsWith("<")) {
-      yield { type: "log", line: `OpenWebUI config read failed (${cfgRes.status}) — add Hermes manually: Admin → Settings → Connections → ${hermesUrl}` };
-      return;
-    }
-    const cfg = JSON.parse(cfgText) as Record<string, unknown>;
-
-    // Upsert Hermes into the openai connections list.
-    const openai = (cfg.openai ?? {}) as Record<string, unknown>;
-    const urls: string[] = Array.isArray(openai.api_base_urls) ? openai.api_base_urls : [];
-    const keys: string[] = Array.isArray(openai.api_keys) ? openai.api_keys : [];
-    const idx = urls.indexOf(hermesUrl);
-    if (idx === -1) {
-      urls.push(hermesUrl);
-      keys.push(hermesApiKey);
-    } else {
-      keys[idx] = hermesApiKey;
-    }
-    // Pad keys list to match urls length (OpenWebUI requires equal-length arrays).
-    while (keys.length < urls.length) keys.push("");
-    openai.api_base_urls = urls;
-    openai.api_keys = keys;
-    cfg.openai = openai;
-
-    const saveRes = await fetch(`${owAdminUrl}/api/v1/configs/`, {
-      method: "POST",
-      headers: authHeaders,
-      body: JSON.stringify(cfg),
-    });
-    if (saveRes.ok) {
-      yield { type: "log", line: `Hermes wired into OpenWebUI ✓ (${urls.length} model source${urls.length === 1 ? "" : "s"}) — open a new chat and select a Hermes model` };
-    } else {
-      const body = await saveRes.json().catch(() => ({})) as Record<string, unknown>;
-      yield { type: "log", line: `OpenWebUI config save returned ${saveRes.status}: ${JSON.stringify(body)}` };
-    }
-  } catch (err) {
-    yield { type: "log", line: `OpenWebUI API wiring failed (${err instanceof Error ? err.message : String(err)}) — run 'eve update hermes' once OpenWebUI is up` };
+  const ok = await upsertModelSource(jwt, hermesUrl, hermesApiKey);
+  if (ok) {
+    yield { type: "log", line: `Hermes wired into OpenWebUI ✓ — open a new chat and select a Hermes model` };
+  } else {
+    yield { type: "log", line: `Failed to wire Hermes via admin API — add manually: Admin → Settings → Connections → ${hermesUrl}` };
   }
 }
 
@@ -1214,13 +1154,6 @@ const HAS_INSTALL_RECIPE: ReadonlySet<string> = new Set([
 ]);
 
 /** True if a container with that name exists (any state). 4s timeout. */
-/** Resolve the host-side base URL for OpenWebUI's admin API. */
-function resolveOpenwebuiAdminUrl(): string {
-  const comp = COMPONENTS.find(c => c.id === "openwebui");
-  const port = comp?.service?.hostPort ?? 3011;
-  return `http://localhost:${port}`;
-}
-
 async function containerExists(name: string): Promise<boolean> {
   return new Promise(resolve => {
     const child = spawn("docker", ["ps", "-a", "--filter", `name=^${name}$`, "--format", "{{.Names}}"], {
@@ -1566,7 +1499,7 @@ services:
       # the pipelines install path; env_file: passes them straight to
       # the container, so they take precedence over the singulars below.
       - ENABLE_OPENAI_API=true
-      - OPENAI_API_BASE_URL=\${SYNAP_IS_URL:-http://intelligence-hub:3001}/v1
+      - OPENAI_API_BASE_URL=\${SYNAP_IS_URL:-http://eve-brain-synap:4000}/v1
       - OPENAI_API_KEY=\${SYNAP_API_KEY:-}
       - OLLAMA_BASE_URL=\${OLLAMA_BASE_URL:-http://eve-brain-ollama:11434}
 
@@ -1628,7 +1561,7 @@ async function* installOpenWebUi(): AsyncGenerator<LifecycleEvent> {
     secrets?.synap?.apiKey ??
     process.env.SYNAP_API_KEY ??
     "";
-  const isUrl = process.env.SYNAP_IS_URL ?? "http://intelligence-hub:3001";
+  const isUrl = process.env.SYNAP_IS_URL ?? "http://eve-brain-synap:4000";
 
   writeOpenwebuiCompose(deployDir);
 
@@ -1725,7 +1658,7 @@ async function reconcilePipelinesEnv(deployDir: string): Promise<void> {
   // bypasses Traefik. resolveSynapUrl() would also work but adds a
   // useless round-trip out and back through public DNS.
   const synapApiUrl = SYNAP_BACKEND_INTERNAL_URL;
-  const isUrl = process.env.SYNAP_IS_URL ?? "http://intelligence-hub:3001";
+  const isUrl = process.env.SYNAP_IS_URL ?? "http://eve-brain-synap:4000";
 
   const envPath = join(deployDir, ".env");
   const existing = existsSync(envPath)
@@ -1791,11 +1724,8 @@ async function* installPipelinesSidecar(): AsyncGenerator<LifecycleEvent> {
  *   2. Pipeline server (Admin → Pipelines) — filter pipelines that run for
  *      every chat, regardless of model. This is the Synap integration path.
  *
- * We register as role #2. OpenWebUI then polls the sidecar for the list of
- * pipelines and activates filters globally. No UI interaction required.
- *
- * Requires OpenWebUI to be running. Retries for up to 60 s to handle the
- * case where openwebui-pipelines starts while OpenWebUI is still booting.
+ * We register as role #2. Delegated to @eve/dna openwebui-admin module for
+ * JWT forging, health checking, and idempotent registration.
  */
 async function* registerPipelinesInOpenwebui(deployDir: string): AsyncGenerator<LifecycleEvent> {
   const owEnv = "/opt/openwebui/.env";
@@ -1804,13 +1734,10 @@ async function* registerPipelinesInOpenwebui(deployDir: string): AsyncGenerator<
     return;
   }
 
-  // Read the pipelines API key and the OpenWebUI secret key.
+  // Read the pipelines API key.
   const pipelinesEnv = readFileSync(join(deployDir, ".env"), "utf-8");
   const pipelinesKey = pipelinesEnv.split("\n")
     .find(l => l.startsWith("PIPELINES_API_KEY="))?.split("=", 2)[1]?.trim() ?? "";
-  const owEnvContent = readFileSync(owEnv, "utf-8");
-  const webuiSecret = owEnvContent.split("\n")
-    .find(l => l.startsWith("WEBUI_SECRET_KEY="))?.split("=", 2)[1]?.trim() ?? "";
 
   if (!pipelinesKey) {
     yield { type: "log", line: "No PIPELINES_API_KEY found — skipping registration" };
@@ -1820,15 +1747,16 @@ async function* registerPipelinesInOpenwebui(deployDir: string): AsyncGenerator<
   const pipelinesUrl = "http://eve-openwebui-pipelines:9099";
   // The pipeline sidecar URL uses the Docker network hostname because
   // OpenWebUI itself (inside Docker) needs to reach it.
-  // Host-side admin calls use the component's actual hostPort.
-  const owAdminUrl = resolveOpenwebuiAdminUrl();
 
   yield { type: "step", label: "Registering pipelines server in OpenWebUI…" };
 
-  // Mint an admin JWT using the WEBUI_SECRET_KEY. OpenWebUI's API accepts
-  // a signed JWT with {"role":"admin"} in place of a session token.
-  // If we can't mint (no secret key), fall back to a hint for manual setup.
-  if (!webuiSecret) {
+  // Check OpenWebUI health first.
+  const status = await getStatus();
+  if (status.status === 'not-reachable') {
+    yield { type: "log", line: `OpenWebUI not reachable — run 'eve update openwebui-pipelines' after it starts` };
+    return;
+  }
+  if (status.status === 'no-secret-key') {
     yield {
       type: "log",
       line: [
@@ -1838,22 +1766,7 @@ async function* registerPipelinesInOpenwebui(deployDir: string): AsyncGenerator<
     };
     return;
   }
-
-  // OpenWebUI validates the JWT by looking up the user id in its database.
-  // Mint a short-lived token for the first admin user.
-  const { createHmac } = await import("node:crypto");
-  const { execSync: execSyncFn } = await import("node:child_process");
-  let adminId = "";
-  let adminEmail = "";
-  try {
-    const row = execSyncFn(
-      `docker exec hestia-openwebui python3 -c "import sqlite3; r=sqlite3.connect('/app/backend/data/webui.db').execute(\\"SELECT id,email FROM user WHERE role='admin' LIMIT 1\\").fetchone(); print(f'{r[0]}|{r[1]}') if r else print('')"`,
-      { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] },
-    ).trim();
-    if (row) [adminId, adminEmail] = row.split("|");
-  } catch { /* container not up yet */ }
-
-  if (!adminId) {
+  if (status.status === 'no-admin-user') {
     yield {
       type: "log",
       line: [
@@ -1864,41 +1777,10 @@ async function* registerPipelinesInOpenwebui(deployDir: string): AsyncGenerator<
     return;
   }
 
-  const header  = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
-  const payload = Buffer.from(JSON.stringify({
-    id: adminId,
-    email: adminEmail,
-    iat: Math.floor(Date.now() / 1000),
-    exp: Math.floor(Date.now() / 1000) + 300,
-  })).toString("base64url");
-  const sig = createHmac("sha256", webuiSecret)
-    .update(`${header}.${payload}`)
-    .digest("base64url");
-  const jwt = `${header}.${payload}.${sig}`;
-
-  // Wait for OpenWebUI to be ready (up to 60 s).
-  let owReady = false;
-  for (let i = 0; i < 12; i++) {
-    try {
-      const r = await fetch(`${owAdminUrl}/health`);
-      if (r.ok) { owReady = true; break; }
-    } catch { /* not ready yet */ }
-    await new Promise(r => setTimeout(r, 5_000));
-  }
-  if (!owReady) {
-    yield {
-      type: "log",
-      line: `OpenWebUI not reachable at ${owAdminUrl} — run 'eve update openwebui-pipelines' after it starts`,
-    };
-    return;
-  }
-
-  // Wait for the pipelines sidecar to be ready — it needs a moment to start
-  // its HTTP server after the container starts.
+  // Wait for the pipelines sidecar to be ready.
   let sidecarReady = false;
   for (let i = 0; i < 10; i++) {
     try {
-      // The pipelines sidecar responds to a simple GET / (or /health) with 200.
       const r = await fetch(`${pipelinesUrl}/health`, { signal: AbortSignal.timeout(3000) });
       if (r.ok) { sidecarReady = true; break; }
       // Even a 404/403 means the HTTP server is up — try registration anyway.
@@ -1914,32 +1796,21 @@ async function* registerPipelinesInOpenwebui(deployDir: string): AsyncGenerator<
     return;
   }
 
-  // Retry registration a few times — the sidecar may still be settling
-  // its pipeline list between health-check and the first real request.
-  let regOk = false;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt > 0) await new Promise(r => setTimeout(r, 3_000));
-    const res = await fetch(`${owAdminUrl}/api/v1/pipelines/add`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${jwt}` },
-      body: JSON.stringify({ url: pipelinesUrl, key: pipelinesKey }),
-    });
-    const body = await res.json().catch(() => ({})) as Record<string, unknown>;
-    if (res.ok || String(body.detail ?? "").includes("already")) {
-      yield { type: "log", line: "Pipelines server registered in OpenWebUI ✓ — filter pipelines now active for all models" };
-      regOk = true;
-      break;
-    }
-    // 404 or other transient error — retry
+  const jwt = await getAdminJwt();
+  if (!jwt) {
+    yield { type: "log", line: `OpenWebUI admin auth unavailable — add pipelines manually` };
+    return;
+  }
+
+  // Use the idempotent registerPipeline from openwebui-admin module.
+  const ok = await registerPipelineApi(jwt, pipelinesUrl, pipelinesKey);
+  if (ok) {
+    yield { type: "log", line: "Pipelines server registered in OpenWebUI ✓ — filter pipelines now active for all models" };
+  } else {
     yield {
       type: "log",
-      line: attempt < 2
-        ? `Pipelines registration attempt ${attempt + 1}/3: HTTP ${res.status}… retrying`
-        : `Pipelines registration returned ${res.status}: ${JSON.stringify(body)} — try Admin → Pipelines in OpenWebUI manually`,
+      line: `Pipelines registration failed — try Admin → Pipelines in OpenWebUI manually`,
     };
-  }
-  if (!regOk) {
-    // Already yielded the failure message in the last attempt.
   }
 }
 

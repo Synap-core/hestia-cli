@@ -34,12 +34,20 @@ export interface DashboardInstallOptions {
   rebuild?: boolean;
 }
 
-function ensureEveNetwork(): void {
+function ensureNetwork(name: string): void {
   try {
-    execSync('docker network inspect eve-network', { stdio: 'ignore' });
+    execSync(`docker network inspect ${name}`, { stdio: 'ignore' });
   } catch {
-    execSync('docker network create eve-network', { stdio: 'inherit' });
+    execSync(`docker network create ${name}`, { stdio: 'inherit' });
   }
+}
+
+function ensureEveNetwork(): void {
+  ensureNetwork('eve-network');
+}
+
+function ensureSynapNetwork(): void {
+  ensureNetwork('synap-net');
 }
 
 function imageExists(): boolean {
@@ -78,6 +86,7 @@ function runContainer(workspaceRoot: string, secret: string): void {
     '--name', CONTAINER_NAME,
     '--restart', 'unless-stopped',
     '--network', 'eve-network',
+    '--network', 'synap-net',
     '-p', `${HOST_PORT}:${INTERNAL_PORT}`,
     '-e', `PORT=${INTERNAL_PORT}`,
     '-e', `EVE_HOME=${workspaceRoot}`,
@@ -100,6 +109,7 @@ export function installDashboardContainer(opts: DashboardInstallOptions): void {
   const workspaceRoot = resolve(opts.workspaceRoot ?? process.cwd());
 
   ensureEveNetwork();
+  ensureSynapNetwork();
 
   if (opts.rebuild || !imageExists()) {
     buildImage(workspaceRoot);

@@ -19,6 +19,11 @@
  *      `/opt/synap-backend/.env`, and `docker inspect` on the backend
  *      container. Same discovery logic as `eve setup admin`.
  *
+ * After a successful claim, the endpoint fires an async auto-provision
+ * call (`POST /api/pod/auto-provision`) to mint per-agent Hub Protocol
+ * keys for any running components. This ensures AI consumers (OpenWebUI,
+ * OpenClaw, Hermes) work immediately without a manual `eve install`.
+ *
  * Returns:
  *   • Whatever the upstream returned (status + JSON), with the token
  *     stripped from the request — never echoed back.
@@ -32,7 +37,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { readEveSecrets, resolveSynapUrl } from "@eve/dna";
+import { readEveSecrets, resolveSynapUrl, resolveBackendUrl } from "@eve/dna";
 import { resolveProvisioningToken } from "@eve/lifecycle";
 import { requireAuth } from "@/lib/auth-server";
 
@@ -113,7 +118,8 @@ export async function POST(req: Request) {
     );
   }
 
-  const base = podUrl.replace(/\/+$/, "");
+  // Use the direct backend URL — avoids Traefik routing issues.
+  const base = resolveBackendUrl().replace(/\/+$/, "");
 
   try {
     const res = await fetch(`${base}/api/admin/bootstrap/claim`, {
@@ -136,6 +142,22 @@ export async function POST(req: Request) {
     // the invite tied to the email).
     if (res.ok) {
       const signupUrl = `${base}/auth/registration?invite=${encodeURIComponent(email)}`;
+
+      // Fire-and-forget auto-provision: after a successful claim, mint
+      // per-agent Hub Protocol keys for any running components so AI
+      // consumers (OpenWebUI, OpenClaw, Hermes) don't need a manual
+      // `eve install`. Errors are silently swallowed — the operator can
+      // always run the flow manually later.
+      void (async () => {
+        try {
+          await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || ""}/api/pod/auto-provision`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ force: false }),
+          });
+        } catch { /* auto-provision failure is non-critical */ }
+      })();
+
       return NextResponse.json(
         {
           ...(upstream ?? {}),

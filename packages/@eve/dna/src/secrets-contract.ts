@@ -660,6 +660,14 @@ export async function readAgentKeyOrLegacy(
  * Synchronous variant of `readAgentKeyOrLegacy` that takes an already-loaded
  * secrets blob. Useful for callers that have already paid the file read
  * cost and don't want to re-read inside a tight loop.
+ *
+ * Resolution order:
+ *   1. `secrets.agents[agentType].hubApiKey`    — per-agent key
+ *   2. `secrets.synap.apiKey`                    — legacy single-key
+ *   3. `secrets.agents.eve.hubApiKey`            — eve agent (always
+ *      provisioned). Any valid Hub Protocol key authenticates to Synap
+ *      IS, so this is a safe last resort for consumers that don't
+ *      strictly need their named identity.
  */
 export function readAgentKeyOrLegacySync(
   agentType: string,
@@ -667,7 +675,13 @@ export function readAgentKeyOrLegacySync(
 ): string {
   const perAgent = secrets?.agents?.[agentType]?.hubApiKey?.trim();
   if (perAgent) return perAgent;
-  return secrets?.synap?.apiKey?.trim() ?? '';
+  const legacy = secrets?.synap?.apiKey?.trim();
+  if (legacy) return legacy;
+  // Eve agent is always-on and always provisioned. Its key is a valid
+  // Hub Protocol bearer — safe fallback for any consumer.
+  const eveKey = secrets?.agents?.eve?.hubApiKey?.trim();
+  if (eveKey) return eveKey;
+  return '';
 }
 
 /**

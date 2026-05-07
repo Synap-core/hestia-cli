@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import {
+  discoverPodConfig,
   entityStateManager,
   type SetupProfileKind,
   writeSetupProfile,
@@ -127,7 +128,16 @@ export async function runInstall(opts: InstallOptions): Promise<void> {
   // -----------------------------------------------------------------
   // 2. Resolve shared settings (domain, email, model, AI mode)
   // -----------------------------------------------------------------
-  const domain = opts.domain || 'localhost';
+  let domain = opts.domain || 'localhost';
+  // When the user didn't pass --domain explicitly, probe on-disk artefacts
+  // so an install on a server that already has a real domain in its .env
+  // gets the right value without the operator needing to re-type it.
+  if (domain === 'localhost') {
+    const discovered = discoverPodConfig();
+    if (discovered.domain) {
+      domain = discovered.domain;
+    }
+  }
   const email = opts.email || process.env.LETSENCRYPT_EMAIL;
 
   // Legacy flags from the old setup command

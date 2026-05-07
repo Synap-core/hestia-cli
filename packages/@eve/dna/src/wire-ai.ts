@@ -25,6 +25,7 @@ import type { EveSecrets } from './secrets-contract.js';
 import { readAgentKeyOrLegacySync } from './secrets-contract.js';
 import { COMPONENTS } from './components.js';
 import { writeHermesConfigYaml, generateSynapPlugin } from './builder-hub-wiring.js';
+import { getStatus, getAdminJwt, getConfig, saveConfig } from './openwebui-admin.js';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const require = createRequire(import.meta.url);
@@ -299,19 +300,16 @@ function wireOpenclaw(secrets: EveSecrets | null): WireAiResult {
  * Upsert custom provider model sources into OpenWebUI's DB via its admin API.
  *
  * OpenWebUI only reads OPENAI_API_BASE_URLS from .env on first boot. Thereafter
- * its SQLite DB is authoritative — so we must use the POST /api/v1/configs/
- * endpoint to add or update custom provider entries.
- *
- * This mirrors the `wireHermesViaOpenwebuiApi` pattern from @eve/lifecycle.
+ * its SQLite DB is authoritative — use getConfig/saveConfig from openwebui-admin.
  */
-function adminUpsertOpenwebuiCustomProviders(
+async function adminUpsertOpenwebuiCustomProviders(
   owAdminUrl: string,
   existingKeys: string[],
   existingUrls: string[],
   customUrls: string[],
   customKeys: string[],
-): void {
-  // Wait briefly for OpenWebUI to be reachable (it may have just started).
+): Promise<void> {
+  // Wait briefly for OpenWebUI to be reachable.
   let ready = false;
   for (let i = 0; i < 4; i++) {
     try {
@@ -322,61 +320,22 @@ function adminUpsertOpenwebuiCustomProviders(
       try { execSync('sleep 3', { stdio: 'ignore' }); } catch { /* */ }
     }
   }
-  if (!ready) {
-    // Already logged via the env write — caller handled it.
-    return;
-  }
+  if (!ready) return;
 
-  // Read WEBUI_SECRET_KEY from OpenWebUI's .env to forge admin JWT.
-  let webuiSecret = '';
-  try {
-    const owEnv = readFileSync('/opt/openwebui/.env', 'utf-8');
-    const match = owEnv.split('\n').find(l => l.startsWith('WEBUI_SECRET_KEY='));
-    webuiSecret = match?.split('=', 2)[1]?.trim() ?? '';
-  } catch { /* can't read — skip admin API */ }
-  if (!webuiSecret) return;
+  // Extract port from owAdminUrl (e.g. "http://127.0.0.1:3002/api/v1" → 3002).
+  const portMatch = owAdminUrl.match(/:\d+/);
+  const hostPort = portMatch ? Number(portMatch[0].slice(1)) : undefined;
 
-  // Extract admin user id + email from OpenWebUI's SQLite DB.
-  let adminId = '';
-  let adminEmail = '';
-  try {
-    const dbPath = '/var/lib/openwebui/webui.db';
-    const row = execSync(
-      `docker exec hestia-openwebui python3 -c ` +
-        `"import sqlite3; r=sqlite3.connect('/app/backend/data/webui.db').execute("SELECT id,email FROM user WHERE role='admin' LIMIT 1").fetchone(); ` +
-        `print(f'{r[0]}|{r[1]}') if r else print('')"`,
-      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
-    ).trim();
-    if (row) [adminId, adminEmail] = row.split('|');
-  } catch { /* container not up or no admin yet */ }
-  if (!adminId) return;
-
-  // Forge a JWT that OpenWebUI's admin API will accept.
-  let jwtToken = '';
-  try {
-    const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
-    const payload = Buffer.from(JSON.stringify({
-      id: adminId,
-      email: adminEmail,
-      iat: Math.floor(Date.now() / 1000),
-      exp: Math.floor(Date.now() / 1000) + 300,
-    })).toString('base64url');
-    const sig = createHmac('sha256', webuiSecret).update(`${header}.${payload}`).digest('base64url');
-    jwtToken = `${header}.${payload}.${sig}`;
-  } catch { return; }
+  const jwt = await getAdminJwt(hostPort);
+  if (!jwt) return;
 
   try {
-    const hAuth = `Bearer ${jwtToken}`;
-    const hCtype = 'application/json';
+    const cfg = await getConfig(jwt, hostPort);
+    if (!cfg) return;
 
-    // Read current config.
-    const cfgText = execSync(`curl -s ${owAdminUrl}/configs -H "${hAuth}" -H "${hCtype}"`, { encoding: 'utf-8' });
-    const cfg = JSON.parse(cfgText) as Record<string, unknown>;
-
-    // Upsert custom providers into the openai connections list.
     const openai = (cfg.openai ?? {}) as Record<string, unknown>;
-    const urls: string[] = Array.isArray(openai.api_base_urls) ? [...openai.api_base_urls] as string[] : [];
-    const keys: string[] = Array.isArray(openai.api_keys) ? [...openai.api_keys] as string[] : [];
+    const urls: string[] = Array.isArray(openai.api_base_urls) ? [...openai.api_base_urls] : [];
+    const keys: string[] = Array.isArray(openai.api_keys) ? [...openai.api_keys] : [];
 
     // Add custom providers if not already present.
     for (let i = 0; i < customUrls.length; i++) {
@@ -397,19 +356,13 @@ function adminUpsertOpenwebuiCustomProviders(
       }
     }
 
-    // Pad keys list to match urls length.
     while (keys.length < urls.length) keys.push('');
 
     openai.api_base_urls = urls;
     openai.api_keys = keys;
     cfg.openai = openai;
 
-    const body = JSON.stringify(cfg);
-    const safeBody = body.replace(/'/g, "'\\''");
-    execSync(
-      `curl -s -X POST ${owAdminUrl}/configs -H "${hAuth}" -H "${hCtype}" -d '${safeBody}'`,
-      { stdio: ['pipe', 'pipe', 'pipe'] },
-    );
+    await saveConfig(jwt, cfg, hostPort);
   } catch { /* non-fatal */ }
 }
 
@@ -554,7 +507,9 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
       const owService = COMPONENTS.find(c => c.id === 'openwebui')?.service;
       const owPort = owService?.hostPort ?? owService?.internalPort ?? 3002;
       const owAdminUrl = `http://127.0.0.1:${owPort}/api/v1`;
-      adminUpsertOpenwebuiCustomProviders(owAdminUrl, apiKeys, apiBaseUrls, customUrls, customKeys);
+      // Fire-and-forget — env file + compose up -d is the primary path.
+      // The admin API call is best-effort to avoid requiring a restart.
+      adminUpsertOpenwebuiCustomProviders(owAdminUrl, apiKeys, apiBaseUrls, customUrls, customKeys).catch(() => { /* non-fatal */ });
     }
   } catch { /* non-fatal — env file is still written */ }
 
@@ -694,6 +649,10 @@ export const AI_CONSUMERS_NEEDING_RECREATE: ReadonlySet<string> = new Set([
   // reuses those stale values. Any channel credential or AI config change
   // requires a full recreate so the updated hermes.env is re-read.
   'hermes',
+  // OpenWebUI reads OPENAI_API_BASE_URLS from .env on first boot. `docker
+  // restart` won't re-read the file — compose up -d is required. The admin
+  // API can update config without restart, but the primary path uses recreate.
+  'openwebui',
 ]);
 
 /**

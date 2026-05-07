@@ -38,6 +38,7 @@ import { NextResponse } from "next/server";
 import {
   readCpUserSession,
   resolveSynapUrl,
+  resolveBackendUrl,
   readEveSecrets,
   writePodUserToken,
 } from "@eve/dna";
@@ -164,9 +165,12 @@ export async function POST(req: Request) {
   }
 
   // ── Step 2: forward to pod /api/handshake to mint Kratos session ─────
+  // Use direct backend URL (Docker DNS) — avoids Traefik round-trip.
+  const podDockerUrl = resolveBackendUrl();
+  const podDockerBase = podDockerUrl.replace(/\/+$/, "");
   let podHandshakeRes: Response;
   try {
-    podHandshakeRes = await fetch(`${podBase}/api/handshake`, {
+    podHandshakeRes = await fetch(`${podDockerBase}/api/handshake`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -233,6 +237,20 @@ export async function POST(req: Request) {
       { status: 500 },
     );
   }
+
+  // Fire-and-forget auto-provision: after a successful CP→pod claim,
+  // mint per-agent Hub Protocol keys for any running components. This
+  // ensures AI consumers (OpenWebUI, OpenClaw, Hermes) work without
+  // requiring a manual `eve install` run. Errors are silently swallowed.
+  void (async () => {
+    try {
+      await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || ""}/api/pod/auto-provision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force: false }),
+      });
+    } catch { /* auto-provision failure is non-critical */ }
+  })();
 
   return NextResponse.json({
     ok: true,

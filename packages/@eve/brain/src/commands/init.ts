@@ -1,5 +1,5 @@
 import type { Command } from 'commander';
-import { EntityStateManager, entityStateManager, readEveSecrets, getServerIp } from '@eve/dna';
+import { EntityStateManager, entityStateManager, readEveSecrets, getServerIp, discoverPodConfig } from '@eve/dna';
 
 import { OllamaService } from '../lib/ollama.js';
 import { execa, ensureNetwork } from '../lib/exec.js';
@@ -56,7 +56,13 @@ export async function runBrainInit(options: BrainInitOptions): Promise<void> {
     process.env.SYNAP_REPO_ROOT = repo;
   }
 
-  const domain = options.domain?.trim() || 'localhost';
+  let domain = options.domain?.trim() || 'localhost';
+  if (domain === 'localhost') {
+    const discovered = discoverPodConfig();
+    if (discovered.domain) {
+      domain = discovered.domain;
+    }
+  }
   const email = options.email?.trim() || process.env.LETSENCRYPT_EMAIL?.trim() || process.env.SYNAP_LETSENCRYPT_EMAIL?.trim();
   const adminEmail = options.adminEmail?.trim() || process.env.ADMIN_EMAIL?.trim();
   const adminPassword = options.adminPassword?.trim() || process.env.ADMIN_PASSWORD?.trim();

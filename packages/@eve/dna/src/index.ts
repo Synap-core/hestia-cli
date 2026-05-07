@@ -6,27 +6,20 @@
  * - Credentials storage
  * - Entity state tracking
  * - Organ health monitoring
- * - Docker Compose generation
- * 
+ *
  * @example
  * ```typescript
  * import { configManager, credentialsManager, entityStateManager } from '@eve/dna';
- * 
+ *
  * // Load configuration
  * const config = await configManager.loadConfig();
- * 
+ *
  * // Manage credentials
  * await credentialsManager.setCredential('api-key', 'secret123');
- * 
+ *
  * // Track entity state
  * await entityStateManager.updateOrgan('brain', 'ready');
  * const completeness = await entityStateManager.getCompleteness();
- * 
- * // Generate docker-compose.yml
- * import { DockerComposeGenerator } from '@eve/dna';
- * const generator = new DockerComposeGenerator();
- * generator.addBrainServices();
- * await generator.toFile('./docker-compose.yml');
  * ```
  */
 
@@ -66,9 +59,6 @@ export { DEFAULT_HERMES_CONFIG } from './types.js';
 export { ConfigManager, configManager } from './config.js';
 export { CredentialsManager, credentialsManager } from './credentials.js';
 export { EntityStateManager, entityStateManager, migrateStateDirectory } from './entity-state.js';
-
-// Docker Compose Generator
-export { DockerComposeGenerator, createDockerComposeGenerator } from './docker-compose-generator.js';
 
 // Kratos config generation
 export {
@@ -174,7 +164,9 @@ export {
   publicComponentUrl,
   isLoopbackUrl,
   resolveSynapUrl,
+  resolveBackendUrl,
   SYNAP_BACKEND_INTERNAL_URL,
+  SYNAP_BACKEND_DOCKER_URL,
   SYNAP_HOST_LOOPBACK_PORT,
 } from './components.js';
 
@@ -212,6 +204,21 @@ export {
   AI_CONSUMERS,
   AI_CONSUMERS_NEEDING_RECREATE,
 } from './wire-ai.js';
+
+// OpenWebUI admin API client — JWT forging, config CRUD, pipelines
+export {
+  type AdminUser,
+  type PipelineRegistration,
+  type OpenWebuiConfig,
+  type OpenwebuiStatus,
+  getStatus,
+  getAdminJwt,
+  getConfig,
+  saveConfig,
+  listPipelines,
+  registerPipeline,
+  upsertModelSource,
+} from './openwebui-admin.js';
 
 export {
   DEFAULT_HUB_PATH,

@@ -42,6 +42,7 @@ import {
 } from '@eve/lifecycle';
 import {
   AGENTS,
+  discoverPodConfig,
   entityStateManager,
   findPodDeployDir,
   readAgentKey,
@@ -486,7 +487,16 @@ async function runProvision(opts: { agent?: string; email?: string }): Promise<v
   // ------------------------------------------------------------------
   try {
     const secrets = await readEveSecrets(process.cwd());
-    const domain = secrets?.domain?.primary ?? 'localhost';
+    // Start with the explicitly configured domain; if it's still 'localhost'
+    // (the install-time default), probe on-disk artefacts for the real domain.
+    let domain = secrets?.domain?.primary ?? 'localhost';
+    if (!domain || domain === 'localhost') {
+      const discovered = discoverPodConfig();
+      if (discovered.domain) {
+        domain = discovered.domain;
+        console.log(`  Discovered domain from disk: ${domain}`);
+      }
+    }
     const deployDir = findPodDeployDir() ?? '/opt/synap-backend';
     printInfo(`Ensuring Kratos is running (deploy dir: ${deployDir})…`);
     await ensureKratosRunning(deployDir, domain);
