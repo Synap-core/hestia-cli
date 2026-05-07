@@ -328,40 +328,222 @@ export async function registerPipeline(
 }
 
 /**
- * Add or update a model source in the OpenWebUI config.
- *
- * OpenWebUI stores model sources in: config.openai.api_base_urls[] + api_keys[]
- * URLs and keys are parallel arrays of the same length.
- *
- * Returns true if the config was updated and saved successfully.
+ * Model source entry — a single AI backend that OpenWebUI can call.
  */
-export async function upsertModelSource(
+export interface ModelSource {
+  /** OpenAI-compat base URL, e.g. "http://eve-brain-synap:4000/v1" */
+  url: string;
+  /** API key for authenticating to the backend */
+  apiKey: string;
+  /** Display name shown in the model picker, e.g. "Synap IS" */
+  displayName: string;
+  /**
+   * Model identifiers to expose in the picker.
+   * When omitted, the models list is fetched from the backend's /v1/models
+   * endpoint on demand.
+   */
+  models?: string[];
+}
+
+/**
+ * Model source metadata as stored in OpenWebUI's config under
+ * `config.openai.metadata[<url>]`.
+ */
+export interface ModelSourceMetadata {
+  name: string;
+  /** e.g. "synap/auto;synap/balanced" */
+  models?: string;
+}
+
+// ── Model Source Management ──
+
+/**
+ * List all model sources currently configured in OpenWebUI.
+ * Returns an empty array if the API is unreachable.
+ */
+export async function listModelSources(jwt: string, hostPort?: number): Promise<ModelSource[]> {
+  const config = await getConfig(jwt, hostPort);
+  if (!config) return [];
+
+  const openai = (config.openai ?? {}) as Record<string, unknown>;
+  const urls: string[] = Array.isArray(openai.api_base_urls) ? openai.api_base_urls : [];
+  const keys: string[] = Array.isArray(openai.api_keys) ? openai.api_keys : [];
+  const metadata: Record<string, ModelSourceMetadata> = (openai.metadata ?? {}) as Record<string, ModelSourceMetadata>;
+
+  return urls.map((url, i) => ({
+    url,
+    apiKey: keys[i] ?? '',
+    displayName: metadata[url]?.name ?? url,
+  }));
+}
+
+/**
+ * Register a single model source as both:
+ *   1. An OpenWebUI config entry (api_base_urls + api_keys + metadata)
+ *   2. A manifold pipeline in /api/v1/pipelines — so it appears in the model
+ *      picker with a proper display name and model list.
+ *
+ * OpenWebUI manifold pipelines accept:
+ *   - `type: "manifold"` — exposes custom models in the selector
+ *   - `inlet` hook — runs before every chat, can transform the request
+ *
+ * Idempotent — skips if the URL is already registered.
+ *
+ * Returns true if registered (or already registered), false on error.
+ */
+export async function registerModelSource(
   jwt: string,
-  url: string,
-  apiKey: string,
+  modelSource: ModelSource,
   hostPort?: number,
 ): Promise<boolean> {
+  const baseUrl = resolveAdminUrl(hostPort);
+
+  // 1. Upsert into config.openai
   const config = await getConfig(jwt, hostPort);
   if (!config) return false;
 
   const openai = (config.openai ?? {}) as Record<string, unknown>;
   const urls: string[] = Array.isArray(openai.api_base_urls) ? [...openai.api_base_urls] : [];
   const keys: string[] = Array.isArray(openai.api_keys) ? [...openai.api_keys] : [];
+  const metadata: Record<string, ModelSourceMetadata> = (openai.metadata ?? {}) as Record<string, ModelSourceMetadata>;
 
-  const idx = urls.indexOf(url);
-  if (idx === -1) {
-    urls.push(url);
-    keys.push(apiKey);
+  const existingIdx = urls.indexOf(modelSource.url);
+  if (existingIdx === -1) {
+    urls.push(modelSource.url);
+    keys.push(modelSource.apiKey);
   } else {
-    keys[idx] = apiKey;
+    keys[existingIdx] = modelSource.apiKey;
   }
 
-  // Pad keys to match URLs length
+  // Pad keys
+  while (keys.length < urls.length) keys.push('');
+
+  // Update metadata
+  metadata[modelSource.url] = {
+    name: modelSource.displayName,
+    models: modelSource.models?.join(';'),
+  };
+
+  openai.api_base_urls = urls;
+  openai.api_keys = keys;
+  openai.metadata = metadata;
+  config.openai = openai;
+
+  if (!await saveConfig(jwt, config, hostPort)) return false;
+
+  // 2. Register as manifold pipeline (for model picker visibility)
+  return registerManifoldPipeline(jwt, modelSource, hostPort);
+}
+
+/**
+ * Register a manifold pipeline in OpenWebUI so the model source appears
+ * in the model picker with its display name and model list.
+ *
+ * OpenWebUI manifold pipelines expose models under a custom namespace
+ * (e.g. "synap/auto", "synap/balanced") in the chat model selector.
+ *
+ * The manifold payload sent to /pipelines/add:
+ *   {
+ *     uid: "<url>",           // unique ID (the URL serves as the namespace)
+ *     name: "<displayName>",  // shown in picker
+ *     type: "manifold",
+ *     hook: "inlet",
+ *     models: [...]           // model list (omitted = auto-fetched from /v1/models)
+ *   }
+ */
+async function registerManifoldPipeline(
+  jwt: string,
+  modelSource: ModelSource,
+  hostPort?: number,
+): Promise<boolean> {
+  const baseUrl = resolveAdminUrl(hostPort);
+
+  // Check if already registered
+  const existing = await listPipelines(jwt, hostPort);
+  if (existing.some(p => p.uid === modelSource.url)) {
+    return true; // already registered
+  }
+
+  const pipelineDef: PipelineRegistration = {
+    url: modelSource.url,
+    name: modelSource.displayName,
+    pipelines: [{
+      uid: modelSource.url,
+      name: modelSource.displayName,
+      description: `Model source: ${modelSource.url}`,
+      type: 'manifold',
+      hook: 'inlet',
+      ...(modelSource.models?.length ? { models: modelSource.models } : {}),
+    }],
+  };
+
+  try {
+    const res = await fetch(`${baseUrl}/api/v1/pipelines/add`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(pipelineDef),
+    });
+    if (res.ok) return true;
+    const body = await res.json().catch(() => ({}));
+    if (String(body.detail ?? '').toLowerCase().includes('already')) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Bulk upsert all model sources. Writes all URLs, keys, and metadata
+ * in a single config POST (atomic), then registers each as a manifold
+ * pipeline (best-effort — individual failures don't roll back the config).
+ *
+ * Returns the count of model sources successfully registered.
+ */
+export async function upsertAllModelSources(
+  jwt: string,
+  modelSources: ModelSource[],
+  hostPort?: number,
+): Promise<number> {
+  if (modelSources.length === 0) return 0;
+
+  const config = await getConfig(jwt, hostPort);
+  if (!config) return 0;
+
+  const openai = (config.openai ?? {}) as Record<string, unknown>;
+  const urls: string[] = Array.isArray(openai.api_base_urls) ? [...openai.api_base_urls] : [];
+  const keys: string[] = Array.isArray(openai.api_keys) ? [...openai.api_keys] : [];
+  const metadata: Record<string, ModelSourceMetadata> = (openai.metadata ?? {}) as Record<string, ModelSourceMetadata>;
+
+  for (const ms of modelSources) {
+    const idx = urls.indexOf(ms.url);
+    if (idx === -1) {
+      urls.push(ms.url);
+      keys.push(ms.apiKey);
+    } else {
+      keys[idx] = ms.apiKey;
+    }
+    metadata[ms.url] = {
+      name: ms.displayName,
+      models: ms.models?.join(';'),
+    };
+  }
+
   while (keys.length < urls.length) keys.push('');
 
   openai.api_base_urls = urls;
   openai.api_keys = keys;
+  openai.metadata = metadata;
   config.openai = openai;
 
-  return saveConfig(jwt, config, hostPort);
+  if (!await saveConfig(jwt, config, hostPort)) return 0;
+
+  // Register each as manifold pipeline (best-effort)
+  let registered = 0;
+  for (const ms of modelSources) {
+    if (await registerManifoldPipeline(jwt, ms, hostPort)) {
+      registered++;
+    }
+  }
+
+  return registered;
 }

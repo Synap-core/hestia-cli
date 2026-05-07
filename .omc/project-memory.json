@@ -1,0 +1,171 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1778180963562,
+  "projectRoot": "/Users/antoine/Documents/Code/synap/hestia-cli",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": ">=18.0.0",
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      }
+    ],
+    "frameworks": [],
+    "packageManager": "pnpm",
+    "runtime": "Node.js 18.0.0"
+  },
+  "build": {
+    "buildCommand": "pnpm build",
+    "testCommand": "pnpm test",
+    "lintCommand": "pnpm lint",
+    "devCommand": null,
+    "scripts": {
+      "build": "pnpm -r run build",
+      "build:new": "pnpm --filter \"@eve/*\" --filter @eve/cli build",
+      "eve": "pnpm --filter @eve/cli exec eve",
+      "setup": "pnpm --filter @eve/cli exec eve setup",
+      "prepush": "pnpm -r run build && pnpm run check:manifest",
+      "setup:hooks": "git config core.hooksPath .githooks",
+      "typecheck": "pnpm -r run typecheck",
+      "lint": "pnpm -r run lint",
+      "test": "pnpm -r run test",
+      "cli": "pnpm --filter @eve/cli",
+      "validate": "pnpm --filter @eve/cli run validate",
+      "verify": "bash verify.sh",
+      "check:manifest": "node scripts/check-manifest.mjs",
+      "release:bundle": "bash scripts/create-release-bundle.sh"
+    }
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": true,
+    "workspaces": [
+      "packages/@eve/*",
+      "packages/eve-cli",
+      "packages/cli-kit",
+      "packages/types",
+      "packages/utils",
+      "packages/usb",
+      "packages/install"
+    ],
+    "mainDirectories": [
+      "docs",
+      "scripts"
+    ],
+    "gitBranches": null
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "dist": {
+      "path": "dist",
+      "purpose": "Distribution/build output",
+      "fileCount": 2,
+      "lastAccessed": 1778180963529,
+      "keyFiles": [
+        "index.d.mts",
+        "index.mjs"
+      ]
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 2,
+      "lastAccessed": 1778180963532,
+      "keyFiles": [
+        "openclaw-vs-hermes.md",
+        "openwebui-integration-strategy.md"
+      ]
+    },
+    "packages": {
+      "path": "packages",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1778180963533,
+      "keyFiles": []
+    },
+    "scripts": {
+      "path": "scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 3,
+      "lastAccessed": 1778180963533,
+      "keyFiles": [
+        "check-manifest.mjs",
+        "create-release-bundle.sh",
+        "self-update.sh"
+      ]
+    },
+    "packages/types": {
+      "path": "packages/types",
+      "purpose": "Type definitions",
+      "fileCount": 2,
+      "lastAccessed": 1778180963535,
+      "keyFiles": [
+        "package.json",
+        "tsconfig.json"
+      ]
+    },
+    "packages/utils": {
+      "path": "packages/utils",
+      "purpose": "Utility functions",
+      "fileCount": 2,
+      "lastAccessed": 1778180963535,
+      "keyFiles": [
+        "package.json",
+        "tsconfig.json"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "packages/@eve/lifecycle/src/index.ts",
+      "accessCount": 31,
+      "lastAccessed": 1778182326973,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/dna/src/wire-ai.ts",
+      "accessCount": 7,
+      "lastAccessed": 1778181925209,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/dna/src/openwebui-admin.ts",
+      "accessCount": 5,
+      "lastAccessed": 1778181699930,
+      "type": "file"
+    },
+    {
+      "path": "",
+      "accessCount": 3,
+      "lastAccessed": 1778181018662,
+      "type": "directory"
+    },
+    {
+      "path": "packages/@eve/dna/src/index.ts",
+      "accessCount": 3,
+      "lastAccessed": 1778181874680,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/lifecycle/src",
+      "accessCount": 3,
+      "lastAccessed": 1778182172360,
+      "type": "directory"
+    },
+    {
+      "path": "packages/@eve/dna/src",
+      "accessCount": 1,
+      "lastAccessed": 1778181720854,
+      "type": "directory"
+    }
+  ],
+  "userDirectives": []
+}

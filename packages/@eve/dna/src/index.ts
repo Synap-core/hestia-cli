@@ -202,19 +202,23 @@ export {
   AI_CONSUMERS_NEEDING_RECREATE,
 } from './wire-ai.js';
 
-// OpenWebUI admin API client — JWT forging, config CRUD, pipelines
+// OpenWebUI admin API client — JWT forging, config CRUD, pipelines, model sources
 export {
   type AdminUser,
   type PipelineRegistration,
   type OpenWebuiConfig,
   type OpenwebuiStatus,
+  type ModelSource,
+  type ModelSourceMetadata,
   getStatus,
   getAdminJwt,
   getConfig,
   saveConfig,
   listPipelines,
   registerPipeline,
-  upsertModelSource,
+  listModelSources,
+  registerModelSource,
+  upsertAllModelSources,
 } from './openwebui-admin.js';
 
 export {

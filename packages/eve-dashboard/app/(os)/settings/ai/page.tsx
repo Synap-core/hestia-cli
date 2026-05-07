@@ -68,6 +68,26 @@ const PROVIDER_LABELS: Record<string, string> = {
   ollama:     "Ollama (local)",
 };
 
+const COMPONENT_LABELS: Record<string, string> = {
+  "synap-is":   "Synap IS",
+  "openclaw":   "OpenClaw",
+  "open-webui": "Open WebUI",
+  "hermes":     "Hermes",
+};
+
+function getComponentLabel(id: string): string {
+  return COMPONENT_LABELS[id] ?? id;
+}
+
+function formatOutcome(outcome: string): string {
+  switch (outcome) {
+    case "ok":          return "OK";
+    case "failed":      return "failed";
+    case "skipped":     return "skipped";
+    default:            return outcome;
+  }
+}
+
 function getProviderLabel(id: string): string {
   return PROVIDER_LABELS[id] ?? id.split("custom-")[1] ?? id;
 }
@@ -356,10 +376,18 @@ export default function AiProvidersPage() {
     try {
       const res = await fetch("/api/ai/apply", { method: "POST", credentials: "include" });
       const data = await res.json() as ApplyResult;
-      if (data.ok) {
-        addToast({ title: `Applied: ${data.summary}`, color: "success" });
+      const lines = data.results.map(r =>
+        `  ${getComponentLabel(r.id)}: ${formatOutcome(r.outcome)}`,
+      ).join("\n");
+      const color = data.ok ? "success" : "warning";
+      if (lines) {
+        addToast({
+          title: data.ok ? "Apply complete" : "Apply completed with errors",
+          description: lines,
+          color,
+        });
       } else {
-        addToast({ title: `Partial: ${data.summary}`, color: "warning" });
+        addToast({ title: "No components to apply", color: "success" });
       }
     } catch {
       addToast({ title: "Apply failed", color: "danger" });

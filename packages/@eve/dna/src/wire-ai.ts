@@ -18,12 +18,13 @@
  */
 
 import { execSync } from 'node:child_process';
-import { writeFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { writeFileSync, existsSync, mkdirSync, readFileSync, homedir } from 'node:fs';
+import { join, dirname, resolve } from 'node:path';
 import type { EveSecrets } from './secrets-contract.js';
 import { readAgentKeyOrLegacySync } from './secrets-contract.js';
 import { COMPONENTS } from './components.js';
 import { writeHermesConfigYaml, generateSynapPlugin } from './builder-hub-wiring.js';
+import { getStatus, getAdminJwt, upsertAllModelSources, type ModelSource } from './openwebui-admin.js';
 
 export interface WireAiResult {
   /** Component id this result is for. */
@@ -418,6 +419,50 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
       detail: errMsg,
     };
   }
+  // Fire-and-forget: register model sources via admin API so they appear in the
+  // picker immediately (don't wait for OpenWebUI to seed its DB from .env).
+  // This uses the same URL/key lists built above, translated into ModelSource[]
+  // with display names. Individual pipeline registration failures don't affect
+  // the config upsert — we just count successes.
+  void (async () => {
+    try {
+      const modelSources: ModelSource[] = [];
+      // Always register Synap IS as first model source
+      modelSources.push({
+        url: 'http://eve-brain-synap:4000/v1',
+        apiKey: synapApiKey,
+        displayName: 'Synap IS',
+      });
+      // Register Hermes if it was wired into the list
+      if (hermesApiServerKey && apiBaseUrls.includes('http://eve-builder-hermes:8642/v1')) {
+        modelSources.push({
+          url: 'http://eve-builder-hermes:8642/v1',
+          apiKey: hermesApiServerKey,
+          displayName: 'Hermes Gateway',
+        });
+      }
+      // Register custom providers
+      for (const p of providers) {
+        if (!p.enabled || !p.id.startsWith('custom-')) continue;
+        if (!p.baseUrl) continue;
+        const url = `${p.baseUrl.replace(/\/v1$/, '')}/v1`;
+        modelSources.push({
+          url,
+          apiKey: p.apiKey ?? '',
+          displayName: p.name ?? p.id,
+        });
+      }
+      if (modelSources.length > 0) {
+        const jwt = await getAdminJwt();
+        if (jwt) {
+          const registered = await upsertAllModelSources(jwt, modelSources);
+          // Non-fatal — logging would go to dashboard/CLI stream
+          if (registered === 0) { /* likely config fetch failed, silently ok */ }
+        }
+      }
+    } catch { /* non-fatal admin API upsert */ }
+  })();
+
   const hermesNote = hermesApiServerKey ? ' + Hermes gateway' : '';
   return {
     id: 'openwebui',
@@ -482,10 +527,48 @@ function wireHermes(secrets: EveSecrets | null): WireAiResult {
     generateSynapPlugin();
   } catch { /* non-fatal — hermes.env wiring already succeeded */ }
 
-  // Restart Hermes container so the new config is picked up
+  // Recreate Hermes container so the updated env file (including API_SERVER_KEY)
+  // is picked up. Docker bakes env-file values into the container spec at creation;
+  // `docker restart` reuses those stale values.
   if (isContainerRunning('eve-builder-hermes')) {
-    dockerRestart('eve-builder-hermes');
+    try {
+      execSync('docker rm -f eve-builder-hermes', { stdio: 'ignore' });
+    } catch { /* already gone */ }
   }
+
+  // Re-run docker run with the fresh env file + updated config.
+  // This mirrors the install recipe in lifecycle/index.ts so wiring and first
+  // install stay in sync. Fire-and-forget: if docker is down, the next add/update
+  // cycle will catch up.
+  try {
+    const home = homedir();
+    const hermesHome = join(home, '.eve', 'hermes');
+    const hermesEnv = join(home, '.eve', 'hermes.env');
+    const skillsDir = join(home, '.eve', 'skills');
+    mkdirSync(hermesHome, { recursive: true });
+    mkdirSync(skillsDir, { recursive: true });
+
+    const args = [
+      'run', '-d',
+      '--name', 'eve-builder-hermes',
+      '--network', 'eve-network',
+      '--restart', 'unless-stopped',
+      '-p', '8642:8642',
+      '-p', '9119:9119',
+      '-p', '9120:9120',
+      '-v', `${hermesHome}:/opt/data`,
+      '-v', `${skillsDir}:/opt/data/skills:ro`,
+      '--env-file', hermesEnv,
+      '-e', 'HERMES_HOME=/opt/data',
+      '-e', 'API_SERVER_ENABLED=true',
+      '-e', 'API_SERVER_PORT=8642',
+      '-e', 'DASHBOARD_PORT=9119',
+      '-e', 'MCP_SERVER_ENABLED=true',
+      '-e', 'MCP_SERVER_PORT=9120',
+      'nousresearch/hermes-agent:latest',
+    ];
+    execSync(`docker ${args.join(' ')}`, { stdio: 'pipe', timeout: 30_000 });
+  } catch { /* non-fatal — next add/update will pick up */ }
 
   return {
     id: 'hermes',

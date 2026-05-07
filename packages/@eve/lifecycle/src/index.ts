@@ -41,6 +41,8 @@ import {
   getStatus,
   getAdminJwt,
   registerPipeline as registerPipelineApi,
+  upsertAllModelSources,
+  type ModelSource,
   type OpenwebuiStatus,
   type ComponentInfo,
   type EnsureOverrideResult,
@@ -914,9 +916,12 @@ async function* postUpdateReconcileHermes(): AsyncGenerator<LifecycleEvent> {
   try {
     // env file MUST be written before config.yaml — writeHermesConfigYaml reads
     // secrets that writeHermesEnvFile also reads, but the env file is what the
-    // container actually picks up (--env-file at docker run time). Since Hermes
-    // is in AI_CONSUMERS_NEEDING_RECREATE, the lifecycle will recreate the
-    // container after this hook runs, re-reading the fresh env file.
+    // container actually picks up (--env-file at docker run time). This hook
+    // runs inside runPostUpdateHooks(), which fires AFTER recreateContainer()
+    // has already started the new container — so the fresh env file must be
+    // written here to cover cases where the container was already recreated
+    // with a stale env file and needs a live rewrite (e.g. key rotation via
+    // wireHermes, or a post-upgrade env drift fix).
     await writeHermesEnvFile();
     await writeHermesConfigYaml();
     generateSynapPlugin();
@@ -994,14 +999,13 @@ async function* installHermes(): AsyncGenerator<LifecycleEvent> {
 
 /**
  * Patch `/opt/openwebui/.env` to add the Hermes OpenAI-compat gateway
- * as a model source. Safe to call multiple times — rewrites its own
- * managed block without touching the pipelines block.
+ * as a model source. Safe to call multiple times — strips its own marker
+ * block first so a re-run always produces a clean file.
  *
- * Design:
- *  - Uses a Hermes-specific marker so it doesn't clobber the pipelines block.
- *  - Always rewrites (doesn't bail out early) so a missing key is fixed on re-run.
- *  - Falls back to reading the key directly from hermes.env when secrets.json
- *    hasn't been updated yet (e.g. first run after manual key regeneration).
+ * The .env changes are baked into the container at creation time. They
+ * take effect on next full recreate (docker rm -f + docker run). For
+ * immediate model-picker visibility, `registerPipelinesInOpenwebui`
+ * calls the admin API upsert instead — which works without a recreate.
  */
 async function* wireHermesIntoOpenwebui(): AsyncGenerator<LifecycleEvent> {
   const owEnv = "/opt/openwebui/.env";
@@ -1019,6 +1023,18 @@ async function* wireHermesIntoOpenwebui(): AsyncGenerator<LifecycleEvent> {
       const hermesEnv = readFileSync(hermesEnvPath, "utf-8");
       hermesApiKey = hermesEnv.split("\n")
         .find(l => l.startsWith("API_SERVER_KEY="))?.split("=", 2)[1]?.trim() ?? "";
+      if (hermesApiKey) {
+        try {
+          const updated = await writeEveSecrets({
+            ...(secrets ?? {}),
+            builder: {
+              ...(secrets?.builder ?? {}),
+              hermes: { ...(secrets?.builder?.hermes ?? {}), apiServerKey: hermesApiKey },
+            },
+          });
+          hermesApiKey = updated.builder?.hermes?.apiServerKey ?? hermesApiKey;
+        } catch { /* non-fatal — fallback key is still valid */ }
+      }
     }
   }
 
@@ -1031,44 +1047,48 @@ async function* wireHermesIntoOpenwebui(): AsyncGenerator<LifecycleEvent> {
 
   const hermesUrl = "http://eve-builder-hermes:8642/v1";
   const hermesMarker = "# Hermes model-source — managed by @eve/lifecycle";
-  const pipelinesMarker = "# Pipelines wiring — managed by @eve/lifecycle";
 
-  // Read the current file. Strip only the Hermes block; leave the pipelines
-  // block intact so both wiring layers co-exist.
   const cur = readFileSync(owEnv, "utf-8");
+
+  // Strip existing Hermes block (if any) so the rewrite is always idempotent.
   let base = cur;
   if (base.includes(hermesMarker)) {
-    // Remove just the Hermes block (everything from marker to next blank line or EOF).
-    base = base.replace(new RegExp(`\n*${hermesMarker}[^\n]*(\n[^\n]+)*`, "g"), "").trimEnd();
+    // Remove from marker line through the last consecutive var line.
+    const lines = base.split("\n");
+    const filtered: string[] = [];
+    let skip = false;
+    for (const line of lines) {
+      if (line.includes(hermesMarker)) { skip = true; continue; }
+      if (skip) {
+        // Stop skipping when we hit a blank line or a non-var, non-comment line.
+        if (line.trim() === "" || (!line.startsWith("#") && !line.includes("="))) {
+          skip = false;
+          // Don't add this line back yet — re-add later if there's content.
+          continue;
+        }
+        // Skip var/comment lines inside the Hermes block.
+        continue;
+      }
+      filtered.push(line);
+    }
+    base = filtered.join("\n").trimEnd();
   }
 
-  // Read OPENAI_API_BASE_URLS / OPENAI_API_KEYS from the remainder (pipelines
-  // block or user config) so we can stitch them together properly.
+  // Read combined vars from the remainder so we can include Hermes.
   const getFromText = (text: string, key: string) =>
     text.split("\n").find(l => l.startsWith(`${key}=`))?.slice(key.length + 1).trim() ?? "";
 
   const existingUrls = getFromText(base, "OPENAI_API_BASE_URLS");
   const existingKeys = getFromText(base, "OPENAI_API_KEYS");
 
-  // Build the combined lists (Hermes appended after pipelines/IS, deduped).
   const allUrls = existingUrls && !existingUrls.includes(hermesUrl)
     ? `${existingUrls};${hermesUrl}`
     : existingUrls || hermesUrl;
   const urlCount = allUrls.split(";").length;
   const existingKeyList = existingKeys ? existingKeys.split(";") : [];
-  // Pad key list to match URL count — Hermes key goes at the end.
   while (existingKeyList.length < urlCount - 1) existingKeyList.push("");
   if (existingKeyList.length < urlCount) existingKeyList.push(hermesApiKey);
   const allKeys = existingKeyList.join(";");
-
-  // Strip the existing combined lines from the base if they're there (the
-  // pipelines block writes them; we'll re-write them in the Hermes block).
-  const stripped = base
-    .split("\n")
-    .filter(l => !l.startsWith("OPENAI_API_BASE_URLS=") && !l.startsWith("OPENAI_API_KEYS="))
-    .join("\n")
-    .replace(new RegExp(`${pipelinesMarker}\n*`), pipelinesMarker + "\n")
-    .trimEnd();
 
   const hermesBlock = [
     hermesMarker,
@@ -1076,13 +1096,11 @@ async function* wireHermesIntoOpenwebui(): AsyncGenerator<LifecycleEvent> {
     `OPENAI_API_KEYS=${allKeys}`,
   ].join("\n");
 
-  writeFileSync(owEnv, (stripped ? stripped + "\n\n" : "") + hermesBlock + "\n", { mode: 0o600 });
-  yield { type: "log", line: `OpenWebUI env updated — ${urlCount} model source(s) in .env` };
+  // Remove trailing blank lines before appending the Hermes block.
+  base = base.replace(/\n+$/, "");
 
-  // OpenWebUI reads OPENAI_API_BASE_URLS from .env on first startup and seeds
-  // its database. When the container is recreated (eve update), the env vars
-  // are re-read and the DB is updated — no admin API needed.
-  // Note: the container was already recreated by the caller (add/update hermes).
+  writeFileSync(owEnv, base ? base + "\n\n" + hermesBlock + "\n" : hermesBlock + "\n", { mode: 0o600 });
+  yield { type: "log", line: `OpenWebUI env updated — ${urlCount} model source(s) in .env` };
 }
 
 /**
@@ -1448,8 +1466,8 @@ services:
       # the pipelines install path; env_file: passes them straight to
       # the container, so they take precedence over the singulars below.
       - ENABLE_OPENAI_API=true
-      - OPENAI_API_BASE_URL=\${SYNAP_IS_URL:-http://eve-brain-synap:4000}/v1
-      - OPENAI_API_KEY=\${SYNAP_API_KEY:-}
+      - OPENAI_API_BASE_URLS=\${OPENAI_API_BASE_URLS:-http://eve-brain-synap:4000/v1}
+      - OPENAI_API_KEYS=\${OPENAI_API_KEYS:-}
       - OLLAMA_BASE_URL=\${OLLAMA_BASE_URL:-http://eve-brain-ollama:11434}
 
       # Pre-selected model on first chat — \`synap/auto\` falls through to
@@ -1693,6 +1711,10 @@ async function* registerPipelinesInOpenwebui(deployDir: string): AsyncGenerator<
   const pipelinesKey = pipelinesEnv.split("\n")
     .find(l => l.startsWith("PIPELINES_API_KEY="))?.split("=", 2)[1]?.trim() ?? "";
 
+  // Resolve the Hermes API key (used for manifold model-source registration).
+  const secrets = await readEveSecrets();
+  const hermesApiKey = secrets?.builder?.hermes?.apiServerKey ?? "";
+
   if (!pipelinesKey) {
     yield { type: "log", line: "No PIPELINES_API_KEY found — skipping registration" };
     return;
@@ -1810,6 +1832,43 @@ async function* registerPipelinesInOpenwebui(deployDir: string): AsyncGenerator<
     yield {
       type: "log",
       line: `Pipelines registration failed — try Admin → Pipelines in OpenWebUI manually: URL=${pipelinesUrl}`,
+    };
+  }
+
+  // Also register model sources as manifold pipelines so they appear in the
+  // model picker with proper display names and model lists.
+  yield { type: "step", label: "Registering model sources in OpenWebUI…" };
+  try {
+    const modelSources: ModelSource[] = [];
+
+    // Synap IS
+    modelSources.push({
+      url: "http://eve-brain-synap:4000/v1",
+      apiKey: "", // Synap IS doesn't require an API key for local deployments
+      displayName: "Synap IS",
+    });
+
+    // Hermes Gateway (if API key is available)
+    if (hermesApiKey) {
+      modelSources.push({
+        url: "http://eve-builder-hermes:8642/v1",
+        apiKey: hermesApiKey,
+        displayName: "Hermes Gateway",
+      });
+    }
+
+    if (modelSources.length > 0) {
+      const registered = await upsertAllModelSources(jwt, modelSources);
+      if (registered > 0) {
+        yield { type: "log", line: `Model sources registered in OpenWebUI ✓ — ${registered} source(s) visible in model picker` };
+      } else {
+        yield { type: "log", line: "Model source registration returned 0 — sources may already be configured" };
+      }
+    }
+  } catch (err) {
+    yield {
+      type: "log",
+      line: `Model source registration skipped — ${err instanceof Error ? err.message : String(err)}`,
     };
   }
 }

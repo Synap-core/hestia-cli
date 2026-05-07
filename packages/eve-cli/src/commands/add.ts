@@ -349,8 +349,8 @@ services:
       - DO_NOT_TRACK=true
       # Synap IS as the OpenAI-compat backend
       - ENABLE_OPENAI_API=true
-      - OPENAI_API_BASE_URL=\${SYNAP_IS_URL:-http://intelligence-hub:3001}/v1
-      - OPENAI_API_KEY=\${SYNAP_API_KEY:-}
+      - OPENAI_API_BASE_URLS=\${OPENAI_API_BASE_URLS:-http://eve-brain-synap:4000/v1}
+      - OPENAI_API_KEYS=\${OPENAI_API_KEYS:-}
       # Local Ollama as fallback
       - OLLAMA_BASE_URL=\${OLLAMA_BASE_URL:-http://eve-brain-ollama:11434}
       # Features

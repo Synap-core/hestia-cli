@@ -18,8 +18,8 @@ services:
   #   2. Synap Hub MCP server for memory, entities, skills (POST /mcp)
   #   3. Ollama as local/offline fallback (auto-discovered via OLLAMA_BASE_URL)
   #
-  # Required: SYNAP_API_KEY, SYNAP_IS_URL (IS base URL)
-  # Optional: OLLAMA_BASE_URL, OPENAI_API_KEY
+  # Required: OPENAI_API_KEYS (or OPENAI_API_BASE_URLS + OPENAI_API_KEYS)
+  # Optional: OLLAMA_BASE_URL
   #
   # No external database — Open WebUI uses SQLite by default.
   # Data persisted in the hestia-openwebui-data volume.
@@ -40,10 +40,9 @@ services:
 
       # ── Synap IS as primary OpenAI-compat endpoint ────────────────────────
       # The IS exposes /v1/chat/completions with synap/* model aliases.
-      # OPENAI_API_BASE_URL must NOT have a trailing /v1 — Open WebUI appends it.
       - ENABLE_OPENAI_API=true
-      - OPENAI_API_BASE_URL=${SYNAP_IS_URL:-http://intelligence-hub:3001}/v1
-      - OPENAI_API_KEY=${SYNAP_API_KEY}
+      - OPENAI_API_BASE_URLS=${OPENAI_API_BASE_URLS:-http://eve-brain-synap:4000/v1}
+      - OPENAI_API_KEYS=${OPENAI_API_KEYS:-}
 
       # ── Ollama (local/offline fallback, auto-discovered) ──────────────────
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://eve-brain-ollama:11434}
