@@ -992,8 +992,6 @@ async function waitForKratosHealthy(maxWaitMs = 120_000): Promise<boolean> {
  * policy is present), then starts kratos with `--no-deps`.
  */
 export async function ensureKratosRunning(deployDir: string, domain: string): Promise<void> {
-  if (isKratosRunning(deployDir) && await probeKratosHealth()) return;
-
   const envPath = join(deployDir, '.env');
   if (!existsSync(envPath)) {
     throw new Error(`No .env found at ${deployDir} — run \`eve install\` first.`);
@@ -1009,10 +1007,38 @@ export async function ensureKratosRunning(deployDir: string, domain: string): Pr
     writeFileSync(envPath, envContent, { encoding: 'utf-8', mode: 0o600 });
   }
 
-  // Write kratos.yml + identity.schema.json
+  // Fix DOMAIN in .env — if it was set to 'localhost' at install time or
+  // by a stale secrets.json, the Docker compose env vars (SERVE_PUBLIC_BASE_URL,
+  // SELFSERVICE_DEFAULT_BROWSER_RETURN_URL, etc.) will all resolve to localhost
+  // and Kratos will serve localhost URLs in its flow responses.
+  const envDomainMatch = envContent.match(/^DOMAIN=(.+)$/m);
+  const oldDomain = envDomainMatch?.[1]?.trim();
+  if (oldDomain !== domain) {
+    console.log(`  Updating DOMAIN in .env: ${oldDomain ?? '(unset)'} → ${domain}`);
+    envContent = envContent.replace(/^DOMAIN=.+$/m, `DOMAIN=${domain}`);
+    writeFileSync(envPath, envContent, { encoding: 'utf-8', mode: 0o600 });
+  }
+
+  // Always regenerate kratos.yml from the current domain — the file may have
+  // been generated with 'localhost' from a stale secrets.json default.
   await generateKratosConfig(deployDir, domain, postgresPassword, parseKratosSecretsFromEnv(envContent), 'http://backend:4000');
 
+  // If Kratos is running, restart it to pick up the regenerated config.
+  // Docker Compose reads kratos.yml at container start, so a restart is
+  // required after every config regeneration.
   const composeEnv = { ...process.env, COMPOSE_PROJECT_NAME: 'synap-backend' };
+  if (isKratosRunning(deployDir) && await probeKratosHealth()) {
+    console.log('  Stopping stale Kratos container (config regenerated)…');
+    const downResult = spawnSync('docker', ['compose', 'stop', 'kratos'], {
+      cwd: deployDir, stdio: 'inherit', env: composeEnv,
+    });
+    if (downResult.status !== 0) {
+      console.warn('  Warning: could not stop Kratos container — config regeneration will take effect on next manual restart');
+      return;
+    }
+    // Wait for container to fully stop before restarting
+    await new Promise(r => setTimeout(r, 2000));
+  }
 
   // Run kratos-migrate explicitly — one-shot, no restart-policy ambiguity
   console.log('  Running Kratos DB migrations…');
