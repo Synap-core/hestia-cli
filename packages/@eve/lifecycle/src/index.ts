@@ -1893,26 +1893,53 @@ async function* registerPipelinesInOpenwebui(deployDir: string): AsyncGenerator<
     return;
   }
 
-  try {
+  // Wait for the pipelines sidecar to be ready — it needs a moment to start
+  // its HTTP server after the container starts.
+  let sidecarReady = false;
+  for (let i = 0; i < 10; i++) {
+    try {
+      // The pipelines sidecar responds to a simple GET / (or /health) with 200.
+      const r = await fetch(`${pipelinesUrl}/health`, { signal: AbortSignal.timeout(3000) });
+      if (r.ok) { sidecarReady = true; break; }
+      // Even a 404/403 means the HTTP server is up — try registration anyway.
+      if (r.status >= 400) { sidecarReady = true; break; }
+    } catch { /* sidecar not ready yet */ }
+    await new Promise(r => setTimeout(r, 3_000));
+  }
+  if (!sidecarReady) {
+    yield {
+      type: "log",
+      line: `Pipelines sidecar not yet ready — open Admin → Pipelines in OpenWebUI and add: URL=${pipelinesUrl}, Key=${pipelinesKey}`,
+    };
+    return;
+  }
+
+  // Retry registration a few times — the sidecar may still be settling
+  // its pipeline list between health-check and the first real request.
+  let regOk = false;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, 3_000));
     const res = await fetch(`${owAdminUrl}/api/v1/pipelines/add`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${jwt}` },
-      body: JSON.stringify({ url: pipelinesUrl, key: pipelinesKey, urlIdx: "1" }),
+      body: JSON.stringify({ url: pipelinesUrl, key: pipelinesKey }),
     });
     const body = await res.json().catch(() => ({})) as Record<string, unknown>;
     if (res.ok || String(body.detail ?? "").includes("already")) {
       yield { type: "log", line: "Pipelines server registered in OpenWebUI ✓ — filter pipelines now active for all models" };
-    } else {
-      yield {
-        type: "log",
-        line: `Pipelines registration returned ${res.status}: ${JSON.stringify(body)} — try Admin → Pipelines in OpenWebUI manually`,
-      };
+      regOk = true;
+      break;
     }
-  } catch (err) {
+    // 404 or other transient error — retry
     yield {
       type: "log",
-      line: `Pipelines registration failed (${err instanceof Error ? err.message : String(err)}) — add manually in OpenWebUI Admin → Pipelines`,
+      line: attempt < 2
+        ? `Pipelines registration attempt ${attempt + 1}/3: HTTP ${res.status}… retrying`
+        : `Pipelines registration returned ${res.status}: ${JSON.stringify(body)} — try Admin → Pipelines in OpenWebUI manually`,
     };
+  }
+  if (!regOk) {
+    // Already yielded the failure message in the last attempt.
   }
 }
 
