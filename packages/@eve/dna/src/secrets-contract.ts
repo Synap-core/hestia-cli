@@ -62,6 +62,27 @@ const SecretsSchema = z.object({
           outcome: z.string(),
         }))
         .optional(),
+      /**
+       * Audit trail of auto-provision runs. Last 50 entries, newest first.
+       * Written by POST /api/pod/auto-provision.
+       */
+      provisioningHistory: z
+        .array(z.object({
+          timestamp: z.string(),
+          provisioned: z.array(z.object({
+            id: z.string(),
+            provisioned: z.boolean(),
+            keyIdPrefix: z.string().optional(),
+            reason: z.string().optional(),
+          })),
+          wired: z.array(z.object({
+            id: z.string(),
+            ok: z.boolean(),
+            summary: z.string(),
+          })),
+          force: z.boolean(),
+        }))
+        .optional(),
     })
     .optional(),
   synap: z

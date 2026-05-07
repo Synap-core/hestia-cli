@@ -28,7 +28,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { readEveSecrets, resolveSynapUrl, resolveBackendUrl, writePodUserToken } from "@eve/dna";
+import { readEveSecrets, resolveSynapUrl, writePodUserToken } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
 
 interface KratosFlow {
@@ -135,15 +135,6 @@ export async function POST(req: Request) {
     );
   }
 
-  // Use the direct backend URL (Docker DNS) — Kratos lives on the backend
-  // container at `/.ory/kratos/public/*`, unreachable via Traefik which
-  // only proxies `/api/*`.
-  const backendUrl = resolveBackendUrl();
-  const kratosBase = `${backendUrl}/.ory/kratos/public`;
-
-  // Check whether a public pod URL is configured for reference (used by
-  // upstream flows like claim/bootstrap — but Kratos itself doesn't need
-  // it since it calls the backend directly).
   const secrets = await readEveSecrets();
   const podUrl = resolveSynapUrl(secrets);
   if (!podUrl) {
@@ -152,6 +143,11 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
+
+  // Traefik now routes `/.ory/*` via the stripprefix-kratos middleware
+  // (added to match what Caddy already does implicitly in the standalone
+  // setup). No need for Docker DNS hacks.
+  const kratosBase = `${podUrl}/.ory/kratos/public`;
 
   // ── Step 1: init the self-service flow ───────────────────────────────────
   const flowEndpoint =

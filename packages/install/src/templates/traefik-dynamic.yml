@@ -74,11 +74,18 @@ http:
         prefixes:
           - "/api"
         forceSlash: false
-    
+
     stripprefix-gateway:
       stripPrefix:
         prefixes:
           - "/gateway"
+        forceSlash: false
+
+    # Strip prefix for trpc (used by Eve dashboard proxy)
+    stripprefix-trpc:
+      stripPrefix:
+        prefixes:
+          - "/trpc"
         forceSlash: false
     
     # Add prefix middleware

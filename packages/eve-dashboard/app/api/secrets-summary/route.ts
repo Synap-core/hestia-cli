@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { readEveSecrets, resolveSynapUrl } from "@eve/dna";
+import { readEveSecrets, resolveSynapUrl, resolveSynapUrlOnHost } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
 
 export async function GET() {
@@ -8,6 +8,7 @@ export async function GET() {
 
   try {
     const secrets = await readEveSecrets();
+    const podUrl = await resolveSynapUrlOnHost(secrets);
 
     const providers = (secrets?.ai?.providers ?? []).map((p) => ({
       id: p.id,
@@ -25,6 +26,7 @@ export async function GET() {
         configured: !!resolveSynapUrl(secrets),
         hasApiKey: !!(secrets?.synap?.apiKey && secrets.synap.apiKey.trim().length > 0),
         apiUrl: resolveSynapUrl(secrets),
+        externalUrl: podUrl,
       },
       arms: {
         openclaw: {

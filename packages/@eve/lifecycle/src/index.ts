@@ -40,9 +40,7 @@ import {
   generateSynapPlugin,
   getStatus,
   getAdminJwt,
-  upsertModelSource,
   registerPipeline as registerPipelineApi,
-  listPipelines,
   type OpenwebuiStatus,
   type ComponentInfo,
   type EnsureOverrideResult,
@@ -1081,59 +1079,10 @@ async function* wireHermesIntoOpenwebui(): AsyncGenerator<LifecycleEvent> {
   writeFileSync(owEnv, (stripped ? stripped + "\n\n" : "") + hermesBlock + "\n", { mode: 0o600 });
   yield { type: "log", line: `OpenWebUI env updated — ${urlCount} model source(s) in .env` };
 
-  // OpenWebUI reads OPENAI_API_BASE_URLS from env only on first startup and
-  // seeds its database. After that the DB is the source of truth and a simple
-  // restart won't add new entries. Use the admin API to upsert the model source
-  // so this is idempotent on any subsequent run.
-  yield* wireHermesViaOpenwebuiApi(hermesUrl, hermesApiKey);
-}
-
-/**
- * Register (or update) the Hermes model source via OpenWebUI's admin API.
- *
- * OpenWebUI's env vars are only read on first boot. On subsequent runs the
- * DB is authoritative — delegated to @eve/dna openwebui-admin module which
- * handles JWT forging, SQLite queries, and config CRUD.
- */
-async function* wireHermesViaOpenwebuiApi(
-  hermesUrl: string,
-  hermesApiKey: string,
-): AsyncGenerator<LifecycleEvent> {
-  const status = await getStatus();
-
-  if (status.status === 'not-reachable') {
-    yield { type: "log", line: `OpenWebUI not reachable — run 'eve update hermes' once it is up` };
-    return;
-  }
-
-  if (status.status === 'no-secret-key') {
-    yield { type: "step", label: "Restarting OpenWebUI (no WEBUI_SECRET_KEY — API wiring skipped)…" };
-    yield* runCommand("docker", ["compose", "up", "-d"], { cwd: "/opt/openwebui" });
-    return;
-  }
-
-  if (status.status === 'no-admin-user') {
-    yield { type: "log", line: `No admin user in OpenWebUI yet — add Hermes manually: Admin → Settings → Connections → add URL ${hermesUrl} with your API key` };
-    return;
-  }
-
-  if (status.status === 'html-response') {
-    yield { type: "log", line: `OpenWebUI still booting — add Hermes manually once fully started` };
-    return;
-  }
-
-  const jwt = await getAdminJwt();
-  if (!jwt) {
-    yield { type: "log", line: `OpenWebUI admin auth unavailable — add Hermes manually: Admin → Settings → Connections → ${hermesUrl}` };
-    return;
-  }
-
-  const ok = await upsertModelSource(jwt, hermesUrl, hermesApiKey);
-  if (ok) {
-    yield { type: "log", line: `Hermes wired into OpenWebUI ✓ — open a new chat and select a Hermes model` };
-  } else {
-    yield { type: "log", line: `Failed to wire Hermes via admin API — add manually: Admin → Settings → Connections → ${hermesUrl}` };
-  }
+  // OpenWebUI reads OPENAI_API_BASE_URLS from .env on first startup and seeds
+  // its database. When the container is recreated (eve update), the env vars
+  // are re-read and the DB is updated — no admin API needed.
+  // Note: the container was already recreated by the caller (add/update hermes).
 }
 
 /**
@@ -1724,8 +1673,13 @@ async function* installPipelinesSidecar(): AsyncGenerator<LifecycleEvent> {
  *   2. Pipeline server (Admin → Pipelines) — filter pipelines that run for
  *      every chat, regardless of model. This is the Synap integration path.
  *
- * We register as role #2. Delegated to @eve/dna openwebui-admin module for
- * JWT forging, health checking, and idempotent registration.
+ * We register as role #2. This REQUIRES admin auth (JWT forging via
+ * WEBUI_SECRET_KEY + admin user). The JWT is forged using HS256 with
+ * claims {id, email, role: "admin"}.
+ *
+ * Critical: OpenWebUI creates the admin user and writes WEBUI_SECRET_KEY
+ * on first boot — these are NOT available immediately after `docker compose
+ * up -d`. We wait up to 90s for both to be ready.
  */
 async function* registerPipelinesInOpenwebui(deployDir: string): AsyncGenerator<LifecycleEvent> {
   const owEnv = "/opt/openwebui/.env";
@@ -1750,33 +1704,6 @@ async function* registerPipelinesInOpenwebui(deployDir: string): AsyncGenerator<
 
   yield { type: "step", label: "Registering pipelines server in OpenWebUI…" };
 
-  // Check OpenWebUI health first.
-  const status = await getStatus();
-  if (status.status === 'not-reachable') {
-    yield { type: "log", line: `OpenWebUI not reachable — run 'eve update openwebui-pipelines' after it starts` };
-    return;
-  }
-  if (status.status === 'no-secret-key') {
-    yield {
-      type: "log",
-      line: [
-        "Manual step needed — OpenWebUI WEBUI_SECRET_KEY not found.",
-        `Go to Admin Panel → Settings → Pipelines and add: URL=${pipelinesUrl}, Key=${pipelinesKey}`,
-      ].join(" "),
-    };
-    return;
-  }
-  if (status.status === 'no-admin-user') {
-    yield {
-      type: "log",
-      line: [
-        "No admin user in OpenWebUI yet — add pipelines manually:",
-        `Go to Admin Panel → Settings → Pipelines and add: URL=${pipelinesUrl}, Key=${pipelinesKey}`,
-      ].join(" "),
-    };
-    return;
-  }
-
   // Wait for the pipelines sidecar to be ready.
   let sidecarReady = false;
   for (let i = 0; i < 10; i++) {
@@ -1796,9 +1723,82 @@ async function* registerPipelinesInOpenwebui(deployDir: string): AsyncGenerator<
     return;
   }
 
+  // Wait for OpenWebUI to be fully initialized (admin user + secret key).
+  // OpenWebUI creates the admin user and writes WEBUI_SECRET_KEY on first
+  // boot. These are NOT available immediately after docker compose up -d.
+  yield { type: "step", label: "Waiting for OpenWebUI to be ready…" };
+  let readyAttempts = 0;
+  const maxReadyAttempts = 30; // 90s total (3s polling)
+  while (readyAttempts < maxReadyAttempts) {
+    const status = await getStatus();
+
+    if (status.status === 'not-reachable') {
+      // OpenWebUI not up yet — keep waiting.
+      readyAttempts++;
+      await new Promise(r => setTimeout(r, 3_000));
+      continue;
+    }
+
+    if (status.status === 'no-secret-key') {
+      // Secret key not written yet — this happens when OpenWebUI is
+      // still in its first-boot setup. Keep waiting.
+      readyAttempts++;
+      await new Promise(r => setTimeout(r, 3_000));
+      continue;
+    }
+
+    if (status.status === 'no-admin-user') {
+      // Admin user not created yet — first-boot step. Keep waiting.
+      readyAttempts++;
+      await new Promise(r => setTimeout(r, 3_000));
+      continue;
+    }
+
+    if (status.status === 'html-response') {
+      // Still booting — serve HTML instead of JSON API. Keep waiting.
+      readyAttempts++;
+      await new Promise(r => setTimeout(r, 3_000));
+      continue;
+    }
+
+    // Healthy — proceed to registration.
+    break;
+  }
+
+  // Final status check after waiting.
+  const finalStatus = await getStatus();
+  if (finalStatus.status !== 'healthy') {
+    if (finalStatus.status === 'not-reachable') {
+      yield { type: "log", line: `OpenWebUI not reachable — run 'eve update openwebui-pipelines' after it starts` };
+    } else if (finalStatus.status === 'no-secret-key') {
+      yield {
+        type: "log",
+        line: [
+          "WEBUI_SECRET_KEY not found after waiting — OpenWebUI may need manual setup.",
+          `Go to Admin Panel → Settings → Pipelines and add: URL=${pipelinesUrl}, Key=${pipelinesKey}`,
+        ].join(" "),
+      };
+    } else if (finalStatus.status === 'no-admin-user') {
+      yield {
+        type: "log",
+        line: [
+          "No admin user in OpenWebUI yet — sign in as admin then run 'eve update openwebui-pipelines'.",
+          `Alternatively add pipelines manually: URL=${pipelinesUrl}, Key=${pipelinesKey}`,
+        ].join(" "),
+      };
+    } else {
+      yield { type: "log", line: `Pipelines registration skipped — OpenWebUI status: ${finalStatus.status}` };
+    }
+    return;
+  }
+
+  // Forge JWT and register.
   const jwt = await getAdminJwt();
   if (!jwt) {
-    yield { type: "log", line: `OpenWebUI admin auth unavailable — add pipelines manually` };
+    yield {
+      type: "log",
+      line: `OpenWebUI admin auth unavailable — add pipelines manually: URL=${pipelinesUrl}, Key=${pipelinesKey}`,
+    };
     return;
   }
 
@@ -1809,7 +1809,7 @@ async function* registerPipelinesInOpenwebui(deployDir: string): AsyncGenerator<
   } else {
     yield {
       type: "log",
-      line: `Pipelines registration failed — try Admin → Pipelines in OpenWebUI manually`,
+      line: `Pipelines registration failed — try Admin → Pipelines in OpenWebUI manually: URL=${pipelinesUrl}`,
     };
   }
 }

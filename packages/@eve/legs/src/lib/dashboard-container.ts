@@ -46,10 +46,6 @@ function ensureEveNetwork(): void {
   ensureNetwork('eve-network');
 }
 
-function ensureSynapNetwork(): void {
-  ensureNetwork('synap-net');
-}
-
 function imageExists(): boolean {
   try {
     const out = execSync(`docker image inspect ${IMAGE_TAG}`, { stdio: ['pipe', 'pipe', 'ignore'] });
@@ -86,7 +82,6 @@ function runContainer(workspaceRoot: string, secret: string): void {
     '--name', CONTAINER_NAME,
     '--restart', 'unless-stopped',
     '--network', 'eve-network',
-    '--network', 'synap-net',
     '-p', `${HOST_PORT}:${INTERNAL_PORT}`,
     '-e', `PORT=${INTERNAL_PORT}`,
     '-e', `EVE_HOME=${workspaceRoot}`,
@@ -109,7 +104,6 @@ export function installDashboardContainer(opts: DashboardInstallOptions): void {
   const workspaceRoot = resolve(opts.workspaceRoot ?? process.cwd());
 
   ensureEveNetwork();
-  ensureSynapNetwork();
 
   if (opts.rebuild || !imageExists()) {
     buildImage(workspaceRoot);

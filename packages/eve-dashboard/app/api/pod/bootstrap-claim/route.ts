@@ -37,7 +37,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { readEveSecrets, resolveSynapUrl, resolveBackendUrl } from "@eve/dna";
+import { readEveSecrets, resolveSynapUrl } from "@eve/dna";
 import { resolveProvisioningToken } from "@eve/lifecycle";
 import { requireAuth } from "@/lib/auth-server";
 
@@ -118,8 +118,10 @@ export async function POST(req: Request) {
     );
   }
 
-  // Use the direct backend URL — avoids Traefik routing issues.
-  const base = resolveBackendUrl().replace(/\/+$/, "");
+  // Traefik now routes `/api/*`, `/trpc/*`, and `/.ory/*` via stripprefix
+  // middlewares, so the public pod URL reaches the Hono server for all
+  // its routes. Same principle as the standalone Caddy setup.
+  const base = podUrl.replace(/\/+$/, "");
 
   try {
     const res = await fetch(`${base}/api/admin/bootstrap/claim`, {

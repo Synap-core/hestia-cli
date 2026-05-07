@@ -6,6 +6,7 @@ import {
   COMPONENTS,
   entityStateManager,
   readEveSecrets,
+  resolveSynapUrlOnHost,
 } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
 
@@ -20,6 +21,12 @@ interface AgentRow {
   componentInstalled: boolean;
   containerName: string | null;
   containerRunning: boolean | null;
+  /** Last 8 chars of the keyId for dashboard display. */
+  keyIdPrefix?: string;
+  /** ISO-8601 timestamp when the key was last minted. */
+  keyCreatedAt?: string;
+  /** External pod URL for the consumer to connect to. */
+  podUrl?: string;
 }
 
 async function isContainerRunning(name: string): Promise<boolean> {
@@ -40,6 +47,8 @@ export async function GET() {
   if ("error" in auth) return auth.error;
 
   const secrets = await readEveSecrets();
+  const podUrl = await resolveSynapUrlOnHost(secrets).catch(() => undefined);
+
   const installedSet = new Set<string>();
   try {
     const ids = await entityStateManager.getInstalledComponents();
@@ -77,6 +86,14 @@ export async function GET() {
         status = hasKey ? "ready" : "unknown";
       }
 
+      // Extract key metadata from secrets
+      const agentEntry = secrets?.agents?.[agent.agentType];
+      const hasKeyMetadata = !!agentEntry;
+      const keyIdPrefix = hasKeyMetadata && agentEntry.keyId
+        ? agentEntry.keyId.slice(-8)
+        : undefined;
+      const keyCreatedAt = hasKeyMetadata ? agentEntry.createdAt : undefined;
+
       return {
         agentType: agent.agentType,
         label: agent.label,
@@ -86,6 +103,9 @@ export async function GET() {
         componentInstalled,
         containerName,
         containerRunning,
+        ...(keyIdPrefix ? { keyIdPrefix } : {}),
+        ...(keyCreatedAt ? { keyCreatedAt } : {}),
+        ...(podUrl ? { podUrl } : {}),
       };
     }),
   );

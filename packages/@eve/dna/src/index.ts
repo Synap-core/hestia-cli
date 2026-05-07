@@ -164,10 +164,6 @@ export {
   publicComponentUrl,
   isLoopbackUrl,
   resolveSynapUrl,
-  resolveBackendUrl,
-  SYNAP_BACKEND_INTERNAL_URL,
-  SYNAP_BACKEND_DOCKER_URL,
-  SYNAP_HOST_LOOPBACK_PORT,
 } from './components.js';
 
 // On-host HTTP transport — probes the loopback port published by Eve's
@@ -252,6 +248,40 @@ export {
   connectTraefikToEveNetwork,
   type ConnectTraefikResult,
 } from './docker-helpers.js';
+
+// Deploy pipeline
+export type {
+  DeployEnv,
+  DeployParams,
+  DeployResult,
+  AppImageName,
+  Framework,
+  VercelConfig,
+  AppConfig,
+  CoolifyTarget,
+  CoolifyApp,
+  DockerPackResult,
+  EveCredentials,
+} from './deploy-types.js';
+export {
+  detectAppConfig,
+  getAppImageName,
+  detectBranch,
+  detectGitSha,
+  detectVercelConfig,
+} from './app-detector.js';
+export {
+  buildAndPackageImage,
+} from './docker-packager.js';
+export {
+  listCoolifyApps,
+  findCoolifyAppByName,
+  syncCoolifyAppImage,
+  deployToCoolify,
+  getCoolifyTargetsFromEnv,
+  detectCoolifyEnvironments,
+  detectCoolifyTargets,
+} from './coolify-client.js';
 
 // Version
 export const VERSION = '0.1.0';

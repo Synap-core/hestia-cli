@@ -153,6 +153,7 @@ services:
       start_period: 30s
     labels:
       - "traefik.enable=true"
+      # /api/* — main API surface
       - "traefik.http.routers.synap-backend.rule=Host(`${HESTIA_DOMAIN:-localhost}`) && PathPrefix(`/api`)"
       - "traefik.http.routers.synap-backend.entrypoints=websecure"
       - "traefik.http.routers.synap-backend.tls.certresolver=letsencrypt"
@@ -165,6 +166,29 @@ services:
       - "traefik.http.services.synap-backend.loadbalancer.healthcheck.path=/health"
       - "traefik.http.services.synap-backend.loadbalancer.healthcheck.interval=10s"
       - "traefik.http.middlewares.stripprefix-api.stripprefix.prefixes=/api"
+      # /trpc/* — Eve dashboard proxy (setup-status, etc.)
+      - "traefik.http.routers.synap-backend-trpc.rule=Host(`${HESTIA_DOMAIN:-localhost}`) && PathPrefix(`/trpc`)"
+      - "traefik.http.routers.synap-backend-trpc.entrypoints=websecure"
+      - "traefik.http.routers.synap-backend-trpc.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.synap-backend-trpc.service=synap-backend"
+      - "traefik.http.routers.synap-backend-trpc.middlewares=security-headers,compression,stripprefix-trpc"
+      - "traefik.http.routers.synap-backend-trpc-http.rule=Host(`${HESTIA_DOMAIN:-localhost}`) && PathPrefix(`/trpc`)"
+      - "traefik.http.routers.synap-backend-trpc-http.entrypoints=web"
+      - "traefik.http.routers.synap-backend-trpc-http.middlewares=redirect-to-https"
+      - "traefik.http.middlewares.stripprefix-trpc.stripprefix.prefixes=/trpc"
+      # /.ory/* — Kratos proxy (login, registration, recovery, verification)
+      # IMPORTANT: do NOT strip the prefix here — Hono expects the full
+      # /.ory/kratos/public/* path to match its route handler which
+      # proxies to the Kratos container internally. Stripping would cause
+      # Hono to see /kratos/public/* which doesn't match the route.
+      - "traefik.http.routers.synap-backend-kratos.rule=Host(`${HESTIA_DOMAIN:-localhost}`) && PathPrefix(`/.ory`)"
+      - "traefik.http.routers.synap-backend-kratos.entrypoints=websecure"
+      - "traefik.http.routers.synap-backend-kratos.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.synap-backend-kratos.service=synap-backend"
+      - "traefik.http.routers.synap-backend-kratos.middlewares=security-headers,compression"
+      - "traefik.http.routers.synap-backend-kratos-http.rule=Host(`${HESTIA_DOMAIN:-localhost}`) && PathPrefix(`/.ory`)"
+      - "traefik.http.routers.synap-backend-kratos-http.entrypoints=web"
+      - "traefik.http.routers.synap-backend-kratos-http.middlewares=redirect-to-https"
 
   # OpenClaw (multi-channel gateway)
   openclaw:

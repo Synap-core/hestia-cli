@@ -400,49 +400,8 @@ export function isLoopbackUrl(url: string | undefined | null): boolean {
  * which returns the public Traefik URL.
  */
 export const SYNAP_BACKEND_INTERNAL_URL = 'http://eve-brain-synap:4000';
-
-/**
- * URL the Eve dashboard container uses to reach the Synap backend directly.
- *
- * The dashboard runs on `eve-network`. To call backend routes that Traefik
- * doesn't proxy (`/trpc/*`, `/.ory/kratos/public/*`), we connect the
- * dashboard to `synap-net` (the Docker network the Synap pod creates) and
- * hit the backend by its Docker DNS name — same container, sub-millisecond,
- * no TLS, no cert, no DNS probe.
- *
- * Same pattern as `SYNAP_BACKEND_INTERNAL_URL` — just a different service
- * name for the sidecar deployment path.
- */
-export const SYNAP_BACKEND_DOCKER_URL = 'http://backend:4000';
-
-/**
- * Return the URL the dashboard container should use for direct backend calls.
- *
- * Currently always returns `SYNAP_BACKEND_DOCKER_URL` — the dashboard must
- * be connected to `synap-net` for this to work (see
- * `@eve/legs/src/lib/dashboard-container.ts`).
- */
-export function resolveBackendUrl(): string {
-  return SYNAP_BACKEND_DOCKER_URL;
-}
-
-/**
- * TCP port on the host's loopback that maps to synap-backend:4000 when
- * Eve's `docker-compose.override.yml` is in place. The on-host CLI
- * prefers this URL over the public Traefik route — same protocol, no
- * DNS, no TLS, no firewall traversal.
- *
- * 4000 matches the port inside the container — Eve's bundled
- * `secrets.json.example` and most existing installs already store
- * `apiUrl: "http://127.0.0.1:4000"`, so binding the same port to
- * loopback means the URL the user already has is the URL that works.
- * No new port to remember, no migration needed.
- *
- * On a production pod host nothing else is competing for :4000 — the
- * synap-app dev server only collides on developer laptops, where Eve
- * isn't installed anyway.
- */
-export const SYNAP_HOST_LOOPBACK_PORT = 4000;
+/** Host loopback port where Eve publishes the backend for on-host CLI access. */
+export const SYNAP_HOST_LOOPBACK_PORT = 14000;
 
 /**
  * Pure derivation of the Synap pod URL — no I/O, no probing, just

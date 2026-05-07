@@ -38,7 +38,6 @@ import { NextResponse } from "next/server";
 import {
   readCpUserSession,
   resolveSynapUrl,
-  resolveBackendUrl,
   readEveSecrets,
   writePodUserToken,
 } from "@eve/dna";
@@ -165,12 +164,10 @@ export async function POST(req: Request) {
   }
 
   // ── Step 2: forward to pod /api/handshake to mint Kratos session ─────
-  // Use direct backend URL (Docker DNS) — avoids Traefik round-trip.
-  const podDockerUrl = resolveBackendUrl();
-  const podDockerBase = podDockerUrl.replace(/\/+$/, "");
+  // Traefik routes /api/* so the public pod URL works directly.
   let podHandshakeRes: Response;
   try {
-    podHandshakeRes = await fetch(`${podDockerBase}/api/handshake`, {
+    podHandshakeRes = await fetch(`${podBase}/api/handshake`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

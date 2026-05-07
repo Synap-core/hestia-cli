@@ -20,16 +20,10 @@
 import { execSync } from 'node:child_process';
 import { writeFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { createRequire } from 'node:module';
 import type { EveSecrets } from './secrets-contract.js';
 import { readAgentKeyOrLegacySync } from './secrets-contract.js';
 import { COMPONENTS } from './components.js';
 import { writeHermesConfigYaml, generateSynapPlugin } from './builder-hub-wiring.js';
-import { getStatus, getAdminJwt, getConfig, saveConfig } from './openwebui-admin.js';
-
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const require = createRequire(import.meta.url);
-const { createHmac } = require('node:crypto');
 
 export interface WireAiResult {
   /** Component id this result is for. */
@@ -297,78 +291,12 @@ function wireOpenclaw(secrets: EveSecrets | null): WireAiResult {
 }
 
 /**
- * Upsert custom provider model sources into OpenWebUI's DB via its admin API.
- *
- * OpenWebUI only reads OPENAI_API_BASE_URLS from .env on first boot. Thereafter
- * its SQLite DB is authoritative — use getConfig/saveConfig from openwebui-admin.
- */
-async function adminUpsertOpenwebuiCustomProviders(
-  owAdminUrl: string,
-  existingKeys: string[],
-  existingUrls: string[],
-  customUrls: string[],
-  customKeys: string[],
-): Promise<void> {
-  // Wait briefly for OpenWebUI to be reachable.
-  let ready = false;
-  for (let i = 0; i < 4; i++) {
-    try {
-      const r = execSync(`curl -sf ${owAdminUrl}/health`, { encoding: 'utf-8' }).trim();
-      if (r) { ready = true; break; }
-    } catch { /* not up yet */ }
-    if (i < 3) {
-      try { execSync('sleep 3', { stdio: 'ignore' }); } catch { /* */ }
-    }
-  }
-  if (!ready) return;
-
-  // Extract port from owAdminUrl (e.g. "http://127.0.0.1:3002/api/v1" → 3002).
-  const portMatch = owAdminUrl.match(/:\d+/);
-  const hostPort = portMatch ? Number(portMatch[0].slice(1)) : undefined;
-
-  const jwt = await getAdminJwt(hostPort);
-  if (!jwt) return;
-
-  try {
-    const cfg = await getConfig(jwt, hostPort);
-    if (!cfg) return;
-
-    const openai = (cfg.openai ?? {}) as Record<string, unknown>;
-    const urls: string[] = Array.isArray(openai.api_base_urls) ? [...openai.api_base_urls] : [];
-    const keys: string[] = Array.isArray(openai.api_keys) ? [...openai.api_keys] : [];
-
-    // Add custom providers if not already present.
-    for (let i = 0; i < customUrls.length; i++) {
-      const idx = urls.indexOf(customUrls[i]);
-      if (idx === -1) {
-        urls.push(customUrls[i]);
-        keys.push(customKeys[i]);
-      } else {
-        keys[idx] = customKeys[i];
-      }
-    }
-
-    // Ensure existing provider URLs still have keys (env-only changes).
-    for (let i = 0; i < existingUrls.length; i++) {
-      const idx = urls.indexOf(existingUrls[i]);
-      if (idx >= 0 && (!keys[idx] || keys[idx] === '')) {
-        keys[idx] = existingKeys[i];
-      }
-    }
-
-    while (keys.length < urls.length) keys.push('');
-
-    openai.api_base_urls = urls;
-    openai.api_keys = keys;
-    cfg.openai = openai;
-
-    await saveConfig(jwt, cfg, hostPort);
-  } catch { /* non-fatal */ }
-}
-
-/**
  * Open WebUI reads OPENAI_API_BASE_URL + OPENAI_API_KEY from its .env. We
  * point it at Synap IS so all chats route through the IS hub.
+ *
+ * The .env file is written before `docker compose up -d` which recreates the
+ * container. OpenWebUI reads the env vars on boot and seeds the DB — no admin
+ * API needed for model-source wiring.
  */
 function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
   // OpenWebUI's OPENAI_API_KEY is what the chat UI uses to call Synap IS.
@@ -490,29 +418,6 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
       detail: errMsg,
     };
   }
-
-  // Upsert custom providers via OpenWebUI's admin API so model sources
-  // appear immediately without requiring a manual container restart.
-  // OpenWebUI reads env vars on first boot but the DB is authoritative
-  // thereafter. This mirrors the `wireHermesViaOpenwebuiApi` pattern.
-  try {
-    if (customProviders.length > 0) {
-      const customUrls: string[] = [];
-      const customKeys: string[] = [];
-      for (const cp of customProviders) {
-        if (!cp.baseUrl) continue;
-        customUrls.push(`${cp.baseUrl.replace(/\/v1$/, '')}/v1`);
-        customKeys.push(cp.apiKey || '');
-      }
-      const owService = COMPONENTS.find(c => c.id === 'openwebui')?.service;
-      const owPort = owService?.hostPort ?? owService?.internalPort ?? 3002;
-      const owAdminUrl = `http://127.0.0.1:${owPort}/api/v1`;
-      // Fire-and-forget — env file + compose up -d is the primary path.
-      // The admin API call is best-effort to avoid requiring a restart.
-      adminUpsertOpenwebuiCustomProviders(owAdminUrl, apiKeys, apiBaseUrls, customUrls, customKeys).catch(() => { /* non-fatal */ });
-    }
-  } catch { /* non-fatal — env file is still written */ }
-
   const hermesNote = hermesApiServerKey ? ' + Hermes gateway' : '';
   return {
     id: 'openwebui',

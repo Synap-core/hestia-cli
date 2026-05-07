@@ -23,7 +23,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { readEveSecrets, resolveSynapUrl, resolveBackendUrl } from "@eve/dna";
+import { readEveSecrets, resolveSynapUrl } from "@eve/dna";
 
 interface TrpcSetupStatusEnvelope {
   result?: {
@@ -37,11 +37,6 @@ interface TrpcSetupStatusEnvelope {
 export async function GET() {
   let podUrl = "";
 
-  // For /trpc/* calls, use the direct backend URL (Docker DNS) to avoid
-  // Traefik routing gaps — Traefik doesn't proxy /trpc/* or /.ory/*,
-  // so the public URL would always fail for this route.
-  const baseUrl = resolveBackendUrl();
-
   try {
     const secrets = await readEveSecrets();
     // Also resolve the public URL for the response payload (UI shows it).
@@ -50,14 +45,7 @@ export async function GET() {
     // Falls through to the no-pod-url branch below.
   }
 
-  if (!podUrl) {
-    return NextResponse.json({
-      initialized: null,
-      reason: "no-pod-url",
-    });
-  }
-
-  const base = baseUrl.replace(/\/+$/, "");
+  const base = podUrl.replace(/\/+$/, "");
 
   try {
     const res = await fetch(`${base}/trpc/setup.status`, {
