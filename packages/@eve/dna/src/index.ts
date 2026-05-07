@@ -164,6 +164,7 @@ export {
   publicComponentUrl,
   isLoopbackUrl,
   resolveSynapUrl,
+  SYNAP_BACKEND_INTERNAL_URL,
 } from './components.js';
 
 // On-host HTTP transport — probes the loopback port published by Eve's
@@ -254,7 +255,6 @@ export type {
   DeployEnv,
   DeployParams,
   DeployResult,
-  AppImageName,
   Framework,
   VercelConfig,
   AppConfig,
@@ -266,9 +266,6 @@ export type {
 export {
   detectAppConfig,
   getAppImageName,
-  detectBranch,
-  detectGitSha,
-  detectVercelConfig,
 } from './app-detector.js';
 export {
   buildAndPackageImage,
