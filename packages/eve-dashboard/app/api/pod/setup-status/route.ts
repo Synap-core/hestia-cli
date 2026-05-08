@@ -10,20 +10,17 @@
  *     returns `{ result: { data: { initialized, version } } }`.
  *   • Downstream (this route):
  *       - 200 `{ initialized, version }` when the pod responded normally
- *       - 200 `{ initialized: null, reason: "no-pod-url" }` when no pod
- *         is configured locally yet (UI shows "configure pod first")
  *       - 200 `{ initialized: null, reason: "unreachable" }` on transport
  *         or upstream error (UI shows a soft retry hint)
  *
  * No auth on this route — the home page hits it before the operator
  * has signed in to the pod, and the upstream procedure is public.
- * The route never touches secrets beyond `synap.apiUrl`.
  *
  * See: synap-team-docs/content/team/platform/eve-auth-architecture.mdx
  */
 
 import { NextResponse } from "next/server";
-import { readEveSecrets, resolveSynapUrl } from "@eve/dna";
+import { resolvePodUrl } from "@eve/dna";
 
 interface TrpcSetupStatusEnvelope {
   result?: {
@@ -35,14 +32,12 @@ interface TrpcSetupStatusEnvelope {
 }
 
 export async function GET() {
-  let podUrl = "";
-
-  try {
-    const secrets = await readEveSecrets();
-    // Also resolve the public URL for the response payload (UI shows it).
-    podUrl = resolveSynapUrl(secrets) ?? "";
-  } catch {
-    // Falls through to the no-pod-url branch below.
+  const podUrl = await resolvePodUrl();
+  if (!podUrl) {
+    return NextResponse.json({
+      initialized: null,
+      reason: "unreachable",
+    });
   }
 
   const base = podUrl.replace(/\/+$/, "");

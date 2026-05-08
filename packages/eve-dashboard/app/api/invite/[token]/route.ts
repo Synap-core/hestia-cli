@@ -27,7 +27,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { readEveSecrets, resolveSynapUrl } from "@eve/dna";
+import { resolvePodUrl } from "@eve/dna";
 
 interface PreviewInviteResult {
   expired?: boolean;
@@ -68,8 +68,7 @@ export async function GET(_req: Request, ctx: RouteCtx) {
 
   let podUrl = "";
   try {
-    const secrets = await readEveSecrets();
-    podUrl = resolveSynapUrl(secrets) ?? "";
+    podUrl = (await resolvePodUrl()) ?? "";
   } catch {
     // Falls through to the no-pod-url branch.
   }

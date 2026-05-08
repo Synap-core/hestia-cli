@@ -178,6 +178,15 @@ export {
   resetSynapLoopbackProbeCache,
 } from './loopback-probe.js';
 
+// Dashboard-to-backend URL resolution — the dashboard's single source of
+// truth for routing requests to the synap backend. Checks env var → loopback
+// probe → Docker DNS → public domain. Designed for co-located dashboard
+// runtime; does NOT require secrets.json.
+export {
+  resolvePodUrl,
+  resetPodUrlCache,
+} from './pod-url.js';
+
 // Compose-override + image-prune helpers. Both the install recipe
 // (@eve/brain `installSynapFromImage`) and the update flow
 // (@eve/lifecycle `runUpdatePlan`) call these — pulling them up to

@@ -33,7 +33,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { readEveSecrets, resolveSynapUrl } from "@eve/dna";
+import { resolvePodUrl } from "@eve/dna";
 
 interface AcceptBody {
   email?: unknown;
@@ -62,8 +62,7 @@ export async function POST(req: Request, ctx: RouteCtx) {
 
   let podUrl = "";
   try {
-    const secrets = await readEveSecrets();
-    podUrl = resolveSynapUrl(secrets) ?? "";
+    podUrl = (await resolvePodUrl()) ?? "";
   } catch {
     // Falls through.
   }

@@ -3,7 +3,7 @@ import {
   isValidEveBackgroundAction,
   listEveBackgroundActions,
   readEveSecrets,
-  resolveSynapUrl,
+  resolvePodUrl,
 } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
 
@@ -12,7 +12,7 @@ async function resolveAuth(): Promise<
   | { ok: true; podUrl: string; apiKey: string }
 > {
   const secrets = await readEveSecrets();
-  const podUrl = resolveSynapUrl(secrets);
+  const podUrl = await resolvePodUrl();
   const apiKey = secrets?.agents?.eve?.hubApiKey?.trim();
   if (!podUrl) {
     return {

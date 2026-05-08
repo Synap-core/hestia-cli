@@ -18,14 +18,14 @@
  */
 
 import { execSync } from 'node:child_process';
-import { writeFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import type { EveSecrets } from './secrets-contract.js';
 import { readAgentKeyOrLegacySync } from './secrets-contract.js';
 import { COMPONENTS } from './components.js';
 import { writeHermesConfigYaml, generateSynapPlugin } from './builder-hub-wiring.js';
-import { getStatus, getAdminJwt, upsertAllModelSources, type ModelSource } from './openwebui-admin.js';
+import { getStatus, getAdminJwt, upsertAllModelSources, registerPipeline, type ModelSource } from './openwebui-admin.js';
 
 export interface WireAiResult {
   /** Component id this result is for. */
@@ -48,6 +48,74 @@ function isContainerRunning(name: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Wait for OpenWebUI to be fully healthy (admin user + secret key available),
+ * with a 2-minute timeout. Returns the status or 'timeout'.
+ */
+async function waitForOpenWebUiReady(): Promise<'healthy' | 'timeout'> {
+  let attempts = 0;
+  const maxAttempts = 40; // 2 min (3s polling)
+  while (attempts < maxAttempts) {
+    const status = await getStatus();
+    if (status.status === 'healthy') return 'healthy';
+    // Any non-healthy status means OpenWebUI is still booting
+    attempts++;
+    await new Promise(r => setTimeout(r, 3_000));
+  }
+  return 'timeout';
+}
+
+/**
+ * Register model sources with proper waits and retry logic.
+ * Mirrors the lifecycle's registerPipelinesInOpenwebui() pattern:
+ *   1. Wait for OpenWebUI healthy (up to 2 min)
+ *   2. Forge JWT
+ *   3. Retry manifold upsert up to 3 times with 5s delays
+ */
+async function upsertModelSourcesWithRetry(
+  modelSources: ModelSource[],
+): Promise<boolean> {
+  if (modelSources.length === 0) return false;
+
+  // Wait for OpenWebUI to be fully booted (admin user + secret key).
+  const ready = await waitForOpenWebUiReady();
+  if (ready !== 'healthy') return false;
+
+  // Forge JWT.
+  const jwt = await getAdminJwt();
+  if (!jwt) return false;
+
+  // Retry manifold upsert (3 attempts, 5s delay).
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const registered = await upsertAllModelSources(jwt, modelSources);
+      if (registered > 0) return true;
+      // 0 registered = config fetch failed — retryable
+    } catch {
+      // transient failure — retry
+    }
+    await new Promise(r => setTimeout(r, 5_000));
+  }
+  return false;
+}
+
+/**
+ * Wait for the pipelines sidecar to be ready, with a 15s timeout.
+ * Returns the sidecar URL if available, or null.
+ */
+async function waitForPipelinesSidecar(): Promise<string | null> {
+  const pipelinesUrl = 'http://eve-openwebui-pipelines:9099';
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const res = await fetch(`${pipelinesUrl}/health`, { signal: AbortSignal.timeout(3000) });
+      // Even 404/403 means the HTTP server is up
+      if (res.ok || res.status >= 400) return pipelinesUrl;
+    } catch { /* sidecar not ready yet */ }
+    await new Promise(r => setTimeout(r, 3_000));
+  }
+  return null;
 }
 
 /** Restart a docker container, swallowing errors (caller decides what to do). */
@@ -420,21 +488,17 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
       detail: errMsg,
     };
   }
-  // Fire-and-forget: register model sources via admin API so they appear in the
-  // picker immediately (don't wait for OpenWebUI to seed its DB from .env).
-  // This uses the same URL/key lists built above, translated into ModelSource[]
-  // with display names. Individual pipeline registration failures don't affect
-  // the config upsert — we just count successes.
+  // Fire-and-forget: register model sources + pipelines via admin API so they
+  // appear in the picker. Unlike the old code, this waits for OpenWebUI to be
+  // fully booted (admin user + secret key) before trying to authenticate.
   void (async () => {
     try {
       const modelSources: ModelSource[] = [];
-      // Always register Synap IS as first model source
       modelSources.push({
         url: 'http://eve-brain-synap:4000/v1',
         apiKey: synapApiKey,
         displayName: 'Synap IS',
       });
-      // Register Hermes if it was wired into the list
       if (hermesApiServerKey && apiBaseUrls.includes('http://eve-builder-hermes:8642/v1')) {
         modelSources.push({
           url: 'http://eve-builder-hermes:8642/v1',
@@ -442,7 +506,6 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
           displayName: 'Hermes Gateway',
         });
       }
-      // Register custom providers
       for (const p of providers) {
         if (!p.enabled || !p.id.startsWith('custom-')) continue;
         if (!p.baseUrl) continue;
@@ -453,12 +516,42 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
           displayName: p.name ?? p.id,
         });
       }
+
+      // 1. Wait for OpenWebUI to be fully booted (up to 2 min).
+      const ready = await waitForOpenWebUiReady();
+      if (ready !== 'healthy') return;
+
+      // 2. Forge admin JWT.
+      const jwt = await getAdminJwt();
+      if (!jwt) return;
+
+      // 3. Register pipelines sidecar (filter pipelines) if sidecar is available.
+      const pipelinesUrl = await waitForPipelinesSidecar();
+      if (pipelinesUrl) {
+        // Pipelines env key from compose directory
+        const pipelinesEnvPath = '/opt/openwebui-pipelines/.env';
+        let pipelinesKey = '';
+        try {
+          pipelinesKey = readFileSync(pipelinesEnvPath, 'utf-8')
+            .split('\n')
+            .find(l => l.startsWith('PIPELINES_API_KEY='))
+            ?.split('=', 2)[1]?.trim() ?? '';
+        } catch { /* pipelines may not have .env yet */ }
+        if (pipelinesKey) {
+          await registerPipeline(jwt, pipelinesUrl, pipelinesKey);
+        }
+      }
+
+      // 4. Retry manifold upsert (3 attempts, 5s delay).
       if (modelSources.length > 0) {
-        const jwt = await getAdminJwt();
-        if (jwt) {
-          const registered = await upsertAllModelSources(jwt, modelSources);
-          // Non-fatal — logging would go to dashboard/CLI stream
-          if (registered === 0) { /* likely config fetch failed, silently ok */ }
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const registered = await upsertAllModelSources(jwt, modelSources);
+            if (registered > 0) break;
+          } catch {
+            // transient failure — retry
+          }
+          await new Promise(r => setTimeout(r, 5_000));
         }
       }
     } catch { /* non-fatal admin API upsert */ }

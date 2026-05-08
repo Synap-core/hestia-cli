@@ -25,7 +25,7 @@
 import {
   ensurePodIssuer,
   readEveSecrets,
-  resolveSynapUrl,
+  resolvePodUrl,
   writePodUserToken,
 } from "@eve/dna";
 import { SignJWT, importJWK, type JWK } from "jose";
@@ -156,7 +156,7 @@ async function mintPodUserTokenInternal(
   }
 
   const secrets = await readEveSecrets();
-  const podUrl = resolveSynapUrl(secrets);
+  const podUrl = await resolvePodUrl();
   if (!podUrl) {
     throw new PodSigninError(
       "Pod URL not configured",

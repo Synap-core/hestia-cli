@@ -18,7 +18,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { readEveSecrets, resolveSynapUrl } from "@eve/dna";
+import { resolvePodUrl } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
 
 export async function POST(req: Request) {
@@ -49,8 +49,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const secrets = await readEveSecrets();
-  const podUrl = resolveSynapUrl(secrets);
+  const podUrl = await resolvePodUrl();
   if (!podUrl) {
     return NextResponse.json(
       { error: "pod-url-not-configured" },

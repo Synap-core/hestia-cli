@@ -35,7 +35,7 @@ import {
   readEveSecrets,
   writeEveSecrets,
   wireAllInstalledComponents,
-  resolveSynapUrlOnHost,
+  resolvePodUrl,
   type WiringStatus,
 } from "@eve/dna";
 import {
@@ -193,7 +193,7 @@ export async function POST(req: Request) {
         const agentForComp = AGENTS.find(a => a.componentId === body.componentId);
         if (agentForComp) {
           const runner = new FetchRunner();
-          const podUrl = await resolveSynapUrlOnHost(secrets) ?? undefined;
+          const podUrl = await resolvePodUrl() ?? undefined;
           const provisioningToken = resolveProvisioningToken() ?? undefined;
           try {
             const results: ProvisionResult[] = await provisionWithRetry({
@@ -236,7 +236,7 @@ export async function POST(req: Request) {
       }
       // Run targeted provision
       const runner = new FetchRunner();
-      const podUrl = await resolveSynapUrlOnHost(secrets) ?? undefined;
+      const podUrl = await resolvePodUrl() ?? undefined;
       const provisioningToken = resolveProvisioningToken() ?? undefined;
       let provisioned: AgentResult[];
       try {
@@ -282,7 +282,7 @@ export async function POST(req: Request) {
   }
 
   // Full auto-provision path
-  const podUrl = await resolveSynapUrlOnHost(secrets) ?? undefined;
+  const podUrl = await resolvePodUrl() ?? undefined;
   const provisioningToken = resolveProvisioningToken() ?? undefined;
   const runner = new FetchRunner();
 

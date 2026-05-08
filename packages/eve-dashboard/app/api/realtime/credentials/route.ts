@@ -19,7 +19,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { readEveSecrets, resolveSynapUrl } from "@eve/dna";
+import { readEveSecrets, resolvePodUrl } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
 
 /** Whether the dashboard request itself came over HTTPS. */
@@ -39,7 +39,7 @@ export async function GET(req: Request) {
 
   const secrets = await readEveSecrets();
   const apiKey = secrets?.synap?.apiKey;
-  const podUrl = resolveSynapUrl(secrets);
+  const podUrl = await resolvePodUrl();
 
   if (!apiKey || !podUrl) {
     return NextResponse.json(

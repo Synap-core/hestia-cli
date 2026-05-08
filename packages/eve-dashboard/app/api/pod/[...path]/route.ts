@@ -37,7 +37,7 @@ import {
   clearPodUserToken,
   readEveSecrets,
   readPodUserToken,
-  resolveSynapUrl,
+  resolvePodUrl,
 } from "@eve/dna";
 import {
   isTokenStillValid,
@@ -178,7 +178,7 @@ async function proxy(req: NextRequest, ctx: RouteCtx): Promise<Response> {
   if ("error" in auth) return auth.error;
 
   const secrets = await readEveSecrets();
-  const podUrl = resolveSynapUrl(secrets);
+  const podUrl = await resolvePodUrl();
   if (!podUrl) {
     return NextResponse.json(
       { error: "no-pod-url", message: "Pod URL not configured." },

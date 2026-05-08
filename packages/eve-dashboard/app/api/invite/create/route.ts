@@ -23,7 +23,7 @@
 
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { readEveSecrets, resolveSynapUrl } from "@eve/dna";
+import { resolvePodUrl } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
 import { unwrapTrpc, type TrpcEnvelope } from "@/lib/trpc-utils";
 
@@ -77,8 +77,7 @@ export async function POST(req: Request, _ctx: RouteCtx) {
 
   let podUrl = "";
   try {
-    const secrets = await readEveSecrets();
-    podUrl = resolveSynapUrl(secrets) ?? "";
+    podUrl = (await resolvePodUrl()) ?? "";
   } catch {
     // Falls through.
   }

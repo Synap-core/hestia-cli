@@ -3,7 +3,7 @@ import {
   isValidEveBackgroundAction,
   listEveBackgroundActions,
   readEveSecrets,
-  resolveSynapUrl,
+  resolvePodUrl,
 } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
 
@@ -11,7 +11,7 @@ import { requireAuth } from "@/lib/auth-server";
  * Resolve the pod URL + Eve agent Hub key from disk.
  *
  * The dashboard mirrors the SDK's auth model: derive pod URL via
- * `resolveSynapUrl(secrets)` (public Traefik route from domain config)
+ * `resolvePodUrl()` (env var → loopback probe → Docker DNS → public domain)
  * and read `secrets.agents.eve.hubApiKey`. When either is missing we
  * surface a 503 — the dashboard is misconfigured, not the user's request.
  */
@@ -20,7 +20,7 @@ async function resolveAuth(): Promise<
   | { ok: true; podUrl: string; apiKey: string }
 > {
   const secrets = await readEveSecrets();
-  const podUrl = resolveSynapUrl(secrets);
+  const podUrl = await resolvePodUrl();
   const apiKey = secrets?.agents?.eve?.hubApiKey?.trim();
   if (!podUrl) {
     return {

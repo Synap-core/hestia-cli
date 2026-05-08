@@ -24,7 +24,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { readEveSecrets, resolveSynapUrl } from "@eve/dna";
+import { readEveSecrets, resolvePodUrl } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
 
 export type PairingStateApi =
@@ -56,7 +56,13 @@ export async function GET() {
     // read secrets at all (volume mount missing on a fresh container).
   }
 
-  const podUrl = secrets ? resolveSynapUrl(secrets) : null;
+  let podUrl: string | undefined;
+  try {
+    podUrl = await resolvePodUrl();
+  } catch {
+    // Falls through — `unconfigured` is the safest answer when we can't
+    // resolve a pod URL (volume mount missing on a fresh container).
+  }
 
   if (!podUrl) {
     return NextResponse.json<PairingStatusResponse>({

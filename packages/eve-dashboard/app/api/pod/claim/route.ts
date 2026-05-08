@@ -37,8 +37,7 @@
 import { NextResponse } from "next/server";
 import {
   readCpUserSession,
-  resolveSynapUrl,
-  readEveSecrets,
+  resolvePodUrl,
   writePodUserToken,
 } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
@@ -104,8 +103,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const secrets = await readEveSecrets();
-  const podUrl = bodyPodUrl ?? resolveSynapUrl(secrets);
+  const podUrl = bodyPodUrl ?? (await resolvePodUrl());
   if (!podUrl) {
     return NextResponse.json(
       { error: "pod-url-not-configured" },

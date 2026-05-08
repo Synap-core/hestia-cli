@@ -16,8 +16,7 @@ import { NextResponse } from "next/server";
 import {
   AGENTS,
   readEveSecrets,
-  resolveSynapUrl,
-  resolveSynapUrlOnHost,
+  resolvePodUrl,
   readAgentKeyOrLegacy,
 } from "@eve/dna";
 import { runHubProtocolProbes, FetchRunner } from "@eve/lifecycle";
@@ -58,7 +57,7 @@ export async function GET(
     : undefined;
 
   // Resolve pod URL — prefer on-host URL for loopback probes
-  const podUrl = (await resolveSynapUrlOnHost(secrets)) ?? resolveSynapUrl(secrets) ?? "";
+  const podUrl = (await resolvePodUrl()) ?? "";
 
   if (!podUrl) {
     return NextResponse.json(

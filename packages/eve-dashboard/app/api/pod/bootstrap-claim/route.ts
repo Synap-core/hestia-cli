@@ -37,7 +37,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { readEveSecrets, resolveSynapUrl } from "@eve/dna";
+import { readEveSecrets, resolvePodUrl } from "@eve/dna";
 import { resolveProvisioningToken } from "@eve/lifecycle";
 import { requireAuth } from "@/lib/auth-server";
 
@@ -101,8 +101,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const secrets = await readEveSecrets();
-  const podUrl = resolveSynapUrl(secrets);
+  const podUrl = await resolvePodUrl();
   if (!podUrl) {
     return NextResponse.json(
       { error: "no-pod-url" },

@@ -33,7 +33,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { readEveSecrets, resolveSynapUrl } from "@eve/dna";
+import { readEveSecrets, resolvePodUrl } from "@eve/dna";
 
 export interface PodAuth {
   podUrl: string;
@@ -50,7 +50,7 @@ export interface PodAuth {
  */
 export async function loadPodAuth(): Promise<PodAuth | null> {
   const secrets = await readEveSecrets().catch(() => null);
-  const podUrl = secrets ? resolveSynapUrl(secrets) : "";
+  const podUrl = await resolvePodUrl();
   const apiKey = secrets?.synap?.apiKey;
   if (!podUrl || !apiKey) return null;
   return { podUrl, apiKey };

@@ -6,7 +6,7 @@ import {
   COMPONENTS,
   entityStateManager,
   readEveSecrets,
-  resolveSynapUrlOnHost,
+  resolvePodUrl,
 } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
 
@@ -47,7 +47,7 @@ export async function GET() {
   if ("error" in auth) return auth.error;
 
   const secrets = await readEveSecrets();
-  const podUrl = await resolveSynapUrlOnHost(secrets).catch(() => undefined);
+  const podUrl = await resolvePodUrl();
 
   const installedSet = new Set<string>();
   try {

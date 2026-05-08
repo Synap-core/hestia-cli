@@ -14,7 +14,7 @@ import {
   hasAnyProvider,
   readAgentKeyOrLegacy,
   readEveSecrets,
-  resolveSynapUrl,
+  resolvePodUrl,
 } from "@eve/dna";
 import { verifyComponent } from "@eve/legs";
 import {
@@ -392,7 +392,7 @@ export async function runDoctor(): Promise<CheckResult[]> {
     // `eve doctor`. Falls back to legacy for pre-migration installs.
     const eveAgentKey = await readAgentKeyOrLegacy("eve");
     const diagnostics = await runHubProtocolProbes({
-      synapUrl: resolveSynapUrl(secrets),
+      synapUrl: await resolvePodUrl(),
       apiKey: eveAgentKey,
     });
     // Backwards-compatibility: the dashboard used to emit only the OpenAPI

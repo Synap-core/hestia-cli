@@ -22,7 +22,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { readEveSecrets, resolveSynapUrl } from "@eve/dna";
+import { readEveSecrets, resolvePodUrl } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
 import { getMessagingConfig, type MessagingPlatform } from "@/lib/openclaw-config";
 import { getStatus as getWhatsAppStatus } from "../../components/openclaw/whatsapp/session-manager";
@@ -239,7 +239,7 @@ export async function GET(): Promise<NextResponse<ChannelRegistryResponse>> {
   try {
     const secrets = await readEveSecrets();
     const apiKey = secrets?.synap?.apiKey;
-    const podUrl = resolveSynapUrl(secrets);
+    const podUrl = await resolvePodUrl();
     if (apiKey && podUrl) {
       const ch = await loadSynapPersonal(podUrl, apiKey);
       if (ch) channels.push(ch);
