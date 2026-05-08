@@ -128,7 +128,7 @@ export async function migrateStateDirectory(): Promise<boolean> {
 const ORGAN_TO_COMPONENT: Record<Organ, string> = {
   brain: 'synap',
   arms: 'openclaw',
-  builder: 'hermes',
+  builder: 'openclaude',
   eyes: 'rsshub',
   legs: 'traefik',
 };

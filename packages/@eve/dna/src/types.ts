@@ -100,7 +100,7 @@ export const SERVICE_TO_ORGAN: Record<Service, Organ> = {
   openclaude: 'builder',
   claudecode: 'builder',
   dokploy: 'builder',
-  hermes: 'builder',
+  hermes: 'arms',
   rsshub: 'eyes',
   traefik: 'legs',
   cloudflared: 'legs',
@@ -285,15 +285,12 @@ export const SERVICE_REGISTRY: Record<Service, ServiceConfig> = {
   hermes: {
     image: 'nousresearch/hermes-agent:latest',
     containerName: 'eve-builder-hermes',
-    ports: ['8642:8642', '9119:9119'],
+    ports: ['8642:8642', '9119:9119', '9120:9120'],
     volumes: [
       '${HOME}/.eve/hermes:/opt/data', // HERMES_HOME — config + plugins + sessions
     ],
     environment: {
       HERMES_HOME: '/opt/data',
-      API_SERVER_ENABLED: 'true',
-      API_SERVER_PORT: '8642',
-      DASHBOARD_PORT: '9119',
     },
     envFile: ['${HOME}/.eve/hermes.env'],
     network: 'eve-network',

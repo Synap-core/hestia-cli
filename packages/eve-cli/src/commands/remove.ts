@@ -364,7 +364,7 @@ async function updateStateAfterRemove(componentId: string): Promise<void> {
     synap: 'brain',
     ollama: 'brain',
     openclaw: 'arms',
-    hermes: 'builder',
+    hermes: 'arms',
     rsshub: 'eyes',
     traefik: 'legs',
     openwebui: 'eyes',

@@ -1,7 +1,7 @@
 {
-  "tool_name": "Read",
-  "tool_input_preview": "{\"file_path\":\"/Users/antoine/Documents/Code/synap/synap-backend/packages/eve-dashboard/app/(os)/settings/components/config-panels/openwebui-config.tsx\"}",
-  "error": "File does not exist. Note: your current working directory is /Users/antoine/Documents/Code/synap/hestia-cli.",
-  "timestamp": "2026-05-07T19:04:19.246Z",
-  "retry_count": 1
+  "tool_name": "WebFetch",
+  "tool_input_preview": "{\"url\":\"https://raw.githubusercontent.com/NousResearch/hermes-agent/main/docs/en/getting-started/messaging-gateway.md\",\"prompt\":\"Return the FULL content of this markdown file. Do not summarize - I nee...",
+  "error": "Request failed with status code 404",
+  "timestamp": "2026-05-08T09:52:44.057Z",
+  "retry_count": 3
 }

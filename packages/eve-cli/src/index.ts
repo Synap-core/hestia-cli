@@ -29,6 +29,7 @@ import { aiCommandGroup } from './commands/ai.js';
 import { uiCommand } from './commands/ui.js';
 import { domainCommand } from './commands/domain.js';
 import { intentCommand } from './commands/intent.js';
+import { deployCommand } from './commands/deploy.js';
 import { colors, emojis } from './lib/ui.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -78,6 +79,7 @@ setupCommand(program);
 installCommand(program);
 addCommand(program);
 removeCommand(program);
+deployCommand(program);
 
 program
   .command('init')

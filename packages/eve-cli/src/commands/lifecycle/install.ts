@@ -1018,7 +1018,7 @@ async function updateEntityStateFromComponents(
     synap: 'brain',
     ollama: 'brain',
     openclaw: 'arms',
-    hermes: 'builder',
+    hermes: 'arms',
     rsshub: 'eyes',
     traefik: 'legs',
     dokploy: 'builder',

@@ -938,10 +938,15 @@ async function* postUpdateReconcileHermes(): AsyncGenerator<LifecycleEvent> {
 /**
  * Install Hermes: generate env + config + plugin, pull image, run container.
  *
- * Unlike OpenClaw (docker run with inline env vars), Hermes reads config
- * from a volume-mounted file (~/.eve/hermes/config.yaml) and an env_file
- * (~/.eve/hermes.env). We write both before the container starts so it
- * boots with the correct AI provider and memory plugin in one shot.
+ * The official `nousresearch/hermes-agent:latest` image has `hermes gateway`
+ * as its default entrypoint. When the env file (hermes.env) contains
+ * `API_SERVER_ENABLED=true` and `API_SERVER_KEY=...`, the gateway command
+ * automatically starts the OpenAI-compat API server alongside messaging
+ * platforms and MCP tools.
+ *
+ * config.yaml (written below) provides advanced settings: memory.provider,
+ * model block, and MCP/dashboard config. The env file provides runtime
+ * credentials (Hub key, channel tokens, API_SERVER_KEY).
  */
 async function* installHermes(): AsyncGenerator<LifecycleEvent> {
   yield { type: "step", label: "Writing Hermes env + config + Synap memory plugin…" };
@@ -969,23 +974,24 @@ async function* installHermes(): AsyncGenerator<LifecycleEvent> {
   const skillsDir = join(homedir(), ".eve", "skills");
   mkdirSync(skillsDir, { recursive: true });
 
+  // Use the image's default entrypoint (`hermes gateway`).
+  // API server + messaging platforms + MCP start together, governed by:
+  //   - hermes.env: API_SERVER_ENABLED=true, API_SERVER_KEY=..., channel tokens
+  //   - config.yaml: memory.provider, model block, advanced config
+  // No --entrypoint override needed — bypassing it with `python -m hermes.api_server`
+  // was a bug that only started the API server (no messaging, no MCP, no tools).
   const args = [
     "run", "-d",
     "--name", "eve-builder-hermes",
     "--network", "eve-network",
     "--restart", "unless-stopped",
-    "-p", "8642:8642",   // OpenAI-compat gateway
-    "-p", "9119:9119",   // Hermes dashboard
-    "-p", "9120:9120",   // MCP server for Claude Code / Cursor
+    "-p", "8642:8642",   // OpenAI-compat gateway (part of hermes gateway)
+    "-p", "9119:9119",   // Admin dashboard (enabled via config.yaml)
+    "-p", "9120:9120",   // MCP server (enabled via config.yaml)
     "-v", `${hermesHome}:/opt/data`,
     "-v", `${skillsDir}:/opt/data/skills:ro`,   // Synap skill packages
     "--env-file", hermesEnv,
     "-e", "HERMES_HOME=/opt/data",
-    "-e", "API_SERVER_ENABLED=true",
-    "-e", "API_SERVER_PORT=8642",
-    "-e", "DASHBOARD_PORT=9119",
-    "-e", "MCP_SERVER_ENABLED=true",
-    "-e", "MCP_SERVER_PORT=9120",
     "nousresearch/hermes-agent:latest",
   ];
   const runCode = yield* runCommand("docker", args);
@@ -1726,9 +1732,12 @@ async function* registerPipelinesInOpenwebui(deployDir: string): AsyncGenerator<
 
   yield { type: "step", label: "Registering pipelines server in OpenWebUI…" };
 
-  // Wait for the pipelines sidecar to be ready.
+  // Wait for the pipelines sidecar to be ready (5 attempts, 15s).
+  // We try up to 5 (15s) because it's a fire-and-forget registration —
+  // if the sidecar isn't ready we just note it and move on; pipelines
+  // can still be added manually later via Admin → Pipelines.
   let sidecarReady = false;
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 5; i++) {
     try {
       const r = await fetch(`${pipelinesUrl}/health`, { signal: AbortSignal.timeout(3000) });
       if (r.ok) { sidecarReady = true; break; }
@@ -1740,9 +1749,9 @@ async function* registerPipelinesInOpenwebui(deployDir: string): AsyncGenerator<
   if (!sidecarReady) {
     yield {
       type: "log",
-      line: `Pipelines sidecar not yet ready — open Admin → Pipelines in OpenWebUI and add: URL=${pipelinesUrl}, Key=${pipelinesKey}`,
+      line: `Pipelines sidecar not yet ready — will retry registration after OpenWebUI starts`,
     };
-    return;
+    // Don't return: manifold sources still need to be registered.
   }
 
   // Wait for OpenWebUI to be fully initialized (admin user + secret key).
@@ -1790,85 +1799,79 @@ async function* registerPipelinesInOpenwebui(deployDir: string): AsyncGenerator<
   // Final status check after waiting.
   const finalStatus = await getStatus();
   if (finalStatus.status !== 'healthy') {
-    if (finalStatus.status === 'not-reachable') {
-      yield { type: "log", line: `OpenWebUI not reachable — run 'eve update openwebui-pipelines' after it starts` };
-    } else if (finalStatus.status === 'no-secret-key') {
-      yield {
-        type: "log",
-        line: [
-          "WEBUI_SECRET_KEY not found after waiting — OpenWebUI may need manual setup.",
-          `Go to Admin Panel → Settings → Pipelines and add: URL=${pipelinesUrl}, Key=${pipelinesKey}`,
-        ].join(" "),
-      };
-    } else if (finalStatus.status === 'no-admin-user') {
-      yield {
-        type: "log",
-        line: [
-          "No admin user in OpenWebUI yet — sign in as admin then run 'eve update openwebui-pipelines'.",
-          `Alternatively add pipelines manually: URL=${pipelinesUrl}, Key=${pipelinesKey}`,
-        ].join(" "),
-      };
-    } else {
-      yield { type: "log", line: `Pipelines registration skipped — OpenWebUI status: ${finalStatus.status}` };
-    }
+    yield { type: "log", line: `Registration skipped — OpenWebUI status: ${finalStatus.status}. Will retry on next update.` };
     return;
   }
 
-  // Forge JWT and register.
+  // Forge JWT.
   const jwt = await getAdminJwt();
   if (!jwt) {
     yield {
       type: "log",
-      line: `OpenWebUI admin auth unavailable — add pipelines manually: URL=${pipelinesUrl}, Key=${pipelinesKey}`,
+      line: `OpenWebUI admin auth unavailable — registration requires manual setup`,
     };
     return;
   }
 
-  // Use the idempotent registerPipeline from openwebui-admin module.
-  const ok = await registerPipelineApi(jwt, pipelinesUrl, pipelinesKey);
-  if (ok) {
-    yield { type: "log", line: "Pipelines server registered in OpenWebUI ✓ — filter pipelines now active for all models" };
-  } else {
-    yield {
-      type: "log",
-      line: `Pipelines registration failed — try Admin → Pipelines in OpenWebUI manually: URL=${pipelinesUrl}`,
-    };
+  // ——— Pipeline registration (filter pipeline, needs sidecar) ———
+  if (sidecarReady) {
+    // Use the idempotent registerPipeline from openwebui-admin module.
+    const ok = await registerPipelineApi(jwt, pipelinesUrl, pipelinesKey);
+    if (ok) {
+      yield { type: "log", line: "Pipelines server registered in OpenWebUI ✓ — filter pipelines now active for all models" };
+    } else {
+      yield {
+        type: "log",
+        line: `Pipelines registration failed — will retry. Can add manually: Admin → Pipelines, URL=${pipelinesUrl}`,
+      };
+    }
   }
 
-  // Also register model sources as manifold pipelines so they appear in the
-  // model picker with proper display names and model lists.
+  // ——— Manifold model-source registration (independent of sidecar) ———
+  // This only needs OpenWebUI to be healthy (JWT). The manifold API
+  // writes directly to OpenWebUI's config — no sidecar needed.
   yield { type: "step", label: "Registering model sources in OpenWebUI…" };
-  try {
-    const modelSources: ModelSource[] = [];
+  let manifoldOk = false;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const modelSources: ModelSource[] = [];
 
-    // Synap IS
-    modelSources.push({
-      url: "http://eve-brain-synap:4000/v1",
-      apiKey: "", // Synap IS doesn't require an API key for local deployments
-      displayName: "Synap IS",
-    });
-
-    // Hermes Gateway (if API key is available)
-    if (hermesApiKey) {
+      // Synap IS
       modelSources.push({
-        url: "http://eve-builder-hermes:8642/v1",
-        apiKey: hermesApiKey,
-        displayName: "Hermes Gateway",
+        url: "http://eve-brain-synap:4000/v1",
+        apiKey: "", // Synap IS doesn't require an API key for local deployments
+        displayName: "Synap IS",
       });
-    }
 
-    if (modelSources.length > 0) {
-      const registered = await upsertAllModelSources(jwt, modelSources);
-      if (registered > 0) {
-        yield { type: "log", line: `Model sources registered in OpenWebUI ✓ — ${registered} source(s) visible in model picker` };
-      } else {
-        yield { type: "log", line: "Model source registration returned 0 — sources may already be configured" };
+      // Hermes Gateway (if API key is available)
+      if (hermesApiKey) {
+        modelSources.push({
+          url: "http://eve-builder-hermes:8642/v1",
+          apiKey: hermesApiKey,
+          displayName: "Hermes Gateway",
+        });
       }
+
+      if (modelSources.length > 0) {
+        const registered = await upsertAllModelSources(jwt, modelSources);
+        if (registered > 0) {
+          yield { type: "log", line: `Model sources registered in OpenWebUI ✓ — ${registered} source(s) visible in model picker` };
+          manifoldOk = true;
+        } else {
+          yield { type: "log", line: "Model source registration returned 0 — sources may already be configured, skipping retry" };
+          break; // non-retryable
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      yield { type: "log", line: `Model source attempt ${attempt + 1}/3 failed — ${msg}, retrying…` };
+      await new Promise(r => setTimeout(r, 5_000));
     }
-  } catch (err) {
+  }
+  if (!manifoldOk) {
     yield {
       type: "log",
-      line: `Model source registration skipped — ${err instanceof Error ? err.message : String(err)}`,
+      line: "Model source registration failed after retries — add manually: OpenWebUI Admin → Settings → OpenAI",
     };
   }
 }
@@ -2046,7 +2049,7 @@ const ORGAN_MAP: Record<string, "brain" | "arms" | "builder" | "eyes" | "legs"> 
   synap: "brain",
   ollama: "brain",
   openclaw: "arms",
-  hermes: "builder",
+  hermes: "arms",
   rsshub: "eyes",
   traefik: "legs",
   openwebui: "eyes",

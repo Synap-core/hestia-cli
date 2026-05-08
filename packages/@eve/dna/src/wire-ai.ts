@@ -538,9 +538,10 @@ function wireHermes(secrets: EveSecrets | null): WireAiResult {
   }
 
   // Re-run docker run with the fresh env file + updated config.
-  // This mirrors the install recipe in lifecycle/index.ts so wiring and first
-  // install stay in sync. Fire-and-forget: if docker is down, the next add/update
-  // cycle will catch up.
+  // Mirrors the install recipe in lifecycle/index.ts: default entrypoint
+  // (`hermes gateway`) starts the API server + messaging + MCP together,
+  // governed by hermes.env and config.yaml. No --entrypoint override.
+  // Fire-and-forget: if docker is down, the next add/update cycle will catch up.
   try {
     const home = homedir();
     const hermesHome = join(home, '.eve', 'hermes');
@@ -561,11 +562,6 @@ function wireHermes(secrets: EveSecrets | null): WireAiResult {
       '-v', `${skillsDir}:/opt/data/skills:ro`,
       '--env-file', hermesEnv,
       '-e', 'HERMES_HOME=/opt/data',
-      '-e', 'API_SERVER_ENABLED=true',
-      '-e', 'API_SERVER_PORT=8642',
-      '-e', 'DASHBOARD_PORT=9119',
-      '-e', 'MCP_SERVER_ENABLED=true',
-      '-e', 'MCP_SERVER_PORT=9120',
       'nousresearch/hermes-agent:latest',
     ];
     execSync(`docker ${args.join(' ')}`, { stdio: 'pipe', timeout: 30_000 });
