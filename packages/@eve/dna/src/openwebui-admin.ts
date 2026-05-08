@@ -460,7 +460,7 @@ async function registerManifoldPipeline(
 
   // Check if already registered
   const existing = await listPipelines(jwt, hostPort);
-  if (existing.some(p => p.uid === modelSource.url)) {
+  if (existing.some(p => p.pipelines?.[0]?.uid === modelSource.url)) {
     return true; // already registered
   }
 
