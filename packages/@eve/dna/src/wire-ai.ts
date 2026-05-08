@@ -480,8 +480,9 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
  * wiring already written by `writeHermesEnvFile()` in builder-hub-wiring.ts.
  */
 function wireHermes(secrets: EveSecrets | null): WireAiResult {
-  const eveDir = join(process.cwd(), '.eve');
-  const hermesEnvPath = join(eveDir, 'hermes.env');
+  const home = homedir();
+  const eveDir = join(home, '.eve');
+  const hermesEnvPath = join(home, '.eve', 'hermes.env');
   if (!existsSync(eveDir)) {
     return { id: 'hermes', outcome: 'skipped', summary: '.eve dir not found — install Hermes first' };
   }

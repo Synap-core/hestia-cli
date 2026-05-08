@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { execa } from 'execa';
-import { OllamaService } from '@eve/brain';
+import { OllamaService, ModelService } from '@eve/brain';
 import { getGlobalCliFlags, outputJson } from '@eve/cli-kit';
 import {
   readEveSecrets,
@@ -20,23 +20,22 @@ function buildNonSecretProviderRouting(
   secrets: Awaited<ReturnType<typeof readEveSecrets>>,
 ): {
   mode?: 'local' | 'provider' | 'hybrid';
-  defaultProvider?: ProviderId;
-  fallbackProvider?: ProviderId;
-  providers?: Array<{ id: ProviderId; enabled?: boolean; baseUrl?: string; defaultModel?: string }>;
-  syncToSynap?: boolean;
+  defaultProvider?: string;
+  fallbackProvider?: string;
+  providers?: Array<{ id: string; enabled?: boolean; baseUrl?: string; defaultModel?: string; models?: string[] }>;
 } {
   const providers = (secrets?.ai?.providers ?? []).map((p) => ({
     id: p.id,
     enabled: p.enabled,
     baseUrl: p.baseUrl,
     defaultModel: p.defaultModel,
+    models: p.models,
   }));
   return {
     mode: secrets?.ai?.mode,
     defaultProvider: secrets?.ai?.defaultProvider,
     fallbackProvider: secrets?.ai?.fallbackProvider,
     providers,
-    syncToSynap: secrets?.ai?.syncToSynap,
   };
 }
 
@@ -116,33 +115,56 @@ export function aiCommandGroup(program: Command): void {
     .command('status')
     .description('Show AI foundation mode, provider routing, and Ollama status')
     .action(async () => {
-      const ollama = new OllamaService();
+      const modelService = new ModelService();
       try {
-        const s = await ollama.getStatus();
         const secrets = await readEveSecrets(process.cwd());
+        const providers = secrets?.ai?.providers ?? [];
+
+        // Quick status for each component
+        const ollamaRunning = await modelService.isOllamaRunning();
+        const hermesRunning = await modelService.isHermesRunning();
+        const ollamaModels = ollamaRunning ? await modelService.listOllamaModels() : [];
+        const hermesModels = hermesRunning ? await modelService.listHermesModels() : [];
+
         const out = {
           ai: secrets?.ai ?? null,
-          ollama: s,
+          ollama: { running: ollamaRunning, modelsInstalled: ollamaModels },
+          hermes: { running: hermesRunning, models: hermesModels },
+          cloudProviders: providers.filter(p => p.apiKey).map(p => ({
+            id: p.id,
+            hasKey: true,
+            models: p.models ?? [],
+          })),
         };
         if (getGlobalCliFlags().json) {
           outputJson(out);
           return;
         }
+
         console.log(colors.primary.bold('AI Foundation'));
         console.log(`  Mode: ${secrets?.ai?.mode ?? '(unset)'}`);
         console.log(`  Default provider: ${secrets?.ai?.defaultProvider ?? '(unset)'}`);
         console.log(`  Fallback provider: ${secrets?.ai?.fallbackProvider ?? '(unset)'}`);
-        const providers = secrets?.ai?.providers ?? [];
         if (providers.length) {
           console.log('  Providers:');
           for (const p of providers) {
-            console.log(`    - ${p.id} enabled=${p.enabled ?? true} model=${p.defaultModel ?? '(unset)'}`);
+            console.log(`    - ${p.id} enabled=${p.enabled ?? true} model=${p.defaultModel ?? '(unset)'}${p.models?.length ? ` models=${p.models.length} discovered` : ''}`);
           }
         }
-        console.log('');
-        console.log(colors.primary.bold('Ollama'));
-        console.log(`  Running: ${s.running ? 'yes' : 'no'}`);
-        console.log(`  Models: ${s.modelsInstalled.length ? s.modelsInstalled.join(', ') : '(none)'}`);
+
+        console.log();
+        console.log(colors.primary.bold('Local Models'));
+        console.log(`  Ollama: ${ollamaRunning ? 'running' : 'stopped'}${ollamaModels.length ? ' · ' + ollamaModels.join(', ') : ''}`);
+        console.log(`  Hermes: ${hermesRunning ? 'running' : 'stopped'}${hermesModels.length ? ' · ' + hermesModels.join(', ') : ''}`);
+
+        const cloudProviders = providers.filter(p => p.apiKey);
+        if (cloudProviders.length) {
+          console.log();
+          console.log(colors.primary.bold('Cloud Providers'));
+          for (const p of cloudProviders) {
+            console.log(`    - ${p.id} (${p.baseUrl ?? 'default url'})${p.models?.length ? ` · ${p.models.length} models cached` : ' · (run \`eve ai models\` to discover)'}`);
+          }
+        }
       } catch (e) {
         printError(e instanceof Error ? e.message : String(e));
         process.exit(1);
@@ -385,20 +407,47 @@ export function aiCommandGroup(program: Command): void {
 
   ai
     .command('models')
-    .description('List models (docker exec ollama list)')
+    .description('List models from all providers (Ollama, Hermes, cloud)')
     .action(async () => {
-      const ollama = new OllamaService();
-      const models = await ollama.listModels();
+      const modelService = new ModelService();
+      const secrets = await readEveSecrets(process.cwd());
+      const providers = secrets?.ai?.providers ?? [];
+      const discovered = await modelService.discoverAll(
+        providers.map(p => ({
+          id: p.id,
+          name: p.name,
+          baseUrl: p.baseUrl,
+          apiKey: p.apiKey,
+          defaultModel: p.defaultModel,
+        })),
+      );
+
       if (getGlobalCliFlags().json) {
-        outputJson({ models });
+        outputJson({ providers: discovered });
         return;
       }
-      for (const m of models) {
-        console.log(`  ${m}`);
+
+      if (discovered.length === 0) {
+        printInfo('No models found. Run `eve brain init --with-ai` for local Ollama, or add a cloud provider with `eve ai providers add`.');
+        return;
       }
-      if (models.length === 0) {
-        printInfo('No models or Ollama not running. Try: eve brain init --with-ai');
+
+      for (const group of discovered) {
+        console.log();
+        const status = group.available ? '' : colors.muted(' (unreachable)');
+        console.log(colors.primary.bold(`── ${group.displayName}${status} ──`));
+        if (group.models.length === 0) {
+          console.log(`  (no models discovered)`);
+        } else {
+          for (const m of group.models) {
+            const marker = m.isDefault ? colors.brain(' *') : '';
+            console.log(`  ${m.name}${marker}`);
+          }
+        }
       }
+
+      console.log();
+      console.log(colors.muted('  * = first model discovered (serves as default when no explicit default is set)'));
     });
 
   ai

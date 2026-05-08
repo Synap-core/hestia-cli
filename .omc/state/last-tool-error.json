@@ -1,7 +1,7 @@
 {
-  "tool_name": "WebFetch",
-  "tool_input_preview": "{\"url\":\"https://raw.githubusercontent.com/NousResearch/hermes-agent/main/docs/en/getting-started/messaging-gateway.md\",\"prompt\":\"Return the FULL content of this markdown file. Do not summarize - I nee...",
-  "error": "Request failed with status code 404",
-  "timestamp": "2026-05-08T09:52:44.057Z",
-  "retry_count": 3
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"docker logs eve-builder-hermes --tail 50 2>&1\",\"description\":\"Check Hermes container logs\"}",
+  "error": "Exit code 1",
+  "timestamp": "2026-05-08T11:25:15.127Z",
+  "retry_count": 2
 }

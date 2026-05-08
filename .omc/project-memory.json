@@ -18,7 +18,7 @@
     "runtime": "Node.js 18.0.0"
   },
   "build": {
-    "buildCommand": "npx tsc --noEmit -p packages/@eve/dna/tsconfig.json 2>&1 | tail -30",
+    "buildCommand": "pnpm tsc --noEmit -p packages/eve-cli/tsconfig.json 2>&1 | grep \"^packages/eve-cli/src/commands/ai\" | head -10",
     "testCommand": "pnpm test",
     "lintCommand": "pnpm lint",
     "devCommand": null,
@@ -126,50 +126,62 @@
   "hotPaths": [
     {
       "path": "packages/@eve/lifecycle/src/index.ts",
-      "accessCount": 47,
-      "lastAccessed": 1778234738441,
+      "accessCount": 48,
+      "lastAccessed": 1778239550371,
       "type": "file"
     },
     {
       "path": "",
-      "accessCount": 21,
-      "lastAccessed": 1778233261758,
+      "accessCount": 36,
+      "lastAccessed": 1778239592885,
       "type": "directory"
     },
     {
       "path": "packages/@eve/dna/src/wire-ai.ts",
-      "accessCount": 21,
-      "lastAccessed": 1778234785847,
+      "accessCount": 36,
+      "lastAccessed": 1778240023947,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/dna/src/secrets-contract.ts",
+      "accessCount": 27,
+      "lastAccessed": 1778240401793,
+      "type": "file"
+    },
+    {
+      "path": "packages/eve-cli/src/commands/ai.ts",
+      "accessCount": 17,
+      "lastAccessed": 1778240437190,
       "type": "file"
     },
     {
       "path": "packages/@eve/dna/src/types.ts",
-      "accessCount": 12,
-      "lastAccessed": 1778234834876,
-      "type": "file"
-    },
-    {
-      "path": "packages/@eve/dna/src/openwebui-admin.ts",
-      "accessCount": 9,
-      "lastAccessed": 1778230433600,
-      "type": "file"
-    },
-    {
-      "path": "packages/@eve/dna/src",
-      "accessCount": 5,
-      "lastAccessed": 1778231281795,
-      "type": "directory"
-    },
-    {
-      "path": "packages/@eve/dna/src/secrets-contract.ts",
-      "accessCount": 5,
-      "lastAccessed": 1778232447460,
+      "accessCount": 13,
+      "lastAccessed": 1778237327021,
       "type": "file"
     },
     {
       "path": "packages/@eve",
-      "accessCount": 5,
-      "lastAccessed": 1778234581766,
+      "accessCount": 11,
+      "lastAccessed": 1778237030883,
+      "type": "directory"
+    },
+    {
+      "path": "packages/@eve/dna/src/openwebui-admin.ts",
+      "accessCount": 11,
+      "lastAccessed": 1778237616146,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/dna/src",
+      "accessCount": 9,
+      "lastAccessed": 1778239571599,
+      "type": "directory"
+    },
+    {
+      "path": "packages/@eve/brain/src/lib/ollama.ts",
+      "accessCount": 4,
+      "lastAccessed": 1778238319348,
       "type": "directory"
     },
     {
@@ -186,14 +198,20 @@
     },
     {
       "path": "packages/@eve/dna/src/components.ts",
-      "accessCount": 2,
-      "lastAccessed": 1778232010263,
+      "accessCount": 3,
+      "lastAccessed": 1778237326971,
       "type": "directory"
     },
     {
+      "path": "packages/@eve/brain/src/index.ts",
+      "accessCount": 3,
+      "lastAccessed": 1778238397456,
+      "type": "file"
+    },
+    {
       "path": "packages/@eve/dna/src/docker-helpers.ts",
-      "accessCount": 2,
-      "lastAccessed": 1778232054548,
+      "accessCount": 3,
+      "lastAccessed": 1778239571636,
       "type": "file"
     },
     {
@@ -201,6 +219,24 @@
       "accessCount": 2,
       "lastAccessed": 1778232464479,
       "type": "file"
+    },
+    {
+      "path": "packages/@eve/lifecycle/assets/pipelines",
+      "accessCount": 2,
+      "lastAccessed": 1778236265922,
+      "type": "directory"
+    },
+    {
+      "path": "packages",
+      "accessCount": 2,
+      "lastAccessed": 1778237616177,
+      "type": "directory"
+    },
+    {
+      "path": "packages/eve-cli/src/lib/ui.ts",
+      "accessCount": 2,
+      "lastAccessed": 1778238489547,
+      "type": "directory"
     },
     {
       "path": "README.md",
@@ -263,21 +299,9 @@
       "type": "file"
     },
     {
-      "path": "packages",
-      "accessCount": 1,
-      "lastAccessed": 1778232306905,
-      "type": "directory"
-    },
-    {
       "path": "packages/eve-cli/src/commands",
       "accessCount": 1,
       "lastAccessed": 1778232306957,
-      "type": "directory"
-    },
-    {
-      "path": "packages/@eve/lifecycle/assets/pipelines",
-      "accessCount": 1,
-      "lastAccessed": 1778233289984,
       "type": "directory"
     },
     {
@@ -296,6 +320,54 @@
       "path": "packages/@eve/lifecycle/assets/pipelines/synap_memory_filter.py",
       "accessCount": 1,
       "lastAccessed": 1778233503074,
+      "type": "file"
+    },
+    {
+      "path": "packages/eve-dashboard/docs/ai-provider-model.md",
+      "accessCount": 1,
+      "lastAccessed": 1778237326982,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/dna/src/config.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778237327003,
+      "type": "file"
+    },
+    {
+      "path": "packages/eve-dashboard/app/api/ai/providers/route.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778237349424,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/dna",
+      "accessCount": 1,
+      "lastAccessed": 1778237349588,
+      "type": "directory"
+    },
+    {
+      "path": "packages/@eve/dna/src/setup-profile.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778237381905,
+      "type": "file"
+    },
+    {
+      "path": "packages/eve-cli/src",
+      "accessCount": 1,
+      "lastAccessed": 1778237889027,
+      "type": "directory"
+    },
+    {
+      "path": "packages/@eve/brain/src/lib/synap.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778238128655,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/brain/src/lib/model-service.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778238380360,
       "type": "file"
     }
   ],

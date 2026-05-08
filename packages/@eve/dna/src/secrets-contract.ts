@@ -18,6 +18,8 @@ const UnifiedProviderSchema = z.object({
   apiKey: z.string().optional(),
   baseUrl: z.string().optional(),
   defaultModel: z.string().optional(),
+  /** Available model names for this provider (populated by model discovery). */
+  models: z.array(z.string()).optional(),
 });
 
 const SecretsSchema = z.object({
@@ -497,6 +499,7 @@ function mergeProviderLists(input: EveSecrets | null): EveSecrets | null {
       apiKey: entry.apiKey as string | undefined,
       baseUrl: entry.baseUrl as string | undefined,
       defaultModel: entry.defaultModel as string | undefined,
+      models: entry.models as string[] | undefined,
     };
   });
 
@@ -509,6 +512,7 @@ function mergeProviderLists(input: EveSecrets | null): EveSecrets | null {
       apiKey: entry.apiKey as string | undefined,
       baseUrl: entry.baseUrl as string | undefined,
       defaultModel: entry.defaultModel as string | undefined,
+      models: entry.models as string[] | undefined,
     });
   }
 

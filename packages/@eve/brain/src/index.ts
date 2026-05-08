@@ -9,6 +9,7 @@ export { SynapService, type SynapHealth } from './lib/synap.js';
 export { resolveSynapDelegate, type SynapDelegatePaths } from './lib/synap-delegate.js';
 export { execa, ensureNetwork } from './lib/exec.js';
 export { OllamaService, type AIModelStatus } from './lib/ollama.js';
+export { ModelService, type ProviderModel, type ProviderModels } from './lib/model-service.js';
 export { installSynapFromImage, ensureKratosRunning, type SynapImageInstallOptions, type SynapImageInstallResult } from './lib/synap-image-install.js';
 
 // Commands (re-export for advanced use)

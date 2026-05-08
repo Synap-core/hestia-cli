@@ -38,6 +38,7 @@ interface DeployOptions {
   clean?: boolean;
   token?: string;
   tag?: string;
+  prod?: boolean;
 }
 
 export function deployCommand(program: Command): void {
@@ -63,6 +64,10 @@ export function deployCommand(program: Command): void {
     .option(
       '--tag <tag>',
       'Custom image tag (default: branch-sha).',
+    )
+    .option(
+      '--prod',
+      'Deploy to production (CT 103) instead of staging.',
     )
     .action(async (opts: DeployOptions) => {
       try {
@@ -166,12 +171,17 @@ async function runDeploy(opts: DeployOptions): Promise<void> {
 
   // Step 6: Summary
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+  const target = opts.prod ? 'production (CT 103)' : 'staging (CT 104)';
   console.log();
   printBox('Deployment summary', [
     `App:          ${appConfig.name}`,
     `Framework:    ${appConfig.framework}`,
     `Image:        ${buildResult.imageName}`,
+    `Target:       ${target}`,
     `Build time:   ${elapsed}s`,
     opts.docker ? 'Mode:         Build-only (no GHCR push)' : 'Mode:         Full build + push',
   ]);
+  if (opts.docker) {
+    printInfo('Build complete. Push and deploy with `eve deploy` (without --docker).');
+  }
 }
