@@ -55,6 +55,7 @@ const IDENTITY_SCHEMA = JSON.stringify(
 );
 
 function buildKratosYml(domain: string, postgresPassword: string, webhookSecret: string, backendUrl = 'http://eve-brain-synap:4000'): string {
+  const pod = `pod.${domain}`;
   return `version: v1.3.1
 
 dsn: postgres://synap:${postgresPassword}@eve-brain-postgres:5432/kratos?sslmode=disable
@@ -65,11 +66,11 @@ log:
 
 serve:
   public:
-    base_url: https://${domain}/.ory/kratos/public/
+    base_url: https://${pod}/.ory/kratos/public/
     cors:
       enabled: true
       allowed_origins:
-        - https://${domain}
+        - https://${pod}
       allowed_headers:
         - Authorization
         - Content-Type
@@ -83,10 +84,10 @@ serve:
     base_url: http://eve-brain-kratos:4434
 
 selfservice:
-  default_browser_return_url: https://${domain}/admin/
+  default_browser_return_url: https://${pod}/admin/
   allowed_return_urls:
-    - https://${domain}
-    - https://${domain}/*
+    - https://${pod}
+    - https://${pod}/*
 
   methods:
     password:
@@ -96,16 +97,16 @@ selfservice:
 
   flows:
     login:
-      ui_url: https://${domain}/admin/kratos
+      ui_url: https://${pod}/admin/kratos
       lifespan: 10m
     registration:
-      ui_url: https://${domain}/admin/kratos
+      ui_url: https://${pod}/admin/kratos
       lifespan: 10m
     recovery:
       enabled: true
-      ui_url: https://${domain}/admin/kratos
+      ui_url: https://${pod}/admin/kratos
     settings:
-      ui_url: https://${domain}/admin/kratos
+      ui_url: https://${pod}/admin/kratos
       privileged_session_max_age: 15m
       after:
         password:
@@ -119,7 +120,7 @@ selfservice:
       enabled: false
     logout:
       after:
-        default_browser_return_url: https://${domain}/admin/
+        default_browser_return_url: https://${pod}/admin/
 
 session:
   cookie:

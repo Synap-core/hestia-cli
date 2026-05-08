@@ -18,7 +18,7 @@
     "runtime": "Node.js 18.0.0"
   },
   "build": {
-    "buildCommand": "pnpm tsc --noEmit -p packages/eve-cli/tsconfig.json 2>&1 | grep -E \"^(packages/@eve/dna|packages/@eve/lifecycle|packages/eve-cli)\" | head -20",
+    "buildCommand": "pnpm tsc --noEmit -p packages/eve-cli/tsconfig.json 2>&1 | grep -E \"^(packages/@eve/dna|packages/@eve/lifecycle)\" | head -20",
     "testCommand": "pnpm test",
     "lintCommand": "pnpm lint",
     "devCommand": null,
@@ -126,14 +126,14 @@
   "hotPaths": [
     {
       "path": "packages/@eve/lifecycle/src/index.ts",
-      "accessCount": 105,
-      "lastAccessed": 1778247495151,
+      "accessCount": 122,
+      "lastAccessed": 1778248594167,
       "type": "file"
     },
     {
       "path": "packages/@eve/dna/src/wire-ai.ts",
-      "accessCount": 82,
-      "lastAccessed": 1778246995793,
+      "accessCount": 93,
+      "lastAccessed": 1778248796003,
       "type": "file"
     },
     {
@@ -144,21 +144,21 @@
     },
     {
       "path": "packages/@eve/dna/src/openwebui-admin.ts",
-      "accessCount": 39,
-      "lastAccessed": 1778245736303,
+      "accessCount": 41,
+      "lastAccessed": 1778248640332,
       "type": "file"
+    },
+    {
+      "path": "packages/@eve/dna/src",
+      "accessCount": 29,
+      "lastAccessed": 1778248850473,
+      "type": "directory"
     },
     {
       "path": "packages/@eve/dna/src/secrets-contract.ts",
       "accessCount": 27,
       "lastAccessed": 1778240401793,
       "type": "file"
-    },
-    {
-      "path": "packages/@eve/dna/src",
-      "accessCount": 20,
-      "lastAccessed": 1778245122862,
-      "type": "directory"
     },
     {
       "path": "packages/eve-cli/src/commands/ai.ts",
@@ -174,8 +174,14 @@
     },
     {
       "path": "packages/@eve",
-      "accessCount": 11,
-      "lastAccessed": 1778237030883,
+      "accessCount": 14,
+      "lastAccessed": 1778247845867,
+      "type": "directory"
+    },
+    {
+      "path": "packages/@eve/dna/src/components.ts",
+      "accessCount": 8,
+      "lastAccessed": 1778247902471,
       "type": "directory"
     },
     {
@@ -185,28 +191,22 @@
       "type": "file"
     },
     {
-      "path": "packages/@eve/dna/src/components.ts",
-      "accessCount": 6,
-      "lastAccessed": 1778242519360,
-      "type": "directory"
+      "path": "packages/eve-dashboard/app/api/pod/bootstrap-claim/route.ts",
+      "accessCount": 7,
+      "lastAccessed": 1778248291192,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/dna/src/index.ts",
+      "accessCount": 7,
+      "lastAccessed": 1778248352806,
+      "type": "file"
     },
     {
       "path": "packages/@eve/lifecycle/src",
       "accessCount": 6,
       "lastAccessed": 1778244986606,
       "type": "directory"
-    },
-    {
-      "path": "packages/eve-dashboard/app/api/pod/bootstrap-claim/route.ts",
-      "accessCount": 6,
-      "lastAccessed": 1778245396467,
-      "type": "file"
-    },
-    {
-      "path": "packages/@eve/dna/src/index.ts",
-      "accessCount": 6,
-      "lastAccessed": 1778246054306,
-      "type": "file"
     },
     {
       "path": "packages/eve-cli/src/commands",
@@ -221,15 +221,21 @@
       "type": "directory"
     },
     {
-      "path": "packages/@eve/brain/src/lib/ollama.ts",
-      "accessCount": 4,
-      "lastAccessed": 1778238319348,
-      "type": "directory"
+      "path": "packages/@eve/dna/src/pod-url.ts",
+      "accessCount": 5,
+      "lastAccessed": 1778248765210,
+      "type": "file"
     },
     {
       "path": "packages/eve-dashboard",
+      "accessCount": 5,
+      "lastAccessed": 1778248783900,
+      "type": "directory"
+    },
+    {
+      "path": "packages/@eve/brain/src/lib/ollama.ts",
       "accessCount": 4,
-      "lastAccessed": 1778245667271,
+      "lastAccessed": 1778238319348,
       "type": "directory"
     },
     {
@@ -248,12 +254,6 @@
       "path": "packages/@eve/lifecycle/assets/pipelines/synap_hermes_dispatch.py",
       "accessCount": 3,
       "lastAccessed": 1778242955056,
-      "type": "file"
-    },
-    {
-      "path": "packages/@eve/dna/src/pod-url.ts",
-      "accessCount": 3,
-      "lastAccessed": 1778245396625,
       "type": "file"
     },
     {

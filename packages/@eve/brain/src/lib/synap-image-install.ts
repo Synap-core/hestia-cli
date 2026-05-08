@@ -385,14 +385,16 @@ services:
       DSN: postgres://synap:\${POSTGRES_PASSWORD}@postgres:5432/kratos?sslmode=disable
       SECRETS_COOKIE: \${KRATOS_SECRETS_COOKIE}
       SECRETS_CIPHER: \${KRATOS_SECRETS_CIPHER}
-      SERVE_PUBLIC_BASE_URL: https://\${DOMAIN}/.ory/kratos/public/
-      SERVE_ADMIN_BASE_URL: https://\${DOMAIN}/.ory/kratos/admin/
+      SERVE_PUBLIC_BASE_URL: https://pod.\${DOMAIN}/.ory/kratos/public/
+      SERVE_ADMIN_BASE_URL: https://pod.\${DOMAIN}/.ory/kratos/admin/
       # Post-success return URL — must be a route the pod actually serves.
       # The pod admin SPA mounts /admin/ (see apps/admin-ui/src/App.tsx) and
       # Kratos flows are rendered inline at /admin/kratos. There is NO /login
       # route on the pod, so pointing this at /login 404s after every flow.
-      SELFSERVICE_DEFAULT_BROWSER_RETURN_URL: https://\${DOMAIN}/admin/
-      SELFSERVICE_ALLOWED_RETURN_URLS: https://\${DOMAIN},https://\${DOMAIN}/*
+      # Eve uses Traefik subdomain routing — backend is on pod.{domain}, not
+      # bare {domain}. All Kratos public URLs must include the pod. prefix.
+      SELFSERVICE_DEFAULT_BROWSER_RETURN_URL: https://pod.\${DOMAIN}/admin/
+      SELFSERVICE_ALLOWED_RETURN_URLS: https://pod.\${DOMAIN},https://pod.\${DOMAIN}/*
       IDENTITY_SCHEMAS_0_ID: default
       IDENTITY_SCHEMAS_0_URL: file:///etc/config/kratos/identity.schema.json
       DOMAIN: \${DOMAIN}

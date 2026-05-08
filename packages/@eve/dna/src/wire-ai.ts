@@ -774,6 +774,122 @@ export function wireAllInstalledComponents(
 }
 
 /**
+ * Build model sources for OpenWebUI's manifold API + extract pipelines key
+ * from the deploy directory. Used by `registerPipelinesInOpenwebui` and
+ * `wireHermesIntoOpenwebui` in @eve/lifecycle.
+ */
+export function buildOpenwebuiModelSources(
+  secrets: EveSecrets | null,
+  deployDir: string,
+): { modelSources: ModelSource[]; pipelinesKey: string; pipelinesUrl: string | null } {
+  // Extract pipelines key from the deploy-dir .env
+  const pipelinesEnvPath = join(deployDir, '.env');
+  let pipelinesKey = '';
+  if (existsSync(pipelinesEnvPath)) {
+    const pipelinesEnv = readFileSync(pipelinesEnvPath, 'utf-8');
+    pipelinesKey = pipelinesEnv.split('\n')
+      .find(l => l.startsWith('PIPELINES_API_KEY='))?.split('=', 2)[1]?.trim() ?? '';
+  }
+  const pipelinesUrl = pipelinesKey ? 'http://eve-openwebui-pipelines:9099' : null;
+
+  const providers = secrets?.ai?.providers ?? [];
+  const modelSources: ModelSource[] = [];
+
+  // Synap IS
+  modelSources.push({
+    url: 'http://eve-brain-synap:4000/v1',
+    apiKey: '',
+    displayName: 'Synap IS',
+  });
+
+  // Hermes Gateway
+  const hermesApiKey = secrets?.builder?.hermes?.apiServerKey ?? '';
+  if (hermesApiKey && isContainerRunning('eve-builder-hermes')) {
+    modelSources.push({
+      url: 'http://eve-builder-hermes:8642/v1',
+      apiKey: hermesApiKey,
+      displayName: 'Hermes Gateway',
+    });
+  }
+
+  // Enabled custom providers
+  for (const p of providers) {
+    if (!p.enabled || !p.id.startsWith('custom-') || !p.baseUrl) continue;
+    modelSources.push({
+      url: p.baseUrl.replace(/\/v1$/, '') + '/v1',
+      apiKey: p.apiKey ?? '',
+      displayName: `Custom: ${p.id}`,
+    });
+  }
+
+  return { modelSources, pipelinesKey, pipelinesUrl };
+}
+
+/**
+ * Ordered registration flow for OpenWebUI's admin API:
+ *   1. Wait for pipelines sidecar (brief, fire-and-forget)
+ *   2. Wait for OpenWebUI health (JWT + admin user ready)
+ *   3. Register pipeline sidecar (if key present)
+ *   4. Upsert model sources (best-effort, single retry)
+ *
+ * Returns true if all steps succeeded (or were skipped).
+ *
+ * The old inline version used a "wait 90s then force-retry 3 times" pattern.
+ * This version sequences each step properly:
+ *   - Sidecar probe only runs if pipelines key exists (not a blocking step)
+ *   - OpenWebUI health is the only blocking step (30×3s = 90s)
+ *   - Registration runs exactly once per healthy OpenWebUI
+ *   - If OpenWebUI never becomes healthy, we skip registration cleanly
+ *     rather than hammering with retries against a dead server
+ */
+export async function registerOpenwebuiAdminApi(
+  modelSources: ModelSource[],
+  options: { pipelinesUrl?: string | null; pipelinesKey?: string },
+): Promise<boolean> {
+  // Step 1: Probe pipelines sidecar (non-blocking, 15s max)
+  let sidecarReady = false;
+  if (options.pipelinesUrl && options.pipelinesKey) {
+    for (let i = 0; i < 5; i++) {
+      try {
+        const r = await fetch(`${options.pipelinesUrl}/health`, { signal: AbortSignal.timeout(3000) });
+        if (r.ok || r.status >= 400) { sidecarReady = true; break; }
+      } catch { /* not ready yet */ }
+      await new Promise(r => setTimeout(r, 3_000));
+    }
+  }
+
+  // Step 2: Wait for OpenWebUI health (30×3s = 90s)
+  const maxReadyAttempts = 30;
+  for (let i = 0; i < maxReadyAttempts; i++) {
+    const status = await getStatus();
+    if (status.status === 'healthy') break;
+    if (i === maxReadyAttempts - 1) {
+      // Exhausted — skip gracefully
+      return sidecarReady;
+    }
+    await new Promise(r => setTimeout(r, 3_000));
+  }
+
+  // Step 3: Register pipeline sidecar (if sidecar is ready)
+  if (sidecarReady && options.pipelinesUrl && options.pipelinesKey) {
+    const jwt = await getAdminJwt();
+    if (jwt) {
+      await registerPipeline(jwt, options.pipelinesUrl, options.pipelinesKey);
+    }
+  }
+
+  // Step 4: Upsert model sources (single pass, no retry — already waited for health)
+  if (modelSources.length > 0) {
+    const jwt = await getAdminJwt();
+    if (jwt) {
+      await upsertAllModelSources(jwt, modelSources);
+    }
+  }
+
+  return true;
+}
+
+/**
  * Inverse check: is the user's `secrets.ai` ready to wire components, or do
  * they need to add a provider first?
  */
