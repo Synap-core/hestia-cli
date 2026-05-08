@@ -109,6 +109,7 @@ export async function POST(req: Request) {
     );
   }
 
+  const secrets = await readEveSecrets();
   const token = resolveBootstrapToken(secrets);
   if (!token) {
     return NextResponse.json(
