@@ -41,16 +41,23 @@ function detectFramework(cwd: string): Framework {
   return 'unknown';
 }
 
-function detectBuildCommand(pkg: Record<string, unknown> | null, framework: Framework, vercelConfig: VercelConfig | null): string {
+function detectBuildTool(cwd: string): 'pnpm' | 'npm' | 'yarn' {
+  if (existsSync(join(cwd, 'pnpm-lock.yaml')) || existsSync(join(cwd, '.pnpm-workspace.yaml'))) return 'pnpm';
+  if (existsSync(join(cwd, 'yarn.lock'))) return 'yarn';
+  return 'npm';
+}
+
+function detectBuildCommand(pkg: Record<string, unknown> | null, framework: Framework, vercelConfig: VercelConfig | null, cwd?: string): string {
   const scripts = pkg?.scripts as Record<string, string> | undefined;
   if (vercelConfig?.buildCommand) return vercelConfig.buildCommand;
   if (scripts?.build) return scripts.build;
 
+  const tool = cwd ? detectBuildTool(cwd) : 'pnpm';
   switch (framework) {
-    case 'nextjs': return 'npm run build';
-    case 'static': return 'npm run build';
-    case 'node': return 'npm run build';
-    default: return 'npm run build';
+    case 'nextjs': return `${tool} run build`;
+    case 'static': return `${tool} run build`;
+    case 'node': return `${tool} run build`;
+    default: return `${tool} run build`;
   }
 }
 
@@ -65,11 +72,11 @@ function detectOutputDir(framework: Framework, pkg: Record<string, unknown> | nu
   }
 }
 
-function detectStandalone(framework: Framework, pkg: Record<string, unknown> | null): boolean {
+function detectStandalone(framework: Framework, pkg: Record<string, unknown> | null, cwd: string): boolean {
   if (framework !== 'nextjs') return false;
 
   const nc = readJSON<{ standalone?: boolean; output?: string }>(
-    join(process.cwd(), 'next.config.ts')
+    join(cwd, 'next.config.ts')
   );
 
   if (!nc) return false;
@@ -78,8 +85,8 @@ function detectStandalone(framework: Framework, pkg: Record<string, unknown> | n
 
   // If vercel.json says framework: nextjs but no output specified, assume standalone
   // for Docker packaging.
-  if (existsSync(join(process.cwd(), 'vercel.json'))) {
-    const vc = readJSON<VercelConfig>(join(process.cwd(), 'vercel.json'));
+  if (existsSync(join(cwd, 'vercel.json'))) {
+    const vc = readJSON<VercelConfig>(join(cwd, 'vercel.json'));
     if (vc?.framework === 'nextjs') return true;
   }
 
@@ -159,9 +166,9 @@ export function detectAppConfig(cwdToInspect?: string): AppConfig {
   const pkg = readJSON<{ name?: string; scripts?: Record<string, string> }>(join(cwd, 'package.json'));
 
   const framework = detectFramework(cwd);
-  const buildCommand = detectBuildCommand(pkg, framework, null);
+  const buildCommand = detectBuildCommand(pkg, framework, null, cwd);
   const outputDir = detectOutputDir(framework, pkg, null);
-  const standalone = detectStandalone(framework, pkg);
+  const standalone = detectStandalone(framework, pkg, cwd);
   const vercelConfig = detectVercelConfig(cwd);
 
   // Override build command if vercel.json specifies different

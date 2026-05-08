@@ -33,14 +33,20 @@ interface TrpcSetupStatusEnvelope {
 
 export async function GET(req: Request) {
   const podUrl = await resolvePodUrl(undefined, req.url);
+
   if (!podUrl) {
+    console.error("[setup-status] podUrl is empty — resolvePodUrl returned falsy");
+    console.error("[setup-status] req.url =", req.url);
+    console.error("[setup-status] process.env.NEXT_PUBLIC_POD_URL =", process.env.NEXT_PUBLIC_POD_URL);
+    console.error("[setup-status] process.env.EVE_HOME =", process.env.EVE_HOME);
     return NextResponse.json({
       initialized: null,
-      reason: "unreachable",
+      reason: "no-pod-url-resolved",
     });
   }
 
   const base = podUrl.replace(/\/+$/, "");
+  console.log("[setup-status] derived podUrl =", podUrl);
 
   try {
     const res = await fetch(`${base}/trpc/setup.status`, {
@@ -50,18 +56,21 @@ export async function GET(req: Request) {
     });
 
     if (!res.ok) {
+      console.error("[setup-status] upstream returned status", res.status);
       return NextResponse.json({
         initialized: null,
-        reason: "unreachable",
+        reason: `upstream-${res.status}`,
       });
     }
 
     const json = (await res.json()) as TrpcSetupStatusEnvelope;
     const data = json.result?.data;
+    console.log("[setup-status] upstream response data:", JSON.stringify(data));
     if (!data || typeof data.initialized !== "boolean") {
+      console.error("[setup-status] unexpected response shape:", JSON.stringify(json));
       return NextResponse.json({
         initialized: null,
-        reason: "unreachable",
+        reason: "unexpected-response-shape",
       });
     }
 
@@ -70,10 +79,11 @@ export async function GET(req: Request) {
       version: data.version ?? null,
       podUrl: base,
     });
-  } catch {
+  } catch (err) {
+    console.error("[setup-status] fetch threw:", err);
     return NextResponse.json({
       initialized: null,
-      reason: "unreachable",
+      reason: "fetch-exception",
     });
   }
 }

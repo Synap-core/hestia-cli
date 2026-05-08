@@ -121,25 +121,6 @@ async function waitUntilHealthy(
 }
 
 /**
- * One-shot health check: does OpenWebUI return a non-HTML 200 right now?
- * No retry loop — just a single probe. Used by callers who want to
- * implement their own retry strategy for specific sub-steps.
- */
-export async function isHealthy(hostPort?: number): Promise<boolean> {
-  const baseUrl = resolveAdminUrl(hostPort);
-  try {
-    const res = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(3000) });
-    if (!res.ok) return false;
-    const contentType = res.headers.get('content-type') || '';
-    if (contentType.includes('json') || !contentType.includes('html')) return true;
-    const text = await res.text();
-    return !text.trimStart().startsWith('<');
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Read WEBUI_SECRET_KEY from OpenWebUI's .env file.
  */
 function readWebuiSecretKey(): string | null {
@@ -219,6 +200,7 @@ export async function isHealthEndpointReady(hostPort?: number): Promise<boolean>
   } catch {
     return false;
   }
+  return false;
 }
 
 /**

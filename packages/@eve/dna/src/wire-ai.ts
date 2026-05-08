@@ -25,7 +25,7 @@ import type { EveSecrets } from './secrets-contract.js';
 import { readAgentKeyOrLegacySync } from './secrets-contract.js';
 import { COMPONENTS } from './components.js';
 import { writeHermesConfigYaml, generateSynapPlugin } from './builder-hub-wiring.js';
-import { getStatus, getAdminJwt, upsertAllModelSources, registerPipeline, isHealthy, type ModelSource } from './openwebui-admin.js';
+import { getStatus, getAdminJwt, upsertAllModelSources, registerPipeline, waitForHealth, type ModelSource } from './openwebui-admin.js';
 
 export interface WireAiResult {
   /** Component id this result is for. */
@@ -489,71 +489,20 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
     };
   }
   // Fire-and-forget: register model sources + pipelines via admin API so they
-  // appear in the picker. Unlike the old code, this waits for OpenWebUI to be
-  // fully booted (admin user + secret key) before trying to authenticate.
+  // appear in the picker. Uses centralized build + register helpers.
   void (async () => {
     try {
-      const modelSources: ModelSource[] = [];
-      modelSources.push({
-        url: 'http://eve-brain-synap:4000/v1',
-        apiKey: synapApiKey,
-        displayName: 'Synap IS',
-      });
-      if (hermesApiServerKey && apiBaseUrls.includes('http://eve-builder-hermes:8642/v1')) {
-        modelSources.push({
-          url: 'http://eve-builder-hermes:8642/v1',
-          apiKey: hermesApiServerKey,
-          displayName: 'Hermes Gateway',
-        });
-      }
-      for (const p of providers) {
-        if (!p.enabled || !p.id.startsWith('custom-')) continue;
-        if (!p.baseUrl) continue;
-        const url = `${p.baseUrl.replace(/\/v1$/, '')}/v1`;
-        modelSources.push({
-          url,
-          apiKey: p.apiKey ?? '',
-          displayName: p.name ?? p.id,
-        });
-      }
-
-      // 1. Wait for OpenWebUI to be fully booted (up to 2 min).
-      const ready = await waitForOpenWebUiReady();
-      if (ready !== 'healthy') return;
-
-      // 2. Forge admin JWT.
-      const jwt = await getAdminJwt();
-      if (!jwt) return;
-
-      // 3. Register pipelines sidecar (filter pipelines) if sidecar is available.
-      const pipelinesUrl = await waitForPipelinesSidecar();
-      if (pipelinesUrl) {
-        // Pipelines env key from compose directory
-        const pipelinesEnvPath = '/opt/openwebui-pipelines/.env';
-        let pipelinesKey = '';
-        try {
-          pipelinesKey = readFileSync(pipelinesEnvPath, 'utf-8')
-            .split('\n')
-            .find(l => l.startsWith('PIPELINES_API_KEY='))
-            ?.split('=', 2)[1]?.trim() ?? '';
-        } catch { /* pipelines may not have .env yet */ }
-        if (pipelinesKey) {
-          await registerPipeline(jwt, pipelinesUrl, pipelinesKey);
-        }
-      }
-
-      // 4. Retry manifold upsert (3 attempts, 5s delay).
+      const { modelSources, pipelinesKey, pipelinesUrl } = buildOpenwebuiModelSources(secrets, deployDir);
+      // Override Synap IS key with the correct agent key
       if (modelSources.length > 0) {
-        for (let attempt = 0; attempt < 3; attempt++) {
-          try {
-            const registered = await upsertAllModelSources(jwt, modelSources);
-            if (registered > 0) break;
-          } catch {
-            // transient failure — retry
-          }
-          await new Promise(r => setTimeout(r, 5_000));
-        }
+        modelSources[0].apiKey = synapApiKey;
       }
+      // Override Hermes key
+      const hermesIdx = modelSources.findIndex(m => m.displayName === 'Hermes Gateway');
+      if (hermesIdx >= 0) {
+        modelSources[hermesIdx].apiKey = hermesApiServerKey ?? '';
+      }
+      await registerOpenwebuiAdminApi(modelSources, { pipelinesUrl, pipelinesKey });
     } catch { /* non-fatal admin API upsert */ }
   })();
 
@@ -812,14 +761,33 @@ export function buildOpenwebuiModelSources(
     });
   }
 
-  // Enabled custom providers
+  // Enabled custom providers — with baseUrl (live) or without (cached models)
   for (const p of providers) {
-    if (!p.enabled || !p.id.startsWith('custom-') || !p.baseUrl) continue;
-    modelSources.push({
-      url: p.baseUrl.replace(/\/v1$/, '') + '/v1',
-      apiKey: p.apiKey ?? '',
-      displayName: `Custom: ${p.id}`,
-    });
+    if (!p.enabled || !p.id.startsWith('custom-')) continue;
+    const hasLiveUrl = !!(p.baseUrl && p.apiKey);
+    const hasCached = p.models && p.models.length > 0;
+    if (!hasLiveUrl && !hasCached) continue;
+
+    if (hasLiveUrl) {
+      const liveUrl = p.baseUrl!;
+      modelSources.push({
+        url: liveUrl.replace(/\/v1$/, '') + '/v1',
+        apiKey: p.apiKey ?? '',
+        displayName: p.name ?? p.id,
+        models: p.models,
+      });
+    } else {
+      // No live URL but we have cached models — create a model source
+      // with the cached model list so it appears in the OpenWebUI picker.
+      // Use a placeholder URL (the backend must be reachable for model
+      // discovery to work; this just seeds the picker with known models).
+      modelSources.push({
+        url: p.baseUrl ?? `http://custom-${p.id}/v1`,
+        apiKey: p.apiKey ?? '',
+        displayName: p.name ?? p.id,
+        models: p.models,
+      });
+    }
   }
 
   return { modelSources, pipelinesKey, pipelinesUrl };
@@ -860,16 +828,11 @@ export async function registerOpenwebuiAdminApi(
     return false;
   })();
 
-  // Step 2: Wait for health once using the lightweight isHealthy() probe (no retry).
+  // Step 2: Wait for health once using waitForHealth() (12×5s = 60s internal poll).
   // This avoids the old bug where getStatus() internally called waitUntilHealthy()
   // on every retry attempt, causing the retry loop to exhaust before health passed.
-  const maxHealthAttempts = 30;
-  for (let i = 0; i < maxHealthAttempts; i++) {
-    if (await isHealthy()) break;
-    if (i === maxHealthAttempts - 1) {
-      return false;
-    }
-    await new Promise(r => setTimeout(r, 3_000));
+  if (!(await waitForHealth())) {
+    return false;
   }
 
   // Step 3: OpenWebUI is healthy — resolve sidecar probe result

@@ -6,56 +6,59 @@
  *   1. **Env var (`NEXT_PUBLIC_POD_URL`)** — explicit deployment-time
  *      config. Takes all other paths.
  *
- *   2. **Derive from dashboard URL** — when the dashboard is reachable at
- *      `eve.{domain}` (via a reverse proxy), the backend is at
- *      `pod.{domain}` by convention on the same host. This is the
- *      production path.
+ *   2. **`secrets.json`** — the operator's actual configured URL.
+ *      Reads `secrets.synap.apiUrl` → `secrets.pod.url` → derives
+ *      `https://pod.{secrets.domain.primary}`. This is the production
+ *      source of truth.
  *
- *   3. **Loopback probe (`127.0.0.1:14000`)** — when the dashboard
+ *   3. **Derive from dashboard URL** — when the dashboard is reachable at
+ *      `eve.{domain}` (via a reverse proxy), the backend is at
+ *      `pod.{domain}` by convention on the same host. Used when secrets
+ *      file doesn't exist yet (e.g. very first request during bootstrap).
+ *
+ *   4. **`discoverPodConfig()`** — probe on-disk artefacts (.env, Traefik,
+ *      docker inspect) for the backend URL.
+ *
+ *   5. **Loopback probe (`127.0.0.1:14000`)** — when the dashboard
  *      runs on the pod host and Eve has published the backend via its
  *      docker-compose.override.yml (sub-millisecond path).
  *
- *   4. **Docker DNS (`http://eve-brain-synap:4000`)** — fallback for
+ *   6. **Docker DNS (`http://eve-brain-synap:4000`)** — fallback for
  *      containerized deployments where the backend is on the same Docker
  *      network but the loopback isn't published.
  *
  * The assumption: dashboard and backend run on the same machine, the
  * reverse proxy (Nginx / Caddy / Traefik) maps `eve.{domain}` to the
- * dashboard and `pod.{domain}` to the backend. `resolvePodUrl` derives
- * the backend URL by replacing the `eve.` prefix with `pod.`.
+ * dashboard and `pod.{domain}` to the backend.
  */
 
 import { Socket } from "node:net";
+import { readEveSecrets } from "./secrets-contract";
+import { discoverPodConfig } from "./discover";
 
 let cachedUrl: string | undefined;
 let cachedProbe: boolean | undefined;
 let cachedDerive: string | undefined;
+let cachedSecrets: string | undefined;
 
 const LOOPBACK_HOST = "127.0.0.1";
 const LOOPBACK_PORT = 14000;
 const DOCKER_DNS_URL = "http://eve-brain-synap:4000";
 const DOCKER_DNS_TIMEOUT_MS = 300;
 
-/**
- * Derive the pod URL from the dashboard URL.
- *
- * If the dashboard is at `eve.{domain}`, the backend is at `pod.{domain}`.
- * If it's at bare `{domain}`, the backend is at `pod.{domain}`.
- * If it's at `127.0.0.1` or `localhost`, returns empty string (use loopback).
- *
- * @param dashboardUrl — the URL the browser used to reach the dashboard
- *   (including scheme, e.g. `https://eve.example.com`)
- */
-function derivePodUrl(dashboardUrl: string): string {
-  if (cachedDerive) return cachedDerive;
+// ---------------------------------------------------------------------------
+// Derive from a hostname (x-forwarded-host / dashboard URL)
+// ---------------------------------------------------------------------------
 
-  let hostname: string;
-  try {
-    const u = new URL(dashboardUrl);
-    hostname = u.hostname;
-  } catch {
-    return "";
-  }
+/**
+ * Derive the pod URL from a hostname + scheme.
+ *
+ * If the hostname is `eve.{domain}`, the backend is `pod.{domain}`.
+ * If it's bare `{domain}`, the backend is `pod.{domain}`.
+ * Returns empty string for loopback or invalid hostnames.
+ */
+function deriveFromHost(hostname: string, scheme: string): string {
+  if (cachedDerive) return cachedDerive;
 
   // Never derive from hostnames that should use loopback.
   if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1") {
@@ -66,13 +69,15 @@ function derivePodUrl(dashboardUrl: string): string {
   const bareDomain = hostname.startsWith("eve.") ? hostname.slice(4) : hostname;
   if (!bareDomain.includes(".") || bareDomain === "localhost") return "";
 
-  // Use HTTPS if the original URL was HTTPS, otherwise HTTP.
-  const scheme = dashboardUrl.startsWith("https:") ? "https" : "http";
   const result = `${scheme}://pod.${bareDomain}`;
 
   cachedDerive = result;
   return result;
 }
+
+// ---------------------------------------------------------------------------
+// Probe helpers
+// ---------------------------------------------------------------------------
 
 /** Probe whether a TCP port is reachable within a timeout. */
 function probePort(host: string, port: number, timeoutMs: number): Promise<boolean> {
@@ -104,8 +109,6 @@ function probePort(host: string, port: number, timeoutMs: number): Promise<boole
 async function isDockerDnsReachable(): Promise<boolean> {
   if (cachedProbe !== undefined) return cachedProbe;
 
-  // Quick DNS check — does the hostname resolve?
-  // If not, skip the TCP probe entirely.
   const socket = new Socket();
   const result = await new Promise<boolean>((resolve) => {
     const timer = setTimeout(() => {
@@ -133,37 +136,110 @@ async function isDockerDnsReachable(): Promise<boolean> {
   return result;
 }
 
+// ---------------------------------------------------------------------------
+// Secrets resolver
+// ---------------------------------------------------------------------------
+
+/**
+ * Read the pod URL from secrets.json.
+ * Resolution order within secrets:
+ *   1. `secrets.synap.apiUrl` (the primary configured URL)
+ *   2. `secrets.pod.url` (back-compat alias)
+ *   3. Derive from `secrets.domain.primary`
+ * Returns the first non-empty string found, or undefined.
+ */
+async function readPodUrlFromSecrets(): Promise<string | undefined> {
+  if (cachedSecrets !== undefined) return cachedSecrets;
+
+  try {
+    const secrets = await readEveSecrets();
+    if (!secrets) {
+      cachedSecrets = "";
+      return undefined;
+    }
+
+    const apiUrl = secrets.synap?.apiUrl?.trim();
+    if (apiUrl) { cachedSecrets = apiUrl; return apiUrl; }
+
+    const podUrl = secrets.pod?.url?.trim();
+    if (podUrl) { cachedSecrets = podUrl; return podUrl; }
+
+    const domain = secrets.domain?.primary?.trim();
+    if (domain && domain.includes(".") && !domain.startsWith("127.") && !domain.startsWith("localhost")) {
+      const derived = `https://pod.${domain}`;
+      cachedSecrets = derived;
+      return derived;
+    }
+
+    cachedSecrets = "";
+    return undefined;
+  } catch {
+    cachedSecrets = "";
+    return undefined;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Main entry point
+// ---------------------------------------------------------------------------
+
 /**
  * Resolve the URL for the dashboard to reach the synap-backend.
  *
  * @param explicitUrl — optional env-var override (e.g. `NEXT_PUBLIC_POD_URL`)
- * @param dashboardUrl — optional URL the browser used to reach this dashboard
- *   (e.g. `https://eve.example.com`). When provided, `resolvePodUrl` derives
- *   the backend URL by replacing `eve.` with `pod.` — the production path.
+ * @param dashboardUrl — optional URL the browser used to reach this dashboard.
+ *   In Next.js route handlers this is `req.url`, which may be a pathname
+ *   like `/api/pod/setup-status` (not a full URL). When a pathname is
+ *   passed, `x-forwarded-host` and `x-forwarded-proto` headers are
+ *   consulted to reconstruct the full URL for derivation.
  * @returns the resolved URL string, or empty string if nothing is reachable
  */
-export async function resolvePodUrl(explicitUrl?: string, dashboardUrl?: string): Promise<string> {
+export async function resolvePodUrl(
+  explicitUrl?: string,
+  dashboardUrl?: string,
+  headers?: Headers,
+): Promise<string> {
   // Step 1: explicit config wins. Set this at deployment time.
   const envUrl = explicitUrl?.trim() || process.env.NEXT_PUBLIC_POD_URL?.trim();
   if (envUrl) return envUrl;
 
-  // Step 2: derive from dashboard URL (production path).
+  // Step 2: secrets.json — the operator's actual configured URL.
+  const fromSecrets = await readPodUrlFromSecrets();
+  if (fromSecrets) return fromSecrets;
+
+  // Step 3: derive from dashboard URL (production path when secrets aren't set yet).
   if (dashboardUrl) {
-    const derived = derivePodUrl(dashboardUrl);
-    if (derived) return derived;
+    const hostname = headers?.get("x-forwarded-host")
+      ?? headers?.get("host")
+      ?? undefined;
+    const scheme = headers?.get("x-forwarded-proto") ?? "https";
+    if (hostname) {
+      const derived = deriveFromHost(hostname, scheme);
+      if (derived) return derived;
+    }
+    // Also try parsing the URL itself as a full URL.
+    try {
+      const u = new URL(dashboardUrl);
+      const derived2 = deriveFromHost(u.hostname, u.protocol.replace(":", ""));
+      if (derived2) return derived2;
+    } catch { /* not a full URL — nothing else to try */ }
   }
 
-  // Step 3: loopback probe (on-host dashboard).
+  // Step 4: discoverPodConfig() — on-disk discovery.
+  const discovered = discoverPodConfig();
+  if (discovered.synapUrl) return discovered.synapUrl;
+
+  // Step 5: loopback probe.
   if (await probePort(LOOPBACK_HOST, LOOPBACK_PORT, 200)) {
     return `http://${LOOPBACK_HOST}:${LOOPBACK_PORT}`;
   }
 
-  // Step 4: Docker DNS (containerized dashboard).
+  // Step 6: Docker DNS.
   if (await isDockerDnsReachable()) {
     return DOCKER_DNS_URL;
   }
 
-  // Step 5: no path found.
+  // Step 7: no path found.
   return "";
 }
 
@@ -171,4 +247,6 @@ export async function resolvePodUrl(explicitUrl?: string, dashboardUrl?: string)
 export function resetPodUrlCache(): void {
   cachedProbe = undefined;
   cachedUrl = undefined;
+  cachedDerive = undefined;
+  cachedSecrets = undefined;
 }

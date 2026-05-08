@@ -1,7 +1,7 @@
 {
-  "tool_name": "Read",
-  "tool_input_preview": "{\"file_path\":\"/Users/antoine/Documents/Code/synap/hestia-cli/packages/@eve/brain/src/lib/kratos.ts\"}",
-  "error": "File does not exist. Note: your current working directory is /Users/antoine/Documents/Code/synap/hestia-cli.",
-  "timestamp": "2026-05-08T13:41:34.490Z",
-  "retry_count": 1
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"docker ps --filter \\\"name=hestia-openwebui\\\" --format \\\"{{.Names}} {{.Status}}\\\"\",\"description\":\"Check if OpenWebUI container is running\"}",
+  "error": "Exit code 1",
+  "timestamp": "2026-05-08T15:07:53.252Z",
+  "retry_count": 3
 }

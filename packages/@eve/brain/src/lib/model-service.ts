@@ -97,12 +97,18 @@ export class ModelService {
     }
   }
 
-  /** Query Hermes gateway's /v1/models endpoint. */
-  async listHermesModels(): Promise<string[]> {
+  /**
+   * Query Hermes gateway's /v1/models endpoint.
+   * @param apiKey — optional Bearer token (API_SERVER_KEY from secrets)
+   */
+  async listHermesModels(apiKey?: string): Promise<string[]> {
     if (!await this.isHermesRunning()) return [];
 
     try {
+      const headers: Record<string, string> = {};
+      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
       const res = await fetch('http://localhost:8642/v1/models', {
+        headers,
         signal: AbortSignal.timeout(5000),
       });
       if (!res.ok) return [];
@@ -150,16 +156,22 @@ export class ModelService {
   /**
    * Discover models from all sources and return a grouped list.
    *
-   * @param cloudProviders — optional list of { id, name, baseUrl, apiKey, defaultModel }
+   * @param cloudProviders — optional list of { id, name, baseUrl, apiKey, defaultModel, models }
+   * @param hermesApiKey — optional API_SERVER_KEY for authenticated Hermes model discovery
    * @returns ProviderModels sorted: Ollama first, then Hermes, then cloud providers
    */
-  async discoverAll(cloudProviders?: Array<{
-    id: string;
-    name?: string;
-    baseUrl?: string;
-    apiKey?: string;
-    defaultModel?: string;
-  }>): Promise<ProviderModels[]> {
+  async discoverAll(
+    cloudProviders?: Array<{
+      id: string;
+      name?: string;
+      baseUrl?: string;
+      apiKey?: string;
+      defaultModel?: string;
+      /** Cached model list from a previous successful discovery. */
+      models?: string[];
+    }>,
+    hermesApiKey?: string,
+  ): Promise<ProviderModels[]> {
     const results: ProviderModels[] = [];
 
     // 1. Ollama
@@ -176,7 +188,9 @@ export class ModelService {
 
     // 2. Hermes gateway
     const hermesRunning = await this.isHermesRunning();
-    const hermesModels = hermesRunning ? await this.listHermesModels() : [];
+    const hermesModels = hermesRunning
+      ? await this.listHermesModels(hermesApiKey)
+      : [];
     if (hermesModels.length > 0 || hermesRunning) {
       results.push({
         providerId: 'hermes',
@@ -186,20 +200,37 @@ export class ModelService {
       });
     }
 
-    // 3. Cloud providers
+    // 3. Cloud providers (including custom providers)
     if (cloudProviders) {
       for (const cp of cloudProviders) {
-        if (!cp.baseUrl || !cp.apiKey) continue;
-        const models = await this.listCloudModels({
-          baseUrl: cp.baseUrl,
-          apiKey: cp.apiKey,
-          providerId: cp.id,
-        });
+        // Skip if we have nothing to work with
+        const canDiscover = !!(cp.baseUrl && cp.apiKey);
+        const hasCachedModels = cp.models && cp.models.length > 0;
+        if (!canDiscover && !hasCachedModels) continue;
+
+        let models: string[] = [];
+        let available = false;
+
+        if (canDiscover) {
+          models = await this.listCloudModels({
+            baseUrl: cp.baseUrl ?? '',
+            apiKey: cp.apiKey,
+            providerId: cp.id,
+          });
+          available = true;
+        }
+
+        // Fallback to cached models when discovery fails or isn't possible
+        if (models.length === 0 && hasCachedModels) {
+          models = cp.models ?? [];
+          available = false; // Mark as cached/unverified so CLI shows "(cached)"
+        }
+
         results.push({
           providerId: cp.id,
           displayName: cp.name ?? cp.id,
           models: models.map(name => ({ name, isDefault: name === cp.defaultModel })),
-          available: true,
+          available,
         });
       }
     }

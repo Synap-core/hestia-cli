@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"docker ps --format '{{.Names}} {{.Image}} {{.Status}}'\",\"description\":\"List all docker containers\"}",
+  "error": "Exit code 1",
+  "timestamp": "2026-05-08T15:41:17.341Z",
+  "retry_count": 1
+}

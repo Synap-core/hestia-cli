@@ -412,6 +412,7 @@ export function aiCommandGroup(program: Command): void {
       const modelService = new ModelService();
       const secrets = await readEveSecrets(process.cwd());
       const providers = secrets?.ai?.providers ?? [];
+      const hermesApiKey = secrets?.builder?.hermes?.apiServerKey;
       const discovered = await modelService.discoverAll(
         providers.map(p => ({
           id: p.id,
@@ -419,7 +420,9 @@ export function aiCommandGroup(program: Command): void {
           baseUrl: p.baseUrl,
           apiKey: p.apiKey,
           defaultModel: p.defaultModel,
+          models: p.models,
         })),
+        hermesApiKey,
       );
 
       if (getGlobalCliFlags().json) {
@@ -434,15 +437,21 @@ export function aiCommandGroup(program: Command): void {
 
       for (const group of discovered) {
         console.log();
-        const status = group.available ? '' : colors.muted(' (unreachable)');
-        console.log(colors.primary.bold(`── ${group.displayName}${status} ──`));
-        if (group.models.length === 0) {
-          console.log(`  (no models discovered)`);
-        } else {
+        if (group.available) {
+          console.log(colors.primary.bold(`── ${group.displayName} ──`));
+        } else if (group.models.length > 0) {
+          // Cached models from previous discovery (no current baseUrl/apiKey)
+          console.log(colors.primary.bold(`── ${group.displayName} ──`));
+          console.log(colors.muted(`  (cached) ${group.models.length} model(s) from previous discovery`));
           for (const m of group.models) {
             const marker = m.isDefault ? colors.brain(' *') : '';
             console.log(`  ${m.name}${marker}`);
           }
+          continue;
+        } else {
+          console.log(colors.primary.bold(`── ${group.displayName} ──`));
+          console.log(colors.muted(`  (unreachable)`));
+          console.log(`  (no models discovered)`);
         }
       }
 

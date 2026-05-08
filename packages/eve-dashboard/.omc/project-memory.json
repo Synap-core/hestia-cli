@@ -1,0 +1,175 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1778252806225,
+  "projectRoot": "/Users/antoine/Documents/Code/synap/hestia-cli/packages/eve-dashboard",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      },
+      {
+        "name": "TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "tsconfig.json"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "next",
+        "version": "16.1.1",
+        "category": "fullstack"
+      },
+      {
+        "name": "react",
+        "version": "19.1.0",
+        "category": "frontend"
+      },
+      {
+        "name": "react-dom",
+        "version": "19.1.0",
+        "category": "frontend"
+      },
+      {
+        "name": "vitest",
+        "version": "1.5.0",
+        "category": "testing"
+      }
+    ],
+    "packageManager": "npm",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": "npm run build",
+    "testCommand": "npm test",
+    "lintCommand": null,
+    "devCommand": "npm run dev",
+    "scripts": {
+      "dev": "next dev --webpack --port 7979",
+      "dev:sidecar": "tsx server/terminal-sidecar.ts",
+      "build": "next build --webpack",
+      "build:sidecar": "tsc -p server/tsconfig.json",
+      "start": "next start",
+      "start:sidecar": "node dist-sidecar/terminal-sidecar.js",
+      "test": "vitest run",
+      "type-check": "tsc --noEmit && tsc --noEmit -p server/tsconfig.json"
+    }
+  },
+  "conventions": {
+    "namingStyle": "camelCase",
+    "importStyle": "ES modules",
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "app",
+      "docs",
+      "lib"
+    ],
+    "gitBranches": null
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "app": {
+      "path": "app",
+      "purpose": "Application code",
+      "fileCount": 3,
+      "lastAccessed": 1778252806090,
+      "keyFiles": [
+        "globals.css",
+        "layout.tsx",
+        "providers.tsx"
+      ]
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 1,
+      "lastAccessed": 1778252806094,
+      "keyFiles": [
+        "ai-provider-model.md"
+      ]
+    },
+    "lib": {
+      "path": "lib",
+      "purpose": "Library code",
+      "fileCount": 7,
+      "lastAccessed": 1778252806121,
+      "keyFiles": [
+        "auth-server.ts",
+        "cp-base-url.ts",
+        "doctor.ts",
+        "feeds.ts",
+        "openclaw-config.ts"
+      ]
+    },
+    "server": {
+      "path": "server",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1778252806178,
+      "keyFiles": [
+        "terminal-sidecar.ts",
+        "tsconfig.json"
+      ]
+    },
+    "app/api": {
+      "path": "app/api",
+      "purpose": "API routes",
+      "fileCount": 0,
+      "lastAccessed": 1778252806209,
+      "keyFiles": []
+    },
+    "app/components": {
+      "path": "app/components",
+      "purpose": "UI components",
+      "fileCount": 3,
+      "lastAccessed": 1778252806210,
+      "keyFiles": [
+        "cp-auth-banner.tsx",
+        "theme-toggle.tsx",
+        "wordmark.tsx"
+      ]
+    },
+    "app/lib": {
+      "path": "app/lib",
+      "purpose": "Library code",
+      "fileCount": 1,
+      "lastAccessed": 1778252806211,
+      "keyFiles": [
+        "background-task-actions.client.ts"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "app/api/pod/setup-status/route.ts",
+      "accessCount": 3,
+      "lastAccessed": 1778254776723,
+      "type": "file"
+    },
+    {
+      "path": "",
+      "accessCount": 3,
+      "lastAccessed": 1778255743439,
+      "type": "directory"
+    },
+    {
+      "path": "app/api/debug/pod-url/route.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778255121079,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}
