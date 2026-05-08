@@ -835,40 +835,46 @@ export function buildOpenwebuiModelSources(
  * Returns true if all steps succeeded (or were skipped).
  *
  * The old inline version used a "wait 90s then force-retry 3 times" pattern.
- * This version sequences each step properly:
- *   - Sidecar probe only runs if pipelines key exists (not a blocking step)
- *   - OpenWebUI health is the only blocking step (30×3s = 90s)
+ * This version runs the sidecar probe and OpenWebUI health wait in parallel,
+ * then registers once if healthy:
+ *   - Sidecar probe only runs if pipelines key exists (fire-and-forget)
+ *   - OpenWebUI health is the blocking step (30×3s = 90s)
+ *   - Both start simultaneously — saves ~15s in happy path
  *   - Registration runs exactly once per healthy OpenWebUI
  *   - If OpenWebUI never becomes healthy, we skip registration cleanly
- *     rather than hammering with retries against a dead server
  */
 export async function registerOpenwebuiAdminApi(
   modelSources: ModelSource[],
   options: { pipelinesUrl?: string | null; pipelinesKey?: string },
 ): Promise<boolean> {
-  // Step 1: Probe pipelines sidecar (non-blocking, 15s max)
-  let sidecarReady = false;
-  if (options.pipelinesUrl && options.pipelinesKey) {
+  // Step 1: Start sidecar probe and OpenWebUI health wait in parallel
+  const sidecarPromise = (async () => {
+    if (!options.pipelinesUrl || !options.pipelinesKey) return false;
     for (let i = 0; i < 5; i++) {
       try {
         const r = await fetch(`${options.pipelinesUrl}/health`, { signal: AbortSignal.timeout(3000) });
-        if (r.ok || r.status >= 400) { sidecarReady = true; break; }
+        if (r.ok || r.status >= 400) return true;
       } catch { /* not ready yet */ }
       await new Promise(r => setTimeout(r, 3_000));
     }
-  }
+    return false;
+  })();
 
-  // Step 2: Wait for OpenWebUI health (30×3s = 90s)
   const maxReadyAttempts = 30;
   for (let i = 0; i < maxReadyAttempts; i++) {
     const status = await getStatus();
     if (status.status === 'healthy') break;
     if (i === maxReadyAttempts - 1) {
-      // Exhausted — skip gracefully
-      return sidecarReady;
+      // Exhausted — bail out. Probe is either done or still running;
+      // we don't wait for it since we're not registering anyway.
+      return false;
     }
     await new Promise(r => setTimeout(r, 3_000));
   }
+
+  // Step 2: OpenWebUI is healthy — resolve sidecar probe (non-blocking if
+  // it hasn't finished yet, we just need the boolean now).
+  const sidecarReady = await sidecarPromise;
 
   // Step 3: Register pipeline sidecar (if sidecar is ready)
   if (sidecarReady && options.pipelinesUrl && options.pipelinesKey) {

@@ -18,7 +18,7 @@
     "runtime": "Node.js 18.0.0"
   },
   "build": {
-    "buildCommand": "pnpm tsc --noEmit -p packages/eve-cli/tsconfig.json 2>&1 | grep -E \"^(packages/@eve/dna|packages/@eve/lifecycle)\" | head -20",
+    "buildCommand": "pnpm tsc --noEmit -p packages/@eve/dna/tsconfig.json 2>&1 | head -20",
     "testCommand": "pnpm test",
     "lintCommand": "pnpm lint",
     "devCommand": null,
@@ -132,14 +132,14 @@
     },
     {
       "path": "packages/@eve/dna/src/wire-ai.ts",
-      "accessCount": 93,
-      "lastAccessed": 1778248796003,
+      "accessCount": 97,
+      "lastAccessed": 1778249249735,
       "type": "file"
     },
     {
       "path": "",
-      "accessCount": 46,
-      "lastAccessed": 1778246092428,
+      "accessCount": 49,
+      "lastAccessed": 1778249124365,
       "type": "directory"
     },
     {
@@ -150,8 +150,8 @@
     },
     {
       "path": "packages/@eve/dna/src",
-      "accessCount": 29,
-      "lastAccessed": 1778248850473,
+      "accessCount": 33,
+      "lastAccessed": 1778249230430,
       "type": "directory"
     },
     {
@@ -174,8 +174,8 @@
     },
     {
       "path": "packages/@eve",
-      "accessCount": 14,
-      "lastAccessed": 1778247845867,
+      "accessCount": 15,
+      "lastAccessed": 1778249124356,
       "type": "directory"
     },
     {
@@ -183,6 +183,12 @@
       "accessCount": 8,
       "lastAccessed": 1778247902471,
       "type": "directory"
+    },
+    {
+      "path": "packages/@eve/dna/src/pod-url.ts",
+      "accessCount": 8,
+      "lastAccessed": 1778249337766,
+      "type": "file"
     },
     {
       "path": "packages/eve-cli/src/commands/lifecycle/install.ts",
@@ -215,21 +221,15 @@
       "type": "directory"
     },
     {
-      "path": "packages/@eve/dna",
-      "accessCount": 5,
-      "lastAccessed": 1778246583451,
+      "path": "packages/eve-dashboard",
+      "accessCount": 6,
+      "lastAccessed": 1778249072178,
       "type": "directory"
     },
     {
-      "path": "packages/@eve/dna/src/pod-url.ts",
+      "path": "packages/@eve/dna",
       "accessCount": 5,
-      "lastAccessed": 1778248765210,
-      "type": "file"
-    },
-    {
-      "path": "packages/eve-dashboard",
-      "accessCount": 5,
-      "lastAccessed": 1778248783900,
+      "lastAccessed": 1778246583451,
       "type": "directory"
     },
     {
@@ -263,6 +263,12 @@
       "type": "directory"
     },
     {
+      "path": "packages/eve-cli/src",
+      "accessCount": 3,
+      "lastAccessed": 1778249262338,
+      "type": "directory"
+    },
+    {
       "path": "packages/@eve/dna/src/entity-state.ts",
       "accessCount": 2,
       "lastAccessed": 1778232464479,
@@ -278,12 +284,6 @@
       "path": "packages/eve-cli/src/lib/ui.ts",
       "accessCount": 2,
       "lastAccessed": 1778238489547,
-      "type": "directory"
-    },
-    {
-      "path": "packages/eve-cli/src",
-      "accessCount": 2,
-      "lastAccessed": 1778244730647,
       "type": "directory"
     },
     {

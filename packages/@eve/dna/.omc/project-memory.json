@@ -1,0 +1,104 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1778249594967,
+  "projectRoot": "/Users/antoine/Documents/Code/synap/hestia-cli/packages/@eve/dna",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      },
+      {
+        "name": "TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "tsconfig.json"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "vitest",
+        "version": "1.5.0",
+        "category": "testing"
+      }
+    ],
+    "packageManager": "npm",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": "npm run build",
+    "testCommand": "npm test",
+    "lintCommand": null,
+    "devCommand": "npm run dev",
+    "scripts": {
+      "build": "tsup src/index.ts --format esm --dts",
+      "dev": "tsup src/index.ts --format esm --dts --watch",
+      "test": "vitest run",
+      "typecheck": "tsc --noEmit"
+    }
+  },
+  "conventions": {
+    "namingStyle": "camelCase",
+    "importStyle": "ES modules",
+    "testPattern": "*.test.ts",
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "src",
+      "test"
+    ],
+    "gitBranches": null
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "dist": {
+      "path": "dist",
+      "purpose": "Distribution/build output",
+      "fileCount": 69,
+      "lastAccessed": 1778249594953,
+      "keyFiles": [
+        "access-urls.d.ts",
+        "access-urls.d.ts.map",
+        "access-urls.js",
+        "agents.d.ts",
+        "agents.d.ts.map"
+      ]
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 28,
+      "lastAccessed": 1778249594954,
+      "keyFiles": [
+        "access-urls.ts",
+        "agents.ts",
+        "app-detector.ts",
+        "background-task-actions.ts",
+        "background-tasks-types.ts"
+      ]
+    },
+    "test": {
+      "path": "test",
+      "purpose": "Test files",
+      "fileCount": 4,
+      "lastAccessed": 1778249594957,
+      "keyFiles": [
+        "agent-keys.test.ts",
+        "agents.test.ts",
+        "entity-state.test.ts",
+        "secrets-contract.test.ts"
+      ]
+    }
+  },
+  "hotPaths": [],
+  "userDirectives": []
+}

@@ -12,7 +12,7 @@ async function resolveAuth(): Promise<
   | { ok: true; podUrl: string; apiKey: string }
 > {
   const secrets = await readEveSecrets();
-  const podUrl = await resolvePodUrl();
+  const podUrl = await resolvePodUrl(undefined, req.url);
   const apiKey = secrets?.agents?.eve?.hubApiKey?.trim();
   if (!podUrl) {
     return {

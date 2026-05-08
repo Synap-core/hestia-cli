@@ -31,8 +31,8 @@ interface TrpcSetupStatusEnvelope {
   };
 }
 
-export async function GET() {
-  const podUrl = await resolvePodUrl();
+export async function GET(req: Request) {
+  const podUrl = await resolvePodUrl(undefined, req.url);
   if (!podUrl) {
     return NextResponse.json({
       initialized: null,

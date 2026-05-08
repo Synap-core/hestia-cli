@@ -156,7 +156,7 @@ async function mintPodUserTokenInternal(
   }
 
   const secrets = await readEveSecrets();
-  const podUrl = await resolvePodUrl();
+  const podUrl = await resolvePodUrl(undefined, req.url)
   if (!podUrl) {
     throw new PodSigninError(
       "Pod URL not configured",

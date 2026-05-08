@@ -54,7 +54,7 @@ export async function POST(req: Request) {
   if ("error" in auth) return auth.error;
 
   const secrets = await readEveSecrets();
-  const podUrl = await resolvePodUrl();
+  const podUrl = await resolvePodUrl(undefined, req.url)
   if (!podUrl) {
     return NextResponse.json(
       { error: "no-pod-url" },

@@ -49,7 +49,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const podUrl = await resolvePodUrl();
+  const podUrl = await resolvePodUrl(undefined, req.url)
   if (!podUrl) {
     return NextResponse.json(
       { error: "pod-url-not-configured" },
