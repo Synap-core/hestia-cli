@@ -14,6 +14,8 @@ import { Command } from 'commander';
 import {
   detectAppConfig,
   buildAndPackageImage,
+  deployToCoolify,
+  detectCoolifyTargets,
   type AppConfig,
 } from '@eve/dna';
 import {
@@ -39,6 +41,8 @@ interface DeployOptions {
   token?: string;
   tag?: string;
   prod?: boolean;
+  env?: string[];
+  yes?: boolean;
 }
 
 export function deployCommand(program: Command): void {
@@ -68,6 +72,14 @@ export function deployCommand(program: Command): void {
     .option(
       '--prod',
       'Deploy to production (CT 103) instead of staging.',
+    )
+    .option(
+      '--env <key=value>',
+      'Custom environment variable (repeatable). e.g. --env DATABASE_URL=postgres://...',
+    )
+    .option(
+      '-y, --yes',
+      'Skip confirmation step (non-interactive / CI mode).',
     )
     .action(async (opts: DeployOptions) => {
       try {

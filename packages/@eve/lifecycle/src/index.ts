@@ -27,6 +27,7 @@ import {
   writeEveSecrets,
   pickPrimaryProvider,
   wireComponentAi,
+  wireAllInstalledComponents,
   resolveSynapUrl,
   resolveSynapUrlOnHost,
   SYNAP_BACKEND_INTERNAL_URL,
@@ -38,11 +39,8 @@ import {
   writeHermesEnvFile,
   writeHermesConfigYaml,
   generateSynapPlugin,
-  getStatus,
-  getAdminJwt,
-  registerPipeline as registerPipelineApi,
-  upsertAllModelSources,
-  type ModelSource,
+  buildOpenwebuiModelSources,
+  registerOpenwebuiAdminApi,
   type OpenwebuiStatus,
   type ComponentInfo,
   type EnsureOverrideResult,
@@ -521,16 +519,49 @@ async function* runUpdatePlan(
 async function* runPostUpdateHooks(comp: ComponentInfo): AsyncGenerator<LifecycleEvent> {
   if (comp.id === "openclaw") {
     yield* postUpdateReconcileOpenclaw();
+    yield* postUpdateReconcileAiWiring();
   }
   if (comp.id === "synap") {
     yield* postUpdateConnectTraefik();
     yield* postUpdateReconcileAuth();
+    yield* postUpdateReconcileAiWiring();
   }
   if (comp.id === "hermes") {
     yield* postUpdateReconcileHermes();
+    yield* postUpdateReconcileAiWiring();
   }
   if (comp.id === "openwebui-pipelines") {
     yield* postUpdateReconcilePipelines();
+    yield* postUpdateReconcileAiWiring();
+  }
+  if (comp.id === "openwebui") {
+    yield* postUpdateReconcileAiWiring();
+  }
+}
+
+/**
+ * Re-run AI wiring for every installed component after an update succeeds.
+ * This is idempotent — the .env file is rewritten with the same content.
+ */
+async function* postUpdateReconcileAiWiring(): AsyncGenerator<LifecycleEvent> {
+  try {
+    const secrets = await readEveSecrets();
+    let installed: string[] = [];
+    try { installed = await entityStateManager.getInstalledComponents(); } catch { /* state not initialized */ }
+    if (installed.length === 0) {
+      yield { type: "log", line: "No installed components — skipping AI wiring reconciliation" };
+      return;
+    }
+    const results = wireAllInstalledComponents(secrets, installed);
+    const okCount = results.filter(r => r.outcome === "ok").length;
+    const failCount = results.filter(r => r.outcome === "failed").length;
+    if (failCount > 0) {
+      yield { type: "log", line: `AI wiring reconciliation: ${okCount} ok, ${failCount} failed` };
+    } else if (okCount > 0) {
+      yield { type: "log", line: `AI wiring reconciled ✓ (${okCount} component(s))` };
+    }
+  } catch (err) {
+    yield { type: "log", line: `Warning: AI wiring reconciliation failed — ${err}` };
   }
 }
 

@@ -1,7 +1,7 @@
 {
-  "tool_name": "Glob",
-  "tool_input_preview": "{\"pattern\":\"**/eve-dashboard/**/package.json\",\"path\":\"/Users/antoine/Documents/Code/synap\"}",
-  "error": "Ripgrep search timed out after 20 seconds. The search may have matched files but did not complete in time. Try searching a more specific path or pattern.",
-  "timestamp": "2026-05-08T12:56:42.478Z",
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"ls hestia-cli/packages/eve-cli/src/commands/\",\"description\":\"List eve-cli command files\"}",
+  "error": "Exit code 1",
+  "timestamp": "2026-05-08T13:23:03.396Z",
   "retry_count": 1
 }

@@ -8,6 +8,7 @@ import {
   pruneOldImagesForRepo,
   generateKratosConfig,
   parseKratosSecretsFromEnv,
+  discoverPodConfig,
 } from '@eve/dna';
 
 export interface SynapImageInstallOptions {
@@ -1066,7 +1067,16 @@ export async function ensureKratosRunning(deployDir: string, domain: string): Pr
 
 export async function installSynapFromImage(opts: SynapImageInstallOptions = {}): Promise<SynapImageInstallResult> {
   const deployDir = opts.deployDir ?? '/opt/synap-backend';
-  const domain = opts.domain ?? 'localhost';
+  let domain = opts.domain ?? 'localhost';
+  // When the user didn't pass --domain explicitly, probe on-disk artefacts
+  // so an install on a server that already has a real domain in its .env
+  // gets the right value without the operator needing to re-type it.
+  if (domain === 'localhost') {
+    const discovered = discoverPodConfig();
+    if (discovered.domain) {
+      domain = discovered.domain;
+    }
+  }
   const email = opts.email ?? '';
   const adminEmail = opts.adminEmail ?? '';
   const adminBootstrapMode = opts.adminBootstrapMode ?? 'token';

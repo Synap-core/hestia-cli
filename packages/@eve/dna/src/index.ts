@@ -209,6 +209,8 @@ export {
   pickPrimaryProvider,
   AI_CONSUMERS,
   AI_CONSUMERS_NEEDING_RECREATE,
+  buildOpenwebuiModelSources,
+  registerOpenwebuiAdminApi,
 } from './wire-ai.js';
 
 // OpenWebUI admin API client — JWT forging, config CRUD, pipelines, model sources
