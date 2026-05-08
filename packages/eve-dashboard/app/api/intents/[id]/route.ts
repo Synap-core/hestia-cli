@@ -7,12 +7,12 @@ import {
 } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
 
-async function resolveAuth(): Promise<
+async function resolveAuth(reqUrl: string): Promise<
   | { error: NextResponse }
   | { ok: true; podUrl: string; apiKey: string }
 > {
   const secrets = await readEveSecrets();
-  const podUrl = await resolvePodUrl(undefined, req.url);
+  const podUrl = await resolvePodUrl(undefined, reqUrl);
   const apiKey = secrets?.agents?.eve?.hubApiKey?.trim();
   if (!podUrl) {
     return {
@@ -67,7 +67,7 @@ type RouteContext = { params: Promise<{ id: string }> };
 export async function GET(_req: Request, ctx: RouteContext) {
   const auth = await requireAuth();
   if ("error" in auth) return auth.error;
-  const resolved = await resolveAuth();
+  const resolved = await resolveAuth(_req.url);
   if ("error" in resolved) return resolved.error;
 
   const { id } = await ctx.params;
@@ -94,7 +94,7 @@ export async function GET(_req: Request, ctx: RouteContext) {
 export async function PATCH(req: Request, ctx: RouteContext) {
   const auth = await requireAuth();
   if ("error" in auth) return auth.error;
-  const resolved = await resolveAuth();
+  const resolved = await resolveAuth(req.url);
   if ("error" in resolved) return resolved.error;
 
   const { id } = await ctx.params;
@@ -148,7 +148,7 @@ export async function PATCH(req: Request, ctx: RouteContext) {
 export async function DELETE(_req: Request, ctx: RouteContext) {
   const auth = await requireAuth();
   if ("error" in auth) return auth.error;
-  const resolved = await resolveAuth();
+  const resolved = await resolveAuth(_req.url);
   if ("error" in resolved) return resolved.error;
 
   const { id } = await ctx.params;

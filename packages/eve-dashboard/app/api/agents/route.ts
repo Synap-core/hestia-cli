@@ -42,12 +42,12 @@ async function isContainerRunning(name: string): Promise<boolean> {
   }
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   const auth = await requireAuth();
   if ("error" in auth) return auth.error;
 
   const secrets = await readEveSecrets();
-  const podUrl = await resolvePodUrl();
+  const podUrl = await resolvePodUrl(undefined, req.url);
 
   const installedSet = new Set<string>();
   try {

@@ -25,7 +25,7 @@ import type { EveSecrets } from './secrets-contract.js';
 import { readAgentKeyOrLegacySync } from './secrets-contract.js';
 import { COMPONENTS } from './components.js';
 import { writeHermesConfigYaml, generateSynapPlugin } from './builder-hub-wiring.js';
-import { getStatus, getAdminJwt, upsertAllModelSources, registerPipeline, type ModelSource } from './openwebui-admin.js';
+import { getStatus, getAdminJwt, upsertAllModelSources, registerPipeline, isHealthy, type ModelSource } from './openwebui-admin.js';
 
 export interface WireAiResult {
   /** Component id this result is for. */
@@ -860,23 +860,22 @@ export async function registerOpenwebuiAdminApi(
     return false;
   })();
 
-  const maxReadyAttempts = 30;
-  for (let i = 0; i < maxReadyAttempts; i++) {
-    const status = await getStatus();
-    if (status.status === 'healthy') break;
-    if (i === maxReadyAttempts - 1) {
-      // Exhausted — bail out. Probe is either done or still running;
-      // we don't wait for it since we're not registering anyway.
+  // Step 2: Wait for health once using the lightweight isHealthy() probe (no retry).
+  // This avoids the old bug where getStatus() internally called waitUntilHealthy()
+  // on every retry attempt, causing the retry loop to exhaust before health passed.
+  const maxHealthAttempts = 30;
+  for (let i = 0; i < maxHealthAttempts; i++) {
+    if (await isHealthy()) break;
+    if (i === maxHealthAttempts - 1) {
       return false;
     }
     await new Promise(r => setTimeout(r, 3_000));
   }
 
-  // Step 2: OpenWebUI is healthy — resolve sidecar probe (non-blocking if
-  // it hasn't finished yet, we just need the boolean now).
+  // Step 3: OpenWebUI is healthy — resolve sidecar probe result
   const sidecarReady = await sidecarPromise;
 
-  // Step 3: Register pipeline sidecar (if sidecar is ready)
+  // Step 4: Register pipeline sidecar (if sidecar is ready)
   if (sidecarReady && options.pipelinesUrl && options.pipelinesKey) {
     const jwt = await getAdminJwt();
     if (jwt) {
@@ -884,7 +883,7 @@ export async function registerOpenwebuiAdminApi(
     }
   }
 
-  // Step 4: Upsert model sources (single pass, no retry — already waited for health)
+  // Step 5: Upsert model sources (single pass — already waited for health)
   if (modelSources.length > 0) {
     const jwt = await getAdminJwt();
     if (jwt) {

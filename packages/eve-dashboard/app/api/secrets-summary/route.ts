@@ -2,13 +2,13 @@ import { NextResponse } from "next/server";
 import { readEveSecrets, resolvePodUrl } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
 
-export async function GET() {
+export async function GET(req: Request) {
   const auth = await requireAuth();
   if ("error" in auth) return auth.error;
 
   try {
     const secrets = await readEveSecrets();
-    const podUrl = await resolvePodUrl();
+    const podUrl = await resolvePodUrl(undefined, req.url);
 
     const providers = (secrets?.ai?.providers ?? []).map((p) => ({
       id: p.id,

@@ -44,7 +44,7 @@ async function listSynapVolumes(): Promise<VolumeRow[]> {
   }
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   const auth = await requireAuth();
   if ("error" in auth) return auth.error;
 
@@ -60,7 +60,7 @@ export async function GET() {
   const volumes = await listSynapVolumes();
 
   return NextResponse.json({
-    podUrl: await resolvePodUrl(),
+    podUrl: await resolvePodUrl(undefined, req.url),
     hubBaseUrl: secrets?.synap?.hubBaseUrl ?? null,
     apiKeyPresent: Boolean(secrets?.synap?.apiKey),
     domain: secrets?.domain?.primary ?? null,

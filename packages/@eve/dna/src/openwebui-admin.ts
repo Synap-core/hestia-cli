@@ -121,6 +121,25 @@ async function waitUntilHealthy(
 }
 
 /**
+ * One-shot health check: does OpenWebUI return a non-HTML 200 right now?
+ * No retry loop — just a single probe. Used by callers who want to
+ * implement their own retry strategy for specific sub-steps.
+ */
+export async function isHealthy(hostPort?: number): Promise<boolean> {
+  const baseUrl = resolveAdminUrl(hostPort);
+  try {
+    const res = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(3000) });
+    if (!res.ok) return false;
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('json') || !contentType.includes('html')) return true;
+    const text = await res.text();
+    return !text.trimStart().startsWith('<');
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Read WEBUI_SECRET_KEY from OpenWebUI's .env file.
  */
 function readWebuiSecretKey(): string | null {
@@ -178,6 +197,41 @@ function forgeAdminJwt(secretKey: string, admin: AdminUser): string {
 // ── Public API ──
 
 /**
+ * Check if OpenWebUI is reachable (health endpoint returns non-HTML).
+ * This is a single-shot check with a 5s timeout — no retry loop.
+ * Used internally by code paths that manage their own retry budget.
+ */
+export async function isHealthEndpointReady(hostPort?: number): Promise<boolean> {
+  const baseUrl = resolveAdminUrl(hostPort);
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(`${baseUrl}/health`, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok) return false;
+    // Verify it's not HTML (OpenWebUI serves HTML while booting)
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('json') || !contentType.includes('html')) {
+      return true;
+    }
+    const text = await res.text();
+    if (!text.trimStart().startsWith('<')) return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Wait for OpenWebUI health to become ready (single-shot, no retries).
+ * Returns true if health passes. Used internally by code paths that
+ * manage their own retry budget for the secret key / admin steps.
+ */
+export async function waitForHealth(hostPort?: number): Promise<boolean> {
+  const baseUrl = resolveAdminUrl(hostPort);
+  return waitUntilHealthy(baseUrl, 12);
+}
+
+/**
  * Check if OpenWebUI is reachable and get its admin status.
  *
  * Returns:
@@ -214,6 +268,23 @@ export async function getStatus(hostPort?: number): Promise<OpenwebuiStatus> {
     return { status: 'no-admin-user', adminUser: null };
   }
 
+  return { status: 'healthy', adminUser: admin };
+}
+
+/**
+ * Lightweight status check — no health wait.
+ * Assumes health is already passing and only checks secret key + admin user.
+ * Used by retry loops that already waited for health upstream.
+ */
+export async function getAdminReadyStatus(): Promise<OpenwebuiStatus> {
+  const secretKey = readWebuiSecretKey();
+  if (!secretKey) {
+    return { status: 'no-secret-key' };
+  }
+  const admin = getAdminUser();
+  if (!admin) {
+    return { status: 'no-admin-user', adminUser: null };
+  }
   return { status: 'healthy', adminUser: admin };
 }
 

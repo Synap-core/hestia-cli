@@ -28,7 +28,7 @@ export interface AppEntity {
   updatedAt: string;
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   const auth = await requireAuth();
   if ("error" in auth) return auth.error;
 
@@ -44,7 +44,7 @@ export async function GET() {
     );
   }
 
-  const podUrl = await resolvePodUrl();
+  const podUrl = await resolvePodUrl(undefined, req.url);
   if (!podUrl) {
     return NextResponse.json(
       { error: "Synap pod URL unresolved — set domain.primary in secrets.json." },

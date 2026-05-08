@@ -48,9 +48,9 @@ export interface PodAuth {
  * 500 in the UI which we don't want — the unpaired state is a
  * legitimate first-run condition, not an error.
  */
-export async function loadPodAuth(): Promise<PodAuth | null> {
+export async function loadPodAuth(reqUrl?: string): Promise<PodAuth | null> {
   const secrets = await readEveSecrets().catch(() => null);
-  const podUrl = await resolvePodUrl();
+  const podUrl = await resolvePodUrl(undefined, reqUrl);
   const apiKey = secrets?.synap?.apiKey;
   if (!podUrl || !apiKey) return null;
   return { podUrl, apiKey };

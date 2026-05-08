@@ -120,8 +120,9 @@ export function resolveEveExternalUrl(
  */
 export async function mintPodUserToken(
   operatorEmail: string,
+  reqUrl?: string,
 ): Promise<PodSessionMint> {
-  return mintPodUserTokenInternal(operatorEmail, { persist: false });
+  return mintPodUserTokenInternal(operatorEmail, { persist: false }, reqUrl);
 }
 
 /**
@@ -138,13 +139,15 @@ export async function mintPodUserToken(
  */
 export async function mintAndStorePodUserToken(
   operatorEmail: string,
+  reqUrl?: string,
 ): Promise<PodSessionMint> {
-  return mintPodUserTokenInternal(operatorEmail, { persist: true });
+  return mintPodUserTokenInternal(operatorEmail, { persist: true }, reqUrl);
 }
 
 async function mintPodUserTokenInternal(
   operatorEmail: string,
   opts: { persist: boolean },
+  reqUrl?: string,
 ): Promise<PodSessionMint> {
   const email = operatorEmail.trim().toLowerCase();
   if (!email) {
@@ -156,7 +159,7 @@ async function mintPodUserTokenInternal(
   }
 
   const secrets = await readEveSecrets();
-  const podUrl = await resolvePodUrl(undefined, req.url)
+  const podUrl = await resolvePodUrl(undefined, reqUrl)
   if (!podUrl) {
     throw new PodSigninError(
       "Pod URL not configured",

@@ -2,12 +2,12 @@ import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth-server";
 import { runDoctor } from "@/lib/doctor";
 
-export async function GET() {
+export async function GET(req: Request) {
   const auth = await requireAuth();
   if ("error" in auth) return auth.error;
 
   try {
-    const checks = await runDoctor();
+    const checks = await runDoctor(req.url);
     const summary = {
       pass: checks.filter(c => c.status === "pass").length,
       warn: checks.filter(c => c.status === "warn").length,

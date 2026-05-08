@@ -76,7 +76,7 @@ export function loginCommand(program: Command): void {
     .option('--coolify-prod <token>', 'Coolify production API token')
     .option('--clear', 'Remove all stored credentials')
     .action(async (opts: {
-      ghr?: string;
+      ghcr?: string;
       coolifyStaging?: string;
       coolifyProd?: string;
       clear?: boolean;

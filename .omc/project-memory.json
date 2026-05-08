@@ -18,7 +18,7 @@
     "runtime": "Node.js 18.0.0"
   },
   "build": {
-    "buildCommand": "pnpm tsc --noEmit -p packages/@eve/dna/tsconfig.json 2>&1 | head -20",
+    "buildCommand": "cd /Users/antoine/Documents/Code/synap/hestia-cli && pnpm tsc --noEmit -p packages/@eve/dna/tsconfig.json 2>&1 | head -20",
     "testCommand": "pnpm test",
     "lintCommand": "pnpm lint",
     "devCommand": null,
@@ -126,14 +126,20 @@
   "hotPaths": [
     {
       "path": "packages/@eve/lifecycle/src/index.ts",
-      "accessCount": 122,
-      "lastAccessed": 1778248594167,
+      "accessCount": 123,
+      "lastAccessed": 1778249994502,
       "type": "file"
     },
     {
       "path": "packages/@eve/dna/src/wire-ai.ts",
-      "accessCount": 97,
-      "lastAccessed": 1778249249735,
+      "accessCount": 100,
+      "lastAccessed": 1778250517854,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/dna/src/openwebui-admin.ts",
+      "accessCount": 50,
+      "lastAccessed": 1778250610721,
       "type": "file"
     },
     {
@@ -141,12 +147,6 @@
       "accessCount": 49,
       "lastAccessed": 1778249124365,
       "type": "directory"
-    },
-    {
-      "path": "packages/@eve/dna/src/openwebui-admin.ts",
-      "accessCount": 41,
-      "lastAccessed": 1778248640332,
-      "type": "file"
     },
     {
       "path": "packages/@eve/dna/src",

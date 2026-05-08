@@ -202,7 +202,7 @@ async function loadSynapPersonal(
 
 // ─── Handler ─────────────────────────────────────────────────────────────────
 
-export async function GET(): Promise<NextResponse<ChannelRegistryResponse>> {
+export async function GET(req: Request): Promise<NextResponse<ChannelRegistryResponse>> {
   const auth = await requireAuth();
   if ("error" in auth) {
     return auth.error as NextResponse<ChannelRegistryResponse>;
@@ -239,7 +239,7 @@ export async function GET(): Promise<NextResponse<ChannelRegistryResponse>> {
   try {
     const secrets = await readEveSecrets();
     const apiKey = secrets?.synap?.apiKey;
-    const podUrl = await resolvePodUrl();
+    const podUrl = await resolvePodUrl(undefined, req.url);
     if (apiKey && podUrl) {
       const ch = await loadSynapPersonal(podUrl, apiKey);
       if (ch) channels.push(ch);

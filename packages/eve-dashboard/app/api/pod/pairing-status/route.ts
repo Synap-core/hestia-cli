@@ -44,7 +44,7 @@ export interface PairingStatusResponse {
   expiresAt?: string;
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   const auth = await requireAuth();
   if ("error" in auth) return auth.error;
 
@@ -58,7 +58,7 @@ export async function GET() {
 
   let podUrl: string | undefined;
   try {
-    podUrl = await resolvePodUrl();
+    podUrl = await resolvePodUrl(undefined, req.url);
   } catch {
     // Falls through — `unconfigured` is the safest answer when we can't
     // resolve a pod URL (volume mount missing on a fresh container).

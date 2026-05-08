@@ -144,7 +144,7 @@ async function checkOpenclawWiring(): Promise<CheckResult> {
   }
 }
 
-export async function runDoctor(): Promise<CheckResult[]> {
+export async function runDoctor(reqUrl?: string): Promise<CheckResult[]> {
   const checks: CheckResult[] = [];
 
   // ─── Platform ────────────────────────────────────────────────────────────
@@ -392,7 +392,7 @@ export async function runDoctor(): Promise<CheckResult[]> {
     // `eve doctor`. Falls back to legacy for pre-migration installs.
     const eveAgentKey = await readAgentKeyOrLegacy("eve");
     const diagnostics = await runHubProtocolProbes({
-      synapUrl: await resolvePodUrl(),
+      synapUrl: await resolvePodUrl(undefined, reqUrl),
       apiKey: eveAgentKey,
     });
     // Backwards-compatibility: the dashboard used to emit only the OpenAPI

@@ -15,12 +15,12 @@ import { requireAuth } from "@/lib/auth-server";
  * and read `secrets.agents.eve.hubApiKey`. When either is missing we
  * surface a 503 — the dashboard is misconfigured, not the user's request.
  */
-async function resolveAuth(): Promise<
+async function resolveAuth(reqUrl: string): Promise<
   | { error: NextResponse }
   | { ok: true; podUrl: string; apiKey: string }
 > {
   const secrets = await readEveSecrets();
-  const podUrl = await resolvePodUrl();
+  const podUrl = await resolvePodUrl(undefined, reqUrl);
   const apiKey = secrets?.agents?.eve?.hubApiKey?.trim();
   if (!podUrl) {
     return {
@@ -73,7 +73,7 @@ export async function GET(req: Request) {
   const auth = await requireAuth();
   if ("error" in auth) return auth.error;
 
-  const resolved = await resolveAuth();
+  const resolved = await resolveAuth(req.url);
   if ("error" in resolved) return resolved.error;
 
   const incoming = new URL(req.url);
@@ -107,7 +107,7 @@ export async function POST(req: Request) {
   const auth = await requireAuth();
   if ("error" in auth) return auth.error;
 
-  const resolved = await resolveAuth();
+  const resolved = await resolveAuth(req.url);
   if ("error" in resolved) return resolved.error;
 
   let body: unknown;

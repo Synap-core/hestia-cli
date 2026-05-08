@@ -39,7 +39,7 @@ export async function GET(req: Request) {
 
   const secrets = await readEveSecrets();
   const apiKey = secrets?.synap?.apiKey;
-  const podUrl = await resolvePodUrl();
+  const podUrl = await resolvePodUrl(undefined, req.url);
 
   if (!apiKey || !podUrl) {
     return NextResponse.json(
