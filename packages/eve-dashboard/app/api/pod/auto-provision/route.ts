@@ -288,7 +288,7 @@ export async function POST(req: Request) {
 
   // Full auto-provision path
   const podUrl = await resolvePodUrl(undefined, req.url, req.headers) ?? undefined;
-  const provisioningToken = resolveProvisioningToken() ?? undefined;
+  const provisioningToken = (await resolveProvisioningToken()) ?? undefined;
   const runner = new FetchRunner();
 
   let provisioned: AgentResult[];

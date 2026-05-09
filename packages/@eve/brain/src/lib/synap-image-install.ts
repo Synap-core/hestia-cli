@@ -180,21 +180,10 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
     );
   }
 
-  // 5. On fresh installs, the synap CLI created .env from scratch — eve's
-  //    pre-CLI heal was a no-op. Run it now to inject eve-specific vars,
-  //    then force-recreate the backend so the new env lands in the running
-  //    container (otherwise eve's agent provisioning fails because the
-  //    backend has stale empty PROVISIONING_TOKEN from the cold boot).
-  if (!envExisted) {
-    const dirty = reconcileEveEnv(envPath);
-    if (dirty) {
-      console.log('  Force-recreating backend so it picks up the eve-specific env vars…');
-      spawnSync('docker', ['compose', 'up', '-d', '--force-recreate', 'backend'], {
-        cwd: composeDir, stdio: 'inherit',
-        env: { ...process.env, COMPOSE_PROJECT_NAME: 'synap-backend' },
-      });
-    }
-  }
+  // (No post-CLI .env reconciliation needed — synap CLI's `cmd_install`
+  // generates PROVISIONING_TOKEN on fresh installs and `cmd_update`
+  // self-heals it on updates. Eve's pre-CLI step covered legacy
+  // KRATOS_CONFIG_DIR cleanup, which is a one-time migration concern.)
 
   // 6. Connect to eve-network so Traefik can route to the backend. The
   //    synap CLI waited for container health before returning, so the
@@ -226,53 +215,24 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
 }
 
 /**
- * Reconcile eve-specific `.env` variables against the canonical synap-backend
- * layout. Idempotent: only writes when something is wrong.
+ * Strip eve-flat-layout legacy values from a migrated `.env`. The synap CLI
+ * generates and self-heals everything else (PROVISIONING_TOKEN included as
+ * of the upstream fix). The only thing the canonical CLI doesn't know about
+ * is eve's previous bundled-compose layout — `KRATOS_CONFIG_DIR=./config/kratos`
+ * was eve's value; canonical compose defaults to `../kratos` and breaks if
+ * the legacy override is left in place.
  *
- * Adds (when missing or empty):
- *   - PROVISIONING_TOKEN: eve uses it to mint agent API keys via the bootstrap
- *     endpoint. The canonical synap CLI doesn't generate it.
- *
- * Removes (when present):
- *   - KRATOS_CONFIG_DIR=./config/kratos (legacy eve flat-layout value).
- *     Canonical layout keeps kratos config at `<repoRoot>/kratos/`, and the
- *     canonical compose's default `${KRATOS_CONFIG_DIR:-../kratos}` resolves
- *     correctly when the var is absent. Leaving the old value points the
- *     bind mount at a non-existent dir → kratos crashes.
- *
- * Returns `true` when the file was modified (caller should restart backend
- * to pick up the new env).
+ * Returns `true` when the file was modified.
  */
 export function reconcileEveEnv(envPath: string): boolean {
   if (!existsSync(envPath)) return false;
   let content = readFileSync(envPath, 'utf-8');
-  let dirty = false;
 
-  // Add PROVISIONING_TOKEN if missing or empty.
-  const tokenMatch = content.match(/^PROVISIONING_TOKEN=(.*)$/m);
-  if (!tokenMatch || tokenMatch[1].trim() === '') {
-    const newToken = gen();
-    if (tokenMatch) {
-      content = content.replace(/^PROVISIONING_TOKEN=.*$/m, `PROVISIONING_TOKEN=${newToken}`);
-    } else {
-      const sep = content.endsWith('\n') ? '' : '\n';
-      content = `${content}${sep}PROVISIONING_TOKEN=${newToken}\n`;
-    }
-    dirty = true;
-    console.log('  reconcile-env: generated PROVISIONING_TOKEN');
-  }
+  const legacy = content.match(/^KRATOS_CONFIG_DIR=\.\/config\/kratos\s*$/m);
+  if (!legacy) return false;
 
-  // Strip the legacy eve flat-layout KRATOS_CONFIG_DIR setting so the
-  // canonical compose default (../kratos) takes over.
-  const kratosLegacyMatch = content.match(/^KRATOS_CONFIG_DIR=\.\/config\/kratos\s*$/m);
-  if (kratosLegacyMatch) {
-    content = content.replace(/^KRATOS_CONFIG_DIR=\.\/config\/kratos\s*\n?/m, '');
-    dirty = true;
-    console.log('  reconcile-env: removed legacy KRATOS_CONFIG_DIR=./config/kratos (canonical layout uses ../kratos)');
-  }
-
-  if (dirty) {
-    writeFileSync(envPath, content, { encoding: 'utf-8', mode: 0o600 });
-  }
-  return dirty;
+  content = content.replace(/^KRATOS_CONFIG_DIR=\.\/config\/kratos\s*\n?/m, '');
+  writeFileSync(envPath, content, { encoding: 'utf-8', mode: 0o600 });
+  console.log('  reconcile-env: removed legacy KRATOS_CONFIG_DIR=./config/kratos (canonical layout uses ../kratos)');
+  return true;
 }
