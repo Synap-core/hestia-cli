@@ -26,3 +26,7 @@
 {"t":0,"agent":"a603b57","agent_type":"unknown","event":"agent_stop","success":true}
 {"t":0,"agent":"add9f7f","agent_type":"document-specialist","event":"agent_start","parent_mode":"none"}
 {"t":0,"agent":"add9f7f","agent_type":"document-specialist","event":"agent_stop","success":true,"duration_ms":101153}
+{"t":0,"agent":"aee7b74","agent_type":"unknown","event":"agent_stop","success":true}
+{"t":0,"agent":"a915cac","agent_type":"code-reviewer","event":"agent_start","parent_mode":"none"}
+{"t":0,"agent":"a915cac","agent_type":"code-reviewer","event":"agent_stop","success":true,"duration_ms":185945}
+{"t":0,"agent":"a4d1461","agent_type":"unknown","event":"agent_stop","success":true}

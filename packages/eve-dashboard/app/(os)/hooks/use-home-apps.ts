@@ -29,11 +29,16 @@ import {
   type MarketplaceAppWithEntitlement,
 } from "../lib/marketplace-client";
 import { getCpUserToken } from "../lib/cp-oauth";
+import {
+  normalizeAppEntitiesToManifests,
+  type AppEntityLike,
+  type EveAppManifest,
+} from "../lib/eve-app-manifest";
 import type { CpAuthBannerState } from "../../components/cp-auth-banner";
 
 // ─── Public types ────────────────────────────────────────────────────────────
 
-export type AppSource = "cp_marketplace" | "local_component" | "pinned_default";
+export type AppSource = "cp_marketplace" | "local_component" | "pinned_default" | "builder_app";
 
 export type AppCategory = "ai" | "productivity" | "communication" | "dev" | "other";
 
@@ -102,6 +107,10 @@ interface LocalComponentRow {
 
 interface ComponentsResponse {
   components: LocalComponentRow[];
+}
+
+interface AppsResponse {
+  apps: AppEntityLike[];
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -224,6 +233,30 @@ function marketplaceToHomeApp(
   };
 }
 
+function builderManifestToHomeApp(manifest: EveAppManifest): HomeApp {
+  const iconIsRemote = manifest.icon?.startsWith("http") ?? false;
+  return {
+    id: manifest.id,
+    source: "builder_app",
+    name: manifest.name,
+    iconUrl: iconIsRemote ? manifest.icon : undefined,
+    emoji: manifest.icon && !iconIsRemote ? manifest.icon : undefined,
+    url: `/builder-apps/${encodeURIComponent(manifest.id)}`,
+    category: "productivity",
+    status: "unknown",
+    isAI: false,
+    isEntitled: true,
+    isLocal: manifest.rendererType === "iframe-srcdoc",
+  };
+}
+
+function hasLauncherEquivalent(apps: HomeApp[], manifest: EveAppManifest): boolean {
+  return apps.some((app) => {
+    if (app.id === manifest.id) return true;
+    return Boolean(manifest.url && app.url === manifest.url);
+  });
+}
+
 /** Stable de-dupe: when an app appears in both sources (e.g. a
  *  marketplace `eve_component` for OpenWebUI AND the local registry
  *  entry), prefer the marketplace record because it carries the
@@ -277,6 +310,22 @@ export function useHomeApps(): UseHomeAppsResult {
       setError(e instanceof Error ? e : new Error("Failed to load components"));
     }
 
+    let builderManifests: EveAppManifest[] = [];
+    try {
+      const res = await fetch("/api/apps", {
+        credentials: "include",
+        cache: "no-store",
+      });
+      if (res.ok) {
+        const json = (await res.json()) as AppsResponse;
+        builderManifests = normalizeAppEntitiesToManifests(json.apps ?? []);
+      } else if (res.status !== 404) {
+        setError(new Error(`/api/apps returned ${res.status}`));
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e : new Error("Failed to load Builder apps"));
+    }
+
     // Marketplace second. We check token presence up front so the banner
     // state reflects "signed-in vs out" regardless of whether the fetch
     // succeeds. Without a token the CP returns the public catalog with
@@ -322,6 +371,11 @@ export function useHomeApps(): UseHomeAppsResult {
     for (const r of localRows) {
       const a = localToHomeApp(r);
       if (a) merged.push(a);
+    }
+    for (const manifest of builderManifests) {
+      if (!hasLauncherEquivalent(merged, manifest)) {
+        merged.push(builderManifestToHomeApp(manifest));
+      }
     }
 
     // OpenWebUI gets pinned to the front when present.

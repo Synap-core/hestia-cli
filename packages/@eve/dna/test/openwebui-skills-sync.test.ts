@@ -116,9 +116,10 @@ describe('pushSynapSkillsToOpenwebuiPrompts', () => {
       command: 'synap',
       content: '# synap skill body',
     });
-    // Title carries the synap:system tag so operators can spot Eve-managed entries.
-    const firstBody = createCalls[0]?.body as { title?: string };
-    expect(firstBody.title).toContain('synap:system');
+    // `name` (renamed from `title` in OWUI v0.9.4 PromptForm) carries the
+    // synap:system tag so operators can spot Eve-managed entries.
+    const firstBody = createCalls[0]?.body as { name?: string };
+    expect(firstBody.name).toContain('synap:system');
   });
 
   it('no-ops when existing prompts already match SKILL.md content', async () => {
@@ -130,21 +131,22 @@ describe('pushSynapSkillsToOpenwebuiPrompts', () => {
         });
       }
       if (call.url.endsWith('/api/v1/prompts/') && call.method === 'GET') {
-        // Mirror back identical content + title so the diff sees no change.
+        // Mirror back identical content + name so the diff sees no change.
+        // v0.9.4 PromptModel uses `name` (renamed from `title`).
         return new Response(JSON.stringify([
           {
             command: 'synap',
-            title: 'Synap — Capture, Memory, Channels [synap:system]',
+            name: 'Synap — Capture, Memory, Channels [synap:system]',
             content: '# synap skill body',
           },
           {
             command: 'synap-schema',
-            title: 'Synap Schema — Profiles & Property Defs [synap:system]',
+            name: 'Synap Schema — Profiles & Property Defs [synap:system]',
             content: '# synap-schema skill body',
           },
           {
             command: 'synap-ui',
-            title: 'Synap UI — Views & Dashboards [synap:system]',
+            name: 'Synap UI — Views & Dashboards [synap:system]',
             content: '# synap-ui skill body',
           },
         ]), {
@@ -173,21 +175,26 @@ describe('pushSynapSkillsToOpenwebuiPrompts', () => {
         });
       }
       if (call.url.endsWith('/api/v1/prompts/') && call.method === 'GET') {
+        // v0.9.4 returns `id` on list entries (used to target the update
+        // path) and `name` instead of `title` on PromptModel.
         return new Response(JSON.stringify([
           // synap exists but with stale content → expect update.
           {
+            id: 'prompt-synap-001',
             command: 'synap',
-            title: 'Synap — Capture, Memory, Channels [synap:system]',
+            name: 'Synap — Capture, Memory, Channels [synap:system]',
             content: '# OUTDATED synap content',
           },
           {
+            id: 'prompt-synap-schema-002',
             command: 'synap-schema',
-            title: 'Synap Schema — Profiles & Property Defs [synap:system]',
+            name: 'Synap Schema — Profiles & Property Defs [synap:system]',
             content: '# synap-schema skill body',
           },
           {
+            id: 'prompt-synap-ui-003',
             command: 'synap-ui',
-            title: 'Synap UI — Views & Dashboards [synap:system]',
+            name: 'Synap UI — Views & Dashboards [synap:system]',
             content: '# synap-ui skill body',
           },
         ]), {
@@ -195,7 +202,7 @@ describe('pushSynapSkillsToOpenwebuiPrompts', () => {
           headers: { 'content-type': 'application/json' },
         });
       }
-      if (call.url.includes('/api/v1/prompts/command/synap/update') && call.method === 'POST') {
+      if (call.url.includes('/api/v1/prompts/id/prompt-synap-001/update') && call.method === 'POST') {
         return new Response('{}', { status: 200 });
       }
       return new Response('unexpected', { status: 500 });
@@ -208,7 +215,7 @@ describe('pushSynapSkillsToOpenwebuiPrompts', () => {
     expect(result.updated).toBe(1);
     expect(result.skipped).toEqual([]);
 
-    const updateCalls = calls.filter(c => c.url.includes('/prompts/command/synap/update'));
+    const updateCalls = calls.filter(c => c.url.includes('/prompts/id/prompt-synap-001/update'));
     expect(updateCalls).toHaveLength(1);
     expect(updateCalls[0]?.body).toMatchObject({
       command: 'synap',

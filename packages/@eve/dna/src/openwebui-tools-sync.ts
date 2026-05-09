@@ -1,36 +1,47 @@
 /**
  * @eve/dna — Synap → OpenWebUI external tool server registration.
  *
- * OpenWebUI v0.6+ supports OpenAPI tool servers: register an OpenAPI spec
- * URL + bearer token, and OWUI exposes the listed operations as tools an
- * LLM can call. This module pushes Synap's Hub Protocol OpenAPI spec into
- * that registry so Synap's 30+ Hub endpoints (memory, entities, channels,
+ * OpenWebUI supports OpenAPI tool servers: register an OpenAPI spec URL +
+ * bearer token, and OWUI exposes the listed operations as tools an LLM can
+ * call. This module pushes Synap's Hub Protocol OpenAPI spec into that
+ * registry so Synap's 30+ Hub endpoints (memory, entities, channels,
  * knowledge, sessions, agents, …) become tools every chat can use, without
  * re-implementing them in Python sidecar pipelines.
  *
- * Why config (not POST /api/v1/tools): OpenWebUI's persisted config holds
- * a `tool_server.connections[]` array (PersistentConfig). The same admin
- * config endpoint used by `openwebui-admin.ts` for model sources is reused
- * here, so we get the same auth and idempotency story.
+ * v0.9.4 endpoints used:
+ *   GET  /api/v1/configs/tool_servers         → admin → ToolServersConfigForm
+ *   POST /api/v1/configs/tool_servers         → admin ← ToolServersConfigForm
+ *
+ *   ToolServersConfigForm = { TOOL_SERVER_CONNECTIONS: ToolServerConnection[] }
+ *
+ *   ToolServerConnection = {
+ *     url, path, type, auth_type, headers, key, config, info
+ *   }
+ *
+ * Migration from < v0.9: this used to live inside the OpenAI persisted
+ * config blob as `config.tool_server.connections[]`, written via the old
+ * `POST /api/v1/configs/`. v0.9 promoted tool servers to a dedicated
+ * sub-route so we no longer round-trip the whole config to update them.
  *
  * Container-network URL: the URL pushed into OWUI must be reachable from
  * inside the OWUI container. Synap exposes its OpenAPI spec at
  * `/api/hub/openapi.json` (mounted by `hub-protocol-rest.ts`). The Synap
- * pod's container name on the eve-network is `eve-brain-synap` and it
- * listens on internal port 4000 — the same address we already write into
- * other sidecars' env via SYNAP_BACKEND_INTERNAL_URL.
+ * pod's container name on the eve-network is `eve-brain-synap` (network
+ * alias added in `connectToEveNetwork`) and it listens on internal port
+ * 4000 — same address we already write into sidecars' env via
+ * SYNAP_BACKEND_INTERNAL_URL.
  *
- * Idempotency: we GET the persisted config, look up the existing entry
- * by `name`, and only PATCH when the URL or bearer key actually differ.
+ * Idempotency: we GET the current TOOL_SERVER_CONNECTIONS list, find the
+ * Eve-managed entry by `name`, and only POST back when the URL or bearer
+ * key actually differ.
  *
  * Failure modes:
  *   - admin login fails → throw (caller can't proceed)
  *   - Synap OpenAPI endpoint 404 / non-JSON → return `registered: false`,
- *     no throw. Wave 2 backend change handles it; we don't block on a
- *     missing upstream endpoint.
+ *     no throw. We don't block on a missing upstream endpoint.
  */
-import { COMPONENTS, SYNAP_BACKEND_INTERNAL_URL } from './components.js';
-import { getAdminJwt, getConfig, saveConfig } from './openwebui-admin.js';
+import { SYNAP_BACKEND_INTERNAL_URL } from './components.js';
+import { getAdminJwt, resolveOpenwebuiAdminUrl } from './openwebui-admin.js';
 import {
   readAgentKeyOrLegacySync,
   type EveSecrets,
@@ -50,28 +61,36 @@ export interface ToolsSyncResult {
 }
 
 /**
- * One entry in OpenWebUI's persisted `tool_server.connections[]`.
+ * One entry in OWUI's `TOOL_SERVER_CONNECTIONS` list (v0.9.4 schema).
  *
- * OWUI v0.6+ stores tool servers as PersistentConfig under
- * `config.tool_server.connections`. Each entry is the spec URL + bearer
- * key; OWUI fetches the spec on demand and exposes the operations.
+ * Source: `backend/open_webui/routers/configs.py` ToolServerConnection model.
+ * Extra fields are tolerated by the backend (`extra='allow'`); we set the
+ * minimum required to register an OpenAPI server with bearer auth.
  */
 interface OpenwebuiToolServerConnection {
-  /** OpenAPI spec URL — fetched by OWUI from inside its own container. */
+  /** Spec URL — fetched by OWUI from inside its own container. */
   url: string;
+  /** Path within the spec to mount tools at. Empty string = root. */
+  path: string;
+  /** Server type — defaults to "openapi" on OWUI. */
+  type?: 'openapi' | 'mcp';
+  /** Auth scheme name — "bearer" matches the `key` field semantics. */
+  auth_type?: string;
   /** Bearer token used by OWUI when calling the upstream API. */
-  key: string;
+  key?: string;
   /** Display name shown in the tool picker. */
   name?: string;
   /** Optional config blob — OWUI passes this back when calling tools. */
   config?: Record<string, unknown>;
   /** Optional cached info from the spec (servers, title, etc.). */
   info?: Record<string, unknown>;
+  /** Optional auth headers for non-bearer schemes. */
+  headers?: Record<string, string> | string;
 }
 
-interface OpenwebuiToolServerConfig {
-  connections?: OpenwebuiToolServerConnection[];
-  [key: string]: unknown;
+/** v0.9.4 wire shape: `{ TOOL_SERVER_CONNECTIONS: [...] }`. */
+interface ToolServersConfigForm {
+  TOOL_SERVER_CONNECTIONS: OpenwebuiToolServerConnection[];
 }
 
 const SYNAP_TOOL_SERVER_NAME = 'Synap Hub Protocol';
@@ -160,29 +179,53 @@ async function fetchSynapOpenapi(
 }
 
 /**
- * Read OWUI's persisted `tool_server` config slot, normalizing to a known
- * shape. Older / forked OWUI builds may use `tool_servers` (plural) — we
- * accept either and write back to whichever key currently holds data; if
- * neither does, we default to the singular form that ships in OWUI 0.6+.
+ * GET /api/v1/configs/tool_servers — read the current tool-server list.
+ * Returns the bare connections array; throws on transport / auth failure.
  */
-function readToolServerConfig(
-  config: Record<string, unknown>,
-): { key: 'tool_server' | 'tool_servers'; value: OpenwebuiToolServerConfig } {
-  const single = config.tool_server;
-  if (single && typeof single === 'object' && !Array.isArray(single)) {
-    return { key: 'tool_server', value: single as OpenwebuiToolServerConfig };
+async function getToolServerConnections(
+  jwt: string,
+  baseUrl: string,
+): Promise<OpenwebuiToolServerConnection[]> {
+  const url = `${baseUrl}/api/v1/configs/tool_servers`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`GET /api/v1/configs/tool_servers HTTP ${res.status}: ${body.slice(0, 200)}`);
   }
-  const plural = config.tool_servers;
-  if (plural && typeof plural === 'object' && !Array.isArray(plural)) {
-    return { key: 'tool_servers', value: plural as OpenwebuiToolServerConfig };
+  const text = await res.text();
+  if (text.trimStart().startsWith('<')) {
+    throw new Error('GET /api/v1/configs/tool_servers returned HTML — admin route not registered on this OWUI build');
   }
-  return { key: 'tool_server', value: { connections: [] } };
+  const parsed = JSON.parse(text) as Partial<ToolServersConfigForm> | OpenwebuiToolServerConnection[];
+  if (Array.isArray(parsed)) return parsed;
+  return parsed.TOOL_SERVER_CONNECTIONS ?? [];
 }
 
-/** Look up the OWUI host port from the component registry (default 3011). */
-function resolveOpenwebuiPort(): number {
-  const comp = COMPONENTS.find((c) => c.id === 'openwebui');
-  return comp?.service?.hostPort ?? 3011;
+/**
+ * POST /api/v1/configs/tool_servers — overwrite the tool-server list with
+ * the supplied connections. We pass the full new list (not a delta) since
+ * the endpoint replaces the whole array.
+ */
+async function saveToolServerConnections(
+  jwt: string,
+  baseUrl: string,
+  connections: OpenwebuiToolServerConnection[],
+): Promise<void> {
+  const url = `${baseUrl}/api/v1/configs/tool_servers`;
+  const body: ToolServersConfigForm = { TOOL_SERVER_CONNECTIONS: connections };
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) {
+    const respBody = await res.text().catch(() => '');
+    throw new Error(`POST /api/v1/configs/tool_servers HTTP ${res.status}: ${respBody.slice(0, 200)}`);
+  }
 }
 
 // ── Public API ──
@@ -236,8 +279,10 @@ export async function registerSynapAsOpenwebuiToolServer(
     };
   }
 
-  const port = resolveOpenwebuiPort();
-  const jwt = await getAdminJwt(port);
+  // Single source of truth for OWUI's host base URL — honors the live
+  // `docker port` mapping when an operator has overridden OPEN_WEBUI_PORT.
+  const baseUrl = resolveOpenwebuiAdminUrl();
+  const jwt = await getAdminJwt();
   if (!jwt) {
     throw new Error(
       'OpenWebUI admin login failed — cannot register Synap tool server',
@@ -251,25 +296,18 @@ export async function registerSynapAsOpenwebuiToolServer(
     );
   }
 
-  const config = await getConfig(jwt, port);
-  if (!config) {
-    throw new Error('Could not read OpenWebUI persisted config');
-  }
-
-  const configRecord = config as Record<string, unknown>;
-  const { key: toolServerKey, value: toolServerCfg } = readToolServerConfig(configRecord);
-  const connections: OpenwebuiToolServerConnection[] = Array.isArray(toolServerCfg.connections)
-    ? [...toolServerCfg.connections]
-    : [];
+  // Read current tool-server list directly from the dedicated v0.9.4 sub-route.
+  const connections = await getToolServerConnections(jwt, baseUrl);
 
   const existingIdx = connections.findIndex((c) => c.name === SYNAP_TOOL_SERVER_NAME);
   const existing = existingIdx >= 0 ? connections[existingIdx] : undefined;
 
-  // Idempotency check: same URL + same bearer = no-op.
+  // Idempotency check: same URL + same bearer = no-op (avoid pointless POST).
   if (
     existing &&
     existing.url === endpointUrl &&
-    existing.key === apiKey
+    existing.key === apiKey &&
+    (existing.path ?? '') === ''
   ) {
     return {
       registered: true,
@@ -281,30 +319,21 @@ export async function registerSynapAsOpenwebuiToolServer(
 
   const updatedEntry: OpenwebuiToolServerConnection = {
     url: endpointUrl,
+    path: '',
+    type: 'openapi',
+    auth_type: 'bearer',
     key: apiKey,
     name: SYNAP_TOOL_SERVER_NAME,
   };
 
+  const next = [...connections];
   if (existingIdx >= 0) {
-    connections[existingIdx] = { ...existing, ...updatedEntry };
+    next[existingIdx] = { ...existing, ...updatedEntry };
   } else {
-    connections.push(updatedEntry);
+    next.push(updatedEntry);
   }
 
-  const nextToolServer: OpenwebuiToolServerConfig = {
-    ...toolServerCfg,
-    connections,
-  };
-
-  const nextConfig: Record<string, unknown> = {
-    ...configRecord,
-    [toolServerKey]: nextToolServer,
-  };
-
-  const saved = await saveConfig(jwt, nextConfig, port);
-  if (!saved) {
-    throw new Error('Failed to save OpenWebUI config with Synap tool server');
-  }
+  await saveToolServerConnections(jwt, baseUrl, next);
 
   return {
     registered: true,

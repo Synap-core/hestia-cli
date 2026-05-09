@@ -71,13 +71,14 @@ describe('registerSynapAsOpenwebuiToolServer', () => {
           headers: { 'content-type': 'application/json' },
         });
       }
-      if (url.endsWith('/api/v1/configs/') && method === 'GET') {
-        return new Response(JSON.stringify({ WEBUI_NAME: 'Eve Chat' }), {
+      if (url.endsWith('/api/v1/configs/tool_servers') && method === 'GET') {
+        // v0.9.4: dedicated sub-route returns `{ TOOL_SERVER_CONNECTIONS: [] }`.
+        return new Response(JSON.stringify({ TOOL_SERVER_CONNECTIONS: [] }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         });
       }
-      if (url.endsWith('/api/v1/configs/') && method === 'POST') {
+      if (url.endsWith('/api/v1/configs/tool_servers') && method === 'POST') {
         return new Response('{}', { status: 200 });
       }
       return new Response('not found', { status: 404 });
@@ -95,32 +96,31 @@ describe('registerSynapAsOpenwebuiToolServer', () => {
     expect(result.serverName).toBe('Synap Hub Protocol');
     expect(result.endpointUrl).toBe(EXPECTED_OPENAPI_URL);
 
-    const saveCall = calls.find((c) => c.method === 'POST' && c.url.endsWith('/api/v1/configs/'));
+    const saveCall = calls.find((c) => c.method === 'POST' && c.url.endsWith('/api/v1/configs/tool_servers'));
     expect(saveCall).toBeDefined();
-    const savedBody = JSON.parse(String(saveCall!.body)) as Record<string, unknown>;
-    expect(savedBody.WEBUI_NAME).toBe('Eve Chat');
-    const toolServer = savedBody.tool_server as { connections: Array<Record<string, unknown>> };
-    expect(toolServer.connections).toHaveLength(1);
-    expect(toolServer.connections[0]).toEqual({
+    const savedBody = JSON.parse(String(saveCall!.body)) as { TOOL_SERVER_CONNECTIONS: Array<Record<string, unknown>> };
+    expect(savedBody.TOOL_SERVER_CONNECTIONS).toHaveLength(1);
+    expect(savedBody.TOOL_SERVER_CONNECTIONS[0]).toEqual({
       url: EXPECTED_OPENAPI_URL,
+      path: '',
+      type: 'openapi',
+      auth_type: 'bearer',
       key: 'eve-key',
       name: 'Synap Hub Protocol',
     });
   });
 
   it('is a no-op when already registered with the same URL and key', async () => {
-    const existingConfig = {
-      WEBUI_NAME: 'Eve Chat',
-      tool_server: {
-        connections: [
-          {
-            url: EXPECTED_OPENAPI_URL,
-            key: 'eve-key',
-            name: 'Synap Hub Protocol',
-          },
-        ],
+    const existingConnections = [
+      {
+        url: EXPECTED_OPENAPI_URL,
+        path: '',
+        type: 'openapi' as const,
+        auth_type: 'bearer',
+        key: 'eve-key',
+        name: 'Synap Hub Protocol',
       },
-    };
+    ];
     const { fn, calls } = buildFetchMock(async ({ url, method }) => {
       if (url === EXPECTED_OPENAPI_URL) {
         return new Response(JSON.stringify(VALID_OPENAPI_DOC), {
@@ -128,13 +128,13 @@ describe('registerSynapAsOpenwebuiToolServer', () => {
           headers: { 'content-type': 'application/json' },
         });
       }
-      if (url.endsWith('/api/v1/configs/') && method === 'GET') {
-        return new Response(JSON.stringify(existingConfig), {
+      if (url.endsWith('/api/v1/configs/tool_servers') && method === 'GET') {
+        return new Response(JSON.stringify({ TOOL_SERVER_CONNECTIONS: existingConnections }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         });
       }
-      if (url.endsWith('/api/v1/configs/') && method === 'POST') {
+      if (url.endsWith('/api/v1/configs/tool_servers') && method === 'POST') {
         return new Response('{}', { status: 200 });
       }
       return new Response('not found', { status: 404 });
@@ -149,22 +149,21 @@ describe('registerSynapAsOpenwebuiToolServer', () => {
 
     expect(result.registered).toBe(true);
     expect(result.toolCount).toBe(4);
-    const savePosts = calls.filter((c) => c.method === 'POST' && c.url.endsWith('/api/v1/configs/'));
+    const savePosts = calls.filter((c) => c.method === 'POST' && c.url.endsWith('/api/v1/configs/tool_servers'));
     expect(savePosts).toHaveLength(0);
   });
 
   it('updates the registration when the bearer key changes', async () => {
-    const existingConfig = {
-      tool_server: {
-        connections: [
-          {
-            url: EXPECTED_OPENAPI_URL,
-            key: 'old-key',
-            name: 'Synap Hub Protocol',
-          },
-        ],
+    const existingConnections = [
+      {
+        url: EXPECTED_OPENAPI_URL,
+        path: '',
+        type: 'openapi' as const,
+        auth_type: 'bearer',
+        key: 'old-key',
+        name: 'Synap Hub Protocol',
       },
-    };
+    ];
     const { fn, calls } = buildFetchMock(async ({ url, method }) => {
       if (url === EXPECTED_OPENAPI_URL) {
         return new Response(JSON.stringify(VALID_OPENAPI_DOC), {
@@ -172,13 +171,13 @@ describe('registerSynapAsOpenwebuiToolServer', () => {
           headers: { 'content-type': 'application/json' },
         });
       }
-      if (url.endsWith('/api/v1/configs/') && method === 'GET') {
-        return new Response(JSON.stringify(existingConfig), {
+      if (url.endsWith('/api/v1/configs/tool_servers') && method === 'GET') {
+        return new Response(JSON.stringify({ TOOL_SERVER_CONNECTIONS: existingConnections }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         });
       }
-      if (url.endsWith('/api/v1/configs/') && method === 'POST') {
+      if (url.endsWith('/api/v1/configs/tool_servers') && method === 'POST') {
         return new Response('{}', { status: 200 });
       }
       return new Response('not found', { status: 404 });
@@ -193,12 +192,11 @@ describe('registerSynapAsOpenwebuiToolServer', () => {
 
     expect(result.registered).toBe(true);
 
-    const saveCall = calls.find((c) => c.method === 'POST' && c.url.endsWith('/api/v1/configs/'));
+    const saveCall = calls.find((c) => c.method === 'POST' && c.url.endsWith('/api/v1/configs/tool_servers'));
     expect(saveCall).toBeDefined();
-    const savedBody = JSON.parse(String(saveCall!.body)) as Record<string, unknown>;
-    const toolServer = savedBody.tool_server as { connections: Array<Record<string, unknown>> };
-    expect(toolServer.connections).toHaveLength(1);
-    expect(toolServer.connections[0]).toMatchObject({
+    const savedBody = JSON.parse(String(saveCall!.body)) as { TOOL_SERVER_CONNECTIONS: Array<Record<string, unknown>> };
+    expect(savedBody.TOOL_SERVER_CONNECTIONS).toHaveLength(1);
+    expect(savedBody.TOOL_SERVER_CONNECTIONS[0]).toMatchObject({
       url: EXPECTED_OPENAPI_URL,
       key: 'new-key',
       name: 'Synap Hub Protocol',
@@ -206,17 +204,16 @@ describe('registerSynapAsOpenwebuiToolServer', () => {
   });
 
   it('preserves unrelated tool server connections when updating', async () => {
-    const existingConfig = {
-      tool_server: {
-        connections: [
-          {
-            url: 'http://other-tool/openapi.json',
-            key: 'other-key',
-            name: 'Some Other Tool',
-          },
-        ],
+    const existingConnections = [
+      {
+        url: 'http://other-tool/openapi.json',
+        path: '',
+        type: 'openapi' as const,
+        auth_type: 'bearer',
+        key: 'other-key',
+        name: 'Some Other Tool',
       },
-    };
+    ];
     const { fn, calls } = buildFetchMock(async ({ url, method }) => {
       if (url === EXPECTED_OPENAPI_URL) {
         return new Response(JSON.stringify(VALID_OPENAPI_DOC), {
@@ -224,13 +221,13 @@ describe('registerSynapAsOpenwebuiToolServer', () => {
           headers: { 'content-type': 'application/json' },
         });
       }
-      if (url.endsWith('/api/v1/configs/') && method === 'GET') {
-        return new Response(JSON.stringify(existingConfig), {
+      if (url.endsWith('/api/v1/configs/tool_servers') && method === 'GET') {
+        return new Response(JSON.stringify({ TOOL_SERVER_CONNECTIONS: existingConnections }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         });
       }
-      if (url.endsWith('/api/v1/configs/') && method === 'POST') {
+      if (url.endsWith('/api/v1/configs/tool_servers') && method === 'POST') {
         return new Response('{}', { status: 200 });
       }
       return new Response('not found', { status: 404 });
@@ -243,16 +240,15 @@ describe('registerSynapAsOpenwebuiToolServer', () => {
       makeSecrets('eve-key'),
     );
 
-    const saveCall = calls.find((c) => c.method === 'POST' && c.url.endsWith('/api/v1/configs/'));
-    const savedBody = JSON.parse(String(saveCall!.body)) as Record<string, unknown>;
-    const toolServer = savedBody.tool_server as { connections: Array<Record<string, unknown>> };
-    expect(toolServer.connections).toHaveLength(2);
-    expect(toolServer.connections.find((c) => c.name === 'Some Other Tool')).toEqual({
+    const saveCall = calls.find((c) => c.method === 'POST' && c.url.endsWith('/api/v1/configs/tool_servers'));
+    const savedBody = JSON.parse(String(saveCall!.body)) as { TOOL_SERVER_CONNECTIONS: Array<Record<string, unknown>> };
+    expect(savedBody.TOOL_SERVER_CONNECTIONS).toHaveLength(2);
+    expect(savedBody.TOOL_SERVER_CONNECTIONS.find((c) => c.name === 'Some Other Tool')).toMatchObject({
       url: 'http://other-tool/openapi.json',
       key: 'other-key',
       name: 'Some Other Tool',
     });
-    expect(toolServer.connections.find((c) => c.name === 'Synap Hub Protocol')).toMatchObject({
+    expect(savedBody.TOOL_SERVER_CONNECTIONS.find((c) => c.name === 'Synap Hub Protocol')).toMatchObject({
       url: EXPECTED_OPENAPI_URL,
       key: 'eve-key',
     });
@@ -297,6 +293,6 @@ describe('registerSynapAsOpenwebuiToolServer', () => {
     expect(result.serverName).toBe('Synap Hub Protocol');
 
     // No admin calls when the upstream endpoint is missing.
-    expect(calls.some((c) => c.url.endsWith('/api/v1/configs/'))).toBe(false);
+    expect(calls.some((c) => c.url.endsWith('/api/v1/configs/tool_servers'))).toBe(false);
   });
 });

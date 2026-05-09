@@ -32,7 +32,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Spinner } from "@heroui/react";
 import { AlertCircle, RefreshCw } from "lucide-react";
 import { getSharedSession } from "@/lib/synap-auth";
-import { isAllowedEmbedOrigin } from "@eve/dna";
+import { createAllowedEmbedOriginChecker } from "@eve/dna";
 
 type PaneStatus = "probing" | "loading" | "ready" | "unreachable";
 
@@ -54,8 +54,15 @@ export function AppPane({ appId, url, isActive = true, className }: AppPaneProps
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   // Derive the exact origin once so we never use "*" when posting the session.
-  const targetOrigin = useMemo(() => {
-    try { return new URL(url).origin; } catch { return null; }
+  // Also build a per-pane origin checker that includes this app URL explicitly —
+  // covers custom-domain Eve installs that don't match *.synap.live or localhost.
+  const { targetOrigin, isAllowed } = useMemo(() => {
+    let origin: string | null = null;
+    try { origin = new URL(url).origin; } catch { /* invalid URL */ }
+    return {
+      targetOrigin: origin,
+      isAllowed: createAllowedEmbedOriginChecker(origin ? [url] : undefined),
+    };
   }, [url]);
 
   // Push the session to a target window using the exact origin.
@@ -93,16 +100,16 @@ export function AppPane({ appId, url, isActive = true, className }: AppPaneProps
   }, [status, pushSession]);
 
   // Phase 2 — respond to synap:ready pull requests from the child.
-  // Always re-register so pushSession closure stays fresh.
+  // Always re-register so pushSession and isAllowed closures stay fresh.
   useEffect(() => {
     function handler(e: MessageEvent) {
       if (e.data?.type !== "synap:ready") return;
-      if (!e.source || !isAllowedEmbedOrigin(e.origin)) return;
+      if (!e.source || !isAllowed(e.origin)) return;
       pushSession(e.source as Window);
     }
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, [pushSession]);
+  }, [pushSession, isAllowed]);
 
   return (
     <div className={`relative w-full h-full overflow-hidden ${className ?? ""}`}>

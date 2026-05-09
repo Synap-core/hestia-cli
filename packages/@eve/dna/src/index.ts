@@ -178,7 +178,13 @@ export {
 
 // postMessage origin allowlist — used by the Eve dashboard app-pane to
 // validate incoming synap:ready requests before posting session tokens.
-export { isAllowedEmbedOrigin } from './allowed-origins.js';
+export {
+  type AllowedEmbedOriginChecker,
+  type AllowedEmbedOriginInput,
+  type AllowedEmbedOrigins,
+  createAllowedEmbedOriginChecker,
+  isAllowedEmbedOrigin,
+} from './allowed-origins.js';
 
 // Agent registry — single source of truth for which Synap agents Eve
 // provisions on the pod (eve, openclaw, hermes, openwebui-pipelines, coder).
@@ -311,6 +317,7 @@ export {
   getConfigDetailed,
   saveConfigDetailed,
   upsertAllModelSources,
+  resolveOpenwebuiAdminUrl,
 } from './openwebui-admin.js';
 
 export {

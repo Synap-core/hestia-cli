@@ -162,9 +162,12 @@ describe('reconcileOpenwebuiManagedConfigViaAdmin', () => {
     expect(result?.changed).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const saveCall = fetchMock.mock.calls[1];
+    // v0.9.4 import endpoint expects `{ config: <full snapshot> }`.
     expect(JSON.parse(String(saveCall[1]?.body))).toEqual({
-      userOwned: true,
-      WEBUI_NAME: 'Eve Chat',
+      config: {
+        userOwned: true,
+        WEBUI_NAME: 'Eve Chat',
+      },
     });
   });
 });

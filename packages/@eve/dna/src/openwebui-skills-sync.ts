@@ -19,22 +19,34 @@
  * the admin row out of the SQLite DB), so we reuse that to avoid duplicating
  * a login flow that doesn't exist yet.
  *
- * OpenWebUI Prompts admin API endpoints (v0.x):
- *   GET    /api/v1/prompts/                      — list all prompts
+ * OpenWebUI Prompts admin API endpoints (v0.9.4):
+ *   GET    /api/v1/prompts/                      — list all prompts (each carries `id`)
  *   POST   /api/v1/prompts/create                — create a new prompt
- *   POST   /api/v1/prompts/command/{cmd}/update  — update an existing prompt
- *   DELETE /api/v1/prompts/command/{cmd}/delete  — delete a prompt
+ *   POST   /api/v1/prompts/id/{id}/update        — update an existing prompt (NEW in v0.9)
+ *   DELETE /api/v1/prompts/id/{id}/delete        — delete a prompt
+ *
+ * Migration note: pre-v0.9 had `POST /api/v1/prompts/command/{cmd}/update`.
+ * v0.9.4 removed the command-keyed update; we look the id up from the list
+ * response and use it for both update and delete.
  */
-import { COMPONENTS } from './components.js';
-import { getAdminJwt } from './openwebui-admin.js';
+import { getAdminJwt, resolveOpenwebuiAdminUrl } from './openwebui-admin.js';
 import { readAgentKeyOrLegacy } from './secrets-contract.js';
 import type { EveSecrets } from './secrets-contract.js';
 
-/** OpenWebUI Prompt — system-prompt template surfaced as `/<command>` in the UI. */
+/**
+ * OpenWebUI Prompt — system-prompt template surfaced as `/<command>` in the UI.
+ *
+ * Field layout matches v0.9.4's `PromptForm` Pydantic model
+ * (`backend/open_webui/models/prompts.py`). Pre-v0.9 used `title`; v0.9
+ * renamed it to `name`. We send `name` so create/update don't 422.
+ */
 export interface OpenwebuiPrompt {
+  /** OWUI's database row id — present on list responses, absent on creates. */
+  id?: string;
   /** Slash-command slug (no leading slash). User types `/synap` to invoke. */
   command: string;
-  title: string;
+  /** Human-readable label shown in the picker (renamed from `title` in v0.9). */
+  name: string;
   content: string;
   /** OpenWebUI access-control object — null/undefined = visible to all. */
   access_control?: unknown;
@@ -43,7 +55,7 @@ export interface OpenwebuiPrompt {
 /** One synced prompt corresponds to one Synap skill (SKILL.md content). */
 export interface SyncedSkillPrompt {
   command: string;        // e.g. "synap" — the user types /synap to invoke
-  title: string;          // human-readable name
+  name: string;           // human-readable label (PromptForm.name in v0.9.4)
   content: string;        // SKILL.md body (system prompt template)
   source: 'synap' | 'synap-schema' | 'synap-ui';
 }
@@ -71,13 +83,7 @@ const EVE_MANAGED_TAG = 'synap:system';
 /** Per-HTTP-call timeout matching `ensureEveSkillsLayout`. */
 const HTTP_TIMEOUT_MS = 8000;
 
-function resolveAdminUrl(hostPort?: number): string {
-  const comp = COMPONENTS.find(c => c.id === 'openwebui');
-  const port = hostPort ?? comp?.service?.hostPort ?? 3011;
-  return `http://127.0.0.1:${port}`;
-}
-
-function titleFor(slug: SynapSkillSlug): string {
+function nameFor(slug: SynapSkillSlug): string {
   switch (slug) {
     case 'synap':
       return `Synap — Capture, Memory, Channels [${EVE_MANAGED_TAG}]`;
@@ -115,7 +121,7 @@ function extractSkillMarkdown(pkg: HubSkillPackage): string | null {
 
 /** GET /api/v1/prompts/ — returns the list of existing prompts. */
 async function listPrompts(jwt: string, hostPort?: number): Promise<OpenwebuiPrompt[]> {
-  const baseUrl = resolveAdminUrl(hostPort);
+  const baseUrl = resolveOpenwebuiAdminUrl(hostPort);
   const res = await fetch(`${baseUrl}/api/v1/prompts/`, {
     headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
     signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
@@ -133,7 +139,7 @@ async function createPrompt(
   prompt: OpenwebuiPrompt,
   hostPort?: number,
 ): Promise<void> {
-  const baseUrl = resolveAdminUrl(hostPort);
+  const baseUrl = resolveOpenwebuiAdminUrl(hostPort);
   const res = await fetch(`${baseUrl}/api/v1/prompts/create`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
@@ -145,14 +151,21 @@ async function createPrompt(
   }
 }
 
-/** POST /api/v1/prompts/command/{command}/update — updates an existing prompt. */
+/**
+ * POST /api/v1/prompts/id/{id}/update — updates an existing prompt.
+ *
+ * v0.9.4 removed the older command-keyed update endpoint
+ * (`/api/v1/prompts/command/{cmd}/update`). The id comes from the list
+ * response (`GET /api/v1/prompts/`); each entry carries an `id`.
+ */
 async function updatePrompt(
   jwt: string,
+  promptId: string,
   prompt: OpenwebuiPrompt,
   hostPort?: number,
 ): Promise<void> {
-  const baseUrl = resolveAdminUrl(hostPort);
-  const path = `/api/v1/prompts/command/${encodeURIComponent(prompt.command)}/update`;
+  const baseUrl = resolveOpenwebuiAdminUrl(hostPort);
+  const path = `/api/v1/prompts/id/${encodeURIComponent(promptId)}/update`;
   const res = await fetch(`${baseUrl}${path}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
@@ -223,7 +236,7 @@ export async function pushSynapSkillsToOpenwebuiPrompts(
 
     const desired: OpenwebuiPrompt = {
       command: slug,
-      title: titleFor(slug),
+      name: nameFor(slug),
       content,
     };
 
@@ -232,13 +245,22 @@ export async function pushSynapSkillsToOpenwebuiPrompts(
       if (!prior) {
         await createPrompt(jwt, desired);
         created++;
-      } else if (prior.content !== content || prior.title !== desired.title) {
-        await updatePrompt(jwt, desired);
+      } else if (prior.content !== content || prior.name !== desired.name) {
+        if (!prior.id) {
+          // OWUI ≥ v0.9 returns id on every prompt; older builds may not.
+          // Without an id we can't target the new update endpoint.
+          skipped.push({
+            command: slug,
+            reason: 'existing prompt missing `id` field — cannot target id-keyed update endpoint',
+          });
+          continue;
+        }
+        await updatePrompt(jwt, prior.id, desired);
         updated++;
       }
       synced.push({
         command: slug,
-        title: desired.title,
+        name: desired.name,
         content,
         source: slug,
       });

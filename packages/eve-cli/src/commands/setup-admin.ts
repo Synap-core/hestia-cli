@@ -13,11 +13,10 @@
  */
 
 import * as readline from 'node:readline';
-import { readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
 import { Command } from 'commander';
 import { runSynapCli } from '@eve/brain';
-import { readEveSecrets, resolveSynapUrlOnHost, findPodDeployDir } from '@eve/dna';
+import { readEveSecrets, resolveSynapUrlOnHost } from '@eve/dna';
+import { resolveProvisioningToken } from '@eve/lifecycle';
 import {
   colors,
   printHeader,
@@ -111,24 +110,16 @@ function promptPassword(question: string): Promise<string> {
 // Pod transport
 // ---------------------------------------------------------------------------
 //
-// Status probe and magic-link mint are pure HTTP calls — same pattern
-// `eve auth provision` uses. We resolve the pod URL via
-// `resolveSynapUrlOnHost(secrets)` (loopback :14000 first, public Traefik
-// URL fallback) and read the bootstrap token from the synap deploy `.env`.
-// Preseed (`--password` mode) still delegates to the bash CLI because it
-// needs `docker compose exec` against the backend container.
-
-function readPodEnvVar(deployDir: string, key: string): string | undefined {
-  const envPath = join(deployDir, '.env');
-  if (!existsSync(envPath)) return undefined;
-  const content = readFileSync(envPath, 'utf-8');
-  const match = content.match(new RegExp(`^${key}=(.*)$`, 'm'));
-  return match?.[1]?.trim().replace(/^"|"$/g, '') || undefined;
-}
+// Status probe and magic-link mint are HTTP calls — same path
+// `eve auth provision` uses. URL resolved via `resolveSynapUrlOnHost(secrets)`
+// (loopback :14000 first, public domain fallback). Auth token is the pod's
+// PROVISIONING_TOKEN — what the backend's `/api/hub/setup/magic-link` route
+// validates against. Preseed (`--password` mode) still delegates to the bash
+// CLI because it needs `docker compose exec` against the backend container.
 
 interface PodTransport {
   podUrl: string;
-  bootstrapToken?: string;
+  token?: string;
 }
 
 async function resolvePodTransport(): Promise<PodTransport | { error: string }> {
@@ -142,11 +133,8 @@ async function resolvePodTransport(): Promise<PodTransport | { error: string }> 
         : '~/.eve/secrets.json not found — run `eve install synap` first',
     };
   }
-  const deployDir = findPodDeployDir();
-  const bootstrapToken =
-    process.env.ADMIN_BOOTSTRAP_TOKEN?.trim() ||
-    (deployDir ? readPodEnvVar(deployDir, 'ADMIN_BOOTSTRAP_TOKEN') : undefined);
-  return { podUrl, bootstrapToken };
+  const token = (await resolveProvisioningToken())?.trim() || undefined;
+  return { podUrl, token };
 }
 
 /**
@@ -158,7 +146,7 @@ export async function probeAdminStatus(): Promise<'needed' | 'ready' | 'unknown'
   if ('error' in t) return 'unknown';
   try {
     const headers: Record<string, string> = { Accept: 'application/json' };
-    if (t.bootstrapToken) headers.Authorization = `Bearer ${t.bootstrapToken}`;
+    if (t.token) headers.Authorization = `Bearer ${t.token}`;
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 6000);
     const res = await fetch(`${t.podUrl}/api/hub/setup/status`, { headers, signal: ctrl.signal });
@@ -180,26 +168,29 @@ async function runPreseed(email: string, password: string): Promise<boolean> {
   return result.ok;
 }
 
-async function runMagicLinkMint(email: string): Promise<string | null> {
+async function runMagicLinkMint(): Promise<string | null> {
   const t = await resolvePodTransport();
   if ('error' in t) {
     printWarning(t.error);
     return null;
   }
-  if (!t.bootstrapToken) {
-    printWarning('ADMIN_BOOTSTRAP_TOKEN not found — check synap deploy/.env or set ADMIN_BOOTSTRAP_TOKEN env var.');
+  if (!t.token) {
+    printWarning('PROVISIONING_TOKEN not found — check synap deploy/.env or run `eve install synap`.');
     return null;
   }
   try {
-    const res = await fetch(`${t.podUrl}/setup/magic-link`, {
+    const res = await fetch(`${t.podUrl}/api/hub/setup/magic-link`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
-        Authorization: `Bearer ${t.bootstrapToken}`,
+        Authorization: `Bearer ${t.token}`,
       },
-      body: JSON.stringify({ email }),
     });
+    if (res.status === 409) {
+      printWarning('Pod already has an admin (409).');
+      return null;
+    }
     if (!res.ok) {
       const detail = await res.text().catch(() => '');
       printWarning(`Pod returned ${res.status} — ${detail.slice(0, 200)}`);
@@ -277,15 +268,14 @@ async function runSetupAdmin(opts: SetupAdminOptions): Promise<void> {
     mode = choice === '2' ? 'magic-link' : 'terminal';
   }
 
-  // Gather email + password as needed, then delegate.
-  const email = opts.email?.trim() || (await prompt('Email: '));
-  if (!email) {
-    printError('Email is required.');
-    process.exitCode = 1;
-    return;
-  }
-
   if (mode === 'terminal') {
+    // Preseed needs both email + password baked in.
+    const email = opts.email?.trim() || (await prompt('Email: '));
+    if (!email) {
+      printError('Email is required.');
+      process.exitCode = 1;
+      return;
+    }
     const password = opts.password?.trim() ?? await promptPassword('Password: ');
     if (!password) {
       printError('Password is required.');
@@ -315,10 +305,11 @@ async function runSetupAdmin(opts: SetupAdminOptions): Promise<void> {
     return;
   }
 
-  // magic-link mode
+  // magic-link mode — the URL is purpose-only ("first_admin_setup"), email
+  // and password are entered in the browser at /setup?token=...
   console.log();
-  printInfo('Minting one-hour setup URL via synap CLI…');
-  const url = await runMagicLinkMint(email);
+  printInfo('Minting one-hour setup URL…');
+  const url = await runMagicLinkMint();
   if (!url) {
     printError('Could not mint magic link.');
     process.exitCode = 1;

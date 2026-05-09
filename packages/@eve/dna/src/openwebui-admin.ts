@@ -126,14 +126,22 @@ function resolveLiveAdminPort(): number | null {
  * Resolve the base URL for OpenWebUI's admin API on the host. Prefers the
  * live-published port from `docker port` so an operator-overridden
  * `OPEN_WEBUI_PORT` is honored automatically.
+ *
+ * Exported so siblings (`openwebui-skills-sync`, `openwebui-tools-sync`,
+ * `openwebui-knowledge-sync`) can share the same resolution path instead
+ * of duplicating a strictly-registry-default version that misses the live
+ * port override.
  */
-function resolveAdminUrl(hostPort?: number): string {
+export function resolveOpenwebuiAdminUrl(hostPort?: number): string {
   if (hostPort) return `http://127.0.0.1:${hostPort}`;
   const live = resolveLiveAdminPort();
   if (live) return `http://127.0.0.1:${live}`;
   const comp = COMPONENTS.find(c => c.id === 'openwebui');
   return `http://127.0.0.1:${comp?.service?.hostPort ?? 3011}`;
 }
+
+/** @deprecated — kept as the file-local alias used throughout this module. */
+const resolveAdminUrl = resolveOpenwebuiAdminUrl;
 
 /**
  * Last-resort probe that bypasses the host port mapping by hitting OWUI's
