@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import type { MessagingPlatform } from "@/lib/openclaw-config";
 import type { WhatsAppStatus } from "../../../api/components/openclaw/whatsapp/session-manager";
+import type { DiscordStatus } from "../../../api/components/openclaw/discord/session-manager";
 
 export interface ConnectChannelsModalProps {
   isOpen: boolean;
@@ -100,7 +101,7 @@ export function ConnectChannelsModal({ isOpen, onClose }: ConnectChannelsModalPr
                     </span>
                   }
                 >
-                  <MessagingTokenForm platform="discord" helperLink="https://discord.com/developers/applications" />
+                  <DiscordForm />
                 </Tab>
                 <Tab
                   key="whatsapp"
@@ -330,6 +331,212 @@ function MessagingTokenForm({
           </CardBody>
         </Card>
       )}
+    </div>
+  );
+}
+
+// ── Discord — Discord.js bot session ───────────────────────────────────────
+
+function DiscordForm() {
+  const [status, setStatus] = useState<DiscordStatus>({ kind: "disconnected" });
+  const [token, setToken] = useState("");
+  const [isSavingToken, setIsSavingToken] = useState(false);
+  const [isStarting, setIsStarting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Fetch current bot status on mount.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/components/openclaw/discord", {
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (res.ok && !cancelled) setStatus((await res.json()) as DiscordStatus);
+      } catch { /* non-fatal */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  async function saveToken() {
+    if (!token.trim()) return;
+    setIsSavingToken(true);
+    setErrorMsg(null);
+    try {
+      const res = await fetch("/api/channels", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ discord: { botToken: token.trim(), enabled: true } }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setToken("");
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : "Couldn't save token");
+    } finally {
+      setIsSavingToken(false);
+    }
+  }
+
+  async function startBot() {
+    setIsStarting(true);
+    setErrorMsg(null);
+    try {
+      const res = await fetch("/api/components/openclaw/discord", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ action: "init" }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setStatus((await res.json()) as DiscordStatus);
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : "Couldn't start bot");
+    } finally {
+      setIsStarting(false);
+    }
+  }
+
+  async function stopBot() {
+    setIsStarting(true);
+    setErrorMsg(null);
+    try {
+      const res = await fetch("/api/components/openclaw/discord", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ action: "disconnect" }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setStatus((await res.json()) as DiscordStatus);
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : "Couldn't stop bot");
+    } finally {
+      setIsStarting(false);
+    }
+  }
+
+  const statusChip = useMemo(() => {
+    switch (status.kind) {
+      case "connected":
+        return <Chip size="sm" radius="full" color="success" variant="flat" startContent={<Check className="h-3 w-3" />}>Connected</Chip>;
+      case "connecting":
+        return <Chip size="sm" radius="full" variant="flat" startContent={<Spinner size="sm" color="default" />}>Connecting…</Chip>;
+      case "error":
+        return <Chip size="sm" radius="full" color="danger" variant="flat" startContent={<AlertTriangle className="h-3 w-3" />}>Error</Chip>;
+      case "disconnected":
+      default:
+        return <Chip size="sm" radius="full" variant="flat">Not connected</Chip>;
+    }
+  }, [status.kind]);
+
+  return (
+    <div className="space-y-4">
+      <header>
+        <h3 className="text-[14px] font-medium text-foreground">Connect a Discord bot</h3>
+        <p className="mt-1 text-[12.5px] text-foreground/65">
+          Create an application in the{" "}
+          <a href="https://discord.com/developers/applications" target="_blank" rel="noreferrer" className="text-primary hover:underline">
+            Discord Developer Portal ↗
+          </a>
+          , add a bot, enable the <strong>Message Content</strong> privileged intent, and paste its token here.
+        </p>
+      </header>
+
+      <Card
+        isBlurred
+        shadow="none"
+        radius="lg"
+        classNames={{ base: "bg-foreground/[0.04] border border-foreground/[0.08]" }}
+      >
+        <CardBody className="space-y-4 px-4 py-4">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[12.5px] font-medium text-foreground/85">Status</span>
+            {statusChip}
+          </div>
+
+          {status.kind === "connected" && (
+            <p className="text-[13px] text-foreground">
+              Bot: <span className="font-mono text-primary">@{status.botName}</span>
+            </p>
+          )}
+
+          {status.kind === "error" && (
+            <div className="flex items-start gap-2 text-[12px] text-danger">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+              {status.message}
+            </div>
+          )}
+
+          <div className="space-y-1.5">
+            <label
+              htmlFor="discord-token-input"
+              className="block text-[11.5px] font-medium uppercase tracking-[0.06em] text-foreground/55"
+            >
+              Bot token
+            </label>
+            <Input
+              id="discord-token-input"
+              type="password"
+              aria-label="Bot token"
+              placeholder={status.kind === "connected" ? "(stored — leave blank to keep)" : "Paste your bot token"}
+              value={token}
+              onChange={e => setToken(e.target.value)}
+              variant="flat"
+              radius="md"
+              size="sm"
+              classNames={{
+                inputWrapper: "bg-foreground/[0.04] border border-foreground/[0.08] data-[hover=true]:bg-foreground/[0.06]",
+              }}
+            />
+          </div>
+
+          {errorMsg && (
+            <div className="flex items-center gap-2 text-[12px] text-danger">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              {errorMsg}
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            {token.trim() && (
+              <Button
+                color="primary"
+                radius="full"
+                size="sm"
+                isLoading={isSavingToken}
+                onPress={() => void saveToken()}
+              >
+                Save token
+              </Button>
+            )}
+            {status.kind === "disconnected" || status.kind === "error" ? (
+              <Button
+                color="primary"
+                radius="full"
+                size="sm"
+                isLoading={isStarting}
+                onPress={() => void startBot()}
+                isDisabled={token.trim().length > 0}
+              >
+                Start bot
+              </Button>
+            ) : status.kind === "connected" ? (
+              <Button
+                color="default"
+                variant="flat"
+                radius="full"
+                size="sm"
+                isLoading={isStarting}
+                onPress={() => void stopBot()}
+              >
+                Disconnect
+              </Button>
+            ) : null}
+          </div>
+        </CardBody>
+      </Card>
     </div>
   );
 }

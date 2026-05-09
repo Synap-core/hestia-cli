@@ -4,8 +4,8 @@ import {
   COMPONENTS,
   appendOperationalEvent,
   entityStateManager,
-  hasAnyProvider,
   readEveSecrets,
+  runStateCoherenceChecks,
   type DoctorCheck,
 } from '@eve/dna';
 import { verifyComponent } from '@eve/legs';
@@ -128,13 +128,11 @@ export async function runDoctorChecks(): Promise<DoctorCheck[]> {
     }
   }
 
-  checks.push({
-    group: 'ai',
-    name: 'AI providers',
-    status: hasAnyProvider(secrets) ? 'pass' : 'warn',
-    message: hasAnyProvider(secrets) ? 'At least one AI provider is configured' : 'No AI providers configured',
-    fix: hasAnyProvider(secrets) ? undefined : 'Add a provider in Eve AI settings',
-  });
+  // Centralised state coherence — single source of truth for AI providers,
+  // service routing, channels, wiring freshness, plus remote probes that
+  // assert Synap surfaces (skills, knowledge, tools) are present in OpenWebUI.
+  // Replaces the previous one-line `hasAnyProvider` warn check.
+  checks.push(...(await runStateCoherenceChecks(secrets)));
 
   for (const check of checks) {
     if (check.status === 'fail' || check.status === 'warn') {

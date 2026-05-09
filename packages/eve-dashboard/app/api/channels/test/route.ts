@@ -32,5 +32,27 @@ export async function POST(req: Request) {
     }
   }
 
+  if (body.platform === "discord") {
+    const secrets = await readEveSecrets();
+    const token = secrets?.channels?.discord?.botToken;
+    if (!token) return NextResponse.json({ ok: false, error: "No bot token saved" }, { status: 400 });
+    try {
+      const r = await fetch("https://discord.com/api/v10/users/@me", {
+        headers: { Authorization: `Bot ${token}` },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (r.ok) {
+        const data = await r.json() as { username?: string; id?: string };
+        return NextResponse.json({ ok: true, name: data.username, id: data.id });
+      }
+      if (r.status === 401) {
+        return NextResponse.json({ ok: false, error: "Invalid token — check your bot token" }, { status: 400 });
+      }
+      return NextResponse.json({ ok: false, error: `Discord returned ${r.status}` }, { status: 400 });
+    } catch {
+      return NextResponse.json({ ok: false, error: "Could not reach Discord" }, { status: 503 });
+    }
+  }
+
   return NextResponse.json({ ok: false, error: "Platform not supported for testing" }, { status: 400 });
 }

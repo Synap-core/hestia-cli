@@ -167,6 +167,12 @@
       "type": "file"
     },
     {
+      "path": "packages/@eve/dna/src/index.ts",
+      "accessCount": 16,
+      "lastAccessed": 1778353766160,
+      "type": "file"
+    },
+    {
       "path": "packages/@eve/dna/src/types.ts",
       "accessCount": 15,
       "lastAccessed": 1778246219304,
@@ -177,12 +183,6 @@
       "accessCount": 15,
       "lastAccessed": 1778249124356,
       "type": "directory"
-    },
-    {
-      "path": "packages/@eve/dna/src/index.ts",
-      "accessCount": 15,
-      "lastAccessed": 1778353147042,
-      "type": "file"
     },
     {
       "path": "packages/@eve/brain/src/lib/model-service.ts",

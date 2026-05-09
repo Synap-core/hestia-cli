@@ -3,12 +3,15 @@
 /**
  * Settings → Vault
  *
- * Zero-knowledge secret manager surfaced inside Eve OS.
- * All CRUD calls go through the pod user channel (/api/pod/trpc/*).
- * Client-side AES-256-GCM encryption: plaintext never leaves the browser.
+ * UI surface for the pod's zero-knowledge Secrets Vault.
+ * All CRUD goes through the pod user channel (/api/pod/trpc/*).
+ * Crypto is client-side AES-256-GCM — plaintext never leaves the browser.
+ *
+ * Types, field definitions, and vault-ref helpers are shared from
+ * @synap-core/types (same package the browser app and backend use).
  *
  * State machine:
- *   checking → no-vault   (setup form)
+ *   checking → no-vault   (master password setup)
  *            → locked      (unlock form)
  *            → unlocked    (secret list + CRUD)
  */
@@ -16,6 +19,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Button,
+  Chip,
   Input,
   Modal,
   ModalBody,
@@ -26,8 +30,6 @@ import {
   SelectItem,
   Spinner,
   Textarea,
-  Chip,
-  addToast,
 } from "@heroui/react";
 import {
   Check,
@@ -50,13 +52,22 @@ import {
   Shield,
   Terminal,
   Trash2,
+  UserCircle,
 } from "lucide-react";
 
-import { PodConnectGate } from "../../components/auth/PodConnectGate";
 import {
-  podTrpcFetch,
-  PodTrpcError,
-} from "../../inbox/lib/pod-fetch";
+  SECRET_TYPES,
+  SECRET_TYPE_LABELS,
+  SECRET_TYPE_FIELDS,
+  SECRET_FIELD_LABELS,
+  makeVaultReference,
+  isSensitiveField,
+  cleanFieldKey,
+  type SecretType,
+} from "@synap-core/types";
+
+import { PodConnectGate } from "../../components/auth/PodConnectGate";
+import { podTrpcFetch, PodTrpcError } from "../../inbox/lib/pod-fetch";
 import {
   generateSetupParams,
   tryUnlock,
@@ -66,19 +77,6 @@ import {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type SecretType =
-  | "password"
-  | "api_key"
-  | "credential"
-  | "note"
-  | "card"
-  | "identity"
-  | "ssh_key"
-  | "certificate"
-  | "env_variable"
-  | "database"
-  | "oauth";
-
 interface SecretListItem {
   id: string;
   name: string;
@@ -87,7 +85,6 @@ interface SecretListItem {
   category?: string | null;
   description?: string | null;
   isFavorite?: boolean;
-  passwordStrength?: number | null;
   createdAt?: string;
   tags?: string[];
 }
@@ -105,42 +102,10 @@ interface SecretDetail {
   authTag: string;
 }
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// DecryptedSecret: field keys match SECRET_TYPE_FIELDS (without the ! prefix)
+type DecryptedSecret = Record<string, string>;
 
-const ALL_SECRET_TYPES: SecretType[] = [
-  "password", "api_key", "credential", "note", "card",
-  "identity", "ssh_key", "certificate", "env_variable", "database", "oauth",
-];
-
-const SECRET_LABELS: Record<SecretType, string> = {
-  password: "Password",
-  api_key: "API Key",
-  credential: "Credential",
-  note: "Note",
-  card: "Card",
-  identity: "Identity",
-  ssh_key: "SSH Key",
-  certificate: "Certificate",
-  env_variable: "Env Var",
-  database: "Database",
-  oauth: "OAuth",
-};
-
-type ChipColor = "default" | "primary" | "secondary" | "success" | "warning" | "danger";
-
-const SECRET_COLORS: Record<SecretType, ChipColor> = {
-  password: "primary",
-  api_key: "success",
-  credential: "warning",
-  note: "default",
-  card: "danger",
-  identity: "secondary",
-  ssh_key: "primary",
-  certificate: "success",
-  env_variable: "warning",
-  database: "danger",
-  oauth: "secondary",
-};
+// ─── Icons ────────────────────────────────────────────────────────────────────
 
 function SecretIcon({ type, className }: { type: SecretType; className?: string }) {
   const cls = className ?? "h-4 w-4";
@@ -150,12 +115,13 @@ function SecretIcon({ type, className }: { type: SecretType; className?: string 
     case "credential":   return <KeyRound className={cls} />;
     case "note":         return <FileText className={cls} />;
     case "card":         return <CreditCard className={cls} />;
-    case "identity":     return <Shield className={cls} />;
+    case "identity":     return <UserCircle className={cls} />;
     case "ssh_key":      return <Terminal className={cls} />;
     case "certificate":  return <Server className={cls} />;
     case "env_variable": return <Terminal className={cls} />;
     case "database":     return <Database className={cls} />;
     case "oauth":        return <Globe className={cls} />;
+    default:             return <Key className={cls} />;
   }
 }
 
@@ -186,13 +152,9 @@ function MasterPasswordSetup({ onSetup }: { onSetup: (key: CryptoKey) => void })
         },
         { method: "POST" },
       );
-      addToast({ title: "Vault created", color: "success" });
       onSetup(params.key);
     } catch (e) {
-      addToast({
-        title: e instanceof PodTrpcError ? e.message : "Failed to create vault",
-        color: "danger",
-      });
+      console.error("Vault setup failed", e);
     } finally {
       setWorking(false);
     }
@@ -219,11 +181,7 @@ function MasterPasswordSetup({ onSetup }: { onSetup: (key: CryptoKey) => void })
           size="sm"
           variant="bordered"
           endContent={
-            <button
-              type="button"
-              onClick={() => setShowPw((v) => !v)}
-              className="text-foreground/40 hover:text-foreground"
-            >
+            <button type="button" onClick={() => setShowPw((v) => !v)} className="text-foreground/40 hover:text-foreground">
               {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
           }
@@ -238,13 +196,7 @@ function MasterPasswordSetup({ onSetup }: { onSetup: (key: CryptoKey) => void })
           size="sm"
           variant="bordered"
         />
-        <Button
-          color="primary"
-          fullWidth
-          isDisabled={!valid}
-          isLoading={working}
-          onPress={() => void setup()}
-        >
+        <Button color="primary" fullWidth isDisabled={!valid} isLoading={working} onPress={() => void setup()}>
           Create vault
         </Button>
       </div>
@@ -254,13 +206,7 @@ function MasterPasswordSetup({ onSetup }: { onSetup: (key: CryptoKey) => void })
 
 // ─── VaultUnlock ──────────────────────────────────────────────────────────────
 
-function VaultUnlock({
-  metadata,
-  onUnlock,
-}: {
-  metadata: VaultMetadata;
-  onUnlock: (key: CryptoKey) => void;
-}) {
+function VaultUnlock({ metadata, onUnlock }: { metadata: VaultMetadata; onUnlock: (key: CryptoKey) => void }) {
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
   const [working, setWorking] = useState(false);
@@ -272,10 +218,7 @@ function VaultUnlock({
     setInvalid(false);
     try {
       const key = await tryUnlock(password, metadata);
-      if (!key) {
-        setInvalid(true);
-        return;
-      }
+      if (!key) { setInvalid(true); return; }
       await podTrpcFetch("secretsVault.recordUnlock", undefined, { method: "POST" });
       onUnlock(key);
     } finally {
@@ -304,11 +247,7 @@ function VaultUnlock({
           variant="bordered"
           onKeyDown={(e) => { if (e.key === "Enter") void unlock(); }}
           endContent={
-            <button
-              type="button"
-              onClick={() => setShowPw((v) => !v)}
-              className="text-foreground/40 hover:text-foreground"
-            >
+            <button type="button" onClick={() => setShowPw((v) => !v)} className="text-foreground/40 hover:text-foreground">
               {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
           }
@@ -324,134 +263,157 @@ function VaultUnlock({
 // ─── CreateSecretModal ────────────────────────────────────────────────────────
 
 function CreateSecretModal({
-  isOpen,
-  onClose,
-  vaultKey,
-  onCreated,
+  isOpen, onClose, vaultKey, onCreated,
 }: {
   isOpen: boolean;
   onClose: () => void;
   vaultKey: CryptoKey;
   onCreated: () => void;
 }) {
-  const [name, setName] = useState("");
   const [type, setType] = useState<SecretType>("password");
-  const [url, setUrl] = useState("");
-  const [description, setDescription] = useState("");
-  const [secretValue, setSecretValue] = useState("");
-  const [showValue, setShowValue] = useState(false);
+  const [name, setName] = useState("");
+  const [category, setCategory] = useState("");
+  const [fields, setFields] = useState<Record<string, string>>({});
   const [working, setWorking] = useState(false);
 
+  const currentFields = SECRET_TYPE_FIELDS[type];
+
   const reset = () => {
-    setName(""); setType("password"); setUrl(""); setDescription(""); setSecretValue("");
+    setType("password"); setName(""); setCategory(""); setFields({});
   };
 
+  const setField = (key: string, value: string) =>
+    setFields((prev) => ({ ...prev, [key]: value }));
+
   const create = async () => {
-    if (!name.trim() || !secretValue) return;
+    if (!name.trim()) return;
     setWorking(true);
     try {
+      // Build structured secret data from per-type fields
+      const secretData: DecryptedSecret = {};
+      for (const rawKey of currentFields) {
+        const key = cleanFieldKey(rawKey);
+        if (fields[key]) secretData[key] = fields[key];
+      }
+
       const { encryptedData, iv, authTag } = await encryptWithKey(
-        JSON.stringify({ value: secretValue }),
+        JSON.stringify(secretData),
         vaultKey,
       );
+
+      // Extract url from fields if present (password/credential types have it)
+      const url = fields.url?.trim() || undefined;
+
       await podTrpcFetch(
         "secretsVault.create",
         {
           name: name.trim(),
           type,
-          url: url.trim() || undefined,
-          description: description.trim() || undefined,
+          url,
+          category: category.trim() || undefined,
           encryptedData,
           iv,
           authTag,
         },
         { method: "POST" },
       );
-      addToast({ title: "Secret saved", color: "success" });
+
       reset();
       onCreated();
       onClose();
     } catch (e) {
-      addToast({
-        title: e instanceof PodTrpcError ? e.message : "Failed to save secret",
-        color: "danger",
-      });
+      console.error("Create secret failed", e);
     } finally {
       setWorking(false);
     }
   };
 
   return (
-    <Modal
-      isOpen={isOpen}
-      onClose={() => { reset(); onClose(); }}
-      size="md"
-    >
+    <Modal isOpen={isOpen} onClose={() => { reset(); onClose(); }} size="md" scrollBehavior="inside">
       <ModalContent>
-        <ModalHeader className="text-sm font-semibold">Add secret</ModalHeader>
+        <ModalHeader className="text-sm font-semibold gap-2">
+          <SecretIcon type={type} className="h-4 w-4" />
+          New {SECRET_TYPE_LABELS[type]}
+        </ModalHeader>
         <ModalBody className="gap-3 pb-2">
+          {/* Type selector */}
+          <Select
+            label="Type"
+            selectedKeys={[type]}
+            onChange={(e) => { setType(e.target.value as SecretType); setFields({}); }}
+            size="sm"
+            variant="bordered"
+          >
+            {SECRET_TYPES.map((t) => (
+              <SelectItem key={t} startContent={<SecretIcon type={t} className="h-3.5 w-3.5" />}>
+                {SECRET_TYPE_LABELS[t]}
+              </SelectItem>
+            ))}
+          </Select>
+
+          {/* Name */}
           <Input
             label="Name"
             value={name}
             onValueChange={setName}
             size="sm"
             variant="bordered"
-            placeholder="e.g. GitHub Personal Access Token"
+            placeholder={`e.g. My ${SECRET_TYPE_LABELS[type]}`}
+            isRequired
           />
-          <Select
-            label="Type"
-            selectedKeys={[type]}
-            onChange={(e) => setType(e.target.value as SecretType)}
-            size="sm"
-            variant="bordered"
-          >
-            {ALL_SECRET_TYPES.map((t) => (
-              <SelectItem key={t}>{SECRET_LABELS[t]}</SelectItem>
-            ))}
-          </Select>
-          <Input
-            label="Secret value"
-            type={showValue ? "text" : "password"}
-            value={secretValue}
-            onValueChange={setSecretValue}
-            size="sm"
-            variant="bordered"
-            placeholder="Encrypted locally before sending"
-            endContent={
-              <button
-                type="button"
-                onClick={() => setShowValue((v) => !v)}
-                className="text-foreground/40 hover:text-foreground"
-              >
-                {showValue ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
+
+          {/* Type-specific fields from @synap-core/types */}
+          {currentFields.map((rawKey) => {
+            const key = cleanFieldKey(rawKey);
+            const sensitive = isSensitiveField(rawKey);
+            const label = SECRET_FIELD_LABELS[key] ?? key.replace(/_/g, " ");
+            const isMultiline = ["notes", "content", "privateKey", "publicKey", "certificate", "chain"].includes(key);
+
+            if (isMultiline) {
+              return (
+                <Textarea
+                  key={key}
+                  label={label}
+                  value={fields[key] ?? ""}
+                  onValueChange={(v) => setField(key, v)}
+                  size="sm"
+                  variant="bordered"
+                  minRows={3}
+                />
+              );
             }
-          />
+
+            return (
+              <SensitiveInput
+                key={key}
+                label={label}
+                value={fields[key] ?? ""}
+                onChange={(v) => setField(key, v)}
+                sensitive={sensitive}
+              />
+            );
+          })}
+
+          {/* Category */}
           <Input
-            label="URL (optional)"
-            value={url}
-            onValueChange={setUrl}
+            label="Category (optional)"
+            value={category}
+            onValueChange={setCategory}
             size="sm"
             variant="bordered"
-            placeholder="https://…"
-          />
-          <Textarea
-            label="Description (optional)"
-            value={description}
-            onValueChange={setDescription}
-            size="sm"
-            variant="bordered"
-            minRows={2}
+            placeholder="e.g. Work, Personal, Infrastructure"
           />
         </ModalBody>
         <ModalFooter>
-          <Button variant="light" onPress={() => { reset(); onClose(); }}>
-            Cancel
-          </Button>
+          <p className="flex-1 text-[11px] text-foreground/40 flex items-center gap-1">
+            <Lock className="h-3 w-3" />
+            Encrypted locally before saving
+          </p>
+          <Button variant="light" onPress={() => { reset(); onClose(); }}>Cancel</Button>
           <Button
             color="primary"
             isLoading={working}
-            isDisabled={!name.trim() || !secretValue}
+            isDisabled={!name.trim()}
             onPress={() => void create()}
           >
             Save secret
@@ -462,52 +424,65 @@ function CreateSecretModal({
   );
 }
 
+// ─── SensitiveInput ───────────────────────────────────────────────────────────
+
+function SensitiveInput({
+  label, value, onChange, sensitive,
+}: { label: string; value: string; onChange: (v: string) => void; sensitive: boolean }) {
+  const [show, setShow] = useState(false);
+  return (
+    <Input
+      label={label}
+      type={sensitive && !show ? "password" : "text"}
+      value={value}
+      onValueChange={onChange}
+      size="sm"
+      variant="bordered"
+      endContent={
+        sensitive ? (
+          <button type="button" onClick={() => setShow((v) => !v)} className="text-foreground/40 hover:text-foreground">
+            {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          </button>
+        ) : undefined
+      }
+    />
+  );
+}
+
 // ─── SecretRow ────────────────────────────────────────────────────────────────
 
 function SecretRow({
-  secret,
-  vaultKey,
-  onDeleted,
+  secret, vaultKey, onDeleted,
 }: {
   secret: SecretListItem;
   vaultKey: CryptoKey;
   onDeleted: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [decrypted, setDecrypted] = useState<string | null>(null);
+  const [decrypted, setDecrypted] = useState<DecryptedSecret | null>(null);
   const [revealing, setRevealing] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [copied, setCopied] = useState<"ref" | "value" | null>(null);
+  const [fieldVisibility, setFieldVisibility] = useState<Record<string, boolean>>({});
+  const [copied, setCopied] = useState<string | null>(null);
 
-  const vaultRef = `vault://${secret.id}`;
+  const vaultRef = makeVaultReference(secret.id);
+  const typeFields = SECRET_TYPE_FIELDS[secret.type] ?? [];
 
-  const copy = async (text: string, kind: "ref" | "value") => {
+  const copy = async (text: string, key: string) => {
     await navigator.clipboard.writeText(text);
-    setCopied(kind);
+    setCopied(key);
     setTimeout(() => setCopied(null), 1500);
   };
 
   const reveal = async () => {
-    if (decrypted !== null) { setDecrypted(null); return; }
+    if (decrypted) { setDecrypted(null); return; }
     setRevealing(true);
     try {
-      const detail = await podTrpcFetch<SecretDetail>(
-        "secretsVault.get",
-        { id: secret.id },
-      );
-      const pt = await decryptWithKey(
-        detail.encryptedData,
-        detail.iv,
-        detail.authTag,
-        vaultKey,
-      );
-      const parsed = JSON.parse(pt) as { value?: string };
-      setDecrypted(parsed.value ?? pt);
+      const detail = await podTrpcFetch<SecretDetail>("secretsVault.get", { id: secret.id });
+      const pt = await decryptWithKey(detail.encryptedData, detail.iv, detail.authTag, vaultKey);
+      setDecrypted(JSON.parse(pt) as DecryptedSecret);
     } catch {
-      addToast({
-        title: "Could not decrypt. Confirm this secret was created with your current master password.",
-        color: "danger",
-      });
+      // Silently fail — secret may have been created outside this client
     } finally {
       setRevealing(false);
     }
@@ -519,16 +494,17 @@ function SecretRow({
       await podTrpcFetch("secretsVault.delete", { id: secret.id }, { method: "POST" });
       onDeleted();
     } catch (e) {
-      addToast({
-        title: e instanceof PodTrpcError ? e.message : "Delete failed",
-        color: "danger",
-      });
+      console.error("Delete failed", e);
       setDeleting(false);
     }
   };
 
+  const toggleField = (key: string) =>
+    setFieldVisibility((prev) => ({ ...prev, [key]: !prev[key] }));
+
   return (
     <div className="rounded-xl border border-divider overflow-hidden">
+      {/* Header row */}
       <button
         type="button"
         className="w-full flex items-center gap-3 px-4 py-3 bg-content2/40 hover:bg-content2/70 transition-colors text-left"
@@ -538,15 +514,13 @@ function SecretRow({
           <SecretIcon type={secret.type} />
         </span>
         <span className="flex-1 min-w-0">
-          <span className="text-sm font-medium text-foreground block truncate">
-            {secret.name}
-          </span>
+          <span className="text-sm font-medium text-foreground block truncate">{secret.name}</span>
           {secret.url && (
             <span className="text-xs text-foreground/40 block truncate">{secret.url}</span>
           )}
         </span>
-        <Chip size="sm" color={SECRET_COLORS[secret.type]} variant="flat" className="shrink-0">
-          {SECRET_LABELS[secret.type]}
+        <Chip size="sm" variant="flat" className="shrink-0 text-[11px]">
+          {SECRET_TYPE_LABELS[secret.type]}
         </Chip>
         {expanded
           ? <ChevronUp className="h-4 w-4 text-foreground/30 shrink-0" />
@@ -554,87 +528,74 @@ function SecretRow({
         }
       </button>
 
+      {/* Expanded detail */}
       {expanded && (
         <div className="px-4 pb-4 pt-3 space-y-3 bg-content1/50 border-t border-divider">
           {secret.description && (
             <p className="text-xs text-foreground/60">{secret.description}</p>
           )}
 
-          {/* vault:// reference */}
+          {/* vault:// agent reference */}
           <div>
-            <p className="text-[11px] text-foreground/40 mb-1.5 uppercase tracking-wide font-medium">
+            <p className="text-[10px] text-foreground/40 mb-1.5 uppercase tracking-wide font-medium">
               Agent reference
             </p>
             <div className="flex items-center gap-2">
-              <code className="flex-1 text-xs font-mono text-foreground/60 bg-content2/60 rounded-lg px-3 py-2 truncate">
+              <code className="flex-1 text-xs font-mono text-foreground/55 bg-content2/60 rounded-lg px-3 py-1.5 truncate">
                 {vaultRef}
               </code>
-              <Button
-                size="sm"
-                variant="flat"
-                isIconOnly
-                radius="md"
-                onPress={() => void copy(vaultRef, "ref")}
-                aria-label="Copy vault reference"
-              >
-                {copied === "ref"
-                  ? <Check className="h-3.5 w-3.5 text-success" />
-                  : <ClipboardCopy className="h-3.5 w-3.5" />
-                }
+              <Button size="sm" variant="flat" isIconOnly radius="md" onPress={() => void copy(vaultRef, "ref")} aria-label="Copy vault reference">
+                {copied === "ref" ? <Check className="h-3.5 w-3.5 text-success" /> : <ClipboardCopy className="h-3.5 w-3.5" />}
               </Button>
             </div>
           </div>
 
-          {/* Reveal / copy value */}
+          {/* Reveal / structured fields */}
           <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="flat"
-              radius="md"
-              isLoading={revealing}
-              onPress={() => void reveal()}
-              startContent={
-                !revealing
-                  ? decrypted !== null
-                    ? <EyeOff className="h-3.5 w-3.5" />
-                    : <Eye className="h-3.5 w-3.5" />
-                  : undefined
-              }
+            <Button size="sm" variant="flat" radius="md" isLoading={revealing} onPress={() => void reveal()}
+              startContent={!revealing ? (decrypted ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />) : undefined}
             >
-              {decrypted !== null ? "Hide" : "Reveal secret"}
+              {decrypted ? "Hide fields" : "Reveal fields"}
             </Button>
-            {decrypted !== null && (
-              <Button
-                size="sm"
-                variant="flat"
-                isIconOnly
-                radius="md"
-                onPress={() => void copy(decrypted, "value")}
-                aria-label="Copy secret value"
-              >
-                {copied === "value"
-                  ? <Check className="h-3.5 w-3.5 text-success" />
-                  : <Copy className="h-3.5 w-3.5" />
-                }
-              </Button>
-            )}
           </div>
 
-          {decrypted !== null && (
-            <div className="rounded-lg bg-content2/60 border border-divider px-3 py-2">
-              <p className="text-xs font-mono text-foreground/80 break-all select-all">
-                {decrypted}
-              </p>
+          {/* Structured field display using SECRET_TYPE_FIELDS */}
+          {decrypted && (
+            <div className="space-y-2 rounded-xl border border-divider overflow-hidden">
+              {typeFields.map((rawKey) => {
+                const key = cleanFieldKey(rawKey);
+                const sensitive = isSensitiveField(rawKey);
+                const label = SECRET_FIELD_LABELS[key] ?? key.replace(/_/g, " ");
+                const val = decrypted[key];
+                if (!val) return null;
+                const visible = fieldVisibility[key] ?? false;
+                const display = sensitive && !visible ? "••••••••••••" : val;
+
+                return (
+                  <div key={key} className="flex items-center gap-2 px-3 py-2 bg-content2/40 border-b border-divider last:border-0">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[10px] text-foreground/40 uppercase tracking-wide">{label}</p>
+                      <p className="text-xs font-mono text-foreground/80 truncate">{display}</p>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {sensitive && (
+                        <Button size="sm" variant="light" isIconOnly radius="md" onPress={() => toggleField(key)} aria-label={visible ? "Hide" : "Show"}>
+                          {visible ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                        </Button>
+                      )}
+                      <Button size="sm" variant="light" isIconOnly radius="md" onPress={() => void copy(val, key)} aria-label={`Copy ${label}`}>
+                        {copied === key ? <Check className="h-3 w-3 text-success" /> : <Copy className="h-3 w-3" />}
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
 
+          {/* Delete */}
           <div className="flex justify-end pt-1 border-t border-divider">
-            <Button
-              size="sm"
-              variant="light"
-              color="danger"
-              radius="md"
-              isLoading={deleting}
+            <Button size="sm" variant="light" color="danger" radius="md" isLoading={deleting}
               onPress={() => void del()}
               startContent={!deleting ? <Trash2 className="h-3.5 w-3.5" /> : undefined}
             >
@@ -649,13 +610,7 @@ function SecretRow({
 
 // ─── VaultContent ─────────────────────────────────────────────────────────────
 
-function VaultContent({
-  vaultKey,
-  onLock,
-}: {
-  vaultKey: CryptoKey;
-  onLock: () => void;
-}) {
+function VaultContent({ vaultKey, onLock }: { vaultKey: CryptoKey; onLock: () => void }) {
   const [secrets, setSecrets] = useState<SecretListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -700,25 +655,15 @@ function VaultContent({
           isClearable
           onClear={() => setSearch("")}
         />
-        <Button
-          size="sm"
-          variant="flat"
-          onPress={onLock}
-          startContent={<Lock className="h-3.5 w-3.5" />}
-        >
+        <Button size="sm" variant="flat" onPress={onLock} startContent={<Lock className="h-3.5 w-3.5" />}>
           Lock
         </Button>
-        <Button
-          size="sm"
-          color="primary"
-          onPress={() => setShowCreate(true)}
-          startContent={<Plus className="h-3.5 w-3.5" />}
-        >
+        <Button size="sm" color="primary" onPress={() => setShowCreate(true)} startContent={<Plus className="h-3.5 w-3.5" />}>
           Add secret
         </Button>
       </div>
 
-      {/* Type filter */}
+      {/* Type filter — uses SECRET_TYPES from @synap-core/types */}
       <div className="flex flex-wrap gap-1.5">
         <Chip
           size="sm"
@@ -729,25 +674,23 @@ function VaultContent({
         >
           All
         </Chip>
-        {ALL_SECRET_TYPES.map((t) => (
+        {SECRET_TYPES.map((t) => (
           <Chip
             key={t}
             size="sm"
             variant={typeFilter === t ? "solid" : "flat"}
-            color={typeFilter === t ? SECRET_COLORS[t] : "default"}
+            color={typeFilter === t ? "primary" : "default"}
             className="cursor-pointer"
             onClick={() => setTypeFilter(typeFilter === t ? null : t)}
           >
-            {SECRET_LABELS[t]}
+            {SECRET_TYPE_LABELS[t]}
           </Chip>
         ))}
       </div>
 
-      {/* Secret list */}
+      {/* List */}
       {loading ? (
-        <div className="flex justify-center py-8">
-          <Spinner size="sm" />
-        </div>
+        <div className="flex justify-center py-8"><Spinner size="sm" /></div>
       ) : filtered.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-12 gap-2 text-center">
           <Shield className="h-8 w-8 text-foreground/20" />
@@ -755,20 +698,13 @@ function VaultContent({
             {search.trim() ? "No secrets match your search" : "No secrets yet"}
           </p>
           {!search.trim() && (
-            <p className="text-xs text-foreground/30">
-              Add your first secret to get started.
-            </p>
+            <p className="text-xs text-foreground/30">Add your first secret to get started.</p>
           )}
         </div>
       ) : (
         <div className="space-y-2">
           {filtered.map((s) => (
-            <SecretRow
-              key={s.id}
-              secret={s}
-              vaultKey={vaultKey}
-              onDeleted={() => void load()}
-            />
+            <SecretRow key={s.id} secret={s} vaultKey={vaultKey} onDeleted={() => void load()} />
           ))}
         </div>
       )}
@@ -808,10 +744,8 @@ function VaultApp() {
 
   const handleSetup = (key: CryptoKey) => {
     vaultKeyRef.current = key;
+    void podTrpcFetch<VaultMetadata>("secretsVault.getVaultMetadata").then(setMetadata).catch(() => null);
     setState("unlocked");
-    void podTrpcFetch<VaultMetadata>("secretsVault.getVaultMetadata")
-      .then((m) => setMetadata(m))
-      .catch(() => null);
   };
 
   const handleUnlock = (key: CryptoKey) => {
@@ -827,19 +761,15 @@ function VaultApp() {
   if (state === "checking") {
     return <div className="flex justify-center py-16"><Spinner size="sm" /></div>;
   }
-
   if (state === "no-vault") {
     return <MasterPasswordSetup onSetup={handleSetup} />;
   }
-
   if (state === "locked" && metadata) {
     return <VaultUnlock metadata={metadata} onUnlock={handleUnlock} />;
   }
-
   if (state === "unlocked" && vaultKeyRef.current) {
     return <VaultContent vaultKey={vaultKeyRef.current} onLock={handleLock} />;
   }
-
   return <div className="flex justify-center py-16"><Spinner size="sm" /></div>;
 }
 

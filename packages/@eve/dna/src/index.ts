@@ -168,6 +168,14 @@ export {
   type ValidateChannelOptions,
 } from './channel-validation.js';
 
+// Doctor checks that assert Eve's centralized state is coherent end-to-end:
+// providers, service routing, channels, wiring freshness, plus optional remote
+// probes for Synap Hub reachability and OpenWebUI extras presence.
+export {
+  runStateCoherenceChecks,
+  type StateCoherenceOptions,
+} from './doctor-state-coherence.js';
+
 // Agent registry — single source of truth for which Synap agents Eve
 // provisions on the pod (eve, openclaw, hermes, openwebui-pipelines, coder).
 export {

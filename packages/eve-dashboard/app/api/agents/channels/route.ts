@@ -26,6 +26,7 @@ import { readEveSecrets, resolvePodUrl } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
 import { getMessagingConfig, type MessagingPlatform } from "@/lib/openclaw-config";
 import { getStatus as getWhatsAppStatus } from "../../components/openclaw/whatsapp/session-manager";
+import { getStatus as getDiscordStatus } from "../../components/openclaw/discord/session-manager";
 import type {
   UnifiedChannel,
   ChannelRegistryResponse,
@@ -144,6 +145,42 @@ function loadWhatsApp(): UnifiedChannel | null {
   };
 }
 
+// ─── Source: Discord (Discord.js bot session) ────────────────────────────────
+
+function loadDiscord(): UnifiedChannel | null {
+  const status = getDiscordStatus();
+  if (status.kind === "disconnected") return null;
+
+  let connectionStatus: ChannelConnectionStatus;
+  let hint: string | undefined;
+  switch (status.kind) {
+    case "connected":
+      connectionStatus = "connected";
+      hint = `@${status.botName}`;
+      break;
+    case "connecting":
+      connectionStatus = "connecting";
+      hint = "connecting";
+      break;
+    case "error":
+      connectionStatus = "needs_attention";
+      hint = status.message;
+      break;
+    default:
+      return null;
+  }
+
+  return {
+    id: "discord:bot",
+    kind: "discord",
+    label: "Discord",
+    hint,
+    participants: ["openclaw", "synap"],
+    connectionStatus,
+    openTarget: openTargetForKind("discord"),
+  };
+}
+
 // ─── Source: Synap personal channel ─────────────────────────────────────────
 
 async function loadSynapPersonal(
@@ -232,6 +269,14 @@ export async function GET(req: Request): Promise<NextResponse<ChannelRegistryRes
     if (ch) channels.push(ch);
   } catch (e) {
     errors.whatsapp = e instanceof Error ? e.message : "Unknown error";
+  }
+
+  // Discord — local; no network.
+  try {
+    const ch = loadDiscord();
+    if (ch) channels.push(ch);
+  } catch (e) {
+    errors.discord = e instanceof Error ? e.message : "Unknown error";
   }
 
   // Synap personal channel — needs paired pod. Soft-fail when not paired
