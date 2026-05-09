@@ -77,7 +77,7 @@ export async function POST(req: Request, _ctx: RouteCtx) {
 
   let podUrl = "";
   try {
-    podUrl = (await resolvePodUrl(undefined, req.url)) ?? "";
+    podUrl = (await resolvePodUrl(undefined, req.url, req.headers)) ?? "";
   } catch {
     // Falls through.
   }

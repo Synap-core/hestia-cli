@@ -60,7 +60,7 @@ export async function GET(req: Request) {
   const volumes = await listSynapVolumes();
 
   return NextResponse.json({
-    podUrl: await resolvePodUrl(undefined, req.url),
+    podUrl: await resolvePodUrl(undefined, req.url, req.headers),
     hubBaseUrl: secrets?.synap?.hubBaseUrl ?? null,
     apiKeyPresent: Boolean(secrets?.synap?.apiKey),
     domain: secrets?.domain?.primary ?? null,

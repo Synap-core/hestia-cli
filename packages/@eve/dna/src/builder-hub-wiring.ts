@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { EveSecrets } from './secrets-contract.js';
-import { readAgentKeyOrLegacy, readEveSecrets, writeEveSecrets } from './secrets-contract.js';
+import { readAgentKeyOrLegacy, readAgentKeyOrLegacySync, readEveSecrets, writeEveSecrets } from './secrets-contract.js';
 import { resolveSynapUrl } from './components.js';
 
 /** Default Hub Protocol path on the Synap API host (Better Auth / Hub REST). */
@@ -406,8 +406,18 @@ skills:
  */
 export async function writeHermesConfigYaml(cwd: string = process.cwd()): Promise<string> {
   const secrets = await readEveSecrets(cwd);
+  return writeHermesConfigYamlSync(secrets);
+}
+
+/**
+ * Synchronous variant used by `wireComponentAi('hermes')`.
+ *
+ * That path removes/recreates the Docker container immediately after writing
+ * config, so config.yaml must be fully written before `docker run` starts.
+ */
+export function writeHermesConfigYamlSync(secrets: EveSecrets | null): string {
   const synapUrl = resolveSynapUrl(secrets);
-  const synapApiKey = await readAgentKeyOrLegacy('hermes', cwd);
+  const synapApiKey = readAgentKeyOrLegacySync('hermes', secrets);
 
   // Resolve model — honour per-service override in secrets.ai.serviceModels.
   // Default to synap/balanced (tier alias → IS routes to best available model).

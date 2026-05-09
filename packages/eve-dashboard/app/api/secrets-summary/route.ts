@@ -8,7 +8,7 @@ export async function GET(req: Request) {
 
   try {
     const secrets = await readEveSecrets();
-    const podUrl = await resolvePodUrl(undefined, req.url);
+    const podUrl = await resolvePodUrl(undefined, req.url, req.headers);
 
     const providers = (secrets?.ai?.providers ?? []).map((p) => ({
       id: p.id,

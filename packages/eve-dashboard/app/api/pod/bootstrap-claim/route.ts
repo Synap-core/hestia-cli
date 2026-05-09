@@ -101,7 +101,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const podUrl = await resolvePodUrl(undefined, req.url)
+  const podUrl = await resolvePodUrl(undefined, req.url, req.headers)
   if (!podUrl) {
     return NextResponse.json(
       { error: "no-pod-url" },

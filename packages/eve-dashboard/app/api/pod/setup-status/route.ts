@@ -32,7 +32,7 @@ interface TrpcSetupStatusEnvelope {
 }
 
 export async function GET(req: Request) {
-  const podUrl = await resolvePodUrl(undefined, req.url);
+  const podUrl = await resolvePodUrl(undefined, req.url, req.headers);
 
   if (!podUrl) {
     console.error("[setup-status] podUrl is empty — resolvePodUrl returned falsy");
@@ -41,7 +41,7 @@ export async function GET(req: Request) {
     console.error("[setup-status] process.env.EVE_HOME =", process.env.EVE_HOME);
     return NextResponse.json({
       initialized: null,
-      reason: "no-pod-url-resolved",
+      reason: "no-pod-url",
     });
   }
 

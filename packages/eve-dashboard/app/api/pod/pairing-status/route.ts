@@ -58,7 +58,7 @@ export async function GET(req: Request) {
 
   let podUrl: string | undefined;
   try {
-    podUrl = await resolvePodUrl(undefined, req.url);
+    podUrl = await resolvePodUrl(undefined, req.url, req.headers);
   } catch {
     // Falls through — `unconfigured` is the safest answer when we can't
     // resolve a pod URL (volume mount missing on a fresh container).

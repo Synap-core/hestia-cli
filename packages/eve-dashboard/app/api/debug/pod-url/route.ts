@@ -22,7 +22,7 @@ export async function GET(req: Request) {
     },
   };
 
-  const resolved = await resolvePodUrl(undefined, req.url);
+  const resolved = await resolvePodUrl(undefined, req.url, req.headers);
   result.resolved = resolved || "(empty — nothing reachable)";
 
   // Also derive from x-forwarded-host which is the real full URL

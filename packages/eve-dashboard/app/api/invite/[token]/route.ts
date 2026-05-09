@@ -68,7 +68,7 @@ export async function GET(_req: Request, ctx: RouteCtx) {
 
   let podUrl = "";
   try {
-    podUrl = (await resolvePodUrl(undefined, _req.url)) ?? "";
+    podUrl = (await resolvePodUrl(undefined, _req.url, _req.headers)) ?? "";
   } catch {
     // Falls through to the no-pod-url branch.
   }

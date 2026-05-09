@@ -178,7 +178,7 @@ async function proxy(req: NextRequest, ctx: RouteCtx): Promise<Response> {
   if ("error" in auth) return auth.error;
 
   const secrets = await readEveSecrets();
-  const podUrl = await resolvePodUrl(undefined, req.url)
+  const podUrl = await resolvePodUrl(undefined, req.url, req.headers)
   if (!podUrl) {
     return NextResponse.json(
       { error: "no-pod-url", message: "Pod URL not configured." },

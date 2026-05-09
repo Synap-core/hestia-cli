@@ -47,7 +47,7 @@ export async function GET(req: Request) {
   if ("error" in auth) return auth.error;
 
   const secrets = await readEveSecrets();
-  const podUrl = await resolvePodUrl(undefined, req.url);
+  const podUrl = await resolvePodUrl(undefined, req.url, req.headers);
 
   const installedSet = new Set<string>();
   try {

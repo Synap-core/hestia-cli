@@ -24,7 +24,7 @@ import { join, dirname, resolve } from 'node:path';
 import type { EveSecrets } from './secrets-contract.js';
 import { readAgentKeyOrLegacySync } from './secrets-contract.js';
 import { COMPONENTS } from './components.js';
-import { writeHermesConfigYaml, generateSynapPlugin } from './builder-hub-wiring.js';
+import { writeHermesConfigYamlSync, generateSynapPlugin } from './builder-hub-wiring.js';
 import { getStatus, getAdminJwt, upsertAllModelSources, registerPipeline, waitForHealth, type ModelSource } from './openwebui-admin.js';
 
 export interface WireAiResult {
@@ -396,14 +396,6 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
   const marker = '# AI wiring — managed by eve ai apply';
   const before = existing.includes(marker) ? existing.split(marker)[0].trimEnd() : existing.trimEnd();
 
-  // Collect custom-enabled providers early for both .env writing and admin API upsert.
-  const customProviders: typeof providers = [];
-  for (const p of providers) {
-    if (p.enabled && p.baseUrl && p.id.startsWith('custom-')) {
-      customProviders.push(p);
-    }
-  }
-
   // Per-service override: Open WebUI lets users pick models in the UI,
   // but `DEFAULT_MODELS` populates the default selection — so honoring
   // the override here means the user's "use OpenAI for Open WebUI"
@@ -567,7 +559,7 @@ function wireHermes(secrets: EveSecrets | null): WireAiResult {
   // the Synap memory plugin Python files every time AI is (re)wired.
   // These are idempotent writes — safe to call on every `eve ai apply`.
   try {
-    void writeHermesConfigYaml(process.cwd()); // async, fire-and-forget
+    writeHermesConfigYamlSync(secrets);
     generateSynapPlugin();
   } catch { /* non-fatal — hermes.env wiring already succeeded */ }
 
@@ -731,13 +723,18 @@ export function buildOpenwebuiModelSources(
   secrets: EveSecrets | null,
   deployDir: string,
 ): { modelSources: ModelSource[]; pipelinesKey: string; pipelinesUrl: string | null } {
-  // Extract pipelines key from the deploy-dir .env
-  const pipelinesEnvPath = join(deployDir, '.env');
+  // Extract the pipelines key. The pipelines install/update path passes its
+  // own deploy dir, while OpenWebUI/Hermes wiring runs from /opt/openwebui.
+  // Fall back to the canonical pipelines env so every caller can register the
+  // sidecar when it exists.
   let pipelinesKey = '';
-  if (existsSync(pipelinesEnvPath)) {
+  for (const envDir of [deployDir, '/opt/openwebui-pipelines']) {
+    const pipelinesEnvPath = join(envDir, '.env');
+    if (!existsSync(pipelinesEnvPath)) continue;
     const pipelinesEnv = readFileSync(pipelinesEnvPath, 'utf-8');
     pipelinesKey = pipelinesEnv.split('\n')
       .find(l => l.startsWith('PIPELINES_API_KEY='))?.split('=', 2)[1]?.trim() ?? '';
+    if (pipelinesKey) break;
   }
   const pipelinesUrl = pipelinesKey ? 'http://eve-openwebui-pipelines:9099' : null;
 

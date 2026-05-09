@@ -239,7 +239,7 @@ export async function GET(req: Request): Promise<NextResponse<ChannelRegistryRes
   try {
     const secrets = await readEveSecrets();
     const apiKey = secrets?.synap?.apiKey;
-    const podUrl = await resolvePodUrl(undefined, req.url);
+    const podUrl = await resolvePodUrl(undefined, req.url, req.headers);
     if (apiKey && podUrl) {
       const ch = await loadSynapPersonal(podUrl, apiKey);
       if (ch) channels.push(ch);

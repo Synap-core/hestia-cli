@@ -57,7 +57,7 @@ export async function GET(
     : undefined;
 
   // Resolve pod URL — prefer on-host URL for loopback probes
-  const podUrl = (await resolvePodUrl(undefined, _req.url)) ?? "";
+  const podUrl = (await resolvePodUrl(undefined, _req.url, _req.headers)) ?? "";
 
   if (!podUrl) {
     return NextResponse.json(

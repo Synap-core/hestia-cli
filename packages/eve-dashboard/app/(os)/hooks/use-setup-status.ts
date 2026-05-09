@@ -31,7 +31,7 @@ export type SetupStatusState =
 
 interface SetupStatusResponse {
   initialized: boolean | null;
-  reason?: "no-pod-url" | "unreachable";
+  reason?: string;
   version?: string | null;
 }
 

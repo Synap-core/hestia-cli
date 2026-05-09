@@ -103,7 +103,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const podUrl = bodyPodUrl ?? (await resolvePodUrl(undefined, req.url));
+  const podUrl = bodyPodUrl ?? (await resolvePodUrl(undefined, req.url, req.headers));
   if (!podUrl) {
     return NextResponse.json(
       { error: "pod-url-not-configured" },

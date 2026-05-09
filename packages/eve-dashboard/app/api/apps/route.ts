@@ -44,7 +44,7 @@ export async function GET(req: Request) {
     );
   }
 
-  const podUrl = await resolvePodUrl(undefined, req.url);
+  const podUrl = await resolvePodUrl(undefined, req.url, req.headers);
   if (!podUrl) {
     return NextResponse.json(
       { error: "Synap pod URL unresolved — set domain.primary in secrets.json." },
