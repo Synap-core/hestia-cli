@@ -114,7 +114,11 @@ export default function BuilderAppPage() {
         {state.kind === "ready" &&
           state.manifest.rendererType === "external" &&
           state.manifest.url && (
-            <AppPane appId={state.manifest.id} url={state.manifest.url} />
+            <AppPane
+              appId={state.manifest.id}
+              url={state.manifest.url}
+              sendAuth={state.manifest.requiresAuth === true}
+            />
           )}
         {state.kind === "ready" &&
           state.manifest.rendererType === "iframe-srcdoc" &&
@@ -145,13 +149,62 @@ function CenteredStatus({
 }
 
 function SrcdocPane({ appId, srcdoc }: { appId: string; srcdoc: string }) {
+  const renderedSrcdoc = useMemo(() => createGeneratedSrcdoc(srcdoc), [srcdoc]);
+
   return (
     <iframe
-      srcDoc={srcdoc}
+      srcDoc={renderedSrcdoc}
       title={appId}
       className="h-full w-full border-0 bg-background"
       sandbox="allow-scripts allow-forms allow-popups allow-downloads"
       allow="clipboard-read; clipboard-write"
     />
   );
+}
+
+const GENERATED_APP_SDK = `
+(function() {
+  var _onInit, _onUpdate;
+  var post = function(msg) { window.parent.postMessage(msg, '*'); };
+  window.addEventListener('message', function(e) {
+    if (!e.data || typeof e.data.type !== 'string') return;
+    if (e.data.type === 'synap:init' && typeof _onInit === 'function') {
+      _onInit(e.data.config, e.data.context);
+    } else if (e.data.type === 'synap:update' && typeof _onUpdate === 'function') {
+      _onUpdate(e.data.config);
+    }
+  });
+  window.SynapWidget = {
+    onInit: function(fn) { _onInit = fn; post({ type: 'synap:ready' }); },
+    onUpdate: function(fn) { _onUpdate = fn; },
+    resize: function(height) { post({ type: 'synap:resize', height: height }); },
+    navigate: function(target) { post({ type: 'synap:navigate', target: target }); },
+    toast: function(message, level) { post({ type: 'synap:toast', message: message, level: level || 'info' }); },
+    error: function(message) { post({ type: 'synap:error', message: message }); }
+  };
+})();
+`;
+
+const GENERATED_APP_BASE_STYLES = `
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+`;
+
+function createGeneratedSrcdoc(source: string): string {
+  const injectedHead = `<meta charset="utf-8">
+<style data-eve-generated-app-v1>${GENERATED_APP_BASE_STYLES}</style>
+<script>${GENERATED_APP_SDK}</script>`;
+  const trimmed = source.trimStart().toLowerCase();
+
+  if (trimmed.startsWith("<!doctype") || trimmed.startsWith("<html")) {
+    if (/<head\b[^>]*>/i.test(source)) {
+      return source.replace(/<head\b[^>]*>/i, (match) => `${match}\n${injectedHead}`);
+    }
+    if (/<html\b[^>]*>/i.test(source)) {
+      return source.replace(/<html\b[^>]*>/i, (match) => `${match}\n<head>${injectedHead}</head>`);
+    }
+  }
+
+  return `<!doctype html><html><head>${injectedHead}</head><body>${source}</body></html>`;
 }

@@ -27,8 +27,7 @@
  * the reconcile cascade.
  */
 import { createHash } from 'node:crypto';
-import { COMPONENTS } from './components.js';
-import { getAdminJwt } from './openwebui-admin.js';
+import { getAdminJwt, resolveOpenwebuiAdminUrl } from './openwebui-admin.js';
 import {
   readAgentKeyOrLegacySync,
   type EveSecrets,
@@ -92,18 +91,6 @@ const DEFAULT_MAX_ENTRIES = 500;
 const SYNAP_PAGE_SIZE = 100;
 const FILE_EXTENSION = '.md';
 const SOURCE_HASH_MARKER = 'source-sha256:';
-
-// ── URL helpers ──────────────────────────────────────────────────────────
-
-/**
- * Resolve the base URL for OpenWebUI's admin API on the host. Mirrors
- * the private `resolveAdminUrl` helper in `openwebui-admin.ts`.
- */
-function resolveOpenwebuiBaseUrl(hostPort?: number): string {
-  const comp = COMPONENTS.find((c) => c.id === 'openwebui');
-  const port = hostPort ?? comp?.service?.hostPort ?? 3011;
-  return `http://127.0.0.1:${port}`;
-}
 
 // ── Filename / hash helpers ──────────────────────────────────────────────
 
@@ -229,6 +216,21 @@ interface OwuiContext {
   jwt: string;
 }
 
+/**
+ * OWUI's SvelteKit catch-all serves `index.html` (200 OK, `<html>...`) for
+ * any unmatched API path — most often when the admin route hasn't loaded
+ * yet or the build is missing the endpoint. Calling `.json()` on that body
+ * throws an opaque `SyntaxError` and the operator can't tell SPA-shadow
+ * apart from a real 5xx. Sniff the body and surface a readable error.
+ */
+function assertJsonText(path: string, text: string): void {
+  if (text.trimStart().startsWith('<')) {
+    throw new Error(
+      `OpenWebUI ${path} returned HTML — admin route not registered on this OWUI build (SPA shell shadowing the API)`,
+    );
+  }
+}
+
 async function owuiGetJson<T>(ctx: OwuiContext, path: string): Promise<T> {
   const res = await fetch(`${ctx.baseUrl}${path}`, {
     headers: { Authorization: `Bearer ${ctx.jwt}`, 'Content-Type': 'application/json' },
@@ -236,7 +238,9 @@ async function owuiGetJson<T>(ctx: OwuiContext, path: string): Promise<T> {
   if (!res.ok) {
     throw new Error(`OpenWebUI GET ${path} failed: HTTP ${res.status}`);
   }
-  return (await res.json()) as T;
+  const text = await res.text();
+  assertJsonText(`GET ${path}`, text);
+  return JSON.parse(text) as T;
 }
 
 async function owuiPostJson<T>(
@@ -252,7 +256,9 @@ async function owuiPostJson<T>(
   if (!res.ok) {
     throw new Error(`OpenWebUI POST ${path} failed: HTTP ${res.status}`);
   }
-  return (await res.json()) as T;
+  const text = await res.text();
+  assertJsonText(`POST ${path}`, text);
+  return JSON.parse(text) as T;
 }
 
 /**
@@ -345,7 +351,9 @@ async function uploadFile(
   if (!res.ok) {
     throw new Error(`OpenWebUI file upload failed: HTTP ${res.status}`);
   }
-  const data = (await res.json()) as { id?: string };
+  const text = await res.text();
+  assertJsonText('POST /api/v1/files/', text);
+  const data = JSON.parse(text) as { id?: string };
   if (!data.id) {
     throw new Error('OpenWebUI file upload returned no id');
   }
@@ -422,7 +430,7 @@ export async function syncSynapKnowledgeToOpenwebui(
   if (!jwt) {
     throw new Error('Could not forge OpenWebUI admin JWT (is the container up and an admin signed up?)');
   }
-  const ctx: OwuiContext = { baseUrl: resolveOpenwebuiBaseUrl(), jwt };
+  const ctx: OwuiContext = { baseUrl: resolveOpenwebuiAdminUrl(), jwt };
 
   // 1) Pull the source of truth from Synap.
   const synapEntries = await fetchSynapKnowledge(

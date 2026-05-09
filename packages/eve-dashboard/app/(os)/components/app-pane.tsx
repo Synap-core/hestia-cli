@@ -41,6 +41,8 @@ export interface AppPaneProps {
   appId: string;
   /** Full URL to load in the iframe. */
   url: string;
+  /** Whether this pane may receive the current pod session. */
+  sendAuth?: boolean;
   /**
    * Visibility toggle. When false the pane hides but stays mounted so
    * the embedded app keeps its state (keep-alive pattern from HubShell).
@@ -49,7 +51,13 @@ export interface AppPaneProps {
   className?: string;
 }
 
-export function AppPane({ appId, url, isActive = true, className }: AppPaneProps) {
+export function AppPane({
+  appId,
+  url,
+  sendAuth = true,
+  isActive = true,
+  className,
+}: AppPaneProps) {
   const [status, setStatus] = useState<PaneStatus>("probing");
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
@@ -69,12 +77,13 @@ export function AppPane({ appId, url, isActive = true, className }: AppPaneProps
   // No-op when there is no active session or the origin is unknown.
   const pushSession = useCallback(
     (target: Window) => {
+      if (!sendAuth) return;
       if (!targetOrigin) return;
       const session = getSharedSession();
       if (!session) return;
       target.postMessage({ type: "synap:auth", session }, targetOrigin);
     },
-    [targetOrigin],
+    [sendAuth, targetOrigin],
   );
 
   // Probe reachability with a no-cors HEAD before loading the iframe,
@@ -104,7 +113,7 @@ export function AppPane({ appId, url, isActive = true, className }: AppPaneProps
   useEffect(() => {
     function handler(e: MessageEvent) {
       if (e.data?.type !== "synap:ready") return;
-      if (!e.source || !isAllowed(e.origin)) return;
+      if (!e.source || e.source !== iframeRef.current?.contentWindow || !isAllowed(e.origin)) return;
       pushSession(e.source as Window);
     }
     window.addEventListener("message", handler);

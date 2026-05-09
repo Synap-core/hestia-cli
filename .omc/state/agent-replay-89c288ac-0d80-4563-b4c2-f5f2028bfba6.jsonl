@@ -30,3 +30,6 @@
 {"t":0,"agent":"a915cac","agent_type":"code-reviewer","event":"agent_start","parent_mode":"none"}
 {"t":0,"agent":"a915cac","agent_type":"code-reviewer","event":"agent_stop","success":true,"duration_ms":185945}
 {"t":0,"agent":"a4d1461","agent_type":"unknown","event":"agent_stop","success":true}
+{"t":0,"agent":"a1fd6da","agent_type":"Explore","event":"agent_start","parent_mode":"none"}
+{"t":0,"agent":"a1fd6da","agent_type":"Explore","event":"agent_stop","success":true,"duration_ms":44647}
+{"t":0,"agent":"a8638cb","agent_type":"Explore","event":"agent_start","parent_mode":"none"}

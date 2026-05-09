@@ -126,15 +126,21 @@
   },
   "hotPaths": [
     {
-      "path": "packages/@eve/dna/src/openwebui-skills-sync.ts",
-      "accessCount": 4,
-      "lastAccessed": 1778368926539,
+      "path": "packages/@eve/dna/src/openwebui-knowledge-sync.ts",
+      "accessCount": 8,
+      "lastAccessed": 1778369048725,
       "type": "file"
     },
     {
       "path": "packages/@eve/dna/src/openwebui-tools-sync.ts",
+      "accessCount": 5,
+      "lastAccessed": 1778369729348,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/dna/src/openwebui-skills-sync.ts",
       "accessCount": 4,
-      "lastAccessed": 1778368997024,
+      "lastAccessed": 1778368926539,
       "type": "file"
     },
     {
@@ -150,15 +156,9 @@
       "type": "file"
     },
     {
-      "path": "packages/@eve/dna/src/openwebui-knowledge-sync.ts",
-      "accessCount": 2,
-      "lastAccessed": 1778368840349,
-      "type": "file"
-    },
-    {
       "path": "packages/@eve/dna/src/openwebui-admin.ts",
-      "accessCount": 2,
-      "lastAccessed": 1778368874644,
+      "accessCount": 3,
+      "lastAccessed": 1778369729815,
       "type": "file"
     }
   ],
