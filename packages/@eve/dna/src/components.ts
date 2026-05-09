@@ -153,6 +153,29 @@ This is the brain of the brain organ — most of what makes your stack feel inte
     doctor: { critical: true, integrationId: 'synap' },
   },
   {
+    id: 'pod-admin',
+    organ: 'brain',
+    label: 'Pod Admin Console',
+    emoji: '🛠️',
+    description: 'Operator console for the Synap pod — workspaces, users, audit. Replaces the legacy admin SPA.',
+    longDescription: `Pod Admin is the Next.js operator console for your Synap Data Pod. It's where you manage workspaces, users, agent provisioning, and audit logs. After Kratos login the browser redirects here, so it's the surface humans interact with most.
+
+Co-located with the synap pod (same docker-compose project, same image release cadence) but exposed on its own subdomain (\`pod-admin.<root>\`) so the API origin (\`pod.<root>\`) and the UI origin stay clean. Kratos session cookies are scoped to the bare root domain so login at one carries over to the other.`,
+    homepage: 'https://github.com/synap-core/synap-backend',
+    category: 'data',
+    requires: ['synap'],
+    service: {
+      containerName: 'eve-brain-pod-admin',
+      internalPort: 3000,
+      hostPort: null,
+      subdomain: 'pod-admin',
+      healthPath: '/',
+    },
+    health: { kind: 'http', path: '/' },
+    lifecycle: { restartStrategy: 'compose-up', envBound: true },
+    doctor: { critical: false, integrationId: 'synap' },
+  },
+  {
     id: 'openclaw',
     organ: 'arms',
     label: 'OpenClaw',
@@ -273,12 +296,16 @@ Use this when you want the best-in-class coding model on tap from inside your st
     id: 'openwebui',
     label: 'Open WebUI',
     emoji: '💬',
-    description: 'Self-hosted chat UI wired to Synap IS (AI provider). No external DB — SQLite by default. Pipelines sidecar enables Synap memory and channel sync.',
+    description: 'Self-hosted chat UI wired to Synap IS. No external DB — SQLite by default. Eve installs inline Filter Functions for memory injection + channel sync.',
     longDescription: `Open WebUI is the chat interface for everyone in your household or team — looks like ChatGPT, runs on your stack. Eve wires it against Synap IS as the OpenAI-compatible backend, so any provider you've configured (Anthropic, OpenAI, OpenRouter, Ollama) is available behind a normal model picker.
 
-State (conversations, users, settings) lives in a local SQLite by default — no external database. Once you install the Pipelines sidecar, conversations sync into Synap as channels and your agents can read them as context.
+State (conversations, users, settings) lives in a local SQLite by default — no external database.
 
-This is usually the most-used UI in a daily stack: it's where humans talk to the AI, while OpenClaw handles the actions and Hermes builds.`,
+Eve also installs two inline Filter Functions directly into Open WebUI:
+  - Synap Memory Injection — pre-prompt hook that pulls relevant entities + memories from your pod and injects them as context.
+  - Synap Channel Sync — mirrors every conversation into a Synap thread so your agents can read it as context.
+
+The other Hub Protocol operations (entity create, knowledge search, calendar lookup, …) are exposed as model-callable tools via the registered OpenAPI tool server, so the model decides when to invoke them.`,
     homepage: 'https://openwebui.com',
     category: 'add-on',
     requires: ['synap'],
@@ -293,33 +320,6 @@ This is usually the most-used UI in a daily stack: it's where humans talk to the
     health: { kind: 'http', path: '/health' },
     lifecycle: { restartStrategy: 'compose-up', envBound: true },
     doctor: { critical: false, integrationId: 'openwebui-synap' },
-  },
-  {
-    id: 'openwebui-pipelines',
-    label: 'Open WebUI Pipelines',
-    emoji: '🪈',
-    description: 'Python pipelines sidecar for Open WebUI. Wires chat into Synap memory + channel sync + Hermes job dispatch.',
-    longDescription: `Open WebUI Pipelines is the bridge between everyday chat and your agent stack. It runs as a small Python service alongside Open WebUI; Open WebUI calls it as an OpenAI-compatible "filter" endpoint, and the pipelines decide what to do.
-
-Three reference pipelines ship by default:
-  - Synap memory injection — pre-prompt hook that pulls relevant entities from your pod via Hub Protocol and injects them as context, so the model sees what you actually have.
-  - Channel sync — every conversation in Open WebUI becomes a Synap channel; messages flow both ways.
-  - Hermes job dispatch — slash commands in chat ("/scaffold a Telegram bot") are picked up by Hermes and the result is reported back as a channel message.
-
-This is what turns Open WebUI from a generic chat front-end into the Synap-aware chat front-end. Without it, Open WebUI is just a model picker.`,
-    homepage: 'https://docs.openwebui.com/pipelines/',
-    category: 'add-on',
-    requires: ['openwebui', 'synap'],
-    service: {
-      containerName: 'eve-openwebui-pipelines',
-      internalPort: 9099,
-      hostPort: null, // internal-only — Open WebUI calls it on the docker network
-      subdomain: null,
-    },
-    materializers: ['openwebui-config'],
-    health: { kind: 'docker' },
-    lifecycle: { restartStrategy: 'compose-up', envBound: true },
-    doctor: { critical: false, integrationId: 'openwebui-pipelines' },
   },
   {
     id: 'eve-dashboard',

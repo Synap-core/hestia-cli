@@ -83,13 +83,6 @@ export const AGENTS: AgentInfo[] = [
     alwaysProvision: false,
   },
   {
-    agentType: "openwebui-pipelines",
-    label: "Open WebUI Pipelines",
-    description: "Pipelines sidecar — memory injection, channel sync, Hermes dispatch.",
-    componentId: "openwebui-pipelines",
-    alwaysProvision: false,
-  },
-  {
     agentType: "coder",
     label: "Coder",
     description:

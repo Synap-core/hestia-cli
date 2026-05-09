@@ -138,6 +138,18 @@
       "type": "file"
     },
     {
+      "path": "packages/@eve/dna/src/synap-overrides.ts",
+      "accessCount": 7,
+      "lastAccessed": 1778371005309,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/legs/src/lib/traefik.ts",
+      "accessCount": 6,
+      "lastAccessed": 1778371076056,
+      "type": "file"
+    },
+    {
       "path": "packages/@eve/dna/src/openwebui-tools-sync.ts",
       "accessCount": 5,
       "lastAccessed": 1778369729348,
@@ -150,27 +162,27 @@
       "type": "file"
     },
     {
+      "path": "packages/@eve/dna/src/index.ts",
+      "accessCount": 5,
+      "lastAccessed": 1778370761779,
+      "type": "file"
+    },
+    {
       "path": "packages/@eve/dna/src/openwebui-skills-sync.ts",
       "accessCount": 4,
       "lastAccessed": 1778368926539,
       "type": "file"
     },
     {
-      "path": "packages/@eve/dna/src/index.ts",
+      "path": "packages/@eve/dna/src/components.ts",
       "accessCount": 4,
-      "lastAccessed": 1778369824791,
+      "lastAccessed": 1778370949935,
       "type": "file"
     },
     {
       "path": "packages/@eve/dna/test/openwebui-skills-sync.test.ts",
       "accessCount": 3,
       "lastAccessed": 1778368951464,
-      "type": "file"
-    },
-    {
-      "path": "packages/@eve/legs/src/lib/traefik.ts",
-      "accessCount": 2,
-      "lastAccessed": 1778370025470,
       "type": "file"
     },
     {
@@ -192,6 +204,18 @@
       "type": "file"
     },
     {
+      "path": "packages/@eve/dna/src/openwebui-extras.ts",
+      "accessCount": 2,
+      "lastAccessed": 1778370757464,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/brain/src/lib/synap-image-install.ts",
+      "accessCount": 2,
+      "lastAccessed": 1778371083653,
+      "type": "file"
+    },
+    {
       "path": "docs/openwebui-integration-strategy.md",
       "accessCount": 1,
       "lastAccessed": 1778369741054,
@@ -201,12 +225,6 @@
       "path": "docker-compose.yml",
       "accessCount": 1,
       "lastAccessed": 1778369875437,
-      "type": "file"
-    },
-    {
-      "path": "packages/@eve/dna/src/synap-overrides.ts",
-      "accessCount": 1,
-      "lastAccessed": 1778369984842,
       "type": "file"
     },
     {
@@ -240,15 +258,33 @@
       "type": "file"
     },
     {
-      "path": "packages/@eve/dna/src/components.ts",
-      "accessCount": 1,
-      "lastAccessed": 1778370194080,
-      "type": "file"
-    },
-    {
       "path": "packages/eve-dashboard/lib/doctor.ts",
       "accessCount": 1,
       "lastAccessed": 1778370197209,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/dna/assets/functions/synap_memory_filter.py",
+      "accessCount": 1,
+      "lastAccessed": 1778370614217,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/dna/assets/functions/synap_channel_sync.py",
+      "accessCount": 1,
+      "lastAccessed": 1778370667335,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/dna/src/openwebui-functions-sync.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778370735434,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/dna/test/openwebui-functions-sync.test.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778370804802,
       "type": "file"
     }
   ],

@@ -25,21 +25,6 @@ export interface AdminUser {
   email: string;
 }
 
-export interface PipelineRegistration {
-  url: string;
-  name: string;
-  /** The pipeline definitions known to OpenWebUI */
-  pipelines?: {
-    uid: string;
-    name: string;
-    description?: string;
-    /** e.g. "filter", "manifold" */
-    type: string;
-    /** e.g. "inlet", "outlet", "filter" */
-    hook?: string;
-  }[];
-}
-
 export interface OpenWebuiConfig {
   openai?: {
     api_base_urls?: string[];
@@ -658,61 +643,6 @@ export async function saveConfigDetailed(
 }
 
 /**
- * List currently registered pipelines.
- * Returns an empty array if the API is unreachable.
- */
-export async function listPipelines(jwt: string, hostPort?: number): Promise<PipelineRegistration[]> {
-  const baseUrl = resolveAdminUrl(hostPort);
-  try {
-    const res = await fetch(`${baseUrl}/api/v1/pipelines`, {
-      headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
-    });
-    if (!res.ok) return [];
-    const text = await res.text();
-    if (text.trimStart().startsWith('<')) return [];
-    const data = JSON.parse(text);
-    return Array.isArray(data) ? data : [];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Register a pipelines sidecar. Idempotent — checks if already registered.
- *
- * @returns true if registered (or already registered), false on error
- */
-export async function registerPipeline(
-  jwt: string,
-  pipelinesUrl: string,
-  pipelinesKey: string,
-  hostPort?: number,
-): Promise<boolean> {
-  const baseUrl = resolveAdminUrl(hostPort);
-
-  // Check if already registered
-  const existing = await listPipelines(jwt, hostPort);
-  if (existing.some(p => p.url === pipelinesUrl)) {
-    return true; // already registered
-  }
-
-  try {
-    const res = await fetch(`${baseUrl}/api/v1/pipelines/add`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: pipelinesUrl, key: pipelinesKey }),
-    });
-    if (res.ok) return true;
-    // Some versions return "already registered" in the detail
-    const body = await res.json().catch(() => ({}));
-    if (String(body.detail ?? '').toLowerCase().includes('already')) return true;
-    return false;
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Model source entry — a single AI backend that OpenWebUI can call.
  */
 export interface ModelSource {
@@ -929,9 +859,6 @@ export async function listModelSources(jwt: string, hostPort?: number): Promise<
  * sufficient for the source to appear in the model picker — OpenWebUI fetches
  * /v1/models from each registered URL automatically.
  *
- * Note: /api/v1/pipelines/add is for the Python pipelines sidecar only;
- * it must NOT be called for OpenAI-compatible model sources.
- *
  * Idempotent — skips if the URL is already registered with the same key.
  * Returns true if registered (or already up-to-date), false on error.
  */
@@ -951,9 +878,8 @@ export async function registerModelSource(
 /**
  * Bulk upsert all model sources in a single atomic config POST.
  *
- * Returns the count of sources written (modelSources.length) on success, 0 on
- * error. Does not call /api/v1/pipelines/add — that endpoint is for the Python
- * pipelines sidecar, not for OpenAI-compatible model source registration.
+ * Returns the count of sources written (modelSources.length) on success,
+ * 0 on error.
  */
 export async function upsertAllModelSources(
   jwt: string,

@@ -33,7 +33,6 @@ import {
   probeAdminAuth,
   reconcileOpenwebuiManagedConfigViaAdmin,
   reconcileOpenwebuiManagedConfigViaAdminDetailed,
-  registerPipeline,
   waitForHealth,
   waitForHealthDetailed,
   type ModelSource,
@@ -317,13 +316,12 @@ function wireOpenclaw(secrets: EveSecrets | null): WireAiResult {
  * API needed for model-source wiring.
  */
 async function wireOpenwebui(secrets: EveSecrets | null): Promise<WireAiResult> {
-  // OpenWebUI's OPENAI_API_KEY is what the chat UI uses to call Synap IS.
-  // When Pipelines is installed, its agent identity is the right one
-  // (channels sync + memory inject originate there). With no pipelines,
-  // we still use the openwebui-pipelines slot — its key is the
-  // canonical "OpenWebUI talking to Synap" identity. Falls back to
-  // legacy if the per-agent record isn't there yet.
-  const synapApiKey = readAgentKeyOrLegacySync('openwebui-pipelines', secrets);
+  // OpenWebUI's OPENAI_API_KEY is what the chat UI uses to call Synap IS,
+  // and what the inline Filter Functions (memory injection + channel sync)
+  // forward as their Hub Protocol bearer. Both surfaces share the same
+  // identity — the `eve` agent — so revoking it cleans up everything OWUI
+  // does against Synap in one shot.
+  const synapApiKey = readAgentKeyOrLegacySync('eve', secrets);
   if (!synapApiKey) {
     return { id: 'openwebui', outcome: 'skipped', summary: 'no Synap pod API key — install Synap first' };
   }
@@ -447,7 +445,7 @@ async function wireOpenwebui(secrets: EveSecrets | null): Promise<WireAiResult> 
   }
   const hermesNote = hermesApiServerKey ? ' + Hermes gateway' : '';
   try {
-    const { modelSources, pipelinesKey, pipelinesUrl } = buildOpenwebuiModelSources(secrets, deployDir);
+    const { modelSources } = buildOpenwebuiModelSources(secrets, deployDir);
     // Override Synap IS key with the correct agent key
     if (modelSources.length > 0) {
       modelSources[0].apiKey = synapApiKey;
@@ -458,8 +456,6 @@ async function wireOpenwebui(secrets: EveSecrets | null): Promise<WireAiResult> 
       modelSources[hermesIdx].apiKey = hermesApiServerKey ?? '';
     }
     const outcome = await registerOpenwebuiAdminApi(modelSources, {
-      pipelinesUrl,
-      pipelinesKey,
       managedConfig: buildOpenwebuiManagedConfig(secrets),
     });
     if (!outcome.ok) {
@@ -698,29 +694,16 @@ export async function wireAllInstalledComponents(
 }
 
 /**
- * Build model sources for OpenWebUI's manifold API + extract pipelines key
- * from the deploy directory. Used by `registerPipelinesInOpenwebui` and
- * `wireHermesIntoOpenwebui` in @eve/lifecycle.
+ * Build model sources for OpenWebUI's manifold API.
+ *
+ * The standalone Pipelines container was removed in 0.5.x in favour of
+ * OpenWebUI native Functions (see `openwebui-functions-sync.ts`). The
+ * `deployDir` arg is retained for ABI stability but is no longer read.
  */
 export function buildOpenwebuiModelSources(
   secrets: EveSecrets | null,
-  deployDir: string,
-): { modelSources: ModelSource[]; pipelinesKey: string; pipelinesUrl: string | null } {
-  // Extract the pipelines key. The pipelines install/update path passes its
-  // own deploy dir, while OpenWebUI/Hermes wiring runs from /opt/openwebui.
-  // Fall back to the canonical pipelines env so every caller can register the
-  // sidecar when it exists.
-  let pipelinesKey = '';
-  for (const envDir of [deployDir, '/opt/openwebui-pipelines']) {
-    const pipelinesEnvPath = join(envDir, '.env');
-    if (!existsSync(pipelinesEnvPath)) continue;
-    const pipelinesEnv = readFileSync(pipelinesEnvPath, 'utf-8');
-    pipelinesKey = pipelinesEnv.split('\n')
-      .find(l => l.startsWith('PIPELINES_API_KEY='))?.split('=', 2)[1]?.trim() ?? '';
-    if (pipelinesKey) break;
-  }
-  const pipelinesUrl = pipelinesKey ? 'http://eve-openwebui-pipelines:9099' : null;
-
+  _deployDir: string,
+): { modelSources: ModelSource[] } {
   const providers = secrets?.ai?.providers ?? [];
   const modelSources: ModelSource[] = [];
 
@@ -755,7 +738,7 @@ export function buildOpenwebuiModelSources(
     });
   }
 
-  return { modelSources, pipelinesKey, pipelinesUrl };
+  return { modelSources };
 }
 
 export function buildOpenwebuiManagedConfig(
@@ -779,51 +762,30 @@ export function buildOpenwebuiManagedConfig(
 
 /**
  * Ordered registration flow for OpenWebUI's admin API:
- *   1. Wait for pipelines sidecar (brief, fire-and-forget)
- *   2. Wait for OpenWebUI health (JWT + admin user ready)
- *   3. Register pipeline sidecar (if key present)
- *   4. Upsert model sources (best-effort, single retry)
+ *   1. Wait for OpenWebUI health (JWT + admin user ready)
+ *   2. Forge admin JWT
+ *   3. Probe admin auth so a JWT rejection (401/403) surfaces with its own stage
+ *   4. Reconcile Eve-managed persisted config (model sources, defaults, etc.)
  *
- * Returns true if all steps succeeded (or were skipped).
+ * Returns a structured `RegisterOutcome` so the caller can distinguish
+ * between health timeouts, missing secret key, admin row missing, and
+ * config write failures — each with a stage and a one-line reason.
  *
- * The old inline version used a "wait 90s then force-retry 3 times" pattern.
- * This version runs the sidecar probe and OpenWebUI health wait in parallel,
- * then registers once if healthy:
- *   - Sidecar probe only runs if pipelines key exists (fire-and-forget)
- *   - OpenWebUI health is the blocking step (30×3s = 90s)
- *   - Both start simultaneously — saves ~15s in happy path
- *   - Registration runs exactly once per healthy OpenWebUI
- *   - If OpenWebUI never becomes healthy, we skip registration cleanly
+ * The standalone Pipelines container was removed in 0.5.x; the inline
+ * Filter Functions are pushed separately by `pushSynapFunctionsToOpenwebui`
+ * after this function returns ok.
  */
 export async function registerOpenwebuiAdminApi(
   modelSources: ModelSource[],
   options: {
-    pipelinesUrl?: string | null;
-    pipelinesKey?: string;
     managedConfig?: Omit<OpenWebuiManagedConfig, 'modelSources'>;
     /** Override the health-check attempt count (default: 12 × 5 s = 60 s). */
     maxRetries?: number;
-    /** Override the sidecar probe attempt count (default: 5 × 3 s = 15 s). */
-    retryInterval?: number;
   },
 ): Promise<RegisterOutcome> {
   const healthAttempts = options.maxRetries ?? 12;
-  const sidecarAttempts = options.retryInterval ?? 5;
 
-  // Step 1: Start sidecar probe and OpenWebUI health wait in parallel
-  const sidecarPromise = (async () => {
-    if (!options.pipelinesUrl || !options.pipelinesKey) return false;
-    for (let i = 0; i < sidecarAttempts; i++) {
-      try {
-        const r = await fetch(`${options.pipelinesUrl}/health`, { signal: AbortSignal.timeout(3000) });
-        if (r.ok || r.status >= 400) return true;
-      } catch { /* not ready yet */ }
-      await new Promise(r => setTimeout(r, 3_000));
-    }
-    return false;
-  })();
-
-  // Step 2: Wait for health with structured diagnostics so the operator
+  // Step 1: Wait for health with structured diagnostics so the operator
   // gets stage='health' + a reason that distinguishes loopback timeout from
   // host-port-mapping mismatch (internal probe disambiguates).
   const health = await waitForHealthDetailed(undefined, healthAttempts);
@@ -831,7 +793,7 @@ export async function registerOpenwebuiAdminApi(
     return { ok: false, stage: 'health', reason: health.reason ?? `health timed out at ${health.baseUrl}` };
   }
 
-  // Step 3: Forge admin JWT with structured diagnostics. stage='secret-key'
+  // Step 2: Forge admin JWT with structured diagnostics. stage='secret-key'
   // when /opt/openwebui/.env lacks WEBUI_SECRET_KEY; stage='admin-row' when
   // the docker exec admin lookup fails (with stderr in the reason).
   const jwtResult = await getAdminJwtPostHealthDetailed();
@@ -840,7 +802,7 @@ export async function registerOpenwebuiAdminApi(
   }
   const jwt = jwtResult.jwt;
 
-  // Step 4: Probe admin auth so a JWT rejection (401/403) surfaces with its
+  // Step 3: Probe admin auth so a JWT rejection (401/403) surfaces with its
   // own stage instead of collapsing into stage='reconcile'.
   const auth = await probeAdminAuth(jwt);
   if (!auth.ok) {
@@ -858,13 +820,7 @@ export async function registerOpenwebuiAdminApi(
     };
   }
 
-  // Step 5: Register pipeline sidecar (best-effort — does not fail the outcome)
-  const sidecarReady = await sidecarPromise;
-  if (sidecarReady && options.pipelinesUrl && options.pipelinesKey) {
-    await registerPipeline(jwt, options.pipelinesUrl, options.pipelinesKey);
-  }
-
-  // Step 6: Reconcile Eve-managed persisted config. With ENABLE_PERSISTENT_CONFIG=true
+  // Step 4: Reconcile Eve-managed persisted config. With ENABLE_PERSISTENT_CONFIG=true
   // the DB overrides env vars for the model picker — a silent write failure here
   // is exactly the bug where users see only Ollama despite admin Connections
   // showing every entry. We use the detailed variant so a bad payload, an

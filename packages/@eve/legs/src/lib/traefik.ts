@@ -25,9 +25,21 @@ const CONTAINER_ACME_FILE = '/etc/traefik/acme.json';
  * Returns the container name, or null if not running.
  */
 function getSynapBackendContainer(): string | null {
+  return findComposeContainer('backend');
+}
+
+/**
+ * Finds the pod-admin container (same compose project as the backend, service
+ * = "pod-admin"). Returns the container name, or null if not running.
+ */
+function getSynapPodAdminContainer(): string | null {
+  return findComposeContainer('pod-admin');
+}
+
+function findComposeContainer(service: string): string | null {
   try {
     const out = execSync(
-      `docker ps --filter "label=com.docker.compose.project=synap-backend" --filter "label=com.docker.compose.service=backend" --format "{{.Names}}"`,
+      `docker ps --filter "label=com.docker.compose.project=synap-backend" --filter "label=com.docker.compose.service=${service}" --format "{{.Names}}"`,
       { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
     ).trim();
     return out.split('\n')[0]?.trim() || null;
@@ -239,6 +251,23 @@ export class TraefikService {
       console.warn('  Warning: Synap backend container not found — pod.domain routing will 502 until `eve brain init` is run');
     }
 
+    // Pod admin ships with the synap-backend compose project — when synap is
+    // installed, pod-admin runs alongside it. Auto-enrol so route generation
+    // picks it up without operators needing a separate `eve install pod-admin`.
+    const podAdminContainer = getSynapPodAdminContainer();
+    if (podAdminContainer) {
+      connectToEveNetwork(podAdminContainer, 'eve-brain-pod-admin');
+      console.log(`  Connected ${podAdminContainer} → eve-network (alias: eve-brain-pod-admin)`);
+    }
+    let effectiveInstalled = installedComponents;
+    if (
+      effectiveInstalled &&
+      effectiveInstalled.includes('synap') &&
+      !effectiveInstalled.includes('pod-admin')
+    ) {
+      effectiveInstalled = [...effectiveInstalled, 'pod-admin'];
+    }
+
     // Build routes from the component registry — single source of truth.
     // Every routed service (including the Eve dashboard) is a Docker container
     // on eve-network, addressable by its container name.
@@ -246,10 +275,11 @@ export class TraefikService {
 
     for (const comp of COMPONENTS) {
       if (!comp.service || !comp.service.subdomain) continue;
-      if (installedComponents && !installedComponents.includes(comp.id)) continue;
+      if (effectiveInstalled && !effectiveInstalled.includes(comp.id)) continue;
 
       let containerName = comp.service.containerName;
       if (comp.id === 'synap' && synapContainer) containerName = synapContainer;
+      if (comp.id === 'pod-admin' && podAdminContainer) containerName = podAdminContainer;
 
       services.push({
         id: comp.id,

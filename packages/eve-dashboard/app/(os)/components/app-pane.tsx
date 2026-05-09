@@ -34,7 +34,7 @@ import { AlertCircle, RefreshCw } from "lucide-react";
 import { getSharedSession } from "@/lib/synap-auth";
 import { createAllowedEmbedOriginChecker } from "@eve/dna/browser";
 
-type PaneStatus = "probing" | "loading" | "ready" | "unreachable";
+type PaneStatus = "loading" | "ready" | "unreachable";
 
 export interface AppPaneProps {
   /** Stable app identifier — used as the iframe `title` and in error copy. */
@@ -58,7 +58,8 @@ export function AppPane({
   isActive = true,
   className,
 }: AppPaneProps) {
-  const [status, setStatus] = useState<PaneStatus>("probing");
+  const [status, setStatus] = useState<PaneStatus>("loading");
+  const [reloadKey, setReloadKey] = useState(0);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   // Derive the exact origin once so we never use "*" when posting the session.
@@ -71,7 +72,7 @@ export function AppPane({
       targetOrigin: origin,
       isAllowed: createAllowedEmbedOriginChecker(origin ? [url] : undefined),
     };
-  }, [url]);
+  }, [url, reloadKey]);
 
   // Push the session to a target window using the exact origin.
   // No-op when there is no active session or the origin is unknown.
@@ -86,19 +87,15 @@ export function AppPane({
     [sendAuth, targetOrigin],
   );
 
-  // Probe reachability with a no-cors HEAD before loading the iframe,
-  // so we can show a friendly "not running" state instead of a blank frame.
-  const probe = useCallback(async (target: string) => {
-    setStatus("probing");
-    try {
-      await fetch(target, { method: "HEAD", mode: "no-cors", cache: "no-store" });
-      setStatus("loading");
-    } catch {
-      setStatus("unreachable");
-    }
-  }, []);
-
-  useEffect(() => { void probe(url); }, [url, probe]);
+  // Load the iframe directly. A separate cross-origin fetch probe is noisy and
+  // can fail even when the frame itself is allowed to load.
+  useEffect(() => {
+    setStatus("loading");
+    const timeout = window.setTimeout(() => {
+      setStatus((current) => current === "loading" ? "unreachable" : current);
+    }, 12000);
+    return () => window.clearTimeout(timeout);
+  }, [url]);
 
   // Phase 1 — proactive push once the iframe reports it has loaded.
   const handleLoad = useCallback(() => {
@@ -122,14 +119,12 @@ export function AppPane({
 
   return (
     <div className={`relative w-full h-full overflow-hidden ${className ?? ""}`}>
-      {/* Loading overlay — shown while probing or waiting for iframe load */}
-      {(status === "probing" || status === "loading") && isActive && (
+      {/* Loading overlay — shown while waiting for iframe load */}
+      {status === "loading" && isActive && (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-background">
           <div className="flex flex-col items-center gap-3">
             <Spinner size="sm" color="primary" />
-            <p className="text-xs text-foreground/40">
-              {status === "probing" ? "Connecting…" : "Loading…"}
-            </p>
+            <p className="text-xs text-foreground/40">Loading…</p>
           </div>
         </div>
       )}
@@ -149,7 +144,7 @@ export function AppPane({
               </p>
             </div>
             <button
-              onClick={() => void probe(url)}
+              onClick={() => setReloadKey((value) => value + 1)}
               className="flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 transition-colors"
             >
               <RefreshCw size={12} />
@@ -161,7 +156,8 @@ export function AppPane({
 
       <iframe
         ref={iframeRef}
-        src={status === "loading" || status === "ready" ? url : "about:blank"}
+        key={`${url}:${reloadKey}`}
+        src={url}
         title={appId}
         className="w-full h-full border-0"
         onLoad={handleLoad}

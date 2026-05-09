@@ -12,7 +12,6 @@ describe('AGENTS registry', () => {
       'eve',
       'openclaw',
       'hermes',
-      'openwebui-pipelines',
       'coder',
     ]);
   });
@@ -48,15 +47,13 @@ describe('agentsToProvision', () => {
     const slugs = result.map((a) => a.agentType);
     expect(slugs).not.toContain('openclaw');
     expect(slugs).not.toContain('hermes');
-    expect(slugs).not.toContain('openwebui-pipelines');
   });
 
   it('includes an agent when its component is installed', () => {
-    const result = agentsToProvision(['openclaw', 'openwebui-pipelines']);
+    const result = agentsToProvision(['openclaw']);
     const slugs = result.map((a) => a.agentType);
     expect(slugs).toContain('eve');
     expect(slugs).toContain('openclaw');
-    expect(slugs).toContain('openwebui-pipelines');
     expect(slugs).not.toContain('hermes');
   });
 });

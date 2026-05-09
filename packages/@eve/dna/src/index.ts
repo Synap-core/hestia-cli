@@ -285,10 +285,9 @@ export {
   registerOpenwebuiAdminApi,
 } from './wire-ai.js';
 
-// OpenWebUI admin API client — JWT forging, config CRUD, pipelines, model sources
+// OpenWebUI admin API client — JWT forging, config CRUD, model sources
 export {
   type AdminUser,
-  type PipelineRegistration,
   type OpenWebuiConfig,
   type OpenwebuiStatus,
   type ModelSource,
@@ -307,8 +306,6 @@ export {
   type RegisterOutcome,
   getConfig,
   saveConfig,
-  listPipelines,
-  registerPipeline,
   listModelSources,
   registerModelSource,
   reconcileOpenwebuiManagedConfig,
@@ -344,6 +341,10 @@ export {
   registerSynapAsOpenwebuiToolServer,
   type ToolsSyncResult,
 } from './openwebui-tools-sync.js';
+export {
+  pushSynapFunctionsToOpenwebui,
+  type FunctionsSyncResult,
+} from './openwebui-functions-sync.js';
 export {
   syncOpenwebuiExtras,
   formatExtrasSummary,

@@ -22,6 +22,10 @@ import {
   registerSynapAsOpenwebuiToolServer,
   type ToolsSyncResult,
 } from './openwebui-tools-sync.js';
+import {
+  pushSynapFunctionsToOpenwebui,
+  type FunctionsSyncResult,
+} from './openwebui-functions-sync.js';
 import type { EveSecrets } from './secrets-contract.js';
 
 export type ExtrasOutcome<T> =
@@ -34,6 +38,7 @@ export interface OpenwebuiExtrasResult {
   skills?: ExtrasOutcome<SkillsSyncResult>;
   knowledge?: ExtrasOutcome<KnowledgeSyncResult>;
   tools?: ExtrasOutcome<ToolsSyncResult>;
+  functions?: ExtrasOutcome<FunctionsSyncResult>;
 }
 
 export interface SyncOpenwebuiExtrasOptions {
@@ -50,10 +55,11 @@ export async function syncOpenwebuiExtras(
     return { skipped: true };
   }
 
-  const [skills, knowledge, tools] = await Promise.allSettled([
+  const [skills, knowledge, tools, functions] = await Promise.allSettled([
     pushSynapSkillsToOpenwebuiPrompts(cwd, hubBaseUrl, secrets),
     syncSynapKnowledgeToOpenwebui(cwd, hubBaseUrl, secrets, opts?.knowledge),
     registerSynapAsOpenwebuiToolServer(cwd, hubBaseUrl, secrets),
+    pushSynapFunctionsToOpenwebui(cwd, hubBaseUrl, secrets),
   ]);
 
   return {
@@ -61,6 +67,7 @@ export async function syncOpenwebuiExtras(
     skills: settled(skills),
     knowledge: settled(knowledge),
     tools: settled(tools),
+    functions: settled(functions),
   };
 }
 
@@ -71,6 +78,7 @@ export function formatExtrasSummary(r: OpenwebuiExtrasResult): string {
   parts.push(formatPart('skills', r.skills, (v) => `created=${v.created} updated=${v.updated} skipped=${v.skipped.length}`));
   parts.push(formatPart('knowledge', r.knowledge, (v) => `+${v.added}/~${v.updated}/-${v.removed} skipped=${v.skipped.length}`));
   parts.push(formatPart('tools', r.tools, (v) => v.registered ? `registered ${v.toolCount} ops` : 'not registered'));
+  parts.push(formatPart('functions', r.functions, (v) => `synced=${v.synced.length} skipped=${v.skipped.length}`));
   return `OpenWebUI extras: ${parts.join(' | ')}`;
 }
 

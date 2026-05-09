@@ -8,16 +8,16 @@
  * install state surfaced via `/api/components`.
  *
  *   appType === "url"
- *     [ Open ]                              → opens app.appUrl in a new tab.
+ *     [ Open ]                              → opens app.appUrl inside Eve.
  *
  *   appType === "eve_component", not installed locally
- *     [ Open ] [ Add to Eve ]               → Open hits the cloud preview
+ *     [ Open ] [ Add to Eve ]               → Open shows the cloud preview
  *                                              (app.appUrl); Add to Eve fires
  *                                              the install POST and switches
  *                                              into the working/installed state.
  *
  *   appType === "eve_component", installed AND running
- *     [ Open ]                              → Open uses the local URL
+ *     [ Open ]                              → Open uses the local URL inside Eve
  *                                              (e.g. http://hostname:11434).
  *
  *   appType === "eve_component", installed but stopped
@@ -30,6 +30,7 @@
  */
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@heroui/react";
 import {
   AlertCircle,
@@ -44,6 +45,7 @@ import {
   MarketplaceError,
   type MarketplaceAppWithEntitlement,
 } from "../../lib/marketplace-client";
+import { createEmbeddedAppHref } from "../../lib/app-launch-url";
 
 export interface LocalComponentRef {
   installed: boolean;
@@ -102,12 +104,21 @@ function UrlOpenButton({
   onInstalled: () => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const router = useRouter();
 
   const handleOpen = async () => {
     if (!app.appUrl) return;
-    // Fire-and-forget click record so install_count increments. The
-    // tab opens immediately — we don't make the user wait on the POST.
-    window.open(app.appUrl, "_blank", "noopener,noreferrer");
+    router.push(
+      createEmbeddedAppHref({
+        id: app.slug,
+        name: app.name,
+        url: app.appUrl,
+        requiresAuth: isTrustedSynapUrl(app.appUrl),
+      }),
+    );
+
+    // Fire-and-forget click record so install_count increments. The pane opens
+    // immediately — we don't make the user wait on the POST.
     if (busy) return;
     setBusy(true);
     try {
@@ -151,6 +162,18 @@ function EveComponentActions({
   onInstalled: () => void;
 }) {
   const [state, setState] = useState<InstallState>({ kind: "idle" });
+  const router = useRouter();
+
+  const openEmbedded = (url: string, idSuffix?: string) => {
+    router.push(
+      createEmbeddedAppHref({
+        id: idSuffix ? `${app.slug}-${idSuffix}` : app.slug,
+        name: app.name,
+        url,
+        requiresAuth: isTrustedSynapUrl(url),
+      }),
+    );
+  };
 
   // Installed + running locally → single Open button to the local URL.
   if (localRef?.installed && localRef.running && localRef.url) {
@@ -161,9 +184,7 @@ function EveComponentActions({
         variant="flat"
         color="success"
         startContent={<ExternalLink className="h-3.5 w-3.5" />}
-        onPress={() =>
-          window.open(localRef.url ?? "", "_blank", "noopener,noreferrer")
-        }
+        onPress={() => openEmbedded(localRef.url ?? "", "local")}
         aria-label={`Open ${app.name} on this Eve`}
       >
         Open
@@ -239,9 +260,7 @@ function EveComponentActions({
           variant="light"
           color="default"
           startContent={<ExternalLink className="h-3.5 w-3.5" />}
-          onPress={() =>
-            window.open(app.appUrl ?? "", "_blank", "noopener,noreferrer")
-          }
+          onPress={() => openEmbedded(app.appUrl ?? "", "preview")}
           aria-label={`Preview ${app.name}`}
         >
           Open
@@ -267,4 +286,13 @@ function EveComponentActions({
       </Button>
     </div>
   );
+}
+
+function isTrustedSynapUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" && parsed.hostname.endsWith(".synap.live");
+  } catch {
+    return false;
+  }
 }

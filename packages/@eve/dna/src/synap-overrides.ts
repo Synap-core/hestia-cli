@@ -71,7 +71,11 @@ import { SYNAP_HOST_LOOPBACK_PORT } from "./components.js";
  * decide "is this file ours, can we refresh it?" — long enough that an
  * accidental match in a hand-written override would be deeply unlikely.
  */
-const OVERRIDE_MARKER = "eve-managed:synap-loopback-override:v1";
+const OVERRIDE_MARKER = "eve-managed:synap-loopback-override:v2";
+// Older markers we still recognise as Eve-managed so pre-existing override
+// files from earlier installs get refreshed on upgrade rather than left
+// behind as "user-owned".
+const LEGACY_MARKERS = ["eve-managed:synap-loopback-override:v1"];
 
 const OVERRIDE_CONTENT = `# Eve-managed docker-compose override — DO NOT edit by hand.
 #
@@ -110,6 +114,15 @@ services:
     networks:
       synap-net: {}
       eve-network: {}
+  # Pod Admin — operator console served at pod-admin.<root>. Joins eve-network
+  # under a stable alias so eve-legs-traefik can route pod-admin.<domain> by
+  # name (its Traefik file provider builds upstreams from container names).
+  pod-admin:
+    networks:
+      synap-net: {}
+      eve-network:
+        aliases:
+          - eve-brain-pod-admin
 `;
 
 export interface EnsureOverrideResult {
@@ -148,7 +161,10 @@ export function ensureSynapLoopbackOverride(deployDir: string): EnsureOverrideRe
     return { path, outcome: "kept", reason: "could not read existing override file" };
   }
 
-  if (existing.includes(OVERRIDE_MARKER)) {
+  const eveManaged =
+    existing.includes(OVERRIDE_MARKER) ||
+    LEGACY_MARKERS.some((m) => existing.includes(m));
+  if (eveManaged) {
     if (existing === OVERRIDE_CONTENT) {
       return { path, outcome: "wrote" };
     }

@@ -33,7 +33,7 @@
   },
   "build": {
     "buildCommand": "pnpm build 2>&1 | tail -20",
-    "testCommand": "pnpm test -- --run 2>&1 | tail -80",
+    "testCommand": "cd /Users/antoine/Documents/Code/synap/hestia-cli/packages/@eve/dna && pnpm test -- --run openwebui-functions-sync 2>&1 | tail -50",
     "lintCommand": null,
     "devCommand": "npm run dev",
     "scripts": {
@@ -102,8 +102,14 @@
   "hotPaths": [
     {
       "path": "src/wire-ai.ts",
-      "accessCount": 24,
-      "lastAccessed": 1778324323073,
+      "accessCount": 34,
+      "lastAccessed": 1778370969726,
+      "type": "file"
+    },
+    {
+      "path": "src/openwebui-admin.ts",
+      "accessCount": 14,
+      "lastAccessed": 1778371015419,
       "type": "file"
     },
     {
@@ -111,12 +117,6 @@
       "accessCount": 8,
       "lastAccessed": 1778324511721,
       "type": "directory"
-    },
-    {
-      "path": "src/openwebui-admin.ts",
-      "accessCount": 7,
-      "lastAccessed": 1778324235970,
-      "type": "file"
     },
     {
       "path": "",
@@ -128,6 +128,12 @@
       "path": "src/reconcile.ts",
       "accessCount": 5,
       "lastAccessed": 1778324668330,
+      "type": "file"
+    },
+    {
+      "path": "src/components.ts",
+      "accessCount": 5,
+      "lastAccessed": 1778371079589,
       "type": "file"
     },
     {
@@ -149,9 +155,15 @@
       "type": "directory"
     },
     {
-      "path": "src/components.ts",
+      "path": "test/agents.test.ts",
+      "accessCount": 3,
+      "lastAccessed": 1778371054461,
+      "type": "file"
+    },
+    {
+      "path": "src/agents.ts",
       "accessCount": 2,
-      "lastAccessed": 1778324382092,
+      "lastAccessed": 1778371036644,
       "type": "file"
     },
     {
@@ -182,6 +194,12 @@
       "path": "src/pod-url.ts",
       "accessCount": 1,
       "lastAccessed": 1778324668382,
+      "type": "file"
+    },
+    {
+      "path": "src/index.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778371027671,
       "type": "file"
     }
   ],
