@@ -126,14 +126,14 @@
   "hotPaths": [
     {
       "path": "packages/@eve/lifecycle/src/index.ts",
-      "accessCount": 135,
-      "lastAccessed": 1778352714344,
+      "accessCount": 136,
+      "lastAccessed": 1778353987280,
       "type": "file"
     },
     {
       "path": "packages/@eve/dna/src/wire-ai.ts",
-      "accessCount": 122,
-      "lastAccessed": 1778352607026,
+      "accessCount": 123,
+      "lastAccessed": 1778353947154,
       "type": "file"
     },
     {

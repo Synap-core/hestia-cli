@@ -1222,25 +1222,38 @@ async function* wireHermesIntoOpenwebui(): AsyncGenerator<LifecycleEvent> {
   const result = wireComponentAi('openwebui', secrets);
   yield { type: "log", line: result.summary };
 
-  // Fire-and-forget admin API upsert so Hermes shows in OpenWebUI model picker.
-  void (async () => {
-    try {
-      const { modelSources, pipelinesKey, pipelinesUrl } = buildOpenwebuiModelSources(secrets, '/opt/openwebui');
-      if (modelSources.length > 0) {
-        const ok = await registerOpenwebuiAdminApi(modelSources, {
-          pipelinesUrl,
-          pipelinesKey,
-          managedConfig: buildOpenwebuiManagedConfig(secrets),
-        });
-        if (ok) {
-          await markOpenwebuiConfigReconciled(secrets);
-          // Push Synap SKILL.md → Prompts, knowledge → Knowledge collection,
-          // Hub OpenAPI → external tool server. Best-effort.
-          await syncOpenwebuiExtras(process.cwd(), secrets);
-        }
+  // Blocking admin API upsert so `eve update hermes` returns only after OWUI
+  // has been reconciled (or after registerOpenwebuiAdminApi's internal 60s
+  // health wait + sidecar probe gives up cleanly). Surfacing the outcome to
+  // the operator is more useful than returning early with stale state.
+  try {
+    const { modelSources, pipelinesKey, pipelinesUrl } = buildOpenwebuiModelSources(secrets, '/opt/openwebui');
+    if (modelSources.length > 0) {
+      const ok = await registerOpenwebuiAdminApi(modelSources, {
+        pipelinesUrl,
+        pipelinesKey,
+        managedConfig: buildOpenwebuiManagedConfig(secrets),
+      });
+      if (ok) {
+        await markOpenwebuiConfigReconciled(secrets);
+        yield { type: "log", line: "OpenWebUI admin reconcile ✓" };
+        // Push Synap SKILL.md → Prompts, knowledge → Knowledge collection,
+        // Hub OpenAPI → external tool server.
+        const extras = await syncOpenwebuiExtras(process.cwd(), secrets);
+        yield { type: "log", line: formatExtrasSummary(extras) };
+      } else {
+        yield {
+          type: "log",
+          line: "OpenWebUI admin reconcile skipped — health check or admin JWT unavailable. Run `eve ai apply` once OpenWebUI is up.",
+        };
       }
-    } catch { /* non-fatal — admin API may come up later */ }
-  })();
+    }
+  } catch (err) {
+    yield {
+      type: "log",
+      line: `OpenWebUI admin reconcile failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
 }
 
 /**
