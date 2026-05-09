@@ -278,6 +278,7 @@ export async function writeHermesEnvFile(cwd: string = process.cwd()): Promise<s
     // API server key — clients (OpenWebUI, LobeChat, etc.) use this to call
     // the Hermes OpenAI-compat gateway at port 8642.
     `API_SERVER_ENABLED=true`,
+    `API_SERVER_HOST=0.0.0.0`,
     `API_SERVER_PORT=8642`,
     `API_SERVER_KEY=${apiServerKey}`,
   ];
@@ -355,7 +356,6 @@ const HERMES_CONFIG_YAML = (
   model: string,
   baseUrl: string,
   apiKey: string,
-  apiServerKey: string,
 ) => `# Hermes config — managed by Eve (eve install / eve ai apply)
 # Editing this file directly is fine; Eve will overwrite the managed sections on the next apply.
 
@@ -365,18 +365,10 @@ memory:
   provider: synap
 
 model:
-  name: ${model}
+  provider: custom
+  default: ${model}
   base_url: ${baseUrl}
   api_key: ${apiKey}
-
-# OpenAI-compat API gateway — OpenWebUI, LobeChat, LibreChat connect here.
-# Port 8642 is exposed by docker-compose; clients reach it at hermes.<your-domain>
-# or directly at http://eve-builder-hermes:8642 from within eve-network.
-api_server:
-  enabled: true
-  port: 8642
-  key: ${apiServerKey}
-  host: 0.0.0.0
 
 # MCP server — exposes Hermes tools to Claude Code, Cursor, and any MCP client.
 # Connect at http://localhost:9120 (host) or http://eve-builder-hermes:9120 (docker network).
@@ -425,13 +417,10 @@ export function writeHermesConfigYamlSync(secrets: EveSecrets | null): string {
   const model = serviceModels['hermes'] ?? 'synap/balanced';
   const baseUrl = synapUrl ? `${synapUrl.replace(/\/$/, '')}/v1` : 'http://eve-brain-synap:4000/v1';
 
-  // Reuse the stable API server key (same one written to hermes.env).
-  const apiServerKey = secrets?.builder?.hermes?.apiServerKey ?? '';
-
   const hermesDir = join(homedir(), '.eve', 'hermes');
   mkdirSync(hermesDir, { recursive: true });
   const configPath = join(hermesDir, 'config.yaml');
-  writeFileSync(configPath, HERMES_CONFIG_YAML(model, baseUrl, synapApiKey, apiServerKey), { mode: 0o600 });
+  writeFileSync(configPath, HERMES_CONFIG_YAML(model, baseUrl, synapApiKey), { mode: 0o600 });
   return configPath;
 }
 

@@ -39,6 +39,10 @@ interface KratosFlow {
       messages?: Array<{ text: string; type: string }>;
     }>;
   };
+  error?: {
+    reason?: string;
+    message?: string;
+  };
 }
 
 interface KratosSuccessLogin {
@@ -64,6 +68,8 @@ function extractKratosMessages(flow: KratosFlow): string[] {
       if (m.text) msgs.push(m.text);
     }
   }
+  if (flow.error?.reason) msgs.push(flow.error.reason);
+  if (flow.error?.message) msgs.push(flow.error.message);
 
   return msgs.length ? msgs : ["Authentication failed. Check your credentials."];
 }
@@ -135,7 +141,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const podUrl = await resolvePodUrl(undefined, req.url, req.headers)
+  const podUrl = await resolvePodUrl(undefined, req.url, req.headers);
   if (!podUrl) {
     return NextResponse.json(
       { error: "pod-url-not-configured" },

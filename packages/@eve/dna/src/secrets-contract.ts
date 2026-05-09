@@ -183,6 +183,19 @@ const SecretsSchema = z.object({
           apiServerKey: z.string().optional(),
         })
         .optional(),
+      /** OpenWebUI headless bootstrap + admin API reconciliation */
+      openwebui: z
+        .object({
+          /** First admin email written to WEBUI_ADMIN_EMAIL for headless bootstrap. */
+          adminEmail: z.string().optional(),
+          /** First admin password written to WEBUI_ADMIN_PASSWORD for headless bootstrap. */
+          adminPassword: z.string().optional(),
+          /** First admin display name written to WEBUI_ADMIN_NAME. */
+          adminName: z.string().optional(),
+          /** Last successful Eve-managed admin API config reconcile. */
+          lastConfigReconciledAt: z.string().optional(),
+        })
+        .optional(),
     })
     .optional(),
   /**

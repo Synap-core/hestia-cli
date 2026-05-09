@@ -1,3 +1,10 @@
+import type {
+  ComponentDoctorMetadata,
+  ComponentHealth,
+  ComponentLifecycle,
+  MaterializerTarget,
+} from './operational.js';
+
 /**
  * Single source of truth for Eve components.
  *
@@ -48,6 +55,14 @@ export interface ComponentInfo {
   requires?: string[];
   /** Network identity — only present for HTTP-exposed services. */
   service?: ServiceInfo;
+  /** Materialized outputs that should be refreshed when config changes. */
+  materializers?: MaterializerTarget[];
+  /** Health strategy used by Doctor and dashboard surfaces. */
+  health?: ComponentHealth;
+  /** Lifecycle/restart semantics for config application. */
+  lifecycle?: ComponentLifecycle;
+  /** Doctor criticality and integration grouping metadata. */
+  doctor?: ComponentDoctorMetadata;
   /**
    * When true, the component is superseded by a better alternative.
    * The component still installs and runs — users who have it keep it.
@@ -81,6 +96,10 @@ Traefik is always-on infrastructure. It can't be removed; the rest of the stack 
       subdomain: null, // Traefik itself isn't routed by Traefik
       healthPath: '/',
     },
+    materializers: ['traefik-routes'],
+    health: { kind: 'docker' },
+    lifecycle: { restartStrategy: 'restart' },
+    doctor: { critical: true },
   },
   {
     id: 'ollama',
@@ -103,6 +122,9 @@ Heads up: model quality and speed depend heavily on your server's RAM and GPU. A
       subdomain: 'ai',
       healthPath: '/',
     },
+    health: { kind: 'http', path: '/' },
+    lifecycle: { restartStrategy: 'restart' },
+    doctor: { critical: false },
   },
   {
     id: 'synap',
@@ -125,6 +147,10 @@ This is the brain of the brain organ — most of what makes your stack feel inte
       subdomain: 'pod',
       healthPath: '/health',
     },
+    materializers: ['backend-env', 'ai-wiring'],
+    health: { kind: 'http', path: '/health' },
+    lifecycle: { restartStrategy: 'compose-up', envBound: true },
+    doctor: { critical: true, integrationId: 'synap' },
   },
   {
     id: 'openclaw',
@@ -149,6 +175,10 @@ Eve wires OpenClaw against Synap as its OpenAI-compatible provider, so the agent
       hostPort: 18789,
       subdomain: 'openclaw',
     },
+    materializers: ['openclaw-config', 'ai-wiring'],
+    health: { kind: 'docker' },
+    lifecycle: { restartStrategy: 'recreate', envBound: true },
+    doctor: { critical: false, integrationId: 'openclaw-synap' },
   },
   {
     id: 'hermes',
@@ -171,6 +201,10 @@ The Synap plugin is the crown jewel: Eve generates \`synap_provider.py\` into th
       subdomain: 'hermes',
       healthPath: '/health',
     },
+    materializers: ['hermes-env', 'ai-wiring'],
+    health: { kind: 'http', path: '/health' },
+    lifecycle: { restartStrategy: 'recreate', envBound: true },
+    doctor: { critical: false, integrationId: 'hermes-synap' },
   },
   {
     id: 'rsshub',
@@ -193,6 +227,9 @@ This is the eyes organ — the part of your stack that watches things you care a
       subdomain: 'feeds',
       healthPath: '/',
     },
+    health: { kind: 'http', path: '/' },
+    lifecycle: { restartStrategy: 'restart' },
+    doctor: { critical: false },
   },
   {
     id: 'dokploy',
@@ -204,6 +241,8 @@ This is the eyes organ — the part of your stack that watches things you care a
 Install this if you want a clicky deploy story for the apps Hermes generates — push code, click deploy, get a URL. Skip it if you're happy running compose files by hand.`,
     homepage: 'https://dokploy.com',
     category: 'add-on',
+    lifecycle: { restartStrategy: 'none' },
+    doctor: { critical: false },
   },
   {
     id: 'opencode',
@@ -215,6 +254,8 @@ Install this if you want a clicky deploy story for the apps Hermes generates —
 This is how a sovereign stack does development without bouncing through someone else's cloud IDE. It pairs especially well with Hermes for "describe what you want, watch the agent write it" loops.`,
     homepage: 'https://github.com/sst/opencode',
     category: 'add-on',
+    lifecycle: { restartStrategy: 'none' },
+    doctor: { critical: false },
   },
   {
     id: 'openclaude',
@@ -225,6 +266,8 @@ This is how a sovereign stack does development without bouncing through someone 
 
 Use this when you want the best-in-class coding model on tap from inside your stack — without exposing your codebase to a third party that doesn't run on your hardware.`,
     category: 'add-on',
+    lifecycle: { restartStrategy: 'none' },
+    doctor: { critical: false },
   },
   {
     id: 'openwebui',
@@ -246,6 +289,10 @@ This is usually the most-used UI in a daily stack: it's where humans talk to the
       subdomain: 'chat',
       healthPath: '/health',
     },
+    materializers: ['openwebui-config', 'ai-wiring'],
+    health: { kind: 'http', path: '/health' },
+    lifecycle: { restartStrategy: 'compose-up', envBound: true },
+    doctor: { critical: false, integrationId: 'openwebui-synap' },
   },
   {
     id: 'openwebui-pipelines',
@@ -269,6 +316,10 @@ This is what turns Open WebUI from a generic chat front-end into the Synap-aware
       hostPort: null, // internal-only — Open WebUI calls it on the docker network
       subdomain: null,
     },
+    materializers: ['openwebui-config'],
+    health: { kind: 'docker' },
+    lifecycle: { restartStrategy: 'compose-up', envBound: true },
+    doctor: { critical: false, integrationId: 'openwebui-pipelines' },
   },
   {
     id: 'eve-dashboard',
@@ -292,6 +343,10 @@ Always-on infrastructure, like Traefik. Removing it would leave you with no UI c
       subdomain: 'eve',
       healthPath: '/api/state',
     },
+    materializers: ['traefik-routes'],
+    health: { kind: 'http', path: '/api/state' },
+    lifecycle: { restartStrategy: 'recreate', envBound: true },
+    doctor: { critical: true },
   },
 ];
 

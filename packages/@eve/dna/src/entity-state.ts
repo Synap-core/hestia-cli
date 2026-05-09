@@ -10,7 +10,7 @@
 import { readFile, writeFile, mkdir, access, readdir, stat } from 'fs/promises';
 import { existsSync, cpSync } from 'node:fs';
 import { dirname, join } from 'path';
-import { homedir, hostname } from 'os';
+import { hostname } from 'os';
 import { z } from 'zod';
 import type {
   EntityState,
@@ -24,6 +24,8 @@ import type {
   LegacySetupProfileKind,
 } from './types.js';
 import { DEFAULT_ENTITY_STATE } from './types.js';
+import { appendOperationalEvent } from './operational.js';
+import { getEveStateHome, getEveStatePath } from './state-paths.js';
 
 const OrganStatusSchema = z.object({
   state: z.enum(['missing', 'installing', 'starting', 'ready', 'error', 'stopped']),
@@ -84,16 +86,7 @@ const StateSchema = z.object({
 
 const ORGANS: Organ[] = ['brain', 'arms', 'builder', 'eyes', 'legs'];
 
-const STATE_HOME_ENV = 'EVE_STATE_HOME';
 const STATE_FILE_NAME = 'state.json';
-
-export function getEveStateHome(): string {
-  return process.env[STATE_HOME_ENV] || join(homedir(), '.local', 'share', 'eve');
-}
-
-export function getEveStatePath(): string {
-  return join(getEveStateHome(), STATE_FILE_NAME);
-}
 
 /**
  * Migrates entity state from the legacy eve directory to the new eve directory.
@@ -299,6 +292,12 @@ export class EntityStateManager {
       const json = JSON.stringify(state, null, 2);
       await writeFile(statePath, json, 'utf-8');
       this.state = state;
+      await appendOperationalEvent({
+        type: 'state.changed',
+        target: 'entity-state',
+        ok: true,
+        summary: 'Entity state saved',
+      }).catch(() => {});
     } catch (error) {
       if (error instanceof z.ZodError) {
         const dnaError = new Error(`Invalid state: ${error.message}`) as DNAError;

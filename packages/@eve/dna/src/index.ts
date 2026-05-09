@@ -87,6 +87,27 @@ export {
 } from './setup-profile.js';
 
 export { type HardwareFacts, probeHardware, formatHardwareReport } from './hw-probe.js';
+export { getEveStateHome, getEveStatePath, getEveEventsPath } from './state-paths.js';
+export {
+  appendOperationalEvent,
+  readOperationalEvents,
+  type ComponentDoctorMetadata,
+  type ComponentHealth,
+  type ComponentLifecycle,
+  type ConfigConfidence,
+  type ConfigSource,
+  type DoctorCheck,
+  type DoctorGroup,
+  type DoctorStatus,
+  type ExplainableValue,
+  type MaterializerTarget,
+  type NewOperationalEvent,
+  type OperationalEvent,
+  type OperationalEventType,
+  type RepairKind,
+  type RepairRequest,
+  type RepairResult,
+} from './operational.js';
 
 export {
   type EveSecrets,
