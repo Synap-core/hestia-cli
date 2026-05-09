@@ -172,6 +172,10 @@ export function runSynapCli(
     SYNAP_DEPLOY_DIR: paths.deployDir,
     SYNAP_ASSUME_YES: '1',
     SYNAP_NON_INTERACTIVE: '1',
+    // Eve always provides the edge proxy (eve-legs-traefik on port 80/443).
+    // Tell the synap CLI to skip its built-in Caddy so it doesn't fight
+    // Traefik for port 80 and abort updates with "port already allocated".
+    SYNAP_SKIP_EDGE: '1',
   };
   if (options.domain) {
     env.DOMAIN = toPodFqdn(options.domain);
