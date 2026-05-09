@@ -8,6 +8,7 @@ import {
   readEveSecrets,
   secretsPath,
 } from '../src/secrets-contract.js';
+import { configStore } from '../src/config-store.js';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'eve-secrets-'));
 
@@ -75,5 +76,30 @@ describe('writeEveSecrets / readEveSecrets', () => {
   it('writes secrets to .eve/secrets/secrets.json', () => {
     const path = secretsPath(dir);
     expect(path).toBe(join(dir, '.eve', 'secrets', 'secrets.json'));
+  });
+});
+
+describe('configStore', () => {
+  const originalEveHome = process.env.EVE_HOME;
+  let dir: string;
+
+  beforeEach(() => {
+    dir = tmp();
+    process.env.EVE_HOME = dir;
+    configStore.reset();
+  });
+
+  afterAll(() => {
+    process.env.EVE_HOME = originalEveHome;
+    configStore.reset();
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* */ }
+  });
+
+  it('refreshes the cached secrets after writeEveSecrets', async () => {
+    await writeEveSecrets({ synap: { apiUrl: 'http://one.local' } }, dir);
+    expect((await configStore.get())?.synap?.apiUrl).toBe('http://one.local');
+
+    await writeEveSecrets({ synap: { apiUrl: 'http://two.local' } }, dir);
+    expect((await configStore.get())?.synap?.apiUrl).toBe('http://two.local');
   });
 });

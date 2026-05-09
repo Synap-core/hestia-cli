@@ -7,12 +7,13 @@ import {
 } from '../src/agents.js';
 
 describe('AGENTS registry', () => {
-  it('lists eve, openclaw, hermes, openwebui-pipelines in this order', () => {
+  it('lists the provisionable agent registry in stable order', () => {
     expect(allAgentTypes()).toEqual([
       'eve',
       'openclaw',
       'hermes',
       'openwebui-pipelines',
+      'coder',
     ]);
   });
 

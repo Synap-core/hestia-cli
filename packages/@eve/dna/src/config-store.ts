@@ -6,7 +6,7 @@
  */
 
 import type { EveSecrets } from './secrets-contract.js';
-import { readEveSecrets } from './secrets-contract.js';
+import { readEveSecretsFromDisk, secretsPath } from './secrets-contract.js';
 
 interface CacheEntry {
   secrets: EveSecrets | null;
@@ -17,51 +17,59 @@ interface Subscriber {
   (secrets: EveSecrets | null): void;
 }
 
-const cache: CacheEntry = { secrets: null, loadedAt: 0 };
+const cache = new Map<string, CacheEntry>();
 const subscribers: Subscriber[] = [];
 
-async function _load(): Promise<EveSecrets | null> {
+function cacheKey(cwd?: string): string {
+  return secretsPath(cwd);
+}
+
+async function _load(cwd?: string): Promise<EveSecrets | null> {
+  const key = cacheKey(cwd);
   try {
-    const secrets = await readEveSecrets();
-    cache.secrets = secrets;
-    cache.loadedAt = Date.now();
+    const secrets = await readEveSecretsFromDisk(cwd);
+    cache.set(key, { secrets, loadedAt: Date.now() });
     for (const sub of subscribers) {
       try { sub(secrets); } catch { /* subscriber errors don't break reload */ }
     }
     return secrets;
   } catch {
-    cache.secrets = null;
-    cache.loadedAt = Date.now();
+    cache.set(key, { secrets: null, loadedAt: Date.now() });
     return null;
   }
 }
 
 export interface ConfigStore {
-  get(): Promise<EveSecrets | null>;
-  getSection<K extends keyof EveSecrets>(key: K): EveSecrets[K] | null;
-  reload(): Promise<void>;
-  reset(): void;
+  get(cwd?: string): Promise<EveSecrets | null>;
+  getSection<K extends keyof EveSecrets>(key: K, cwd?: string): EveSecrets[K] | null;
+  reload(cwd?: string): Promise<void>;
+  reset(cwd?: string): void;
   onChange(fn: Subscriber): () => void;
 }
 
 export const configStore: ConfigStore = {
-  async get(): Promise<EveSecrets | null> {
-    if (cache.secrets !== null) return cache.secrets;
-    return _load();
+  async get(cwd?: string): Promise<EveSecrets | null> {
+    const entry = cache.get(cacheKey(cwd));
+    if (entry && entry.loadedAt > 0) return entry.secrets;
+    return _load(cwd);
   },
 
-  getSection<K extends keyof EveSecrets>(key: K): EveSecrets[K] | null {
-    if (cache.secrets === null) return null;
-    return cache.secrets[key] ?? null;
+  getSection<K extends keyof EveSecrets>(key: K, cwd?: string): EveSecrets[K] | null {
+    const entry = cache.get(cacheKey(cwd));
+    if (!entry?.secrets) return null;
+    return entry.secrets[key] ?? null;
   },
 
-  async reload(): Promise<void> {
-    await _load();
+  async reload(cwd?: string): Promise<void> {
+    await _load(cwd);
   },
 
-  reset(): void {
-    cache.secrets = null;
-    cache.loadedAt = 0;
+  reset(cwd?: string): void {
+    if (cwd) {
+      cache.delete(cacheKey(cwd));
+      return;
+    }
+    cache.clear();
   },
 
   onChange(fn: Subscriber): () => void {

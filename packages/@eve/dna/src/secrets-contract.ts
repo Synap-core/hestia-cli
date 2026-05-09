@@ -532,7 +532,7 @@ function mergeProviderLists(input: EveSecrets | null): EveSecrets | null {
  * Read secrets from disk, normalizing any legacy dual-list shape
  * (`providers` + `customProviders`) into a single unified `providers` list.
  */
-export async function readEveSecrets(cwd: string = defaultEveCwd()): Promise<EveSecrets | null> {
+export async function readEveSecretsFromDisk(cwd: string = defaultEveCwd()): Promise<EveSecrets | null> {
   const path = secretsPath(cwd);
   if (!existsSync(path)) return null;
   try {
@@ -541,6 +541,11 @@ export async function readEveSecrets(cwd: string = defaultEveCwd()): Promise<Eve
   } catch {
     return null;
   }
+}
+
+export async function readEveSecrets(cwd: string = defaultEveCwd()): Promise<EveSecrets | null> {
+  const { configStore } = await import('./config-store.js');
+  return configStore.get(cwd);
 }
 
 function mergeNested<T extends Record<string, unknown>>(
@@ -624,6 +629,16 @@ export async function writeEveSecrets(
   const path = secretsPath(cwd);
   await mkdir(join(cwd, '.eve', 'secrets'), { recursive: true });
   await writeFile(path, JSON.stringify(parsed, null, 2), { mode: 0o600 });
+
+  // Keep the centralized per-process cache coherent for long-running
+  // dashboard/daemon processes. This is intentionally best-effort so the file
+  // write remains the durable source of truth even if cache notification fails.
+  try {
+    const { configStore } = await import('./config-store.js');
+    await configStore.reload(cwd);
+  } catch {
+    /* non-fatal — next process/request can still read from disk */
+  }
 
   // Best-effort downstream cascade — wire reconcile() after write.
   // Dynamic import to avoid circular dep at module load time.
