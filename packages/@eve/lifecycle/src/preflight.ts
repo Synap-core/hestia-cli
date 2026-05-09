@@ -30,10 +30,9 @@ import {
   isSynapLoopbackReachable,
   ensureSynapLoopbackOverride,
   connectTraefikToEveNetwork,
-  discoverPodConfig,
+  discoverAndBackfillPodConfig,
   findPodDeployDir,
   restartBackendContainer,
-  type EveSecrets,
 } from "@eve/dna";
 
 import {
@@ -187,49 +186,10 @@ export async function runBackendPreflight(
   // Step 2: Auto-discover pod config from on-disk artefacts.
   // ------------------------------------------------------------------
 
-  const discovered = discoverPodConfig();
+  const discovered = await discoverAndBackfillPodConfig(cwd);
 
-  if (discovered.synapUrl || discovered.domain) {
-    // Write discovered config into secrets.json, preserving all other entries.
-    //
-    // Critical: we do NOT write discovered.synapUrl into secrets.synap.apiUrl
-    // unless it came from PUBLIC_URL (a fully-qualified override). When derived
-    // from DOMAIN the URL lacks the "pod." Traefik subdomain prefix, so storing
-    // it would cause resolveSynapUrlOnHost to return the wrong URL and bypass
-    // the loopback probe — the exact failure that produced persistent 404s.
-    //
-    // We DO write domain.primary so that resolveSynapUrl can derive the correct
-    // Traefik URL (`https://pod.<domain>`) on its own. We also clear any
-    // previously stored synap.apiUrl that was auto-written by an older preflight
-    // version (identified as a non-loopback URL derived from the domain).
-    const storedApiUrl = secrets?.synap?.apiUrl?.trim();
-    // If synap.apiUrl was previously auto-written from DOMAIN discovery (old
-    // behaviour — wrong "https://domain" format or correct "https://pod.domain"
-    // format), clear it. We now rely on domain.primary + resolveSynapUrl for
-    // derivation, keeping secrets.json free of auto-computed redundant values.
-    // Only preserve synap.apiUrl when it was explicitly set by the user (i.e.
-    // it's a completely different host from what DOMAIN would produce).
-    const domainHostVariants = discovered.domain
-      ? [`https://${discovered.domain}`, `http://${discovered.domain}`,
-         `https://pod.${discovered.domain}`, `http://pod.${discovered.domain}`]
-      : [];
-    const shouldClearStoredUrl =
-      storedApiUrl &&
-      !discovered.synapUrl && // no PUBLIC_URL replacing it
-      domainHostVariants.some((v) => storedApiUrl.startsWith(v));
-
-    const partial: Omit<EveSecrets, "version" | "updatedAt"> = {
-      ...(discovered.domain ? { domain: { primary: discovered.domain } } : {}),
-      // Only write synap.apiUrl when PUBLIC_URL was the source (an explicit
-      // full URL the user or installer configured). Clear any stale auto-written
-      // value so resolveSynapUrl derives the correct URL from domain.primary.
-      ...(discovered.synapUrl
-        ? { synap: { apiUrl: discovered.synapUrl } }
-        : shouldClearStoredUrl
-          ? { synap: { apiUrl: "" } }
-          : {}),
-    };
-    secrets = await writeEveSecrets(partial, cwd);
+  if (discovered.backfilled) {
+    secrets = await readEveSecrets(cwd);
     configured = true;
     notes.push(
       `Auto-configured pod: domain=${discovered.domain ?? "(unchanged)"}` +

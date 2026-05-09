@@ -1,5 +1,5 @@
 import type { Command } from 'commander';
-import { EntityStateManager, entityStateManager, readEveSecrets, getServerIp, discoverPodConfig } from '@eve/dna';
+import { EntityStateManager, entityStateManager, readEveSecrets, getServerIp, discoverAndBackfillPodConfig } from '@eve/dna';
 
 import { OllamaService } from '../lib/ollama.js';
 import { execa, ensureNetwork } from '../lib/exec.js';
@@ -58,7 +58,7 @@ export async function runBrainInit(options: BrainInitOptions): Promise<void> {
 
   let domain = options.domain?.trim() || 'localhost';
   if (domain === 'localhost') {
-    const discovered = discoverPodConfig();
+    const discovered = await discoverAndBackfillPodConfig(process.cwd());
     if (discovered.domain) {
       domain = discovered.domain;
     }

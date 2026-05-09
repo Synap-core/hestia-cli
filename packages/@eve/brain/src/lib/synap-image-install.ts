@@ -8,7 +8,7 @@ import {
   pruneOldImagesForRepo,
   generateKratosConfig,
   parseKratosSecretsFromEnv,
-  discoverPodConfig,
+  discoverAndBackfillPodConfig,
 } from '@eve/dna';
 
 export interface SynapImageInstallOptions {
@@ -1074,7 +1074,7 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
   // so an install on a server that already has a real domain in its .env
   // gets the right value without the operator needing to re-type it.
   if (domain === 'localhost') {
-    const discovered = discoverPodConfig();
+    const discovered = await discoverAndBackfillPodConfig(process.cwd());
     if (discovered.domain) {
       domain = discovered.domain;
     }

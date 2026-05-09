@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import {
-  discoverPodConfig,
+  discoverAndBackfillPodConfig,
   entityStateManager,
   type SetupProfileKind,
   writeSetupProfile,
@@ -133,7 +133,7 @@ export async function runInstall(opts: InstallOptions): Promise<void> {
   // so an install on a server that already has a real domain in its .env
   // gets the right value without the operator needing to re-type it.
   if (domain === 'localhost') {
-    const discovered = discoverPodConfig();
+    const discovered = await discoverAndBackfillPodConfig(process.cwd(), { backfill: !opts.dryRun });
     if (discovered.domain) {
       domain = discovered.domain;
     }

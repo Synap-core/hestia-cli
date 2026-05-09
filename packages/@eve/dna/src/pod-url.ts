@@ -16,8 +16,8 @@
  *      `pod.{domain}` by convention on the same host. Used when secrets
  *      file doesn't exist yet (e.g. very first request during bootstrap).
  *
- *   4. **`discoverPodConfig()`** — probe on-disk artefacts (.env, Traefik,
- *      docker inspect) for the backend URL.
+ *   4. **Discovery backfill** — probe on-disk artefacts (.env, Traefik,
+ *      docker inspect) for the backend URL and persist canonical config.
  *
  *   5. **Loopback probe (`127.0.0.1:14000`)** — when the dashboard
  *      runs on the pod host and Eve has published the backend via its
@@ -34,7 +34,7 @@
 
 import { Socket } from "node:net";
 import { configStore } from "./config-store";
-import { discoverPodConfig, discoverAndBackfillPodUrl } from "./discover";
+import { discoverAndBackfillPodUrl } from "./discover";
 
 let cachedUrl: string | undefined;
 let cachedProbe: boolean | undefined;
@@ -211,7 +211,7 @@ export async function resolvePodUrl(
     } catch { /* not a full URL — nothing else to try */ }
   }
 
-  // Step 4: discoverPodConfig() — on-disk discovery with write-back.
+  // Step 4: on-disk discovery with canonical write-back.
   const fromDiscovery = await discoverAndBackfillPodUrl();
   if (fromDiscovery) return fromDiscovery;
 

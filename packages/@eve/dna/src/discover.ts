@@ -13,7 +13,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
-import { readEveSecrets, writeEveSecrets } from "./secrets-contract.js";
+import { readEveSecrets, writeEveSecrets, type EveSecrets } from "./secrets-contract.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -28,6 +28,19 @@ export interface DiscoveredPodConfig {
   provisioningToken?: string;
   /** Human-readable note on where the values were found. */
   sources: string[];
+}
+
+export interface BackfilledPodConfig extends DiscoveredPodConfig {
+  /** true when canonical pod config was written to secrets.json. */
+  backfilled: boolean;
+}
+
+export interface DiscoverAndBackfillPodConfigOptions {
+  /**
+   * Write discovered canonical values into secrets.json. Defaults to true.
+   * Set false for dry-run flows that still need to know what would be used.
+   */
+  backfill?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -293,25 +306,87 @@ export function discoverPodConfig(): DiscoveredPodConfig {
   return { synapUrl, domain, provisioningToken, sources };
 }
 
+function buildBackfillPatch(
+  discovered: DiscoveredPodConfig,
+  secrets: EveSecrets | null,
+): Omit<EveSecrets, "version" | "updatedAt"> {
+  if (!discovered.synapUrl && !discovered.domain) return {};
+
+  const storedApiUrl = secrets?.synap?.apiUrl?.trim();
+  const domainHostVariants = discovered.domain
+    ? [
+        `https://${discovered.domain}`,
+        `http://${discovered.domain}`,
+        `https://pod.${discovered.domain}`,
+        `http://pod.${discovered.domain}`,
+      ]
+    : [];
+  const shouldClearStoredUrl =
+    storedApiUrl &&
+    !discovered.synapUrl &&
+    domainHostVariants.some((v) => storedApiUrl.startsWith(v));
+
+  return {
+    ...(discovered.domain ? { domain: { primary: discovered.domain } } : {}),
+    ...(discovered.synapUrl
+      ? { synap: { apiUrl: discovered.synapUrl } }
+      : shouldClearStoredUrl
+        ? { synap: { apiUrl: "" } }
+        : {}),
+  };
+}
+
+function patchHasValues(patch: Omit<EveSecrets, "version" | "updatedAt">): boolean {
+  return Object.values(patch).some((value) => {
+    if (!value || typeof value !== "object") return value !== undefined;
+    return Object.keys(value).length > 0;
+  });
+}
+
+/**
+ * Discover canonical pod config from on-disk artifacts and backfill it into
+ * secrets.json. `discoverPodConfig()` remains a read-only diagnostic probe;
+ * operational callers that want canonical config should use this helper.
+ *
+ * Backfill rules:
+ *   - `domain.primary` is written when a real domain is discovered.
+ *   - `synap.apiUrl` is written only for an explicit PUBLIC_URL.
+ *   - stale derived apiUrl values are cleared so URL resolution derives from
+ *     `domain.primary` and can prefer the loopback transport on-host.
+ */
+export async function discoverAndBackfillPodConfig(
+  cwd = process.cwd(),
+  options: DiscoverAndBackfillPodConfigOptions = {},
+): Promise<BackfilledPodConfig> {
+  const discovered = discoverPodConfig();
+  const shouldBackfill = options.backfill ?? true;
+
+  if (!shouldBackfill || (!discovered.synapUrl && !discovered.domain)) {
+    return { ...discovered, backfilled: false };
+  }
+
+  const secrets = await readEveSecrets(cwd);
+  const patch = buildBackfillPatch(discovered, secrets);
+  if (!patchHasValues(patch)) {
+    return { ...discovered, backfilled: false };
+  }
+
+  await writeEveSecrets(patch, cwd);
+  return { ...discovered, backfilled: true };
+}
+
 /**
  * Discover the pod URL from on-disk artifacts and write it back to
- * secrets.json if synap.apiUrl is not already set. This prevents future
- * reads from falling through to discovery — once backfilled, the URL
- * is read from secrets.json (the canonical store) on all subsequent calls.
+ * secrets.json as canonical config. This prevents future reads from falling
+ * through to discovery — once backfilled, the URL is read from secrets.json
+ * on all subsequent calls.
  *
  * Returns the discovered URL on success, or null if nothing was found
- * or backfill was skipped (apiUrl already set).
+ * with an explicit URL.
  */
-export async function discoverAndBackfillPodUrl(): Promise<string | null> {
-  const discovered = discoverPodConfig();
-  if (discovered.synapUrl) {
-    const secrets = await readEveSecrets();
-    if (secrets) {
-      if (!secrets.synap?.apiUrl) {
-        await writeEveSecrets({ synap: { apiUrl: discovered.synapUrl } });
-      }
-      return discovered.synapUrl;
-    }
-  }
+export async function discoverAndBackfillPodUrl(cwd = process.cwd()): Promise<string | null> {
+  const discovered = await discoverAndBackfillPodConfig(cwd);
+  if (discovered.synapUrl) return discovered.synapUrl;
+  if (discovered.domain) return `https://pod.${discovered.domain}`;
   return null;
 }

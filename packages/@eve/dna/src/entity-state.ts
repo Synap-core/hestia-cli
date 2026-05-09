@@ -3,12 +3,13 @@
  *
  * Manages the state of the Eve entity, including organ health,
  * installation status, and completeness tracking.
- * State is stored as JSON in ~/.local/share/eve/state.json
+ * State is stored as JSON in EVE_STATE_HOME/state.json when set,
+ * otherwise ~/.local/share/eve/state.json.
  */
 
 import { readFile, writeFile, mkdir, access, readdir, stat } from 'fs/promises';
 import { existsSync, cpSync } from 'node:fs';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { homedir, hostname } from 'os';
 import { z } from 'zod';
 import type {
@@ -83,8 +84,16 @@ const StateSchema = z.object({
 
 const ORGANS: Organ[] = ['brain', 'arms', 'builder', 'eyes', 'legs'];
 
-const OLD_STATE_DIR = join(homedir(), '.local', 'share', 'eve');
-const NEW_STATE_DIR = join(homedir(), '.local', 'share', 'eve');
+const STATE_HOME_ENV = 'EVE_STATE_HOME';
+const STATE_FILE_NAME = 'state.json';
+
+export function getEveStateHome(): string {
+  return process.env[STATE_HOME_ENV] || join(homedir(), '.local', 'share', 'eve');
+}
+
+export function getEveStatePath(): string {
+  return join(getEveStateHome(), STATE_FILE_NAME);
+}
 
 /**
  * Migrates entity state from the legacy eve directory to the new eve directory.
@@ -92,14 +101,17 @@ const NEW_STATE_DIR = join(homedir(), '.local', 'share', 'eve');
  * Returns true if a migration was performed, false if nothing to migrate.
  */
 export async function migrateStateDirectory(): Promise<boolean> {
-  if (!existsSync(OLD_STATE_DIR)) return false;
+  const oldStateDir = getEveStateHome();
+  const newStateDir = getEveStateHome();
 
-  const oldStatePath = join(OLD_STATE_DIR, 'state.json');
+  if (!existsSync(oldStateDir)) return false;
+
+  const oldStatePath = join(oldStateDir, STATE_FILE_NAME);
   if (!existsSync(oldStatePath)) return false;
 
   // Already migrated? Check if new dir exists with a valid state file
-  if (existsSync(NEW_STATE_DIR)) {
-    const newStatePath = join(NEW_STATE_DIR, 'state.json');
+  if (existsSync(newStateDir)) {
+    const newStatePath = join(newStateDir, STATE_FILE_NAME);
     if (existsSync(newStatePath)) {
       // Already on new path — no-op
       return false;
@@ -107,13 +119,13 @@ export async function migrateStateDirectory(): Promise<boolean> {
   }
 
   // Copy state to new location
-  await mkdir(NEW_STATE_DIR, { recursive: true });
+  await mkdir(newStateDir, { recursive: true });
   const { cp } = await import('node:fs/promises');
-  await cp(oldStatePath, join(NEW_STATE_DIR, 'state.json'), { recursive: true });
+  await cp(oldStatePath, join(newStateDir, STATE_FILE_NAME), { recursive: true });
 
   // Remove old directory entirely
   const { rm } = await import('node:fs/promises');
-  await rm(OLD_STATE_DIR, { recursive: true, force: true });
+  await rm(oldStateDir, { recursive: true, force: true });
 
   return true;
 }
@@ -206,7 +218,7 @@ export class EntityStateManager {
     if (this.statePath) {
       return this.statePath;
     }
-    return join(homedir(), '.local', 'share', 'eve', 'state.json');
+    return getEveStatePath();
   }
 
   async getState(): Promise<EntityState> {
@@ -277,7 +289,7 @@ export class EntityStateManager {
 
   async saveState(state: EntityState): Promise<void> {
     const statePath = this.getStatePath();
-    const stateDir = join(homedir(), '.local', 'share', 'eve');
+    const stateDir = dirname(statePath);
 
     try {
       await mkdir(stateDir, { recursive: true });

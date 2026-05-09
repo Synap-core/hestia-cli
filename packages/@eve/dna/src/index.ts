@@ -255,7 +255,10 @@ export {
 // Pod config auto-discovery (reads on-disk .env / Traefik / docker inspect)
 export {
   type DiscoveredPodConfig,
+  type BackfilledPodConfig,
+  type DiscoverAndBackfillPodConfigOptions,
   discoverPodConfig,
+  discoverAndBackfillPodConfig,
   discoverAndBackfillPodUrl,
 } from './discover.js';
 

@@ -85,7 +85,7 @@ function buildUpstreamUrl(podUrl: string, path: string[], req: NextRequest): str
  * Returns the token plus a flag the caller uses to decide whether a
  * 401-retry is worth attempting (no point if we just minted).
  */
-async function getUserToken(): Promise<
+async function getUserToken(reqUrl: string, headers: Headers): Promise<
   | { ok: true; token: string; freshlyMinted: boolean }
   | { ok: false; status: number; body: Record<string, unknown> }
 > {
@@ -117,7 +117,7 @@ async function getUserToken(): Promise<
   }
 
   try {
-    const minted = await mintAndStorePodUserToken(userEmail);
+    const minted = await mintAndStorePodUserToken(userEmail, reqUrl, headers);
     return { ok: true, token: minted.token, freshlyMinted: true };
   } catch (err) {
     if (err instanceof PodSigninError) {
@@ -198,7 +198,7 @@ async function proxy(req: NextRequest, ctx: RouteCtx): Promise<Response> {
   }
 
   // First attempt.
-  let tokenResolution = await getUserToken();
+  let tokenResolution = await getUserToken(req.url, req.headers);
   if (!tokenResolution.ok) {
     return NextResponse.json(tokenResolution.body, {
       status: tokenResolution.status,
@@ -230,7 +230,7 @@ async function proxy(req: NextRequest, ctx: RouteCtx): Promise<Response> {
     await clearPodUserToken().catch(() => {
       /* best-effort — the next mint will overwrite anyway */
     });
-    tokenResolution = await getUserToken();
+    tokenResolution = await getUserToken(req.url, req.headers);
     if (!tokenResolution.ok) {
       return NextResponse.json(tokenResolution.body, {
         status: tokenResolution.status,

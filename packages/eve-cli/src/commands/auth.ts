@@ -42,7 +42,7 @@ import {
 } from '@eve/lifecycle';
 import {
   AGENTS,
-  discoverPodConfig,
+  discoverAndBackfillPodConfig,
   entityStateManager,
   findPodDeployDir,
   readAgentKey,
@@ -491,7 +491,7 @@ async function runProvision(opts: { agent?: string; email?: string }): Promise<v
     // (the install-time default), probe on-disk artefacts for the real domain.
     let domain = secrets?.domain?.primary ?? 'localhost';
     if (!domain || domain === 'localhost') {
-      const discovered = discoverPodConfig();
+      const discovered = await discoverAndBackfillPodConfig(process.cwd());
       if (discovered.domain) {
         domain = discovered.domain;
         console.log(`  Discovered domain from disk: ${domain}`);

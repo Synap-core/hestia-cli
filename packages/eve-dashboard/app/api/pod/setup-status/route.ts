@@ -7,7 +7,8 @@
  *
  * Wire shapes:
  *   • Upstream: `GET ${podUrl}/trpc/setup.status` (public procedure)
- *     returns `{ result: { data: { initialized, version } } }`.
+ *     returns either `{ result: { data: { initialized, version } } }` or
+ *     the transformer-wrapped `{ result: { data: { json: { ... } } } }`.
  *   • Downstream (this route):
  *       - 200 `{ initialized, version }` when the pod responded normally
  *       - 200 `{ initialized: null, reason: "unreachable" }` on transport
@@ -27,7 +28,30 @@ interface TrpcSetupStatusEnvelope {
     data?: {
       initialized?: boolean;
       version?: string;
+      json?: {
+        initialized?: boolean;
+        version?: string;
+      };
     };
+  };
+}
+
+interface SetupStatusData {
+  initialized: boolean;
+  version?: string;
+}
+
+function parseSetupStatusEnvelope(json: unknown): SetupStatusData | null {
+  const envelope = Array.isArray(json) ? json[0] : json;
+  if (!envelope || typeof envelope !== "object") return null;
+
+  const data = (envelope as TrpcSetupStatusEnvelope).result?.data;
+  const payload = data?.json ?? data;
+  if (!payload || typeof payload.initialized !== "boolean") return null;
+
+  return {
+    initialized: payload.initialized,
+    version: payload.version,
   };
 }
 
@@ -63,10 +87,10 @@ export async function GET(req: Request) {
       });
     }
 
-    const json = (await res.json()) as TrpcSetupStatusEnvelope;
-    const data = json.result?.data;
+    const json = await res.json();
+    const data = parseSetupStatusEnvelope(json);
     console.log("[setup-status] upstream response data:", JSON.stringify(data));
-    if (!data || typeof data.initialized !== "boolean") {
+    if (!data) {
       console.error("[setup-status] unexpected response shape:", JSON.stringify(json));
       return NextResponse.json({
         initialized: null,

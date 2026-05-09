@@ -6,28 +6,12 @@ import {
   SERVICE_TO_ORGAN,
   ORGAN_INFO,
 } from '../src/types.js';
-import { EntityStateManager } from '../src/entity-state.js';
-import { homedir, hostname } from 'os';
-import { existsSync, rmSync, mkdirSync, copyFileSync, writeFileSync } from 'fs';
+import { EntityStateManager, getEveStatePath } from '../src/entity-state.js';
+import { hostname, tmpdir } from 'os';
+import { rmSync, mkdirSync, writeFileSync, mkdtempSync } from 'fs';
 import { join } from 'path';
 
-// Backup/restore the real state file to avoid polluting user's actual state
-const STATE_PATH = join(homedir(), '.local', 'share', 'eve', 'state.json');
-const STATE_DIR = join(homedir(), '.local', 'share', 'eve');
-const BACKUP_PATH = STATE_PATH + '.bak';
-
-function backupState(): boolean {
-  if (!existsSync(STATE_PATH)) return false;
-  mkdirSync(STATE_DIR, { recursive: true });
-  copyFileSync(STATE_PATH, BACKUP_PATH);
-  return true;
-}
-
-function restoreState(): void {
-  if (!existsSync(BACKUP_PATH)) return;
-  copyFileSync(BACKUP_PATH, STATE_PATH);
-  rmSync(BACKUP_PATH, { force: true });
-}
+const ORIGINAL_EVE_STATE_HOME = process.env.EVE_STATE_HOME;
 
 describe('constants', () => {
   it('has all five organs', () => {
@@ -105,6 +89,22 @@ describe('EntityStateManager', () => {
 // =============================================================================
 
 describe('v2 component state', () => {
+  let stateHome: string;
+
+  beforeEach(() => {
+    stateHome = mkdtempSync(join(tmpdir(), 'eve-state-'));
+    process.env.EVE_STATE_HOME = stateHome;
+  });
+
+  afterEach(() => {
+    if (ORIGINAL_EVE_STATE_HOME === undefined) {
+      delete process.env.EVE_STATE_HOME;
+    } else {
+      process.env.EVE_STATE_HOME = ORIGINAL_EVE_STATE_HOME;
+    }
+    rmSync(stateHome, { recursive: true, force: true });
+  });
+
   function resetStateFile(): void {
     const state = {
       version: '0.1.0',
@@ -119,8 +119,8 @@ describe('v2 component state', () => {
       },
       metadata: { platform: process.platform, arch: process.arch, hostname: hostname() },
     };
-    mkdirSync(STATE_DIR, { recursive: true });
-    writeFileSync(STATE_PATH, JSON.stringify(state, null, 2));
+    mkdirSync(stateHome, { recursive: true });
+    writeFileSync(getEveStatePath(), JSON.stringify(state, null, 2));
   }
 
   it('updateComponentEntry creates a new entry', async () => {

@@ -117,8 +117,8 @@ export async function POST(req: Request) {
 
   try {
     const minted = isHostOwner
-      ? await mintAndStorePodUserToken(rawEmail, req.url)
-      : await mintPodUserToken(rawEmail, req.url);
+      ? await mintAndStorePodUserToken(rawEmail, req.url, req.headers)
+      : await mintPodUserToken(rawEmail, req.url, req.headers);
 
     return NextResponse.json({
       ok: true,
