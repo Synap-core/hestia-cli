@@ -126,20 +126,20 @@
   "hotPaths": [
     {
       "path": "packages/@eve/lifecycle/src/index.ts",
-      "accessCount": 143,
-      "lastAccessed": 1778358612713,
+      "accessCount": 145,
+      "lastAccessed": 1778359249749,
       "type": "file"
     },
     {
       "path": "packages/@eve/dna/src/wire-ai.ts",
-      "accessCount": 124,
-      "lastAccessed": 1778358639159,
+      "accessCount": 132,
+      "lastAccessed": 1778359242709,
       "type": "file"
     },
     {
       "path": "packages/@eve/dna/src/openwebui-admin.ts",
-      "accessCount": 66,
-      "lastAccessed": 1778358597673,
+      "accessCount": 73,
+      "lastAccessed": 1778359171812,
       "type": "file"
     },
     {
@@ -168,8 +168,8 @@
     },
     {
       "path": "packages/@eve/dna/src/index.ts",
-      "accessCount": 16,
-      "lastAccessed": 1778353766160,
+      "accessCount": 18,
+      "lastAccessed": 1778359283552,
       "type": "file"
     },
     {

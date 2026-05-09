@@ -71,23 +71,103 @@ export interface OpenWebuiConfigReconcileResult {
 
 export type OpenwebuiStatus =
   | { status: 'healthy'; adminUser: AdminUser | null }
-  | { status: 'no-admin-user'; adminUser: null }
+  | { status: 'no-admin-user'; adminUser: null; error?: string }
   | { status: 'not-reachable' }
   | { status: 'no-secret-key' }
   | { status: 'html-response' }; // Got HTTP 200 but HTML, not JSON
+
+/**
+ * Distinct failure stages for `registerOpenwebuiAdminApi`. Each maps to one
+ * actionable operator fix; the `reason` carries the underlying detail so the
+ * "after retries" black-box message is gone.
+ */
+export type RegisterStage =
+  | 'health'         // OWUI /health did not become non-HTML JSON within budget
+  | 'secret-key'     // WEBUI_SECRET_KEY missing in /opt/openwebui/.env
+  | 'admin-row'      // docker exec admin-user query failed or returned nothing
+  | 'jwt-rejected'   // admin API returned 401/403 to a forged JWT
+  | 'reconcile';     // managed-config read/save failed for any other reason
+
+/**
+ * Result of `registerOpenwebuiAdminApi`. Replaces the old `Promise<boolean>`
+ * — `ok=false` carries a stage so operators get an actionable diagnosis.
+ */
+export type RegisterOutcome =
+  | { ok: true }
+  | { ok: false; stage: RegisterStage; reason: string };
 
 // ── Constants ──
 
 // ── Helpers ──
 
 /**
- * Resolve the base URL for OpenWebUI's admin API on the host.
- * Uses the component registry for the correct port.
+ * Read the live host port that Docker actually published for OpenWebUI's
+ * 8080 container port. Returns null when docker isn't reachable or the
+ * container isn't running. Lets us recover when the operator overrides
+ * `OPEN_WEBUI_PORT` in `/opt/openwebui/.env` away from the registry default.
+ */
+function resolveLiveAdminPort(): number | null {
+  try {
+    const out = execSync(
+      'docker port hestia-openwebui 8080',
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
+    ).trim();
+    // `docker port` lines look like "0.0.0.0:3011" or "[::]:3011" — possibly multiple.
+    const match = out.match(/:(\d+)\s*$/m);
+    if (match) {
+      const port = parseInt(match[1], 10);
+      if (port > 0) return port;
+    }
+  } catch { /* fall through to registry default */ }
+  return null;
+}
+
+/**
+ * Resolve the base URL for OpenWebUI's admin API on the host. Prefers the
+ * live-published port from `docker port` so an operator-overridden
+ * `OPEN_WEBUI_PORT` is honored automatically.
  */
 function resolveAdminUrl(hostPort?: number): string {
+  if (hostPort) return `http://127.0.0.1:${hostPort}`;
+  const live = resolveLiveAdminPort();
+  if (live) return `http://127.0.0.1:${live}`;
   const comp = COMPONENTS.find(c => c.id === 'openwebui');
-  const port = hostPort ?? comp?.service?.hostPort ?? 3011;
-  return `http://127.0.0.1:${port}`;
+  return `http://127.0.0.1:${comp?.service?.hostPort ?? 3011}`;
+}
+
+/**
+ * Last-resort probe that bypasses the host port mapping by hitting OWUI's
+ * own loopback inside the container. Diagnostic only — when this succeeds
+ * but the host loopback fails, the host port mapping is broken (most
+ * common cause: `OPEN_WEBUI_PORT` overridden, port collision on bind).
+ */
+function probeHealthInternal(): { ok: boolean; reason?: string } {
+  try {
+    const out = execSync(
+      `docker exec hestia-openwebui python3 -c "import urllib.request,sys
+try:
+    r=urllib.request.urlopen('http://localhost:8080/health',timeout=5)
+    sys.stdout.write(f'{r.status}\\n')
+    sys.stdout.write(r.read(200).decode('utf-8','ignore'))
+except Exception as e:
+    sys.stderr.write(str(e))
+    sys.exit(2)"`,
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
+    );
+    const text = out.toString();
+    const lines = text.split('\n');
+    const status = parseInt(lines[0] ?? '', 10);
+    const body = lines.slice(1).join('\n').trim();
+    if (status >= 200 && status < 300 && !body.startsWith('<')) {
+      return { ok: true };
+    }
+    return { ok: false, reason: `HTTP ${status || '?'}, body=${body.slice(0, 100)}` };
+  } catch (err: unknown) {
+    const stderrBuf = (err as { stderr?: Buffer })?.stderr;
+    const stderrStr = stderrBuf?.toString().trim();
+    const fallback = err instanceof Error ? err.message : String(err);
+    return { ok: false, reason: stderrStr || fallback };
+  }
 }
 
 /**
@@ -156,23 +236,36 @@ function readWebuiSecretKey(): string | null {
 }
 
 /**
- * Query OpenWebUI's SQLite DB for the admin user.
+ * Query OpenWebUI's SQLite DB for the admin user, capturing stderr so a
+ * schema/path mismatch on a future OWUI version is visible instead of
+ * collapsing into a silent null.
  */
-function getAdminUser(): AdminUser | null {
+function getAdminUserDetailed(): { user: AdminUser | null; error?: string } {
   try {
-    const row = execSync(
+    const out = execSync(
       `docker exec hestia-openwebui python3 -c ` +
-        `"import sqlite3; r=sqlite3.connect('/app/backend/data/webui.db').execute(\\"SELECT id,email FROM user WHERE role='admin' LIMIT 1\\").fetchone(); " +
-        "print(f'{r[0]}|{r[1]}') if r else print('')"`,
-      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
-    ).trim();
-    if (!row) return null;
+        `"import sqlite3; r=sqlite3.connect('/app/backend/data/webui.db').execute(\\"SELECT id,email FROM user WHERE role='admin' LIMIT 1\\").fetchone(); ` +
+        `print(f'{r[0]}|{r[1]}') if r else print('')"`,
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
+    );
+    const row = out.toString().trim();
+    if (!row) {
+      return { user: null, error: 'admin row not found (no row where role=\'admin\' in user table)' };
+    }
     const [id, email] = row.split('|');
-    if (!id || !email) return null;
-    return { id, email };
-  } catch {
-    return null;
+    if (!id || !email) return { user: null, error: `unexpected row shape: ${row}` };
+    return { user: { id, email } };
+  } catch (err: unknown) {
+    const stderrBuf = (err as { stderr?: Buffer })?.stderr;
+    const stderrStr = stderrBuf?.toString().trim();
+    const fallback = err instanceof Error ? err.message : String(err);
+    return { user: null, error: `docker exec failed: ${(stderrStr || fallback).slice(0, 300)}` };
   }
+}
+
+/** Legacy boolean wrapper for callers that don't care about the stderr. */
+function getAdminUser(): AdminUser | null {
+  return getAdminUserDetailed().user;
 }
 
 /**
@@ -234,6 +327,63 @@ export async function waitForHealth(hostPort?: number, maxAttempts = 12): Promis
 }
 
 /**
+ * Wait for OpenWebUI health, with structured diagnostics on failure.
+ * When the host loopback exhausts its budget, runs an internal probe
+ * inside the container so the operator can tell host-port-mapping issues
+ * apart from "the app actually isn't ready yet".
+ */
+export async function waitForHealthDetailed(
+  hostPort?: number,
+  maxAttempts = 12,
+): Promise<{ ok: boolean; reason?: string; baseUrl: string }> {
+  const baseUrl = resolveAdminUrl(hostPort);
+  let lastErr = '';
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(`${baseUrl}/health`, { signal: controller.signal });
+      clearTimeout(timer);
+      if (res.ok) {
+        const ct = res.headers.get('content-type') || '';
+        if (ct.includes('json') || !ct.includes('html')) {
+          return { ok: true, baseUrl };
+        }
+        const text = await res.text();
+        if (!text.trimStart().startsWith('<')) {
+          return { ok: true, baseUrl };
+        }
+        lastErr = 'OWUI returned HTML at /health (still booting)';
+      } else {
+        lastErr = `HTTP ${res.status}`;
+      }
+    } catch (err) {
+      lastErr = err instanceof Error ? err.message : String(err);
+    }
+    if (i < maxAttempts - 1) await new Promise(r => setTimeout(r, 5_000));
+  }
+  // Loopback exhausted — disambiguate via internal probe.
+  const internal = probeHealthInternal();
+  if (internal.ok) {
+    return {
+      ok: false,
+      baseUrl,
+      reason:
+        `Host loopback ${baseUrl}/health timed out after ${maxAttempts * 5}s ` +
+        `(last error: ${lastErr || 'unknown'}), but the container's own /health responds. ` +
+        `Host port mapping is broken — check \`docker port hestia-openwebui 8080\` and \`OPEN_WEBUI_PORT\` in /opt/openwebui/.env.`,
+    };
+  }
+  return {
+    ok: false,
+    baseUrl,
+    reason:
+      `Host loopback ${baseUrl}/health timed out after ${maxAttempts * 5}s ` +
+      `(last error: ${lastErr || 'unknown'}); internal probe also failed: ${internal.reason ?? 'unknown'}.`,
+  };
+}
+
+/**
  * Check if OpenWebUI is reachable and get its admin status.
  *
  * Returns:
@@ -265,12 +415,12 @@ export async function getStatus(hostPort?: number): Promise<OpenwebuiStatus> {
     return { status: 'no-secret-key' };
   }
 
-  const admin = getAdminUser();
-  if (!admin) {
-    return { status: 'no-admin-user', adminUser: null };
+  const adminQ = getAdminUserDetailed();
+  if (!adminQ.user) {
+    return { status: 'no-admin-user', adminUser: null, error: adminQ.error };
   }
 
-  return { status: 'healthy', adminUser: admin };
+  return { status: 'healthy', adminUser: adminQ.user };
 }
 
 /**
@@ -283,11 +433,11 @@ export async function getAdminReadyStatus(): Promise<OpenwebuiStatus> {
   if (!secretKey) {
     return { status: 'no-secret-key' };
   }
-  const admin = getAdminUser();
-  if (!admin) {
-    return { status: 'no-admin-user', adminUser: null };
+  const adminQ = getAdminUserDetailed();
+  if (!adminQ.user) {
+    return { status: 'no-admin-user', adminUser: null, error: adminQ.error };
   }
-  return { status: 'healthy', adminUser: admin };
+  return { status: 'healthy', adminUser: adminQ.user };
 }
 
 /**
@@ -319,6 +469,53 @@ export async function getAdminJwtPostHealth(): Promise<string | null> {
   const secretKey = readWebuiSecretKey();
   if (!secretKey) return null;
   return forgeAdminJwt(secretKey, status.adminUser);
+}
+
+/**
+ * Post-health JWT acquisition with structured diagnostics. Returns either a
+ * usable JWT or a stage+reason that maps directly onto `RegisterStage`.
+ */
+export async function getAdminJwtPostHealthDetailed(): Promise<
+  | { ok: true; jwt: string }
+  | { ok: false; stage: 'secret-key' | 'admin-row'; reason: string }
+> {
+  const status = await getAdminReadyStatus();
+  if (status.status === 'no-secret-key') {
+    return { ok: false, stage: 'secret-key', reason: 'WEBUI_SECRET_KEY missing in /opt/openwebui/.env' };
+  }
+  if (status.status !== 'healthy' || !status.adminUser) {
+    const reason = status.status === 'no-admin-user'
+      ? (status.error ?? 'admin user not found in user table')
+      : `unexpected status: ${status.status}`;
+    return { ok: false, stage: 'admin-row', reason };
+  }
+  const secretKey = readWebuiSecretKey();
+  if (!secretKey) {
+    return { ok: false, stage: 'secret-key', reason: 'WEBUI_SECRET_KEY missing in /opt/openwebui/.env' };
+  }
+  return { ok: true, jwt: forgeAdminJwt(secretKey, status.adminUser) };
+}
+
+/**
+ * One-shot probe of OpenWebUI's admin API with the supplied JWT. Used by
+ * `registerOpenwebuiAdminApi` to surface stage='jwt-rejected' (401/403)
+ * separately from generic reconcile failures.
+ */
+export async function probeAdminAuth(
+  jwt: string,
+  hostPort?: number,
+): Promise<{ ok: boolean; status: number; body: string }> {
+  const baseUrl = resolveAdminUrl(hostPort);
+  try {
+    const res = await fetch(`${baseUrl}/api/v1/configs/`, {
+      headers: { Authorization: `Bearer ${jwt}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    const body = await res.text();
+    return { ok: res.ok, status: res.status, body };
+  } catch (err) {
+    return { ok: false, status: 0, body: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 /**

@@ -29,11 +29,15 @@ import { syncOpenwebuiExtras } from './openwebui-extras.js';
 import {
   getAdminJwt,
   getAdminJwtPostHealth,
+  getAdminJwtPostHealthDetailed,
+  probeAdminAuth,
   reconcileOpenwebuiManagedConfigViaAdmin,
   registerPipeline,
   waitForHealth,
+  waitForHealthDetailed,
   type ModelSource,
   type OpenWebuiManagedConfig,
+  type RegisterOutcome,
 } from './openwebui-admin.js';
 
 export interface WireAiResult {
@@ -452,16 +456,16 @@ async function wireOpenwebui(secrets: EveSecrets | null): Promise<WireAiResult> 
     if (hermesIdx >= 0) {
       modelSources[hermesIdx].apiKey = hermesApiServerKey ?? '';
     }
-    const ok = await registerOpenwebuiAdminApi(modelSources, {
+    const outcome = await registerOpenwebuiAdminApi(modelSources, {
       pipelinesUrl,
       pipelinesKey,
       managedConfig: buildOpenwebuiManagedConfig(secrets),
     });
-    if (!ok) {
+    if (!outcome.ok) {
       return {
         id: 'openwebui',
         outcome: 'ok',
-        summary: `Open WebUI wired to Synap IS${hermesNote} (registration warning: health timeout or JWT error — run \`eve openwebui sync\` to retry)`,
+        summary: `Open WebUI wired to Synap IS${hermesNote} (registration warning: ${outcome.stage} — ${outcome.reason} — run \`eve openwebui sync\` to retry)`,
         detail: envPath,
       };
     }
@@ -801,7 +805,7 @@ export async function registerOpenwebuiAdminApi(
     /** Override the sidecar probe attempt count (default: 5 × 3 s = 15 s). */
     retryInterval?: number;
   },
-): Promise<boolean> {
+): Promise<RegisterOutcome> {
   const healthAttempts = options.maxRetries ?? 12;
   const sidecarAttempts = options.retryInterval ?? 5;
 
@@ -818,40 +822,68 @@ export async function registerOpenwebuiAdminApi(
     return false;
   })();
 
-  // Step 2: Wait for health once using waitForHealth() (attempts × 5 s poll).
-  // This avoids the old bug where getStatus() internally called waitUntilHealthy()
-  // on every retry attempt, causing the retry loop to exhaust before health passed.
-  if (!(await waitForHealth(undefined, healthAttempts))) {
-    return false;
+  // Step 2: Wait for health with structured diagnostics so the operator
+  // gets stage='health' + a reason that distinguishes loopback timeout from
+  // host-port-mapping mismatch (internal probe disambiguates).
+  const health = await waitForHealthDetailed(undefined, healthAttempts);
+  if (!health.ok) {
+    return { ok: false, stage: 'health', reason: health.reason ?? `health timed out at ${health.baseUrl}` };
   }
 
-  // Use the post-health fast path — health is already confirmed above.
-  // getAdminJwt() would re-run waitUntilHealthy() (another 30 s budget),
-  // which wastes time and can race-fail even though health just passed.
-  const jwt = await getAdminJwtPostHealth();
-  if (!jwt) return false;
+  // Step 3: Forge admin JWT with structured diagnostics. stage='secret-key'
+  // when /opt/openwebui/.env lacks WEBUI_SECRET_KEY; stage='admin-row' when
+  // the docker exec admin lookup fails (with stderr in the reason).
+  const jwtResult = await getAdminJwtPostHealthDetailed();
+  if (!jwtResult.ok) {
+    return { ok: false, stage: jwtResult.stage, reason: jwtResult.reason };
+  }
+  const jwt = jwtResult.jwt;
 
-  // Step 3: OpenWebUI is healthy and admin auth works — resolve sidecar probe result
+  // Step 4: Probe admin auth so a JWT rejection (401/403) surfaces with its
+  // own stage instead of collapsing into stage='reconcile'.
+  const auth = await probeAdminAuth(jwt);
+  if (!auth.ok) {
+    if (auth.status === 401 || auth.status === 403) {
+      return {
+        ok: false,
+        stage: 'jwt-rejected',
+        reason: `admin /api/v1/configs/ rejected forged JWT with HTTP ${auth.status}: ${auth.body.slice(0, 200)}`,
+      };
+    }
+    return {
+      ok: false,
+      stage: 'reconcile',
+      reason: `admin /api/v1/configs/ probe returned HTTP ${auth.status || '?'}: ${auth.body.slice(0, 200)}`,
+    };
+  }
+
+  // Step 5: Register pipeline sidecar (best-effort — does not fail the outcome)
   const sidecarReady = await sidecarPromise;
-
-  // Step 4: Register pipeline sidecar (if sidecar is ready)
   if (sidecarReady && options.pipelinesUrl && options.pipelinesKey) {
     await registerPipeline(jwt, options.pipelinesUrl, options.pipelinesKey);
   }
 
-  // Step 5: Reconcile Eve-managed persisted config. This is the headless
-  // equivalent of using OpenWebUI's Admin Settings UI after first boot.
-  // null means the config read or write failed (JWT rejected, API unreachable).
-  // With ENABLE_PERSISTENT_CONFIG=true the DB overrides env vars for the model
-  // picker, so a silent write failure = users see only Ollama even though
-  // admin Connections shows the env-var entries.
-  const reconcileResult = await reconcileOpenwebuiManagedConfigViaAdmin(jwt, {
-    ...(options.managedConfig ?? {}),
-    modelSources,
-  });
+  // Step 6: Reconcile Eve-managed persisted config. With ENABLE_PERSISTENT_CONFIG=true
+  // the DB overrides env vars for the model picker — a silent write failure here
+  // is exactly the bug where users see only Ollama despite admin Connections
+  // showing every entry.
+  try {
+    const reconcileResult = await reconcileOpenwebuiManagedConfigViaAdmin(jwt, {
+      ...(options.managedConfig ?? {}),
+      modelSources,
+    });
+    if (!reconcileResult) {
+      return { ok: false, stage: 'reconcile', reason: 'managed config read or save returned null' };
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      stage: 'reconcile',
+      reason: err instanceof Error ? err.message : String(err),
+    };
+  }
 
-  if (!reconcileResult) return false;
-  return true;
+  return { ok: true };
 }
 
 /**

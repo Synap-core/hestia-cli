@@ -1906,12 +1906,12 @@ async function* registerPipelinesInOpenwebui(deployDir: string): AsyncGenerator<
   const { modelSources, pipelinesKey, pipelinesUrl } = buildOpenwebuiModelSources(secrets, deployDir);
   if (pipelinesKey) {
     yield { type: "step", label: "Registering model sources in OpenWebUI…" };
-    const ok = await registerOpenwebuiAdminApi(modelSources, {
+    const outcome = await registerOpenwebuiAdminApi(modelSources, {
       pipelinesUrl,
       pipelinesKey,
       managedConfig: buildOpenwebuiManagedConfig(secrets),
     });
-    if (ok) {
+    if (outcome.ok) {
       await markOpenwebuiConfigReconciled(secrets);
       const count = modelSources.length;
       yield { type: "log", line: `Model sources registered in OpenWebUI ✓ — ${count} source(s) visible in model picker` };
@@ -1927,7 +1927,10 @@ async function* registerPipelinesInOpenwebui(deployDir: string): AsyncGenerator<
         };
       }
     } else {
-      yield { type: "log", line: "Model source registration failed after retries — add manually: OpenWebUI Admin → Settings → OpenAI" };
+      yield {
+        type: "log",
+        line: `Model source registration failed at stage='${outcome.stage}': ${outcome.reason} — run \`eve openwebui sync\` to retry`,
+      };
     }
   } else {
     yield { type: "log", line: "No PIPELINES_API_KEY found — skipping model-source registration" };

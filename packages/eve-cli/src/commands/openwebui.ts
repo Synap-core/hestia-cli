@@ -54,22 +54,26 @@ export function openwebuiCommand(program: Command): void {
       const spinner = createSpinner(`Waiting for OpenWebUI (up to ${maxRetries * 5} s)…`);
       spinner.start();
 
-      const ok = await registerOpenwebuiAdminApi(modelSources, {
+      const outcome = await registerOpenwebuiAdminApi(modelSources, {
         pipelinesUrl,
         pipelinesKey,
         managedConfig: buildOpenwebuiManagedConfig(secrets),
         maxRetries,
       });
 
-      if (!ok) {
-        spinner.fail('Registration failed');
-        printError('OpenWebUI did not become healthy within the budget, or the admin JWT could not be forged.');
+      if (!outcome.ok) {
+        spinner.fail(`Registration failed at stage='${outcome.stage}'`);
+        printError(outcome.reason);
         console.log();
-        printWarning('Checks to run:');
-        console.log(colors.muted('  1. docker ps | grep openwebui'));
-        console.log(colors.muted('  2. docker logs hestia-openwebui --tail 30'));
-        console.log(colors.muted('  3. cat /opt/openwebui/.env | grep WEBUI_SECRET_KEY'));
-        console.log(colors.muted('  4. eve doctor'));
+        printWarning('Likely fix per stage:');
+        console.log(colors.muted("  health        → docker ps --filter name=hestia-openwebui --format '{{.Ports}}'"));
+        console.log(colors.muted('                  curl -sI http://127.0.0.1:3011/health'));
+        console.log(colors.muted("  secret-key    → grep '^WEBUI_SECRET_KEY=' /opt/openwebui/.env"));
+        console.log(colors.muted('  admin-row     → docker exec hestia-openwebui sqlite3 /app/backend/data/webui.db "SELECT id,email,role FROM user"'));
+        console.log(colors.muted('  jwt-rejected  → check OWUI version; admin JWT format may have changed'));
+        console.log(colors.muted('  reconcile     → docker logs hestia-openwebui --tail 30'));
+        console.log();
+        printWarning('After fixing, re-run: eve openwebui sync');
         process.exit(1);
       }
 
