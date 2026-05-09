@@ -1,7 +1,7 @@
 {
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"find /Users/antoine/Documents/Code/synap/hestia-cli -name \\\"*.compose.yml\\\" -o -name \\\"docker-compose*.yml\\\" | xargs grep -l \\\"pipelines\\\\|openwebui\\\" 2>/dev/null\"}",
-  "error": "Exit code 1",
-  "timestamp": "2026-05-09T23:37:51.180Z",
+  "tool_name": "Read",
+  "tool_input_preview": "{\"file_path\":\"/Users/antoine/Documents/Code/synap/hestia-cli/packages/@eve/lifecycle/assets/pipelines\"}",
+  "error": "EISDIR: illegal operation on a directory, read '/Users/antoine/Documents/Code/synap/hestia-cli/packages/@eve/lifecycle/assets/pipelines'",
+  "timestamp": "2026-05-09T23:42:17.420Z",
   "retry_count": 1
 }

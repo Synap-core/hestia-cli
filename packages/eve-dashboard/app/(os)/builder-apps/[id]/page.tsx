@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Button, Spinner } from "@heroui/react";
-import { ExternalLink, RefreshCw } from "lucide-react";
+import { ExternalLink, Maximize2, Minimize2, RefreshCw } from "lucide-react";
 import { AppPane } from "../../components/app-pane";
 import { PaneHeader } from "../../components/pane-header";
 import {
@@ -29,6 +29,7 @@ export default function BuilderAppPage() {
   const appId = useMemo(() => decodeURIComponent(params.id), [params.id]);
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [reloadKey, setReloadKey] = useState(0);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,26 +68,43 @@ export default function BuilderAppPage() {
 
   const title = state.kind === "ready" ? state.manifest.name : "Builder app";
 
-  return (
+  const content = (
     <>
       <PaneHeader
         title={title}
         back={() => router.push("/")}
         actions={
-          state.kind === "ready" &&
-          state.manifest.rendererType === "external" &&
-          state.manifest.url ? (
-            <Button
-              isIconOnly
-              variant="light"
-              size="sm"
-              radius="full"
-              aria-label="Open in new tab"
-              onPress={() => window.open(state.manifest.url, "_blank", "noreferrer")}
-              className="text-foreground/55 hover:text-foreground"
-            >
-              <ExternalLink className="h-4 w-4" strokeWidth={2} />
-            </Button>
+          state.kind === "ready" ? (
+            <>
+              <Button
+                isIconOnly
+                variant="light"
+                size="sm"
+                radius="full"
+                aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+                onPress={() => setIsFullscreen((value) => !value)}
+                className="text-foreground/55 hover:text-foreground"
+              >
+                {isFullscreen ? (
+                  <Minimize2 className="h-4 w-4" strokeWidth={2} />
+                ) : (
+                  <Maximize2 className="h-4 w-4" strokeWidth={2} />
+                )}
+              </Button>
+              {state.manifest.rendererType === "external" && state.manifest.url ? (
+                <Button
+                  isIconOnly
+                  variant="light"
+                  size="sm"
+                  radius="full"
+                  aria-label="Open in new tab"
+                  onPress={() => window.open(state.manifest.url, "_blank", "noopener,noreferrer")}
+                  className="text-foreground/55 hover:text-foreground"
+                >
+                  <ExternalLink className="h-4 w-4" strokeWidth={2} />
+                </Button>
+              ) : null}
+            </>
           ) : null
         }
       />
@@ -128,6 +146,16 @@ export default function BuilderAppPage() {
       </div>
     </>
   );
+
+  if (isFullscreen) {
+    return (
+      <div className="fixed inset-0 z-50 flex flex-col bg-background">
+        {content}
+      </div>
+    );
+  }
+
+  return content;
 }
 
 function CenteredStatus({

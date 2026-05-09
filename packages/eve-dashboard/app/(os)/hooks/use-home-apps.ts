@@ -34,6 +34,7 @@ import {
   type AppEntityLike,
   type EveAppManifest,
 } from "../lib/eve-app-manifest";
+import { createEmbeddedAppHref } from "../lib/app-launch-url";
 import type { CpAuthBannerState } from "../../components/cp-auth-banner";
 
 // ─── Public types ────────────────────────────────────────────────────────────
@@ -57,7 +58,7 @@ export interface HomeApp {
   iconLucide?: string;
   /** Single-character/emoji fallback for components without icons. */
   emoji?: string;
-  /** Where clicking opens. New tab. */
+  /** Where clicking opens. External apps route through the Eve app pane. */
   url: string;
   category: AppCategory;
   status: AppStatus;
@@ -170,7 +171,12 @@ function localToHomeApp(c: LocalComponentRow): HomeApp | null {
     name,
     description: c.description,
     emoji: c.emoji,
-    url,
+    url: createEmbeddedAppHref({
+      id: c.id,
+      name,
+      url,
+      requiresAuth: c.id === "synap",
+    }),
     category: AI_LOCAL_COMPONENTS.has(c.id) ? "ai" : mapCategory(c.category),
     status,
     isAI: AI_LOCAL_COMPONENTS.has(c.id),
@@ -223,7 +229,12 @@ function marketplaceToHomeApp(
     name: m.name,
     description: m.description ?? undefined,
     iconUrl: m.iconUrl ?? undefined,
-    url,
+    url: createEmbeddedAppHref({
+      id: m.slug,
+      name: m.name,
+      url,
+      requiresAuth: m.appType === "url" && isTrustedSynapUrl(url),
+    }),
     category: cat,
     status,
     isAI,
@@ -231,6 +242,15 @@ function marketplaceToHomeApp(
     installCount: m.installCount,
     isLocal: m.appType === "eve_component",
   };
+}
+
+function isTrustedSynapUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" && parsed.hostname.endsWith(".synap.live");
+  } catch {
+    return false;
+  }
 }
 
 function builderManifestToHomeApp(manifest: EveAppManifest): HomeApp {

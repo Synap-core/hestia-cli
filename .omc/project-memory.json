@@ -133,14 +133,20 @@
     },
     {
       "path": "packages/@eve/dna/src/openwebui-admin.ts",
-      "accessCount": 6,
-      "lastAccessed": 1778369900704,
+      "accessCount": 8,
+      "lastAccessed": 1778370205387,
       "type": "file"
     },
     {
       "path": "packages/@eve/dna/src/openwebui-tools-sync.ts",
       "accessCount": 5,
       "lastAccessed": 1778369729348,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/lifecycle/src/index.ts",
+      "accessCount": 5,
+      "lastAccessed": 1778370200123,
       "type": "file"
     },
     {
@@ -162,27 +168,33 @@
       "type": "file"
     },
     {
-      "path": "packages/@eve/lifecycle/src/index.ts",
-      "accessCount": 2,
-      "lastAccessed": 1778369910480,
-      "type": "file"
-    },
-    {
       "path": "packages/@eve/legs/src/lib/traefik.ts",
       "accessCount": 2,
       "lastAccessed": 1778370025470,
       "type": "file"
     },
     {
-      "path": "docs/openwebui-integration-strategy.md",
-      "accessCount": 1,
-      "lastAccessed": 1778369741054,
+      "path": "packages/@eve/dna/src/wire-ai.ts",
+      "accessCount": 2,
+      "lastAccessed": 1778370191220,
       "type": "file"
     },
     {
-      "path": "packages/@eve/dna/src/wire-ai.ts",
+      "path": "packages/@eve/lifecycle/assets/pipelines/synap_memory_filter.py",
+      "accessCount": 2,
+      "lastAccessed": 1778370413268,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/lifecycle/assets/pipelines/synap_channel_sync.py",
+      "accessCount": 2,
+      "lastAccessed": 1778370424137,
+      "type": "file"
+    },
+    {
+      "path": "docs/openwebui-integration-strategy.md",
       "accessCount": 1,
-      "lastAccessed": 1778369872850,
+      "lastAccessed": 1778369741054,
       "type": "file"
     },
     {
@@ -195,6 +207,48 @@
       "path": "packages/@eve/dna/src/synap-overrides.ts",
       "accessCount": 1,
       "lastAccessed": 1778369984842,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/lifecycle/assets/pipelines/synap_eve_help.py",
+      "accessCount": 1,
+      "lastAccessed": 1778370139951,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/lifecycle/assets/pipelines/synap_welcome.py",
+      "accessCount": 1,
+      "lastAccessed": 1778370140406,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/lifecycle/assets/pipelines/synap_hermes_dispatch.py",
+      "accessCount": 1,
+      "lastAccessed": 1778370140789,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/lifecycle/assets/pipelines/synap_calendar_awareness.py",
+      "accessCount": 1,
+      "lastAccessed": 1778370141223,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/lifecycle/assets/pipelines/synap_knowledge_sync.py",
+      "accessCount": 1,
+      "lastAccessed": 1778370143980,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/dna/src/components.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778370194080,
+      "type": "file"
+    },
+    {
+      "path": "packages/eve-dashboard/lib/doctor.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778370197209,
       "type": "file"
     }
   ],

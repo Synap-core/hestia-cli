@@ -24,6 +24,7 @@ import {
   type LucideIcon, type LucideProps,
 } from "lucide-react";
 import { brandColorFor } from "../lib/brand-colors";
+import { createEmbeddedAppHref } from "../lib/app-launch-url";
 import type { DockApp } from "./use-dock-apps";
 
 const GLYPHS: Record<string, LucideIcon> = {
@@ -60,6 +61,13 @@ export function DockIcon({ app, active, iconUrl }: DockIconProps) {
   const palette = brandColorFor(app.slug);
   const useRemote = !palette.glyph && iconUrl;
   const isExternal = app.path.startsWith("http");
+  const href = isExternal
+    ? createEmbeddedAppHref({
+        id: app.id,
+        name: app.name,
+        url: app.path,
+      })
+    : app.path;
 
   const iconContent = useRemote ? (
     // eslint-disable-next-line @next/next/no-img-element
@@ -90,29 +98,15 @@ export function DockIcon({ app, active, iconUrl }: DockIconProps) {
 
   return (
     <div className="relative flex h-10 w-10 shrink-0 items-center justify-center">
-      {isExternal ? (
-        <a
-          href={app.path}
-          target="_blank"
-          rel="noreferrer"
-          aria-label={`Open ${app.name}`}
-          title={app.name}
-          className={sharedClassName}
-          style={{ background: palette.bg }}
-        >
-          {iconContent}
-        </a>
-      ) : (
-        <Link
-          href={app.path}
-          aria-label={`Open ${app.name}`}
-          title={app.name}
-          className={sharedClassName}
-          style={{ background: palette.bg }}
-        >
-          {iconContent}
-        </Link>
-      )}
+      <Link
+        href={href}
+        aria-label={`Open ${app.name}`}
+        title={app.name}
+        className={sharedClassName}
+        style={{ background: palette.bg }}
+      >
+        {iconContent}
+      </Link>
 
       {/* Active indicator pill — 3px tall x 10px wide, ~6px below the icon. */}
       {active && (

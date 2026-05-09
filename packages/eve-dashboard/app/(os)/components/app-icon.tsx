@@ -50,7 +50,6 @@ export interface AppIconProps {
 export function AppIcon({ app }: AppIconProps) {
   const palette = brandColorFor(app.id);
   const useRemote = !palette.glyph && Boolean(app.iconUrl);
-  const isExternalUrl = /^https?:\/\//.test(app.url);
 
   const statusLabel =
     app.status === "online"
@@ -64,8 +63,6 @@ export function AppIcon({ app }: AppIconProps) {
   return (
     <a
       href={app.url}
-      target={isExternalUrl ? "_blank" : undefined}
-      rel={isExternalUrl ? "noreferrer" : undefined}
       aria-label={
         statusLabel
           ? `Open ${app.name}, status ${statusLabel}`
