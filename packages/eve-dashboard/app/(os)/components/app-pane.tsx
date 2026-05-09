@@ -32,7 +32,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Spinner } from "@heroui/react";
 import { AlertCircle, RefreshCw } from "lucide-react";
 import { getSharedSession } from "@/lib/synap-auth";
-import { createAllowedEmbedOriginChecker } from "@eve/dna";
+import { createAllowedEmbedOriginChecker } from "@eve/dna/browser";
 
 type PaneStatus = "probing" | "loading" | "ready" | "unreachable";
 

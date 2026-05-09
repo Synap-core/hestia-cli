@@ -132,6 +132,12 @@
       "type": "file"
     },
     {
+      "path": "packages/@eve/dna/src/openwebui-admin.ts",
+      "accessCount": 6,
+      "lastAccessed": 1778369900704,
+      "type": "file"
+    },
+    {
       "path": "packages/@eve/dna/src/openwebui-tools-sync.ts",
       "accessCount": 5,
       "lastAccessed": 1778369729348,
@@ -145,8 +151,8 @@
     },
     {
       "path": "packages/@eve/dna/src/index.ts",
-      "accessCount": 3,
-      "lastAccessed": 1778368889312,
+      "accessCount": 4,
+      "lastAccessed": 1778369824791,
       "type": "file"
     },
     {
@@ -156,9 +162,39 @@
       "type": "file"
     },
     {
-      "path": "packages/@eve/dna/src/openwebui-admin.ts",
-      "accessCount": 3,
-      "lastAccessed": 1778369729815,
+      "path": "packages/@eve/lifecycle/src/index.ts",
+      "accessCount": 2,
+      "lastAccessed": 1778369910480,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/legs/src/lib/traefik.ts",
+      "accessCount": 2,
+      "lastAccessed": 1778370025470,
+      "type": "file"
+    },
+    {
+      "path": "docs/openwebui-integration-strategy.md",
+      "accessCount": 1,
+      "lastAccessed": 1778369741054,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/dna/src/wire-ai.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778369872850,
+      "type": "file"
+    },
+    {
+      "path": "docker-compose.yml",
+      "accessCount": 1,
+      "lastAccessed": 1778369875437,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/dna/src/synap-overrides.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778369984842,
       "type": "file"
     }
   ],

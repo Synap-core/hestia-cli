@@ -1,7 +1,7 @@
 {
   "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"ls /Users/antoine/Documents/Code/synap/hestia-cli/packages/@eve/dna/src/lifecycle/ 2>&1\",\"description\":\"Check if lifecycle directory exists\"}",
-  "error": "Exit code 1\nls: /Users/antoine/Documents/Code/synap/hestia-cli/packages/@eve/dna/src/lifecycle/: No such file or directory",
-  "timestamp": "2026-05-09T18:33:17.665Z",
+  "tool_input_preview": "{\"command\":\"find /Users/antoine/Documents/Code/synap/hestia-cli -name \\\"*.compose.yml\\\" -o -name \\\"docker-compose*.yml\\\" | xargs grep -l \\\"pipelines\\\\|openwebui\\\" 2>/dev/null\"}",
+  "error": "Exit code 1",
+  "timestamp": "2026-05-09T23:37:51.180Z",
   "retry_count": 1
 }
