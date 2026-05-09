@@ -3,7 +3,7 @@ import { execa } from 'execa';
 import { execSync, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getGlobalCliFlags } from '@eve/cli-kit';
@@ -14,6 +14,7 @@ import {
   checkNeedsAdmin,
 } from '@eve/lifecycle';
 import { findPodDeployDir, entityStateManager, readEveSecrets } from '@eve/dna';
+import { ensureKratosRunning } from '@eve/brain';
 import { installDashboardContainer, dashboardIsRunning } from '@eve/legs';
 import { randomBytes } from 'node:crypto';
 import {
@@ -43,6 +44,39 @@ function connectToEveNetwork(name: string): void {
   try {
     execSync(`docker network connect eve-network ${name}`, { stdio: ['pipe', 'pipe', 'ignore'] });
   } catch { /* already connected */ }
+}
+
+async function resolveSynapUpdateDomain(deployDir: string): Promise<string> {
+  const secrets = await readEveSecrets().catch(() => null);
+  const fromSecrets = secrets?.domain?.primary?.trim();
+  if (fromSecrets) return fromSecrets;
+
+  try {
+    const out = execSync(
+      `docker compose config --format json`,
+      { cwd: deployDir, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
+    );
+    const parsed = JSON.parse(out) as { services?: { kratos?: { environment?: string[] | Record<string, string> } } };
+    const env = parsed.services?.kratos?.environment;
+    if (Array.isArray(env)) {
+      const domainLine = env.find((line) => line.startsWith('DOMAIN='));
+      const domain = domainLine?.slice('DOMAIN='.length).trim();
+      if (domain) return domain;
+    } else if (env?.DOMAIN?.trim()) {
+      return env.DOMAIN.trim();
+    }
+  } catch {
+    // Fall through to .env parsing.
+  }
+
+  const envPath = join(deployDir, '.env');
+  if (existsSync(envPath)) {
+    const envText = readFileSync(envPath, 'utf-8');
+    const domain = envText.match(/^DOMAIN=(.+)$/m)?.[1]?.trim();
+    if (domain) return domain;
+  }
+
+  return 'localhost';
 }
 
 interface UpdateTarget {
@@ -215,8 +249,18 @@ async function buildUpdateTargets(deployDir: string | undefined): Promise<Update
         // silently keeping the old image. backend-migrate shares the same
         // image as backend; realtime has its own separate image.
         await execa('docker', ['compose', 'pull', 'backend', 'backend-migrate', 'realtime'], { cwd: deployDir, env, stdio: 'inherit' });
+        // Mirror synap-backend/deploy/update-pod.sh: Kratos image refresh is
+        // best-effort so a registry hiccup does not block a backend security
+        // update, but migrations still run below against the available image.
+        try {
+          await execa('docker', ['compose', 'pull', 'kratos', 'kratos-migrate'], { cwd: deployDir, env, stdio: 'inherit' });
+        } catch {
+          printWarning('Kratos image pull failed — continuing with the currently available Kratos image.');
+        }
         await execa('docker', ['compose', 'run', '--rm', 'backend-migrate'], { cwd: deployDir, env, stdio: 'inherit' });
         await execa('docker', ['compose', 'up', '-d', '--no-deps', 'backend', 'realtime'], { cwd: deployDir, env, stdio: 'inherit' });
+        const domain = await resolveSynapUpdateDomain(deployDir);
+        await ensureKratosRunning(deployDir, domain);
         const name = getSynapBackendContainer();
         if (name) connectToEveNetwork(name);
 

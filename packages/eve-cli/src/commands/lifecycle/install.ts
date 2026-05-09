@@ -16,11 +16,11 @@ import {
   ensureSecretValue,
   getServerIp,
   hasAnyProvider,
-  wireAllInstalledComponents,
+  type WireAiResult,
 } from '@eve/dna';
 import { getGlobalCliFlags, outputJson } from '@eve/cli-kit';
 import { runBrainInit, runInferenceInit, resolveSynapDelegate } from '@eve/brain';
-import { runLegsProxySetup, refreshTraefikRoutes, TraefikService } from '@eve/legs';
+import { runLegsProxySetup } from '@eve/legs';
 import { text } from '@clack/prompts';
 import {
   colors,
@@ -45,6 +45,7 @@ import {
   runBackendPreflight,
   provisionAllAgents,
   checkNeedsAdmin,
+  materializeTargets,
 } from '@eve/lifecycle';
 
 // ---------------------------------------------------------------------------
@@ -610,8 +611,8 @@ async function maybeOfferDomainSetup(installedComponents: string[]): Promise<voi
   spinner.start();
   try {
     await writeEveSecrets({ domain: { primary: domainName, ssl: !!wantSsl, email } });
-    const traefik = new TraefikService();
-    await traefik.configureSubdomains(domainName, !!wantSsl, email, installedComponents);
+    const [result] = await materializeTargets(null, ['traefik-routes']);
+    if (!result?.ok) throw new Error(result?.error ?? result?.summary ?? 'unknown Traefik error');
     spinner.succeed(`Domain ${domainName} configured`);
   } catch (err) {
     spinner.fail(`Failed to configure domain: ${err instanceof Error ? err.message : String(err)}`);
@@ -748,7 +749,10 @@ async function maybeOfferAiProviderSetup(installedComponents: string[]): Promise
   const spinner = createSpinner('Wiring AI provider into installed components...');
   spinner.start();
   const updated = await readEveSecrets(process.cwd());
-  const results = wireAllInstalledComponents(updated, installedComponents);
+  const [materialized] = await materializeTargets(updated, ['ai-wiring'], { components: installedComponents });
+  const results = Array.isArray(materialized?.details?.results)
+    ? materialized.details.results as WireAiResult[]
+    : [];
   const ok = results.filter(r => r.outcome === 'ok').length;
   const failed = results.filter(r => r.outcome === 'failed');
 
@@ -928,8 +932,7 @@ function buildInstallSteps(
     steps.push({
       label: 'Setting up Hermes daemon...',
       async fn() {
-        const { writeHermesEnvFile } = await import('@eve/dna');
-        await writeHermesEnvFile(process.cwd());
+        await materializeTargets(null, ['hermes-env']);
         // Container is managed by the Eve compose stack — no extra start needed;
         // the env file written above is picked up on next docker compose up.
         console.log('  Hermes env file written to .eve/hermes.env');

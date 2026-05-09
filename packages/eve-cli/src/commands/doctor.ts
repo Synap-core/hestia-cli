@@ -12,7 +12,7 @@ import {
   hasAnyProvider,
 } from '@eve/dna';
 import { verifyComponent } from '@eve/legs';
-import { runHubProtocolProbes, type HubProtocolDiagnostic } from '@eve/lifecycle';
+import { runDoctorChecks, runHubProtocolProbes, type HubProtocolDiagnostic } from '@eve/lifecycle';
 import { probeRoutes, probeVerdict, type RouteProbe } from '../lib/probe-routes.js';
 import { diagnoseFailedRoute, type DeepDiagnostic } from '../lib/diagnose-route.js';
 import { buildPodRunner } from '../lib/doctor-runners.js';
@@ -582,6 +582,28 @@ async function runDiagnostics(opts: DoctorOptions = { verbose: false, skipProbes
   } catch (error) {
     stateCheck.fail('Cannot read entity state');
     checks.push({ name: 'Entity State', status: 'fail', message: 'Failed to read state' });
+  }
+
+  try {
+    const coreChecks = await runDoctorChecks();
+    const existing = new Set(checks.map((check) => check.name));
+    for (const check of coreChecks) {
+      const name = `Core: ${check.name}`;
+      if (existing.has(name)) continue;
+      existing.add(name);
+      checks.push({
+        name,
+        status: check.status,
+        message: check.message,
+        fix: check.fix,
+      });
+    }
+  } catch (error) {
+    checks.push({
+      name: 'Operational core',
+      status: 'warn',
+      message: `Shared doctor runner unavailable: ${error instanceof Error ? error.message : String(error)}`,
+    });
   }
 
   // Print results

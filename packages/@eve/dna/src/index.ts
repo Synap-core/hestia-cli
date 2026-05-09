@@ -110,6 +110,14 @@ export {
 } from './operational.js';
 
 export {
+  redactSecrets,
+  buildConfigDebugPayload,
+  buildDiscoveryDebugPayload,
+  buildMaterializedDebugPayload,
+  buildEventsDebugPayload,
+} from './debug-payloads.js';
+
+export {
   type EveSecrets,
   type WiringStatus,
   type UnifiedProvider,
@@ -210,7 +218,11 @@ export {
 // probe → Docker DNS → public domain. Designed for co-located dashboard
 // runtime; does NOT require secrets.json.
 export {
+  type PodUrlResolutionDiagnostic,
+  type PodUrlResolutionResult,
+  type PodUrlResolutionSource,
   resolvePodUrl,
+  resolvePodUrlDetailed,
   resetPodUrlCache,
 } from './pod-url.js';
 
@@ -237,6 +249,7 @@ export {
   AI_CONSUMERS,
   AI_CONSUMERS_NEEDING_RECREATE,
   buildOpenwebuiModelSources,
+  buildOpenwebuiManagedConfig,
   registerOpenwebuiAdminApi,
 } from './wire-ai.js';
 
@@ -248,6 +261,8 @@ export {
   type OpenwebuiStatus,
   type ModelSource,
   type ModelSourceMetadata,
+  type OpenWebuiManagedConfig,
+  type OpenWebuiConfigReconcileResult,
   getStatus,
   getAdminJwt,
   getConfig,
@@ -256,8 +271,18 @@ export {
   registerPipeline,
   listModelSources,
   registerModelSource,
+  reconcileOpenwebuiManagedConfig,
+  reconcileOpenwebuiManagedConfigViaAdmin,
   upsertAllModelSources,
 } from './openwebui-admin.js';
+
+export {
+  ensureOpenWebuiBootstrapSecrets,
+  writeOpenwebuiEnv,
+  type OpenwebuiBootstrapResult,
+  type WriteOpenwebuiEnvOptions,
+  type WriteOpenwebuiEnvResult,
+} from './openwebui-bootstrap.js';
 
 export {
   DEFAULT_HUB_PATH,

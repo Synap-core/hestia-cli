@@ -44,9 +44,29 @@ export interface OpenWebuiConfig {
   openai?: {
     api_base_urls?: string[];
     api_keys?: string[];
+    metadata?: Record<string, ModelSourceMetadata>;
   };
   // Other config keys may exist
   [key: string]: unknown;
+}
+
+export type OpenWebuiDefaultModels = string | string[];
+
+export interface OpenWebuiManagedConfig {
+  /** Eve-managed OpenAI-compatible model sources. Other sources are preserved. */
+  modelSources?: ModelSource[];
+  /** OpenWebUI default model selection. Preserves existing config key casing/shape where possible. */
+  defaultModels?: OpenWebuiDefaultModels;
+  webuiUrl?: string;
+  webuiName?: string;
+  enableSignup?: boolean;
+  defaultUserRole?: string;
+}
+
+export interface OpenWebuiConfigReconcileResult {
+  config: OpenWebuiConfig;
+  changed: boolean;
+  changedKeys: string[];
 }
 
 export type OpenwebuiStatus =
@@ -410,6 +430,143 @@ export interface ModelSourceMetadata {
 
 // ── Model Source Management ──
 
+const MANAGED_ROOT_KEY_BY_OPTION = {
+  webuiUrl: 'WEBUI_URL',
+  webuiName: 'WEBUI_NAME',
+  enableSignup: 'ENABLE_SIGNUP',
+  defaultUserRole: 'DEFAULT_USER_ROLE',
+} as const satisfies Record<Exclude<keyof OpenWebuiManagedConfig, 'modelSources' | 'defaultModels'>, string>;
+
+const DEFAULT_MODELS_KEYS = ['DEFAULT_MODELS', 'default_models'] as const;
+
+function isPlainConfigObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function modelSourceMetadataFor(modelSource: ModelSource): ModelSourceMetadata {
+  return {
+    name: modelSource.displayName,
+    models: modelSource.models?.join(';'),
+  };
+}
+
+function defaultModelsForExistingShape(
+  desired: OpenWebuiDefaultModels,
+  existing: unknown,
+): OpenWebuiDefaultModels {
+  if (Array.isArray(existing)) {
+    return Array.isArray(desired) ? [...desired] : [desired];
+  }
+  return Array.isArray(desired) ? desired.join(',') : desired;
+}
+
+function setIfChanged(
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown,
+  changedKeys: Set<string>,
+): void {
+  if (JSON.stringify(target[key]) === JSON.stringify(value)) return;
+  target[key] = value;
+  changedKeys.add(key);
+}
+
+/**
+ * Reconcile Eve-managed OpenWebUI persisted config while preserving unrelated
+ * OpenWebUI and user-owned settings.
+ *
+ * This helper only owns:
+ *   - config.openai.api_base_urls/api_keys/metadata entries for supplied sources
+ *   - DEFAULT_MODELS/default_models
+ *   - WEBUI_URL, WEBUI_NAME, ENABLE_SIGNUP, DEFAULT_USER_ROLE
+ *
+ * Existing model sources not supplied by Eve remain in place. OpenAI keys are
+ * aligned by URL and padded to OpenWebUI's expected array shape.
+ */
+export function reconcileOpenwebuiManagedConfig(
+  currentConfig: OpenWebuiConfig,
+  desired: OpenWebuiManagedConfig,
+): OpenWebuiConfigReconcileResult {
+  const config: OpenWebuiConfig = { ...currentConfig };
+  const changedKeys = new Set<string>();
+
+  if (desired.modelSources?.length) {
+    const existingOpenai = isPlainConfigObject(config.openai) ? config.openai : {};
+    const openai: Record<string, unknown> = { ...existingOpenai };
+    const urls = Array.isArray(openai.api_base_urls) ? [...openai.api_base_urls] : [];
+    const keys = Array.isArray(openai.api_keys) ? [...openai.api_keys] : [];
+    const existingMetadata = isPlainConfigObject(openai.metadata) ? openai.metadata : {};
+    const metadata: Record<string, ModelSourceMetadata> = { ...existingMetadata } as Record<string, ModelSourceMetadata>;
+
+    for (const modelSource of desired.modelSources) {
+      const idx = urls.indexOf(modelSource.url);
+      if (idx === -1) {
+        urls.push(modelSource.url);
+        keys.push(modelSource.apiKey);
+      } else {
+        keys[idx] = modelSource.apiKey;
+      }
+      metadata[modelSource.url] = modelSourceMetadataFor(modelSource);
+    }
+
+    while (keys.length < urls.length) keys.push('');
+
+    setIfChanged(openai, 'api_base_urls', urls, changedKeys);
+    setIfChanged(openai, 'api_keys', keys, changedKeys);
+    setIfChanged(openai, 'metadata', metadata, changedKeys);
+
+    if (JSON.stringify(config.openai) !== JSON.stringify(openai)) {
+      config.openai = openai as OpenWebuiConfig['openai'];
+      changedKeys.add('openai');
+    }
+  }
+
+  if (desired.defaultModels !== undefined) {
+    const existingKeys = DEFAULT_MODELS_KEYS.filter(key => key in config);
+    const keysToSet: readonly string[] = existingKeys.length ? existingKeys : ['DEFAULT_MODELS'];
+    for (const key of keysToSet) {
+      setIfChanged(
+        config,
+        key,
+        defaultModelsForExistingShape(desired.defaultModels, config[key]),
+        changedKeys,
+      );
+    }
+  }
+
+  for (const [optionKey, configKey] of Object.entries(MANAGED_ROOT_KEY_BY_OPTION)) {
+    const value = desired[optionKey as keyof typeof MANAGED_ROOT_KEY_BY_OPTION];
+    if (value !== undefined) {
+      setIfChanged(config, configKey, value, changedKeys);
+    }
+  }
+
+  return {
+    config,
+    changed: changedKeys.size > 0,
+    changedKeys: [...changedKeys],
+  };
+}
+
+/**
+ * Read OpenWebUI persisted config, reconcile Eve-managed fields, and save the
+ * merged result. Returns null when the admin API cannot be read or written.
+ */
+export async function reconcileOpenwebuiManagedConfigViaAdmin(
+  jwt: string,
+  desired: OpenWebuiManagedConfig,
+  hostPort?: number,
+): Promise<OpenWebuiConfigReconcileResult | null> {
+  const config = await getConfig(jwt, hostPort);
+  if (!config) return null;
+
+  const result = reconcileOpenwebuiManagedConfig(config, desired);
+  if (!result.changed) return result;
+
+  if (!await saveConfig(jwt, result.config, hostPort)) return null;
+  return result;
+}
+
 /**
  * List all model sources currently configured in OpenWebUI.
  * Returns an empty array if the API is unreachable.
@@ -449,40 +606,13 @@ export async function registerModelSource(
   modelSource: ModelSource,
   hostPort?: number,
 ): Promise<boolean> {
-  const baseUrl = resolveAdminUrl(hostPort);
-
   // 1. Upsert into config.openai
-  const config = await getConfig(jwt, hostPort);
-  if (!config) return false;
-
-  const openai = (config.openai ?? {}) as Record<string, unknown>;
-  const urls: string[] = Array.isArray(openai.api_base_urls) ? [...openai.api_base_urls] : [];
-  const keys: string[] = Array.isArray(openai.api_keys) ? [...openai.api_keys] : [];
-  const metadata: Record<string, ModelSourceMetadata> = (openai.metadata ?? {}) as Record<string, ModelSourceMetadata>;
-
-  const existingIdx = urls.indexOf(modelSource.url);
-  if (existingIdx === -1) {
-    urls.push(modelSource.url);
-    keys.push(modelSource.apiKey);
-  } else {
-    keys[existingIdx] = modelSource.apiKey;
-  }
-
-  // Pad keys
-  while (keys.length < urls.length) keys.push('');
-
-  // Update metadata
-  metadata[modelSource.url] = {
-    name: modelSource.displayName,
-    models: modelSource.models?.join(';'),
-  };
-
-  openai.api_base_urls = urls;
-  openai.api_keys = keys;
-  openai.metadata = metadata;
-  config.openai = openai;
-
-  if (!await saveConfig(jwt, config, hostPort)) return false;
+  const result = await reconcileOpenwebuiManagedConfigViaAdmin(
+    jwt,
+    { modelSources: [modelSource] },
+    hostPort,
+  );
+  if (!result) return false;
 
   // 2. Register as manifold pipeline (for model picker visibility)
   return registerManifoldPipeline(jwt, modelSource, hostPort);
@@ -559,36 +689,12 @@ export async function upsertAllModelSources(
 ): Promise<number> {
   if (modelSources.length === 0) return 0;
 
-  const config = await getConfig(jwt, hostPort);
-  if (!config) return 0;
-
-  const openai = (config.openai ?? {}) as Record<string, unknown>;
-  const urls: string[] = Array.isArray(openai.api_base_urls) ? [...openai.api_base_urls] : [];
-  const keys: string[] = Array.isArray(openai.api_keys) ? [...openai.api_keys] : [];
-  const metadata: Record<string, ModelSourceMetadata> = (openai.metadata ?? {}) as Record<string, ModelSourceMetadata>;
-
-  for (const ms of modelSources) {
-    const idx = urls.indexOf(ms.url);
-    if (idx === -1) {
-      urls.push(ms.url);
-      keys.push(ms.apiKey);
-    } else {
-      keys[idx] = ms.apiKey;
-    }
-    metadata[ms.url] = {
-      name: ms.displayName,
-      models: ms.models?.join(';'),
-    };
-  }
-
-  while (keys.length < urls.length) keys.push('');
-
-  openai.api_base_urls = urls;
-  openai.api_keys = keys;
-  openai.metadata = metadata;
-  config.openai = openai;
-
-  if (!await saveConfig(jwt, config, hostPort)) return 0;
+  const result = await reconcileOpenwebuiManagedConfigViaAdmin(
+    jwt,
+    { modelSources },
+    hostPort,
+  );
+  if (!result) return 0;
 
   // Register each as manifold pipeline (best-effort)
   let registered = 0;

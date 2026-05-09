@@ -16,8 +16,9 @@
 
 import { NextResponse } from "next/server";
 import {
-  readEveSecrets, writeEveSecrets, writeHermesEnvFile, restartHermesIfRunning,
+  readEveSecrets, writeEveSecrets, restartHermesIfRunning,
 } from "@eve/dna";
+import { materializeTargets } from "@eve/lifecycle";
 import { requireAuth } from "@/lib/auth-server";
 
 type Platform = "telegram" | "discord" | "whatsapp" | "signal" | "matrix" | "slack";
@@ -176,9 +177,9 @@ export async function PATCH(req: Request) {
   let hermesRestarted = false;
   if (credentialsChanged) {
     try {
-      await writeHermesEnvFile();
-      hermesRewired = true;
-      hermesRestarted = restartHermesIfRunning();
+      const [result] = await materializeTargets(null, ["hermes-env"]);
+      hermesRewired = Boolean(result?.ok);
+      hermesRestarted = hermesRewired ? restartHermesIfRunning() : false;
     } catch { /* hermes not installed */ }
   }
 

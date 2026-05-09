@@ -24,6 +24,7 @@ import {
   detectCoolifyTargets,
   type AppConfig,
   type DeployEnv,
+  type DeployResult,
 } from '@eve/dna';
 import {
   colors,
@@ -52,6 +53,8 @@ interface DeployOptions {
   yes?: boolean;
   rollback?: string;
 }
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export function deployCommand(program: Command): void {
   const deploy = program
@@ -206,7 +209,7 @@ async function runDeploy(opts: DeployOptions): Promise<void> {
     opts.tag,
   );
 
-  let deployResult: ReturnType<typeof deployToCoolify>;
+  let deployResult: DeployResult | undefined;
 
   if (opts.docker) {
     spinner.succeed('Done');
@@ -217,7 +220,7 @@ async function runDeploy(opts: DeployOptions): Promise<void> {
     const targets = detectCoolifyTargets();
 
     if (!targets[targetEnv]) {
-      spinner.stop();
+      spinner.warn(`No ${targetEnv} Coolify target configured`);
       printWarning(`No ${targetEnv} Coolify target configured.`);
       printInfo(`Set env vars: COOLIFY_${targetEnv.toUpperCase()}_URL + COOLIFY_${targetEnv.toUpperCase()}_TOKEN`);
       printInfo(`Or run: eve login --coolify-${targetEnv} <token>`);
@@ -227,7 +230,7 @@ async function runDeploy(opts: DeployOptions): Promise<void> {
 
     // Confirm before deploying to production
     if (targetEnv === 'production' && !opts.yes) {
-      spinner.stop();
+      spinner.warn('Awaiting production confirmation');
       const confirmed = await clack.confirm({
         message: `Deploying to PRODUCTION. Continue?`,
         initialValue: false,
@@ -398,5 +401,4 @@ async function waitForDeploy(
 
   return targetUrl; // Return whatever we have
 }
-
 

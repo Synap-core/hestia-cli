@@ -20,7 +20,7 @@
  * See: synap-team-docs/content/team/platform/eve-auth-architecture.mdx
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { usePodAuthState } from "./use-pod-auth-state";
 
 export type SetupStatusState =
   | "loading"
@@ -28,12 +28,6 @@ export type SetupStatusState =
   | "needsBootstrap"
   | "unconfigured"
   | "unreachable";
-
-interface SetupStatusResponse {
-  initialized: boolean | null;
-  reason?: string;
-  version?: string | null;
-}
 
 interface UseSetupStatusResult {
   state: SetupStatusState;
@@ -44,55 +38,16 @@ interface UseSetupStatusResult {
 }
 
 export function useSetupStatus(): UseSetupStatusResult {
-  const [state, setState] = useState<SetupStatusState>("loading");
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [version, setVersion] = useState<string | null>(null);
-  const initialLoadDone = useRef(false);
-
-  const load = useCallback(async () => {
-    if (initialLoadDone.current) {
-      setIsRefreshing(true);
-    } else {
-      setState("loading");
-    }
-    try {
-      const res = await fetch("/api/pod/setup-status", {
-        cache: "no-store",
-        credentials: "include",
-      });
-      if (!res.ok) {
-        setState("unreachable");
-        return;
-      }
-      const data = (await res.json()) as SetupStatusResponse;
-
-      if (data.initialized === true) {
-        setVersion(data.version ?? null);
-        setState("ready");
-        return;
-      }
-      if (data.initialized === false) {
-        setVersion(data.version ?? null);
-        setState("needsBootstrap");
-        return;
-      }
-      // initialized === null — distinguish missing pod URL from upstream error.
-      if (data.reason === "no-pod-url") {
-        setState("unconfigured");
-      } else {
-        setState("unreachable");
-      }
-    } catch {
-      setState("unreachable");
-    } finally {
-      initialLoadDone.current = true;
-      setIsRefreshing(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  return { state, isRefreshing, version, refetch: load };
+  const podAuth = usePodAuthState({ includePairing: false });
+  return {
+    state: podAuth.kind === "loading" ? "loading" : podAuth.kind,
+    isRefreshing: podAuth.isRefreshing,
+    version:
+      podAuth.kind === "ready" ||
+      podAuth.kind === "needsBootstrap" ||
+      podAuth.kind === "unreachable"
+        ? podAuth.version
+        : null,
+    refetch: podAuth.refetch,
+  };
 }

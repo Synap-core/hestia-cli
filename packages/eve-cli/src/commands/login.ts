@@ -111,7 +111,7 @@ async function runLogin(opts: {
   }
 
   // No args — show status
-  if (!opts.ghr && !opts.coolifyStaging && !opts.coolifyProd) {
+  if (!opts.ghcr && !opts.coolifyStaging && !opts.coolifyProd) {
     const creds = loadCreds();
     const entries: string[] = [];
     if (creds.ghcr) {

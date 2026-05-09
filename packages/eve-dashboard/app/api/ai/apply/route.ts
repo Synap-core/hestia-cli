@@ -10,11 +10,12 @@
 import { NextResponse } from "next/server";
 import {
   readEveSecrets, entityStateManager,
-  wireAllInstalledComponents,
   AI_CONSUMERS_NEEDING_RECREATE,
 } from "@eve/dna";
-import { runActionToCompletion } from "@eve/lifecycle";
+import { materializeTargets, runActionToCompletion } from "@eve/lifecycle";
 import { requireAuth } from "@/lib/auth-server";
+
+type WireResult = { id: string; outcome: "ok" | "failed" | "skipped"; summary: string };
 
 export async function POST() {
   const auth = await requireAuth();
@@ -30,7 +31,10 @@ export async function POST() {
     return NextResponse.json({ ok: true, results: [], message: "No installed components" });
   }
 
-  const results = wireAllInstalledComponents(secrets, installed);
+  const [materialized] = await materializeTargets(secrets, ["ai-wiring"], { components: installed });
+  const results = Array.isArray(materialized?.details?.results)
+    ? materialized.details.results as WireResult[]
+    : [];
 
   // Wire-only restart isn't enough for components whose env is set at
   // `docker run` time (openclaw). Replace their wire result with a
@@ -55,8 +59,9 @@ export async function POST() {
   const failed = results.filter(r => r.outcome === "failed").length;
 
   return NextResponse.json({
-    ok: failed === 0,
+    ok: Boolean(materialized?.ok) && failed === 0,
     summary: `${ok} ok, ${failed} failed, ${results.length - ok - failed} skipped`,
+    materialized,
     results,
   });
 }

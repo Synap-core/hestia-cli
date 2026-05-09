@@ -53,6 +53,8 @@ const SecretsSchema = z.object({
       serviceModels: z
         .record(z.string(), z.string())
         .optional(),
+      /** Mirror provider routing into the Synap pod when supported. */
+      syncToSynap: z.boolean().optional(),
       /**
        * Per-component wiring status. Keys are component ids; value records
        * when the AI wiring was last applied and whether it succeeded.
@@ -642,6 +644,24 @@ export async function writeEveSecrets(
   const path = secretsPath(cwd);
   await mkdir(join(cwd, '.eve', 'secrets'), { recursive: true });
   await writeFile(path, JSON.stringify(parsed, null, 2), { mode: 0o600 });
+  const changedSections = Object.keys(partial as Record<string, unknown>)
+    .filter((k) => (partial as Record<string, unknown>)[k] !== undefined)
+    .map((k) => `${k}`);
+
+  try {
+    const { appendOperationalEvent } = await import('./operational.js');
+    await appendOperationalEvent({
+      type: 'config.changed',
+      target: 'secrets',
+      ok: true,
+      summary: changedSections.length > 0
+        ? `Updated ${changedSections.join(', ')}`
+        : 'Secrets file touched',
+      details: { path, changedSections },
+    });
+  } catch {
+    /* non-fatal — operational logging must never block the durable write */
+  }
 
   // Keep the centralized per-process cache coherent for long-running
   // dashboard/daemon processes. This is intentionally best-effort so the file
@@ -657,9 +677,6 @@ export async function writeEveSecrets(
   // Dynamic import to avoid circular dep at module load time.
   try {
     const { reconcile } = await import('./reconcile.js');
-    const changedSections = Object.keys(partial as Record<string, unknown>)
-      .filter((k) => (partial as Record<string, unknown>)[k] !== undefined)
-      .map((k) => `${k}`);
     await reconcile(parsed, changedSections);
   } catch {
     /* non-fatal — cascade failures must never block the write */

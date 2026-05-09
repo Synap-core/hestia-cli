@@ -45,6 +45,35 @@ const LOOPBACK_PORT = 14000;
 const DOCKER_DNS_URL = "http://eve-brain-synap:4000";
 const DOCKER_DNS_TIMEOUT_MS = 300;
 
+export type PodUrlResolutionSource =
+  | "env"
+  | "secrets"
+  | "headers"
+  | "discovery"
+  | "loopback"
+  | "docker-dns"
+  | "none";
+
+export interface PodUrlResolutionDiagnostic {
+  level: "info" | "warn" | "error";
+  code: string;
+  message: string;
+}
+
+export interface PodUrlResolutionResult {
+  podUrl: string;
+  source: PodUrlResolutionSource;
+  diagnostics: PodUrlResolutionDiagnostic[];
+}
+
+function diagnostic(
+  level: PodUrlResolutionDiagnostic["level"],
+  code: string,
+  message: string,
+): PodUrlResolutionDiagnostic {
+  return { level, code, message };
+}
+
 // ---------------------------------------------------------------------------
 // Derive from a hostname (x-forwarded-host / dashboard URL)
 // ---------------------------------------------------------------------------
@@ -147,19 +176,19 @@ async function isDockerDnsReachable(): Promise<boolean> {
  *   3. Derive from `secrets.domain.primary`
  * Returns the first non-empty string found, or undefined.
  */
-async function readPodUrlFromSecrets(): Promise<string | undefined> {
+async function readPodUrlFromSecrets(): Promise<{ podUrl: string; detail: string } | undefined> {
   const secrets = await configStore.get();
   if (!secrets) return undefined;
 
   const apiUrl = secrets.synap?.apiUrl?.trim();
-  if (apiUrl) return apiUrl;
+  if (apiUrl) return { podUrl: apiUrl, detail: "secrets.synap.apiUrl" };
 
   const podUrl = secrets.pod?.url?.trim();
-  if (podUrl) return podUrl;
+  if (podUrl) return { podUrl, detail: "secrets.pod.url" };
 
   const domain = secrets.domain?.primary?.trim();
   if (domain && domain.includes(".") && !domain.startsWith("127.") && !domain.startsWith("localhost")) {
-    return `https://pod.${domain}`;
+    return { podUrl: `https://pod.${domain}`, detail: "secrets.domain.primary" };
   }
 
   return undefined;
@@ -185,13 +214,38 @@ export async function resolvePodUrl(
   dashboardUrl?: string,
   headers?: Headers,
 ): Promise<string> {
+  const result = await resolvePodUrlDetailed(explicitUrl, dashboardUrl, headers);
+  return result.podUrl;
+}
+
+/**
+ * Resolve the dashboard-to-backend URL with source tracking and diagnostics.
+ *
+ * This preserves `resolvePodUrl` resolution order and return values while
+ * exposing enough detail for callers to explain which fallback was used.
+ */
+export async function resolvePodUrlDetailed(
+  explicitUrl?: string,
+  dashboardUrl?: string,
+  headers?: Headers,
+): Promise<PodUrlResolutionResult> {
+  const diagnostics: PodUrlResolutionDiagnostic[] = [];
+
   // Step 1: explicit config wins. Set this at deployment time.
   const envUrl = explicitUrl?.trim() || process.env.NEXT_PUBLIC_POD_URL?.trim();
-  if (envUrl) return envUrl;
+  if (envUrl) {
+    diagnostics.push(diagnostic("info", "pod_url.env", "Resolved pod URL from explicit/env configuration."));
+    return { podUrl: envUrl, source: "env", diagnostics };
+  }
+  diagnostics.push(diagnostic("info", "pod_url.env.empty", "No explicit/env pod URL configured."));
 
   // Step 2: secrets.json — the operator's actual configured URL.
   const fromSecrets = await readPodUrlFromSecrets();
-  if (fromSecrets) return fromSecrets;
+  if (fromSecrets) {
+    diagnostics.push(diagnostic("info", "pod_url.secrets", `Resolved pod URL from ${fromSecrets.detail}.`));
+    return { podUrl: fromSecrets.podUrl, source: "secrets", diagnostics };
+  }
+  diagnostics.push(diagnostic("info", "pod_url.secrets.empty", "No pod URL found in secrets."));
 
   // Step 3: derive from dashboard URL (production path when secrets aren't set yet).
   if (dashboardUrl) {
@@ -201,32 +255,53 @@ export async function resolvePodUrl(
     const scheme = headers?.get("x-forwarded-proto") ?? "https";
     if (hostname) {
       const derived = deriveFromHost(hostname, scheme);
-      if (derived) return derived;
+      if (derived) {
+        diagnostics.push(diagnostic("info", "pod_url.headers", "Derived pod URL from request host headers."));
+        return { podUrl: derived, source: "headers", diagnostics };
+      }
+      diagnostics.push(diagnostic("info", "pod_url.headers.unusable", "Request host headers did not contain a routable domain."));
     }
     // Also try parsing the URL itself as a full URL.
     try {
       const u = new URL(dashboardUrl);
       const derived2 = deriveFromHost(u.hostname, u.protocol.replace(":", ""));
-      if (derived2) return derived2;
-    } catch { /* not a full URL — nothing else to try */ }
+      if (derived2) {
+        diagnostics.push(diagnostic("info", "pod_url.dashboard_url", "Derived pod URL from dashboard URL."));
+        return { podUrl: derived2, source: "headers", diagnostics };
+      }
+      diagnostics.push(diagnostic("info", "pod_url.dashboard_url.unusable", "Dashboard URL did not contain a routable domain."));
+    } catch {
+      diagnostics.push(diagnostic("info", "pod_url.dashboard_url.invalid", "Dashboard URL was not a full URL."));
+    }
+  } else {
+    diagnostics.push(diagnostic("info", "pod_url.dashboard_url.empty", "No dashboard URL provided for host derivation."));
   }
 
   // Step 4: on-disk discovery with canonical write-back.
   const fromDiscovery = await discoverAndBackfillPodUrl();
-  if (fromDiscovery) return fromDiscovery;
+  if (fromDiscovery) {
+    diagnostics.push(diagnostic("info", "pod_url.discovery", "Resolved pod URL from on-disk discovery."));
+    return { podUrl: fromDiscovery, source: "discovery", diagnostics };
+  }
+  diagnostics.push(diagnostic("info", "pod_url.discovery.empty", "On-disk discovery did not find a pod URL."));
 
   // Step 5: loopback probe.
   if (await probePort(LOOPBACK_HOST, LOOPBACK_PORT, 200)) {
-    return `http://${LOOPBACK_HOST}:${LOOPBACK_PORT}`;
+    diagnostics.push(diagnostic("info", "pod_url.loopback", "Resolved pod URL from loopback probe."));
+    return { podUrl: `http://${LOOPBACK_HOST}:${LOOPBACK_PORT}`, source: "loopback", diagnostics };
   }
+  diagnostics.push(diagnostic("warn", "pod_url.loopback.unreachable", "Loopback backend port is not reachable."));
 
   // Step 6: Docker DNS.
   if (await isDockerDnsReachable()) {
-    return DOCKER_DNS_URL;
+    diagnostics.push(diagnostic("info", "pod_url.docker_dns", "Resolved pod URL from Docker DNS."));
+    return { podUrl: DOCKER_DNS_URL, source: "docker-dns", diagnostics };
   }
+  diagnostics.push(diagnostic("warn", "pod_url.docker_dns.unreachable", "Docker DNS backend host is not reachable."));
 
   // Step 7: no path found.
-  return "";
+  diagnostics.push(diagnostic("error", "pod_url.none", "Unable to resolve a pod URL."));
+  return { podUrl: "", source: "none", diagnostics };
 }
 
 /** Test hook — clear cached probe results. */

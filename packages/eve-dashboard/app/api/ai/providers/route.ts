@@ -8,9 +8,9 @@
 import { NextResponse } from "next/server";
 import {
   readEveSecrets, writeEveSecrets, entityStateManager,
-  wireAllInstalledComponents, AI_CONSUMERS, AI_CONSUMERS_NEEDING_RECREATE,
+  AI_CONSUMERS, AI_CONSUMERS_NEEDING_RECREATE,
 } from "@eve/dna";
-import { runActionToCompletion } from "@eve/lifecycle";
+import { materializeTargets, runActionToCompletion } from "@eve/lifecycle";
 import { requireAuth } from "@/lib/auth-server";
 
 type ProviderId = "ollama" | "openrouter" | "anthropic" | "openai";
@@ -39,7 +39,10 @@ async function autoApply(opts: { recreate?: boolean } = {}) {
     const consumers = installed.filter(id => AI_CONSUMERS.has(id));
     if (consumers.length === 0) return [];
     const fresh = await readEveSecrets();
-    const wireResults = wireAllInstalledComponents(fresh, consumers);
+    const [materialized] = await materializeTargets(fresh, ["ai-wiring"], { components: consumers });
+    const wireResults = Array.isArray(materialized?.details?.results)
+      ? materialized.details.results as Array<{ id: string; outcome: "ok" | "failed" | "skipped"; summary: string }>
+      : [];
 
     if (opts.recreate) {
       for (const id of AI_CONSUMERS_NEEDING_RECREATE) {

@@ -10,6 +10,7 @@ import {
 import { useTheme } from "next-themes";
 import { ThemeToggle } from "../../components/theme-toggle";
 import { usePodPairing } from "../hooks/use-pod-pairing";
+import { usePodAuthState, type PodAuthState } from "../hooks/use-pod-auth-state";
 import { PodPairDialog } from "../components/pod-pair-dialog";
 
 // ---------------------------------------------------------------------------
@@ -327,6 +328,7 @@ function RotatedKeyBanner({ secret, onSignOut }: { secret: string; onSignOut: ()
 
 function PodConnectionPanel() {
   const { state, userEmail, podUrl, expiresAt, refetch } = usePodPairing();
+  const podAuthState = usePodAuthState({ includePairing: false });
   const [isPairOpen, setIsPairOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
 
@@ -472,6 +474,10 @@ function PodConnectionPanel() {
               sign in again to refresh now.
             </p>
           )}
+          <CompactPodAuthDiagnostics
+            authState={podAuthState}
+            pairingState={state}
+          />
         </div>
         {primaryAction && <div className="self-start">{primaryAction}</div>}
       </div>
@@ -483,6 +489,62 @@ function PodConnectionPanel() {
         onSuccess={refetch}
       />
     </>
+  );
+}
+
+function CompactPodAuthDiagnostics({
+  authState,
+  pairingState,
+}: {
+  authState: PodAuthState;
+  pairingState: ReturnType<typeof usePodPairing>["state"];
+}) {
+  const setupTone =
+    authState.kind === "ready"
+      ? "success"
+      : authState.kind === "loading"
+        ? "default"
+        : authState.kind === "needsBootstrap"
+          ? "warning"
+          : "danger";
+  const pairingTone =
+    pairingState === "paired" || pairingState === "needs-refresh"
+      ? "success"
+      : pairingState === "loading"
+        ? "default"
+        : "warning";
+  const version =
+    authState.kind === "ready" ||
+    authState.kind === "needsBootstrap" ||
+    authState.kind === "unreachable"
+      ? authState.version
+      : null;
+  const reason =
+    authState.kind === "unconfigured" || authState.kind === "unreachable"
+      ? authState.reason
+      : null;
+
+  return (
+    <div className="rounded-lg border border-divider bg-content2/40 px-3 py-2.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[11px] font-medium uppercase tracking-wider text-default-400">
+          Diagnostics
+        </span>
+        <Chip size="sm" color={setupTone} variant="flat" radius="sm">
+          setup: {authState.kind}
+        </Chip>
+        <Chip size="sm" color={pairingTone} variant="flat" radius="sm">
+          token: {pairingState}
+        </Chip>
+      </div>
+      {(version || reason) && (
+        <p className="mt-2 text-xs text-default-500">
+          {version && <>Pod version {version}</>}
+          {version && reason && <span> · </span>}
+          {reason && <>Probe reason: <code className="font-mono">{reason}</code></>}
+        </p>
+      )}
+    </div>
   );
 }
 

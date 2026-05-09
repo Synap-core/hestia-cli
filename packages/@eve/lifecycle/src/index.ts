@@ -27,7 +27,6 @@ import {
   writeEveSecrets,
   pickPrimaryProvider,
   wireComponentAi,
-  wireAllInstalledComponents,
   resolveSynapUrl,
   resolveSynapUrlOnHost,
   SYNAP_BACKEND_INTERNAL_URL,
@@ -36,25 +35,33 @@ import {
   pruneOldImagesForRepo,
   ensureSynapLoopbackOverride,
   connectTraefikToEveNetwork,
-  writeHermesEnvFile,
   writeHermesConfigYaml,
   generateSynapPlugin,
   buildOpenwebuiModelSources,
+  buildOpenwebuiManagedConfig,
   registerOpenwebuiAdminApi,
+  ensureOpenWebuiBootstrapSecrets,
+  writeOpenwebuiEnv,
+  appendOperationalEvent,
+  findPodDeployDir,
   type OpenwebuiStatus,
   type ComponentInfo,
   type EnsureOverrideResult,
+  type RepairRequest,
+  type RepairResult,
+  type WireAiResult,
 } from "@eve/dna";
 import {
-  refreshTraefikRoutes,
   installDashboardContainer,
   uninstallDashboardContainer,
 } from "@eve/legs";
+import { ensureKratosRunning } from "@eve/brain";
 import {
   reconcileOpenclawConfig,
   type OpenclawReconcileResult,
 } from "./components/openclaw/reconcile.js";
 import { ensureBuilderWorkspace } from "./builder-workspace.js";
+import { materializeTargets } from "./materialize.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -203,6 +210,7 @@ const UPDATE_PLAN: Record<string, UpdatePlan> = {
     compose: {
       cwd: "/opt/openwebui",
       regenerate: () => writeOpenwebuiCompose("/opt/openwebui"),
+      reconcileEnv: () => reconcileOpenwebuiEnv("/opt/openwebui"),
     },
   },
   "openwebui-pipelines": {
@@ -522,6 +530,7 @@ async function* runPostUpdateHooks(comp: ComponentInfo): AsyncGenerator<Lifecycl
     yield* postUpdateReconcileAiWiring();
   }
   if (comp.id === "synap") {
+    yield* postUpdateReconcileKratos();
     yield* postUpdateConnectTraefik();
     yield* postUpdateReconcileAuth();
     yield* postUpdateReconcileAiWiring();
@@ -552,7 +561,10 @@ async function* postUpdateReconcileAiWiring(): AsyncGenerator<LifecycleEvent> {
       yield { type: "log", line: "No installed components — skipping AI wiring reconciliation" };
       return;
     }
-    const results = wireAllInstalledComponents(secrets, installed);
+    const [materialized] = await materializeTargets(secrets, ["ai-wiring"], { components: installed });
+    const results = Array.isArray(materialized?.details?.results)
+      ? materialized.details.results as WireAiResult[]
+      : [];
     const okCount = results.filter(r => r.outcome === "ok").length;
     const failCount = results.filter(r => r.outcome === "failed").length;
     if (failCount > 0) {
@@ -562,6 +574,52 @@ async function* postUpdateReconcileAiWiring(): AsyncGenerator<LifecycleEvent> {
     }
   } catch (err) {
     yield { type: "log", line: `Warning: AI wiring reconciliation failed — ${err}` };
+  }
+}
+
+async function resolveSynapDomainForUpdate(deployDir: string): Promise<string> {
+  const secrets = await readEveSecrets().catch(() => null);
+  const fromSecrets = secrets?.domain?.primary?.trim();
+  if (fromSecrets) return fromSecrets;
+
+  const envPath = join(deployDir, ".env");
+  if (existsSync(envPath)) {
+    const envText = readFileSync(envPath, "utf-8");
+    const domain = envText.match(/^DOMAIN=(.+)$/m)?.[1]?.trim();
+    if (domain) return domain;
+  }
+
+  return "localhost";
+}
+
+async function* postUpdateReconcileKratos(): AsyncGenerator<LifecycleEvent> {
+  const deployDir = findPodDeployDir() ?? "/opt/synap-backend";
+  if (!existsSync(deployDir)) {
+    yield { type: "log", line: "Kratos reconciliation skipped — Synap deploy dir not found" };
+    return;
+  }
+
+  try {
+    const domain = await resolveSynapDomainForUpdate(deployDir);
+    yield { type: "log", line: `Reconciling Kratos config and migrations for ${domain}` };
+    const pullCode = yield* runCommand(
+      "docker",
+      ["compose", "pull", "kratos", "kratos-migrate"],
+      { cwd: deployDir },
+    );
+    if (pullCode !== 0) {
+      yield {
+        type: "log",
+        line: "Kratos image pull failed — continuing with the currently available Kratos image",
+      };
+    }
+    await ensureKratosRunning(deployDir, domain);
+    yield { type: "log", line: "Kratos config, migrations, and service health reconciled ✓" };
+  } catch (err) {
+    yield {
+      type: "error",
+      message: `Kratos reconciliation failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
   }
 }
 
@@ -953,7 +1011,7 @@ async function* postUpdateReconcileHermes(): AsyncGenerator<LifecycleEvent> {
     // written here to cover cases where the container was already recreated
     // with a stale env file and needs a live rewrite (e.g. key rotation via
     // wireHermes, or a post-upgrade env drift fix).
-    await writeHermesEnvFile();
+    await materializeTargets(null, ["hermes-env"]);
     await writeHermesConfigYaml();
     generateSynapPlugin();
     yield { type: "log", line: "Hermes env, config + plugin regenerated ✓" };
@@ -982,7 +1040,7 @@ async function* postUpdateReconcileHermes(): AsyncGenerator<LifecycleEvent> {
 async function* installHermes(): AsyncGenerator<LifecycleEvent> {
   yield { type: "step", label: "Writing Hermes env + config + Synap memory plugin…" };
   try {
-    await writeHermesEnvFile();
+    await materializeTargets(null, ["hermes-env"]);
     await writeHermesConfigYaml();
     generateSynapPlugin();
     yield { type: "log", line: "Env file, config.yaml, and Synap plugin written ✓" };
@@ -1091,7 +1149,14 @@ async function* wireHermesIntoOpenwebui(): AsyncGenerator<LifecycleEvent> {
     try {
       const { modelSources, pipelinesKey, pipelinesUrl } = buildOpenwebuiModelSources(secrets, '/opt/openwebui');
       if (modelSources.length > 0) {
-        await registerOpenwebuiAdminApi(modelSources, { pipelinesUrl, pipelinesKey });
+        const ok = await registerOpenwebuiAdminApi(modelSources, {
+          pipelinesUrl,
+          pipelinesKey,
+          managedConfig: buildOpenwebuiManagedConfig(secrets),
+        });
+        if (ok) {
+          await markOpenwebuiConfigReconciled(secrets);
+        }
       }
     } catch { /* non-fatal — admin API may come up later */ }
   })();
@@ -1236,9 +1301,9 @@ async function* installOne(
   // After the recipe finishes, refresh Traefik routing so the new component
   // is reachable via subdomain.
   try {
-    const refresh = await refreshTraefikRoutes();
-    if (refresh.refreshed) {
-      yield { type: "log", line: `Traefik routes refreshed for ${refresh.domain}` };
+    const [refresh] = await materializeTargets(null, ["traefik-routes"]);
+    if (refresh?.changed) {
+      yield { type: "log", line: refresh.summary };
     }
   } catch {
     // not fatal — domain not configured or Traefik down
@@ -1473,11 +1538,12 @@ services:
       - ENABLE_WEB_SEARCH=true
       - WEB_SEARCH_ENGINE=duckduckgo
       - ENABLE_COMMUNITY_SHARING=false
+      - ENABLE_PERSISTENT_CONFIG=\${ENABLE_PERSISTENT_CONFIG:-true}
 
       # Auth — first signup auto-becomes admin (OpenWebUI's special-case).
-      # Subsequent signups follow DEFAULT_USER_ROLE; "pending" forces the
-      # admin to approve, which is the safer default for a network-bound
-      # deployment.
+      # Eve also writes WEBUI_ADMIN_EMAIL/PASSWORD/NAME to .env so first
+      # boot can create the admin user headlessly without using the UI.
+      # Subsequent signups follow DEFAULT_USER_ROLE; "pending" forces approval.
       - ENABLE_SIGNUP=\${ENABLE_SIGNUP:-true}
       - DEFAULT_USER_ROLE=\${DEFAULT_USER_ROLE:-pending}
     ports:
@@ -1507,10 +1573,48 @@ function writeOpenwebuiCompose(deployDir: string): void {
   writeFileSync(join(deployDir, "docker-compose.yml"), OPENWEBUI_COMPOSE_YAML);
 }
 
+async function reconcileOpenwebuiEnv(deployDir: string): Promise<void> {
+  const bootstrap = await ensureOpenWebuiBootstrapSecrets();
+  const secrets = bootstrap.secrets;
+  const pipelinesAgent = await readAgentKey("openwebui-pipelines");
+  const synapApiKey =
+    pipelinesAgent?.hubApiKey ??
+    secrets?.synap?.apiKey ??
+    process.env.SYNAP_API_KEY ??
+    "";
+  const isUrl = process.env.SYNAP_IS_URL ?? "http://eve-brain-synap:4000";
+  const domain = secrets?.domain?.primary;
+  const ssl = !!secrets?.domain?.ssl;
+  const protocol = ssl ? "https" : "http";
+  const webuiUrl = domain ? `${protocol}://chat.${domain}` : "";
+
+  writeOpenwebuiEnv(deployDir, {
+    synapApiKey,
+    synapIsUrl: isUrl,
+    webuiUrl,
+    adminEmail: secrets.builder?.openwebui?.adminEmail ?? "admin@eve.local",
+    adminPassword: secrets.builder?.openwebui?.adminPassword ?? "",
+    adminName: secrets.builder?.openwebui?.adminName ?? "Eve Admin",
+  });
+}
+
+async function markOpenwebuiConfigReconciled(secrets: Awaited<ReturnType<typeof readEveSecrets>>): Promise<void> {
+  await writeEveSecrets({
+    builder: {
+      ...(secrets?.builder ?? {}),
+      openwebui: {
+        ...(secrets?.builder?.openwebui ?? {}),
+        lastConfigReconciledAt: new Date().toISOString(),
+      },
+    },
+  });
+}
+
 async function* installOpenWebUi(): AsyncGenerator<LifecycleEvent> {
   const deployDir = "/opt/openwebui";
 
-  const secrets = await readEveSecrets();
+  const bootstrap = await ensureOpenWebuiBootstrapSecrets();
+  const secrets = bootstrap.secrets;
   // OpenWebUI's SYNAP_API_KEY is the bearer it uses to call Synap IS
   // when the Pipelines sidecar isn't sitting in front. Use the
   // openwebui-pipelines agent key when available — that's the
@@ -1533,30 +1637,26 @@ async function* installOpenWebUi(): AsyncGenerator<LifecycleEvent> {
   const protocol = ssl ? "https" : "http";
   const webuiUrl = domain ? `${protocol}://chat.${domain}` : "";
 
-  const envPath = join(deployDir, ".env");
-  if (!existsSync(envPath)) {
-    writeFileSync(envPath, [
-      "# Open WebUI — generated by @eve/lifecycle",
-      "# Override anything in this file to customize without touching",
-      "# docker-compose.yml (which is regenerated on every update).",
-      "",
-      "# Branding",
-      `WEBUI_NAME=Eve`,
-      `WEBUI_URL=${webuiUrl}`,
-      "",
-      "# Backend wiring",
-      `SYNAP_API_KEY=${synapApiKey}`,
-      `SYNAP_IS_URL=${isUrl}`,
-      `OLLAMA_BASE_URL=http://eve-brain-ollama:11434`,
-      "",
-      "# Auth & first-run",
-      "ENABLE_SIGNUP=true",
-      "DEFAULT_USER_ROLE=pending",
-      "",
-      "# Secrets",
-      `WEBUI_SECRET_KEY=${randomBytes(32).toString("hex")}`,
-    ].join("\n"), { mode: 0o600 });
-  }
+  const envResult = writeOpenwebuiEnv(deployDir, {
+    synapApiKey,
+    synapIsUrl: isUrl,
+    webuiUrl,
+    adminEmail: secrets.builder?.openwebui?.adminEmail ?? "admin@eve.local",
+    adminPassword: secrets.builder?.openwebui?.adminPassword ?? "",
+    adminName: secrets.builder?.openwebui?.adminName ?? "Eve Admin",
+  });
+  const generatedParts = [
+    bootstrap.generated.adminEmail ? "email" : "",
+    bootstrap.generated.adminPassword ? "password" : "",
+    bootstrap.generated.adminName ? "name" : "",
+    envResult.secretKeyGenerated ? "secret-key" : "",
+  ].filter(Boolean);
+  yield {
+    type: "log",
+    line: generatedParts.length > 0
+      ? `OpenWebUI headless admin bootstrap prepared (${generatedParts.join(", ")} generated)`
+      : "OpenWebUI headless admin bootstrap prepared (existing credentials reused)",
+  };
 
   yield* ensureEveNetwork();
 
@@ -1696,8 +1796,13 @@ async function* registerPipelinesInOpenwebui(deployDir: string): AsyncGenerator<
   const { modelSources, pipelinesKey, pipelinesUrl } = buildOpenwebuiModelSources(secrets, deployDir);
   if (pipelinesKey) {
     yield { type: "step", label: "Registering model sources in OpenWebUI…" };
-    const ok = await registerOpenwebuiAdminApi(modelSources, { pipelinesUrl, pipelinesKey });
+    const ok = await registerOpenwebuiAdminApi(modelSources, {
+      pipelinesUrl,
+      pipelinesKey,
+      managedConfig: buildOpenwebuiManagedConfig(secrets),
+    });
     if (ok) {
+      await markOpenwebuiConfigReconciled(secrets);
       const count = modelSources.length;
       yield { type: "log", line: `Model sources registered in OpenWebUI ✓ — ${count} source(s) visible in model picker` };
     } else {
@@ -1989,6 +2094,124 @@ export async function runActionToCompletion(
   return { ok: !error, summary, logs, error };
 }
 
+export async function runRepair(request: RepairRequest): Promise<RepairResult> {
+  await appendOperationalEvent({
+    type: "repair.started",
+    target: request.kind,
+    componentId: request.componentId,
+    details: { target: request.target },
+  }).catch(() => {});
+
+  let result: RepairResult;
+  let eventRequest = request;
+  try {
+    switch (request.kind) {
+      case "create-eve-network": {
+        let commandError: string | undefined;
+        for await (const event of runCommand("docker", ["network", "create", "eve-network"])) {
+          if (event.type === "error") commandError = event.message;
+        }
+        if (commandError && !commandError.includes("already exists")) throw new Error(commandError);
+        result = { ok: true, summary: "eve-network created", recheck: { doctorGroup: "network" } };
+        break;
+      }
+      case "start-container":
+      case "start-component":
+        if (!request.componentId) throw new Error("componentId required");
+        result = await runActionToCompletion(request.componentId, "start");
+        result.recheck = { doctorGroup: "containers", componentId: request.componentId };
+        break;
+      case "restart-component":
+        if (!request.componentId) throw new Error("componentId required");
+        result = await runActionToCompletion(request.componentId, "restart");
+        result.recheck = { doctorGroup: "containers", componentId: request.componentId };
+        break;
+      case "recreate-component":
+        if (!request.componentId) throw new Error("componentId required");
+        result = await runActionToCompletion(request.componentId, "recreate");
+        result.recheck = { doctorGroup: "containers", componentId: request.componentId };
+        break;
+      case "materialize-target": {
+        if (!request.target) throw new Error("target required");
+        const [materialized] = await materializeTargets(null, [request.target]);
+        result = {
+          ok: materialized?.ok ?? false,
+          summary: materialized?.summary ?? "No materializer result",
+          error: materialized?.error,
+          recheck: { target: request.target },
+        };
+        break;
+      }
+      case "repair-domain-routing": {
+        const [materialized] = await materializeTargets(null, ["traefik-routes"]);
+        result = {
+          ok: materialized.ok,
+          summary: materialized.summary,
+          error: materialized.error,
+          recheck: { doctorGroup: "network" },
+        };
+        break;
+      }
+      case "repair-pod-url": {
+        const results = await materializeTargets(null, ["backend-env", "traefik-routes"]);
+        const failed = results.find((item) => !item.ok);
+        result = {
+          ok: !failed,
+          summary: failed ? failed.summary : "Pod URL materialized",
+          error: failed?.error,
+          recheck: { doctorGroup: "config" },
+        };
+        break;
+      }
+      case "rewire-openclaw":
+        eventRequest = { ...request, kind: "rewire-ai", componentId: "openclaw" };
+      // falls through
+      case "rewire-ai": {
+        const [materialized] = await materializeTargets(null, ["ai-wiring"], {
+          components: eventRequest.componentId ? [eventRequest.componentId] : undefined,
+        });
+        result = {
+          ok: materialized.ok,
+          summary: materialized.summary,
+          error: materialized.error,
+          recheck: { doctorGroup: "wiring", componentId: eventRequest.componentId },
+        };
+        break;
+      }
+      default:
+        result = { ok: false, summary: "Unknown repair", error: `Unknown repair: ${request.kind}` };
+    }
+  } catch (error) {
+    result = {
+      ok: false,
+      summary: `${request.kind} failed`,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  await appendOperationalEvent({
+    type: result.ok ? "repair.succeeded" : "repair.failed",
+    target: eventRequest.kind,
+    componentId: eventRequest.componentId,
+    ok: result.ok,
+    summary: result.summary,
+    error: result.error,
+    details: { target: eventRequest.target, recheck: result.recheck },
+  }).catch(() => {});
+
+  return result;
+}
+
+export {
+  materializeTargets,
+  type MaterializeOptions,
+  type MaterializeResult,
+} from "./materialize.js";
+
+export {
+  runDoctorChecks,
+} from "./doctor.js";
+
 /** Re-export the component registry so callers don't need a separate import. */
 export { COMPONENTS, resolveComponent } from "@eve/dna";
 export type { ComponentInfo } from "@eve/dna";
@@ -2084,4 +2307,3 @@ export {
   type PreflightResult,
   type PreflightOptions,
 } from "./preflight.js";
-

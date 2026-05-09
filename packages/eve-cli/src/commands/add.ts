@@ -34,7 +34,8 @@ async function containerExists(name: string): Promise<boolean> {
   } catch { return false; }
 }
 import { runBrainInit, runInferenceInit } from '@eve/brain';
-import { runLegsProxySetup, refreshTraefikRoutes, verifyComponent, installDashboardContainer } from '@eve/legs';
+import { runLegsProxySetup, verifyComponent, installDashboardContainer } from '@eve/legs';
+import { materializeTargets } from '@eve/lifecycle';
 import {
   colors,
   emojis,
@@ -254,11 +255,11 @@ export async function runAdd(
   await updateStateAfterAdd(comp.id, verification.ok ? 'ready' : 'error');
 
   // Auto-refresh Traefik routes so the new component is reachable via domain
-  const refresh = await refreshTraefikRoutes();
-  if (refresh.refreshed) {
-    printInfo(`Traefik routes refreshed for ${refresh.domain}`);
-  } else if (refresh.domain) {
-    printWarning(`Could not refresh Traefik routes: ${refresh.reason ?? 'unknown'}`);
+  const [refresh] = await materializeTargets(null, ['traefik-routes']);
+  if (refresh?.changed) {
+    printInfo(refresh.summary);
+  } else if (refresh && !refresh.ok) {
+    printWarning(`Could not refresh Traefik routes: ${refresh.error ?? refresh.summary}`);
   }
 
   console.log();

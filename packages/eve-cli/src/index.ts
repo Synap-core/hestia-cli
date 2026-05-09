@@ -20,6 +20,7 @@ import { addCommand } from './commands/add.js';
 import { removeCommand } from './commands/remove.js';
 import { logsCommand } from './commands/debug/logs.js';
 import { inspectCommand } from './commands/debug/inspect.js';
+import { debugCommand } from './commands/debug/operational.js';
 import { configCommands } from './commands/manage/config-cmd.js';
 import { backupUpdateCommands } from './commands/manage/backup-update.js';
 import { purgeCommand } from './commands/manage/purge.js';
@@ -137,6 +138,7 @@ growCommand(program);
 doctorCommand(program);
 logsCommand(program);
 inspectCommand(program);
+debugCommand(program);
 
 // --- Management ---
 configCommands(program);

@@ -15,6 +15,9 @@ import {
   readAgentKeyOrLegacy,
   readEveSecrets,
   resolvePodUrl,
+  type DoctorCheck,
+  type DoctorStatus,
+  type RepairKind,
 } from "@eve/dna";
 import { verifyComponent } from "@eve/legs";
 import {
@@ -24,41 +27,9 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-export type CheckStatus = "pass" | "fail" | "warn";
-
-/**
- * One-click repair the dashboard knows how to run. The doctor page uses
- * this to render an inline button next to a failing check; the click
- * POSTs to `/api/doctor/repair` with this kind.
- */
-export type RepairKind =
-  | "create-eve-network"
-  | "start-container"
-  | "rewire-openclaw";
-
-export interface CheckResult {
-  group: "platform" | "containers" | "network" | "ai" | "wiring" | "integrations";
-  name: string;
-  status: CheckStatus;
-  message: string;
-  /** Optional one-line fix hint shown next to the failing check. */
-  fix?: string;
-  /** Component id this check is about, if any — lets the UI link to drawer. */
-  componentId?: string;
-  /** When set, the dashboard renders a "Repair" button that runs this kind. */
-  repair?: { kind: RepairKind; label: string };
-  /**
-   * Tag identifying which integration scenario this check belongs to.
-   * Lets the Hermes drawer + the Channels page reuse the same checks
-   * without duplicating logic.
-   */
-  integrationId?:
-    | "synap"
-    | "hermes-synap"
-    | "openclaw-synap"
-    | "openwebui-synap"
-    | "openwebui-pipelines";
-}
+export type CheckStatus = DoctorStatus;
+export type { RepairKind };
+export type CheckResult = DoctorCheck;
 
 /**
  * Per-call hard timeout for docker subprocesses we spawn from the doctor

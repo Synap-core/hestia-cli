@@ -34,7 +34,6 @@ import {
   COMPONENTS,
   readEveSecrets,
   writeEveSecrets,
-  wireAllInstalledComponents,
   resolvePodUrl,
   type WiringStatus,
 } from "@eve/dna";
@@ -42,6 +41,7 @@ import {
   provisionAllAgents,
   resolveProvisioningToken,
   FetchRunner,
+  materializeTargets,
   type ProvisionResult,
 } from "@eve/lifecycle";
 
@@ -58,6 +58,16 @@ interface WireResult {
   id: string;
   ok: boolean;
   summary: string;
+}
+
+async function materializeAiWiring(components: string[]): Promise<WireResult[]> {
+  const [materialized] = await materializeTargets(null, ["ai-wiring"], { components });
+  return Array.isArray(materialized?.details?.results)
+    ? materialized.details.results.map((w) => {
+        const result = w as { id: string; outcome: string; summary: string };
+        return { id: result.id, ok: result.outcome === "ok", summary: result.summary };
+      })
+    : [];
 }
 
 /**
@@ -176,9 +186,6 @@ export async function POST(req: Request) {
     | null;
   const force = body?.force === true;
 
-  // Read secrets first — needed for URL resolution and wire results
-  const secrets = await readEveSecrets();
-
   // Resolve running components
   const runningComponents = await discoverRunningComponents();
 
@@ -214,8 +221,7 @@ export async function POST(req: Request) {
               }
               return { id: r.agentType, provisioned: false, reason: r.reason };
             });
-            const wired = wireAllInstalledComponents(secrets, [body.componentId])
-              .map(w => ({ id: w.id, ok: w.outcome === "ok", summary: w.summary }));
+            const wired = await materializeAiWiring([body.componentId]);
             // Persist history (gap 15)
             void persistProvisioningHistory(provisioned, wired, force);
             return NextResponse.json({ ok: true, provisioned, wired });
@@ -267,8 +273,7 @@ export async function POST(req: Request) {
           { status: 500 },
         );
       }
-      const wired = wireAllInstalledComponents(secrets, targetedComponents)
-        .map(w => ({ id: w.id, ok: w.outcome === "ok", summary: w.summary }));
+      const wired = await materializeAiWiring(targetedComponents);
       // Persist wiring status (gap 12)
       void persistWiringStatus(wired.map(w => ({ id: w.id, outcome: w.ok ? "ok" : "failed" })));
       // Persist history (gap 15)
@@ -316,12 +321,9 @@ export async function POST(req: Request) {
     );
   }
 
-  // Re-wire AI consumers. Use the secrets blob (keys were just written
-  // by provisionAllAgents on disk, so secrets read earlier won't have
-  // them — but wireAllInstalledComponents reads from the secrets file
-  // internally, so it picks up the newly minted keys).
-  const wired = wireAllInstalledComponents(secrets, runningComponents)
-    .map(w => ({ id: w.id, ok: w.outcome === "ok", summary: w.summary }));
+  // Re-wire AI consumers through the shared materializer so newly minted
+  // agent keys are picked up from disk and operational events are recorded.
+  const wired = await materializeAiWiring(runningComponents);
 
   // Persist wiring status (gap 12) — fire-and-forget
   void persistWiringStatus(wired.map(w => ({ id: w.id, outcome: w.ok ? "ok" : "failed" })));

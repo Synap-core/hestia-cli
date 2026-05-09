@@ -3,6 +3,7 @@ import { execSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { writeEveSecrets, readEveSecrets, getAccessUrls, getServerIp, entityStateManager } from '@eve/dna';
 import { TraefikService } from '@eve/legs';
+import { materializeTargets } from '@eve/lifecycle';
 import { colors, printSuccess, printInfo, printWarning, printError } from '../lib/ui.js';
 import { probeRoutes, probeSummary, probeVerdict, type RouteProbe } from '../lib/probe-routes.js';
 
@@ -96,9 +97,9 @@ export function domainCommand(program: Command): void {
 
       let writeOk = false;
       try {
-        const traefik = new TraefikService();
-        await traefik.configureSubdomains(domainName, !!opts.ssl, opts.email, installedComponents);
-        writeOk = true;
+        const [result] = await materializeTargets(null, ['traefik-routes']);
+        if (!result?.ok) throw new Error(result?.error ?? result?.summary ?? 'unknown Traefik error');
+        writeOk = result.changed;
       } catch (err) {
         printError(`Could not write Traefik config: ${err instanceof Error ? err.message : String(err)}`);
         printInfo('Run this command on your server (where Docker is available).');
@@ -387,9 +388,8 @@ export function domainCommand(program: Command): void {
 
       // 4. Reapply domain routes (Fix D: pass behindProxy)
       printInfo('Applying domain routes...');
-      let installedComponents: string[] | undefined;
-      try { installedComponents = await entityStateManager.getInstalledComponents(); } catch { /* ignore */ }
-      await traefik.configureSubdomains(domainName, !!secrets?.domain?.ssl, secrets?.domain?.email, installedComponents, !!secrets?.domain?.behindProxy);
+      const [result] = await materializeTargets(secrets, ['traefik-routes']);
+      if (!result?.ok) throw new Error(result?.error ?? result?.summary ?? 'unknown Traefik error');
 
       console.log();
       printSuccess('Repair complete. Run `eve domain check` to verify.');

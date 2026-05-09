@@ -47,6 +47,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { storePodSession } from "@/lib/synap-auth";
+import { usePodAuthState } from "../../hooks/use-pod-auth-state";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -178,36 +179,26 @@ export function SelfHostedSignInForm({
   const [manglingLink, setMintingLink] = useState(false);
   const claimIdRef = useRef(0);
 
-  // Probe whether the pod already has an admin. Three states:
+  const podAuthState = usePodAuthState({ includePairing: false });
+  // Preserve the existing three-way rendering contract:
   //   null  → still loading (show spinner)
-  //   true  → admin exists → show inline Kratos login/registration form
-  //   false → no admin yet → show bootstrap form
-  const [podInitialized, setPodInitialized] = useState<boolean | null>(null);
-  const [podUrl, setPodUrl] = useState<string | null>(null);
+  //   true  → admin exists → show inline Kratos login form
+  //   false → no admin yet or probe unavailable → show bootstrap form
+  const podInitialized =
+    podAuthState.kind === "loading"
+      ? null
+      : podAuthState.kind === "ready";
+  const podUrl =
+    podAuthState.kind === "ready" ||
+    podAuthState.kind === "needsBootstrap" ||
+    podAuthState.kind === "unreachable"
+      ? podAuthState.podUrl ?? null
+      : null;
 
   // Kratos inline form state (used when podInitialized === true)
   const [kratosEmail, setKratosEmail] = useState(fixedEmail ?? "");
   const [kratosPassword, setKratosPassword] = useState("");
   const [kratosErrors, setKratosErrors] = useState<string[]>([]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetch("/api/pod/setup-status", { cache: "no-store" });
-        if (!res.ok) { if (!cancelled) setPodInitialized(false); return; }
-        const data = (await res.json().catch(() => null)) as
-          | { initialized?: boolean | null; reason?: string; podUrl?: string }
-          | null;
-        if (cancelled) return;
-        setPodUrl(data?.podUrl ?? null);
-        setPodInitialized(data?.initialized ?? false);
-      } catch {
-        if (!cancelled) setPodInitialized(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
 
   const emailLooksValid = useMemo(
     () => email.length === 0 || EMAIL_RE.test(email.trim()),

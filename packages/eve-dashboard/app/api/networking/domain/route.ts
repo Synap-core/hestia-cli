@@ -8,9 +8,9 @@
 
 import { NextResponse } from "next/server";
 import {
-  writeEveSecrets, entityStateManager,
+  writeEveSecrets,
 } from "@eve/dna";
-import { TraefikService } from "@eve/legs";
+import { materializeTargets } from "@eve/lifecycle";
 import { requireAuth } from "@/lib/auth-server";
 
 export async function POST(req: Request) {
@@ -41,28 +41,19 @@ export async function POST(req: Request) {
   // reads this back as the "what the user wanted" state.
   await writeEveSecrets({ domain: { primary, ssl, email } });
 
-  let installedComponents: string[] | undefined;
-  try {
-    installedComponents = await entityStateManager.getInstalledComponents();
-  } catch {
-    // first-run state not initialised — fall through and route everything
-  }
-
-  try {
-    const traefik = new TraefikService();
-    await traefik.configureSubdomains(primary, ssl, email, installedComponents);
-  } catch (err) {
+  const [routeResult] = await materializeTargets(null, ["traefik-routes"]);
+  if (!routeResult?.ok) {
     return NextResponse.json(
       {
         ok: true,
         traefikUpdated: false,
-        warning: `Domain saved but Traefik wasn't reachable: ${err instanceof Error ? err.message : String(err)}. Run \`eve domain repair\` on the host.`,
+        warning: `Domain saved but Traefik wasn't reachable: ${routeResult?.error ?? routeResult?.summary ?? "unknown error"}. Run \`eve domain repair\` on the host.`,
       },
       { status: 200 },
     );
   }
 
-  return NextResponse.json({ ok: true, traefikUpdated: true });
+  return NextResponse.json({ ok: true, traefikUpdated: routeResult.changed });
 }
 
 /** DELETE — revert to no domain (localhost). */
@@ -74,19 +65,17 @@ export async function DELETE() {
     domain: { primary: undefined, ssl: false, email: undefined },
   });
 
-  try {
-    const traefik = new TraefikService();
-    await traefik.configureDomain("localhost");
-  } catch (err) {
+  const [routeResult] = await materializeTargets(null, ["traefik-routes"]);
+  if (!routeResult?.ok) {
     return NextResponse.json(
       {
         ok: true,
         traefikUpdated: false,
-        warning: err instanceof Error ? err.message : String(err),
+        warning: routeResult?.error ?? routeResult?.summary ?? "unknown error",
       },
       { status: 200 },
     );
   }
 
-  return NextResponse.json({ ok: true, traefikUpdated: true });
+  return NextResponse.json({ ok: true, traefikUpdated: routeResult.changed });
 }

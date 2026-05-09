@@ -13,7 +13,8 @@ import { getGlobalCliFlags, } from '@eve/cli-kit';
 import {
   entityStateManager,
 } from '@eve/dna';
-import { refreshTraefikRoutes, uninstallDashboardContainer } from '@eve/legs';
+import { uninstallDashboardContainer } from '@eve/legs';
+import { materializeTargets } from '@eve/lifecycle';
 import {
   colors,
   emojis,
@@ -303,9 +304,9 @@ export async function runRemove(componentId: string): Promise<void> {
   await updateStateAfterRemove(comp.id);
 
   // Auto-refresh Traefik routes so removed component's subdomain stops returning 502
-  const refresh = await refreshTraefikRoutes();
-  if (refresh.refreshed) {
-    printInfo(`Traefik routes refreshed for ${refresh.domain}`);
+  const [refresh] = await materializeTargets(null, ['traefik-routes']);
+  if (refresh?.changed) {
+    printInfo(refresh.summary);
   }
 
   console.log();

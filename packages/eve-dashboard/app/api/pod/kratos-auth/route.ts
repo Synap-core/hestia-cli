@@ -28,75 +28,11 @@
  */
 
 import { NextResponse } from "next/server";
-import { resolvePodUrl, writePodUserToken } from "@eve/dna";
+import { writePodUserToken } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
-
-interface KratosFlow {
-  id: string;
-  ui?: {
-    messages?: Array<{ text: string; type: string }>;
-    nodes?: Array<{
-      messages?: Array<{ text: string; type: string }>;
-    }>;
-  };
-  error?: {
-    reason?: string;
-    message?: string;
-  };
-}
-
-interface KratosSuccessLogin {
-  session_token?: string;
-  session?: { expires_at?: string };
-}
-
-interface KratosSuccessRegistration {
-  session_token?: string;
-  session?: { expires_at?: string };
-  identity?: { id?: string; traits?: { email?: string; name?: string } };
-}
-
-/** Pull human-readable error strings from a Kratos UI envelope. */
-function extractKratosMessages(flow: KratosFlow): string[] {
-  const msgs: string[] = [];
-
-  for (const m of flow.ui?.messages ?? []) {
-    if (m.text) msgs.push(m.text);
-  }
-  for (const node of flow.ui?.nodes ?? []) {
-    for (const m of node.messages ?? []) {
-      if (m.text) msgs.push(m.text);
-    }
-  }
-  if (flow.error?.reason) msgs.push(flow.error.reason);
-  if (flow.error?.message) msgs.push(flow.error.message);
-
-  return msgs.length ? msgs : ["Authentication failed. Check your credentials."];
-}
-
-/** Map verbose Kratos messages to user-friendly short versions. */
-function friendlyMessages(raw: string[]): string[] {
-  return raw.map((m) => {
-    const lower = m.toLowerCase();
-    if (
-      lower.includes("provided credentials are invalid") ||
-      lower.includes("invalid credentials") ||
-      lower.includes("identifier or password")
-    ) {
-      return "Wrong email or password.";
-    }
-    if (lower.includes("already exists") || lower.includes("already registered")) {
-      return "An account with that email already exists. Try signing in instead.";
-    }
-    if (lower.includes("password") && lower.includes("too short")) {
-      return "Password is too short (minimum 8 characters).";
-    }
-    if (lower.includes("valid email")) {
-      return "Enter a valid email address.";
-    }
-    return m;
-  });
-}
+import { createEveKratosClient } from "@/lib/eve-kratos-client";
+import { getPodRuntimeContext } from "@/lib/pod-runtime-context";
+import { DashboardApiException, toDashboardApiError } from "@/lib/pod-response-parsers";
 
 export async function POST(req: Request) {
   const auth = await requireAuth();
@@ -141,114 +77,29 @@ export async function POST(req: Request) {
     );
   }
 
-  const podUrl = await resolvePodUrl(undefined, req.url, req.headers);
-  if (!podUrl) {
+  const context = await getPodRuntimeContext(req);
+  if (!context) {
     return NextResponse.json(
       { error: "pod-url-not-configured" },
       { status: 400 },
     );
   }
 
-  // Traefik now routes `/.ory/*` via the stripprefix-kratos middleware
-  // (added to match what Caddy already does implicitly in the standalone
-  // setup). No need for Docker DNS hacks.
-  const kratosBase = `${podUrl}/.ory/kratos/public`;
-
-  // ── Step 1: init the self-service flow ───────────────────────────────────
-  const flowEndpoint =
-    mode === "login"
-      ? `${kratosBase}/self-service/login/api`
-      : `${kratosBase}/self-service/registration/api`;
-
-  let flowRes: Response;
+  const kratos = createEveKratosClient(context);
+  let submitBody;
   try {
-    flowRes = await fetch(flowEndpoint, {
-      method: "GET",
-      headers: { Accept: "application/json" },
-      cache: "no-store",
+    submitBody = await kratos.submitPasswordAuth({
+      mode: mode as "login" | "registration",
+      email,
+      password,
+      name,
     });
   } catch (err) {
-    return NextResponse.json(
-      {
-        error: "pod-unreachable",
-        detail: err instanceof Error ? err.message : "Pod unreachable",
-      },
-      { status: 502 },
-    );
+    const status = err instanceof DashboardApiException ? err.httpStatus : 502;
+    return NextResponse.json(toDashboardApiError(err, "pod-unreachable"), { status });
   }
 
-  if (!flowRes.ok) {
-    return NextResponse.json(
-      {
-        error: "pod-unreachable",
-        detail: `Kratos flow init returned ${flowRes.status}`,
-      },
-      { status: 502 },
-    );
-  }
-
-  const flow = (await flowRes.json().catch(() => null)) as KratosFlow | null;
-  const flowId = flow?.id;
-  if (!flowId) {
-    return NextResponse.json(
-      { error: "pod-unreachable", detail: "No flow id in Kratos response" },
-      { status: 502 },
-    );
-  }
-
-  // ── Step 2: submit credentials ────────────────────────────────────────────
-  const submitEndpoint =
-    mode === "login"
-      ? `${kratosBase}/self-service/login?flow=${flowId}`
-      : `${kratosBase}/self-service/registration?flow=${flowId}`;
-
-  const submitBody =
-    mode === "login"
-      ? { method: "password", identifier: email, password }
-      : {
-          method: "password",
-          traits: { email, name: name ?? email.split("@")[0] },
-          password,
-        };
-
-  let submitRes: Response;
-  try {
-    submitRes = await fetch(submitEndpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify(submitBody),
-      cache: "no-store",
-    });
-  } catch (err) {
-    return NextResponse.json(
-      {
-        error: "pod-unreachable",
-        detail: err instanceof Error ? err.message : "Pod unreachable",
-      },
-      { status: 502 },
-    );
-  }
-
-  const submitBody2 = (await submitRes.json().catch(() => null)) as
-    | (KratosFlow & KratosSuccessLogin & KratosSuccessRegistration)
-    | null;
-
-  if (!submitRes.ok) {
-    const rawMsgs = submitBody2 ? extractKratosMessages(submitBody2) : ["Authentication failed."];
-    return NextResponse.json(
-      {
-        error: "kratos-error",
-        messages: friendlyMessages(rawMsgs),
-        status: submitRes.status,
-      },
-      { status: 422 },
-    );
-  }
-
-  const sessionToken = submitBody2?.session_token;
+  const sessionToken = submitBody.session_token;
   if (!sessionToken) {
     return NextResponse.json(
       { error: "kratos-error", messages: ["Pod authenticated but returned no session token."] },
@@ -257,7 +108,7 @@ export async function POST(req: Request) {
   }
 
   const expiresAt =
-    submitBody2?.session?.expires_at ??
+    submitBody.session?.expires_at ??
     new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
   // Persist so the pod proxy picks it up automatically.
@@ -270,7 +121,7 @@ export async function POST(req: Request) {
   // Resolve user identity: for registration Kratos returns `identity.traits`,
   // for login we only have what's in the session (Kratos v0.x doesn't return
   // the full identity on login). Best-effort.
-  const identity = submitBody2?.identity;
+  const identity = submitBody.identity;
   const userEmail = identity?.traits?.email ?? email;
   const userName = identity?.traits?.name ?? identity?.id ?? "";
 

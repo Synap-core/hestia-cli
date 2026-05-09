@@ -1200,6 +1200,12 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
     env: { ...process.env, COMPOSE_PROJECT_NAME: 'synap-backend', BACKEND_VERSION: 'main' },
   });
 
+  console.log('  Pulling Kratos image...');
+  spawnSync('docker', ['compose', 'pull', 'kratos', 'kratos-migrate', '--ignore-pull-failures'], {
+    cwd: deployDir, stdio: 'inherit',
+    env: { ...process.env, COMPOSE_PROJECT_NAME: 'synap-backend' },
+  });
+
   // 5. Bring up backend + realtime. Compose resolves infra dependencies
   //    (postgres/redis/minio/typesense) and runs backend-migrate automatically.
   //    Caddy, Hydra, pod-agent, and profile-gated services are excluded.

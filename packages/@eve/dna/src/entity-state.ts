@@ -27,6 +27,8 @@ import { DEFAULT_ENTITY_STATE } from './types.js';
 import { appendOperationalEvent } from './operational.js';
 import { getEveStateHome, getEveStatePath } from './state-paths.js';
 
+export { getEveStateHome, getEveStatePath } from './state-paths.js';
+
 const OrganStatusSchema = z.object({
   state: z.enum(['missing', 'installing', 'starting', 'ready', 'error', 'stopped']),
   installedAt: z.string().optional(),
@@ -297,7 +299,7 @@ export class EntityStateManager {
         target: 'entity-state',
         ok: true,
         summary: 'Entity state saved',
-      }).catch(() => {});
+      }, stateDir).catch(() => {});
     } catch (error) {
       if (error instanceof z.ZodError) {
         const dnaError = new Error(`Invalid state: ${error.message}`) as DNAError;

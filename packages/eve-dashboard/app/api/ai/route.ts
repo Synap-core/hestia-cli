@@ -8,9 +8,10 @@
 import { NextResponse } from "next/server";
 import {
   readEveSecrets, writeEveSecrets, entityStateManager,
-  wireAllInstalledComponents, AI_CONSUMERS, AI_CONSUMERS_NEEDING_RECREATE,
+  AI_CONSUMERS, AI_CONSUMERS_NEEDING_RECREATE,
+  type WireAiResult,
 } from "@eve/dna";
-import { runActionToCompletion } from "@eve/lifecycle";
+import { materializeTargets, runActionToCompletion } from "@eve/lifecycle";
 import { requireAuth } from "@/lib/auth-server";
 
 type ProviderId = "ollama" | "openrouter" | "anthropic" | "openai";
@@ -147,7 +148,7 @@ export async function PATCH(req: Request) {
   // `recreate` (rather than the wire-only restart) so docker-run-time env
   // is refreshed. We over-include rather than try to compute exact
   // diffs — recreate is idempotent and infrequent.
-  let applyResults: ReturnType<typeof wireAllInstalledComponents> = [];
+  let applyResults: WireAiResult[] = [];
   const shouldApply =
     body.defaultProvider !== undefined ||
     body.serviceProviders !== undefined ||
@@ -160,7 +161,10 @@ export async function PATCH(req: Request) {
       const consumers = installed.filter(id => AI_CONSUMERS.has(id));
       if (consumers.length > 0) {
         const fresh = await readEveSecrets(); // re-read after write
-        applyResults = wireAllInstalledComponents(fresh, consumers);
+        const [materialized] = await materializeTargets(fresh, ["ai-wiring"], { components: consumers });
+        applyResults = Array.isArray(materialized?.details?.results)
+          ? materialized.details.results as WireAiResult[]
+          : [];
 
         for (const id of AI_CONSUMERS_NEEDING_RECREATE) {
           if (!consumers.includes(id)) continue;

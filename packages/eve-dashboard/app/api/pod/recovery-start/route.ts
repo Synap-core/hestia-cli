@@ -18,8 +18,10 @@
  */
 
 import { NextResponse } from "next/server";
-import { resolvePodUrl } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
+import { createEveKratosClient } from "@/lib/eve-kratos-client";
+import { getPodRuntimeContext } from "@/lib/pod-runtime-context";
+import { DashboardApiException, toDashboardApiError } from "@/lib/pod-response-parsers";
 
 export async function POST(req: Request) {
   const auth = await requireAuth();
@@ -49,94 +51,20 @@ export async function POST(req: Request) {
     );
   }
 
-  const podUrl = await resolvePodUrl(undefined, req.url, req.headers)
-  if (!podUrl) {
+  const context = await getPodRuntimeContext(req);
+  if (!context) {
     return NextResponse.json(
       { error: "pod-url-not-configured" },
       { status: 400 },
     );
   }
-  const podBase = podUrl.replace(/\/+$/, "");
-  const kratosBase = `${podBase}/.ory/kratos/public`;
 
-  // ── Step 1: init the recovery/verification flow ─────────────────────────
-  const flowEndpoint =
-    mode === "password"
-      ? `${kratosBase}/self-service/recovery/api`
-      : `${kratosBase}/self-service/verification/api`;
-
-  let flowRes: Response;
+  const kratos = createEveKratosClient(context);
   try {
-    flowRes = await fetch(flowEndpoint, {
-      method: "GET",
-      headers: { Accept: "application/json" },
-      cache: "no-store",
-    });
+    await kratos.startRecovery(mode as "password" | "verification", email);
   } catch (err) {
-    return NextResponse.json(
-      {
-        error: "pod-unreachable",
-        detail: err instanceof Error ? err.message : "Pod unreachable",
-      },
-      { status: 502 },
-    );
-  }
-
-  if (!flowRes.ok) {
-    return NextResponse.json(
-      {
-        error: "pod-unreachable",
-        detail: `Kratos ${mode} flow init returned ${flowRes.status}`,
-      },
-      { status: 502 },
-    );
-  }
-
-  const flow = (await flowRes.json().catch(() => null)) as { id?: string } | null;
-  const flowId = flow?.id;
-  if (!flowId) {
-    return NextResponse.json(
-      { error: "pod-unreachable", detail: "No flow id in Kratos response" },
-      { status: 502 },
-    );
-  }
-
-  // ── Step 2: submit the email to trigger the recovery/verification email ──
-  const submitEndpoint =
-    mode === "password"
-      ? `${kratosBase}/self-service/recovery?flow=${flowId}`
-      : `${kratosBase}/self-service/verification?flow=${flowId}`;
-
-  let submitRes: Response;
-  try {
-    submitRes = await fetch(submitEndpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify({ method: "link", email }),
-      cache: "no-store",
-    });
-  } catch (err) {
-    return NextResponse.json(
-      {
-        error: "pod-unreachable",
-        detail: err instanceof Error ? err.message : "Pod unreachable",
-      },
-      { status: 502 },
-    );
-  }
-
-  if (!submitRes.ok) {
-    const body = (await submitRes.json().catch(() => null)) as
-      | { ui?: { messages?: Array<{ text: string; type: string }> } }
-      | null;
-    const msgs = body?.ui?.messages?.map((m) => m.text).filter(Boolean) ?? [];
-    return NextResponse.json(
-      { error: "kratos-error", messages: msgs, status: submitRes.status },
-      { status: 422 },
-    );
+    const status = err instanceof DashboardApiException ? err.httpStatus : 502;
+    return NextResponse.json(toDashboardApiError(err, "pod-unreachable"), { status });
   }
 
   // Kratos sends the email on success (200). Return silently — the user

@@ -6,12 +6,11 @@ import {
   readEveSecrets,
   writeEveSecrets,
   entityStateManager,
-  wireAllInstalledComponents,
   resolveHubBaseUrl,
   AI_CONSUMERS_NEEDING_RECREATE,
   type WireAiResult,
 } from '@eve/dna';
-import { runActionToCompletion } from '@eve/lifecycle';
+import { materializeTargets, runActionToCompletion } from '@eve/lifecycle';
 import { colors, printError, printInfo, printSuccess, printWarning } from '../lib/ui.js';
 
 type ProviderId = 'ollama' | 'openrouter' | 'anthropic' | 'openai';
@@ -74,7 +73,10 @@ async function applyAiWiring(): Promise<WireAiResult[]> {
 
   console.log();
   console.log(colors.primary.bold('Wiring AI provider into installed components:'));
-  const results = wireAllInstalledComponents(secrets, installed);
+  const [materialized] = await materializeTargets(secrets, ['ai-wiring'], { components: installed });
+  const results = Array.isArray(materialized?.details?.results)
+    ? materialized.details.results as WireAiResult[]
+    : [];
 
   // For components whose env is set at `docker run` time (openclaw),
   // wire-only restart leaves the env stale. Recreate via lifecycle so

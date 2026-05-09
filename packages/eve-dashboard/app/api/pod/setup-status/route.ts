@@ -21,44 +21,13 @@
  */
 
 import { NextResponse } from "next/server";
-import { resolvePodUrl } from "@eve/dna";
-
-interface TrpcSetupStatusEnvelope {
-  result?: {
-    data?: {
-      initialized?: boolean;
-      version?: string;
-      json?: {
-        initialized?: boolean;
-        version?: string;
-      };
-    };
-  };
-}
-
-interface SetupStatusData {
-  initialized: boolean;
-  version?: string;
-}
-
-function parseSetupStatusEnvelope(json: unknown): SetupStatusData | null {
-  const envelope = Array.isArray(json) ? json[0] : json;
-  if (!envelope || typeof envelope !== "object") return null;
-
-  const data = (envelope as TrpcSetupStatusEnvelope).result?.data;
-  const payload = data?.json ?? data;
-  if (!payload || typeof payload.initialized !== "boolean") return null;
-
-  return {
-    initialized: payload.initialized,
-    version: payload.version,
-  };
-}
+import { getPodRuntimeContext } from "@/lib/pod-runtime-context";
+import { parseSetupStatusResponse } from "@/lib/pod-response-parsers";
 
 export async function GET(req: Request) {
-  const podUrl = await resolvePodUrl(undefined, req.url, req.headers);
+  const context = await getPodRuntimeContext(req);
 
-  if (!podUrl) {
+  if (!context) {
     console.error("[setup-status] podUrl is empty — resolvePodUrl returned falsy");
     console.error("[setup-status] req.url =", req.url);
     console.error("[setup-status] process.env.NEXT_PUBLIC_POD_URL =", process.env.NEXT_PUBLIC_POD_URL);
@@ -69,11 +38,10 @@ export async function GET(req: Request) {
     });
   }
 
-  const base = podUrl.replace(/\/+$/, "");
-  console.log("[setup-status] derived podUrl =", podUrl);
+  console.log("[setup-status] derived podUrl =", context.podUrl);
 
   try {
-    const res = await fetch(`${base}/trpc/setup.status`, {
+    const res = await fetch(`${context.trpcBaseUrl}/setup.status`, {
       method: "GET",
       headers: { Accept: "application/json" },
       cache: "no-store",
@@ -88,7 +56,7 @@ export async function GET(req: Request) {
     }
 
     const json = await res.json();
-    const data = parseSetupStatusEnvelope(json);
+    const data = parseSetupStatusResponse(json);
     console.log("[setup-status] upstream response data:", JSON.stringify(data));
     if (!data) {
       console.error("[setup-status] unexpected response shape:", JSON.stringify(json));
@@ -101,7 +69,7 @@ export async function GET(req: Request) {
     return NextResponse.json({
       initialized: data.initialized,
       version: data.version ?? null,
-      podUrl: base,
+      podUrl: context.podBaseUrl,
     });
   } catch (err) {
     console.error("[setup-status] fetch threw:", err);

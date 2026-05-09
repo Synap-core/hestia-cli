@@ -25,7 +25,14 @@ import type { EveSecrets } from './secrets-contract.js';
 import { readAgentKeyOrLegacySync } from './secrets-contract.js';
 import { COMPONENTS } from './components.js';
 import { writeHermesConfigYamlSync, generateSynapPlugin } from './builder-hub-wiring.js';
-import { getStatus, getAdminJwt, upsertAllModelSources, registerPipeline, waitForHealth, type ModelSource } from './openwebui-admin.js';
+import {
+  getAdminJwt,
+  reconcileOpenwebuiManagedConfigViaAdmin,
+  registerPipeline,
+  waitForHealth,
+  type ModelSource,
+  type OpenWebuiManagedConfig,
+} from './openwebui-admin.js';
 
 export interface WireAiResult {
   /** Component id this result is for. */
@@ -48,74 +55,6 @@ function isContainerRunning(name: string): boolean {
   } catch {
     return false;
   }
-}
-
-/**
- * Wait for OpenWebUI to be fully healthy (admin user + secret key available),
- * with a 2-minute timeout. Returns the status or 'timeout'.
- */
-async function waitForOpenWebUiReady(): Promise<'healthy' | 'timeout'> {
-  let attempts = 0;
-  const maxAttempts = 40; // 2 min (3s polling)
-  while (attempts < maxAttempts) {
-    const status = await getStatus();
-    if (status.status === 'healthy') return 'healthy';
-    // Any non-healthy status means OpenWebUI is still booting
-    attempts++;
-    await new Promise(r => setTimeout(r, 3_000));
-  }
-  return 'timeout';
-}
-
-/**
- * Register model sources with proper waits and retry logic.
- * Mirrors the lifecycle's registerPipelinesInOpenwebui() pattern:
- *   1. Wait for OpenWebUI healthy (up to 2 min)
- *   2. Forge JWT
- *   3. Retry manifold upsert up to 3 times with 5s delays
- */
-async function upsertModelSourcesWithRetry(
-  modelSources: ModelSource[],
-): Promise<boolean> {
-  if (modelSources.length === 0) return false;
-
-  // Wait for OpenWebUI to be fully booted (admin user + secret key).
-  const ready = await waitForOpenWebUiReady();
-  if (ready !== 'healthy') return false;
-
-  // Forge JWT.
-  const jwt = await getAdminJwt();
-  if (!jwt) return false;
-
-  // Retry manifold upsert (3 attempts, 5s delay).
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const registered = await upsertAllModelSources(jwt, modelSources);
-      if (registered > 0) return true;
-      // 0 registered = config fetch failed — retryable
-    } catch {
-      // transient failure — retry
-    }
-    await new Promise(r => setTimeout(r, 5_000));
-  }
-  return false;
-}
-
-/**
- * Wait for the pipelines sidecar to be ready, with a 15s timeout.
- * Returns the sidecar URL if available, or null.
- */
-async function waitForPipelinesSidecar(): Promise<string | null> {
-  const pipelinesUrl = 'http://eve-openwebui-pipelines:9099';
-  for (let attempt = 0; attempt < 5; attempt++) {
-    try {
-      const res = await fetch(`${pipelinesUrl}/health`, { signal: AbortSignal.timeout(3000) });
-      // Even 404/403 means the HTTP server is up
-      if (res.ok || res.status >= 400) return pipelinesUrl;
-    } catch { /* sidecar not ready yet */ }
-    await new Promise(r => setTimeout(r, 3_000));
-  }
-  return null;
 }
 
 /** Restart a docker container, swallowing errors (caller decides what to do). */
@@ -394,7 +333,24 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
   } catch { /* missing */ }
 
   const marker = '# AI wiring — managed by eve ai apply';
-  const before = existing.includes(marker) ? existing.split(marker)[0].trimEnd() : existing.trimEnd();
+  const aiManagedEnvKeys = new Set([
+    'SYNAP_API_KEY',
+    'SYNAP_IS_URL',
+    'OPENAI_API_BASE_URLS',
+    'OPENAI_API_KEYS',
+    'DEFAULT_MODELS',
+  ]);
+  const rawBefore = existing.includes(marker) ? existing.split(marker)[0] : existing;
+  const before = rawBefore
+    .split('\n')
+    .filter(line => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#') || !trimmed.includes('=')) return true;
+      const key = trimmed.slice(0, trimmed.indexOf('='));
+      return !aiManagedEnvKeys.has(key);
+    })
+    .join('\n')
+    .trimEnd();
 
   // Per-service override: Open WebUI lets users pick models in the UI,
   // but `DEFAULT_MODELS` populates the default selection — so honoring
@@ -494,7 +450,11 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
       if (hermesIdx >= 0) {
         modelSources[hermesIdx].apiKey = hermesApiServerKey ?? '';
       }
-      await registerOpenwebuiAdminApi(modelSources, { pipelinesUrl, pipelinesKey });
+      await registerOpenwebuiAdminApi(modelSources, {
+        pipelinesUrl,
+        pipelinesKey,
+        managedConfig: buildOpenwebuiManagedConfig(secrets),
+      });
     } catch { /* non-fatal admin API upsert */ }
   })();
 
@@ -777,6 +737,25 @@ export function buildOpenwebuiModelSources(
   return { modelSources, pipelinesKey, pipelinesUrl };
 }
 
+export function buildOpenwebuiManagedConfig(
+  secrets: EveSecrets | null,
+): Omit<OpenWebuiManagedConfig, 'modelSources'> {
+  const provider = pickPrimaryProvider(secrets, 'openwebui');
+  const defaultModels = secrets?.ai?.serviceModels?.openwebui ?? provider?.defaultModel ?? 'synap/auto';
+  const domain = secrets?.domain?.primary?.trim();
+  const webuiUrl = domain && domain !== 'localhost'
+    ? `${secrets?.domain?.ssl ? 'https' : 'http'}://chat.${domain}`
+    : '';
+
+  return {
+    defaultModels,
+    webuiUrl,
+    webuiName: 'Eve',
+    enableSignup: true,
+    defaultUserRole: 'pending',
+  };
+}
+
 /**
  * Ordered registration flow for OpenWebUI's admin API:
  *   1. Wait for pipelines sidecar (brief, fire-and-forget)
@@ -797,7 +776,11 @@ export function buildOpenwebuiModelSources(
  */
 export async function registerOpenwebuiAdminApi(
   modelSources: ModelSource[],
-  options: { pipelinesUrl?: string | null; pipelinesKey?: string },
+  options: {
+    pipelinesUrl?: string | null;
+    pipelinesKey?: string;
+    managedConfig?: Omit<OpenWebuiManagedConfig, 'modelSources'>;
+  },
 ): Promise<boolean> {
   // Step 1: Start sidecar probe and OpenWebUI health wait in parallel
   const sidecarPromise = (async () => {
@@ -819,24 +802,23 @@ export async function registerOpenwebuiAdminApi(
     return false;
   }
 
-  // Step 3: OpenWebUI is healthy — resolve sidecar probe result
+  const jwt = await getAdminJwt();
+  if (!jwt) return false;
+
+  // Step 3: OpenWebUI is healthy and admin auth works — resolve sidecar probe result
   const sidecarReady = await sidecarPromise;
 
   // Step 4: Register pipeline sidecar (if sidecar is ready)
   if (sidecarReady && options.pipelinesUrl && options.pipelinesKey) {
-    const jwt = await getAdminJwt();
-    if (jwt) {
-      await registerPipeline(jwt, options.pipelinesUrl, options.pipelinesKey);
-    }
+    await registerPipeline(jwt, options.pipelinesUrl, options.pipelinesKey);
   }
 
-  // Step 5: Upsert model sources (single pass — already waited for health)
-  if (modelSources.length > 0) {
-    const jwt = await getAdminJwt();
-    if (jwt) {
-      await upsertAllModelSources(jwt, modelSources);
-    }
-  }
+  // Step 5: Reconcile Eve-managed persisted config. This is the headless
+  // equivalent of using OpenWebUI's Admin Settings UI after first boot.
+  await reconcileOpenwebuiManagedConfigViaAdmin(jwt, {
+    ...(options.managedConfig ?? {}),
+    modelSources,
+  });
 
   return true;
 }

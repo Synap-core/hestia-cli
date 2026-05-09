@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,6 +9,7 @@ import {
   secretsPath,
 } from '../src/secrets-contract.js';
 import { configStore } from '../src/config-store.js';
+import { readOperationalEvents } from '../src/operational.js';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'eve-secrets-'));
 
@@ -35,11 +36,22 @@ describe('ensureSecretValue', () => {
 
 describe('writeEveSecrets / readEveSecrets', () => {
   let dir: string;
+  let stateHome: string;
+  const originalStateHome = process.env.EVE_STATE_HOME;
+
   beforeEach(() => {
     dir = tmp();
+    stateHome = tmp();
+    process.env.EVE_STATE_HOME = stateHome;
   });
-  afterAll(() => {
+  afterEach(() => {
+    if (originalStateHome === undefined) {
+      delete process.env.EVE_STATE_HOME;
+    } else {
+      process.env.EVE_STATE_HOME = originalStateHome;
+    }
     try { rmSync(dir, { recursive: true, force: true }); } catch { /* */ }
+    try { rmSync(stateHome, { recursive: true, force: true }); } catch { /* */ }
   });
 
   it('writes and reads a partial secret', async () => {
@@ -76,6 +88,17 @@ describe('writeEveSecrets / readEveSecrets', () => {
   it('writes secrets to .eve/secrets/secrets.json', () => {
     const path = secretsPath(dir);
     expect(path).toBe(join(dir, '.eve', 'secrets', 'secrets.json'));
+  });
+
+  it('records config.changed after durable writes', async () => {
+    await writeEveSecrets({ synap: { apiUrl: 'http://localhost:4000' } }, dir);
+
+    const events = await readOperationalEvents({ stateHome });
+    expect(events.some((event) => (
+      event.type === 'config.changed'
+      && event.target === 'secrets'
+      && event.summary?.includes('synap')
+    ))).toBe(true);
   });
 });
 

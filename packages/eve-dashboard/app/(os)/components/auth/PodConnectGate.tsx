@@ -30,7 +30,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Card, Input, Spinner, addToast } from "@heroui/react";
 import { ExternalLink, Mail, Plug, Server, Sparkles } from "lucide-react";
-import { useSetupStatus } from "../../hooks/use-setup-status";
+import { usePodAuthState } from "../../hooks/use-pod-auth-state";
 import { ConfigurePodCard } from "../bootstrap-admin-card";
 import {
   ClaimSuccessNotice,
@@ -76,7 +76,8 @@ function inferPodUrlFromHostname(): string | null {
 }
 
 export function PodConnectGate({ children }: PodConnectGateProps) {
-  const { state: setupState, refetch } = useSetupStatus();
+  const podAuthState = usePodAuthState({ includePairing: false });
+  const { refetch } = podAuthState;
   const [claim, setClaim] = useState<SelfHostedClaimResult | null>(null);
   const [localPodUrl, setLocalPodUrl] = useState<string | null>(null);
   // Candidate pod URL when secrets don't have one — inferred from hostname.
@@ -227,11 +228,11 @@ export function PodConnectGate({ children }: PodConnectGateProps) {
   // OS doesn't flicker during the initial fetch. Only "loading" gets
   // the optimistic pass; "ready" falls through so the claim CTA is
   // shown when the operator hasn't completed the CP→pod handshake yet.
-  if (setupState === "loading") {
+  if (podAuthState.kind === "loading") {
     return <>{children}</>;
   }
 
-  if (setupState === "unconfigured") {
+  if (podAuthState.kind === "unconfigured") {
     return (
       <div className="flex min-h-[calc(100vh-3rem)] items-center justify-center px-4 py-8">
         <ConfigurePodCard />
@@ -239,7 +240,7 @@ export function PodConnectGate({ children }: PodConnectGateProps) {
     );
   }
 
-  if (setupState === "needsBootstrap") {
+  if (podAuthState.kind === "needsBootstrap") {
     if (claim) {
       return (
         <div className="flex min-h-[calc(100vh-3rem)] items-center justify-center px-4 py-8">
