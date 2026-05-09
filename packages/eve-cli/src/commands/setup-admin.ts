@@ -112,7 +112,7 @@ function promptPassword(question: string): Promise<string> {
  * `synap setup admin --status` returns "needed" / "ready" / "unknown".
  * Maps to a tri-state for callers.
  */
-async function probeAdminStatus(): Promise<'needed' | 'ready' | 'unknown'> {
+export async function probeAdminStatus(): Promise<'needed' | 'ready' | 'unknown'> {
   const result = runSynapCli('setup', ['admin', '--status'], { inherit: false });
   if (!result.ok && result.exitCode !== 2) {
     return 'unknown';
@@ -160,235 +160,110 @@ interface SetupAdminOptions {
   terminal?: boolean;
 }
 
-export interface SetupAdminInlineOptions {
-  synapUrl: string;
-  provisioningToken: string;
-  mode: 'prompt' | 'magic-link';
-  email?: string;
-  /** Public-facing URL for magic-link display (e.g. https://pod.example.com). */
-  publicUrl?: string;
-}
-
-/**
- * Inline variant used by `eve auth provision` when it detects a first-admin
- * is still needed. Takes already-resolved synapUrl + provisioningToken so it
- * doesn't redo the lookup.
- */
-export async function runSetupAdminInline(opts: SetupAdminInlineOptions): Promise<void> {
-  if (opts.mode === 'prompt') {
-    const email = opts.email?.trim() || '';
-    if (!email) {
-      printError('Email required for prompt mode. Pass --email <addr>.');
-      process.exitCode = 1;
-      return;
-    }
-
-    const defaultName = email.split('@')[0] ?? '';
-    const nameInput = await prompt(`Name [${defaultName}]: `);
-    const name = nameInput.trim() || defaultName;
-    const password = await promptPassword('Password: ');
-    if (!password) {
-      printError('Password is required.');
-      process.exitCode = 1;
-      return;
-    }
-    const confirm = await promptPassword('Confirm password: ');
-    if (password !== confirm) {
-      printError('Passwords do not match.');
-      process.exitCode = 1;
-      return;
-    }
-
-    const s = createSpinner('Creating admin account…');
-    s.start();
-    const result = await createFirstAdmin({
-      synapUrl: opts.synapUrl,
-      provisioningToken: opts.provisioningToken,
-      mode: 'prompt',
-      email,
-      password,
-      name,
-    });
-    if (!result) {
-      s.fail('Failed to create admin account.');
-      process.exitCode = 1;
-      return;
-    }
-    s.succeed('Admin account created.');
-    printSuccess(`Admin created: ${email}`);
-  } else {
-    // magic-link
-    printInfo('Generating magic-link setup URL…');
-    const pollSpinner = createSpinner('Waiting for you to complete setup in browser…');
-    const result = await createFirstAdmin({
-      synapUrl: opts.synapUrl,
-      provisioningToken: opts.provisioningToken,
-      mode: 'magic-link',
-      publicUrl: opts.publicUrl,
-    });
-    pollSpinner.start();
-    if (!result) {
-      pollSpinner.fail('Setup timed out or failed.');
-      printWarning('Run `eve setup admin --magic-link` to generate a new link.');
-      process.exitCode = 1;
-      return;
-    }
-    pollSpinner.succeed('Admin account created via browser.');
-  }
-}
 
 async function runSetupAdmin(opts: SetupAdminOptions): Promise<void> {
   console.log();
   printHeader('Synap — First Admin Setup');
   console.log();
 
-  const secrets = await readEveSecrets(process.cwd());
-  const synapUrl = await resolveSynapUrlOnHost(secrets);
-  const domain = secrets?.domain?.primary;
-  const publicUrl = domain ? `https://${domain}` : undefined;
-
-  if (!synapUrl) {
-    printError('Pod URL not configured. Run `eve install` first.');
-    process.exitCode = 1;
-    return;
-  }
-
-  // Resolve provisioning token — checks env vars, /opt/synap-backend/.env,
-  // /opt/synap-backend/deploy/.env, and docker inspect (in that order).
-  const provisioningToken = await resolveProvisioningToken() ?? '';
-
-  if (!provisioningToken) {
-    printError('PROVISIONING_TOKEN not found.');
-    printInfo(
-      '  Checked: EVE_PROVISIONING_TOKEN / PROVISIONING_TOKEN env vars,\n' +
-        '           /opt/synap-backend/.env, /opt/synap-backend/deploy/.env,\n' +
-        '           and docker inspect on the running backend container.\n' +
-        '  Fix: set EVE_PROVISIONING_TOKEN=<token>, or ensure the pod .env is readable.',
-    );
-    process.exitCode = 1;
-    return;
-  }
-
-  // Check if admin already exists
+  // Single source of truth for "is admin needed" — the synap CLI probe.
   const spinner = createSpinner('Checking pod status…');
   spinner.start();
-  const needsSetup = await checkNeedsAdmin(synapUrl);
-  if (!needsSetup) {
+  const status = await probeAdminStatus();
+  if (status === 'unknown') {
+    spinner.fail('Could not reach the synap pod. Is it installed and running?');
+    printInfo('  Try: eve status, eve doctor, or eve install synap.');
+    process.exitCode = 1;
+    return;
+  }
+  if (status === 'ready') {
     spinner.succeed('Pod already has an admin account.');
     printInfo('  Nothing to do — log in at your pod URL.');
     return;
   }
-  spinner.succeed(`Pod at ${synapUrl} has no admin yet.`);
+  spinner.succeed('Pod has no admin yet — proceeding.');
   console.log();
 
-  // Determine mode
-  let mode: 'prompt' | 'magic-link';
-
+  // Resolve mode from flags. Precedence: --magic-link > --password > --terminal
+  // > interactive picker (TTY) > magic-link (non-TTY default).
+  let mode: 'terminal' | 'magic-link';
   if (opts.magicLink) {
     mode = 'magic-link';
-  } else if (opts.email) {
-    mode = 'prompt';
+  } else if (opts.password || opts.terminal) {
+    mode = 'terminal';
   } else if (!process.stdin.isTTY) {
-    // Non-interactive: default to magic-link
     mode = 'magic-link';
   } else {
-    // Interactive: ask
     console.log(
       `${colors.muted('How would you like to create the first admin account?')}\n` +
-        `  ${colors.primary('1')} Enter credentials here (email + password)\n` +
+        `  ${colors.primary('1')} Enter credentials here (email + password) — terminal\n` +
         `  ${colors.primary('2')} Open magic link in browser\n`,
     );
     const choice = await prompt('Choice [1]: ');
-    mode = choice === '2' ? 'magic-link' : 'prompt';
+    mode = choice === '2' ? 'magic-link' : 'terminal';
   }
 
-  if (mode === 'prompt') {
-    // Gather credentials
-    const email =
-      opts.email?.trim() ||
-      (await prompt('Email: '));
+  // Gather email + password as needed, then delegate.
+  const email = opts.email?.trim() || (await prompt('Email: '));
+  if (!email) {
+    printError('Email is required.');
+    process.exitCode = 1;
+    return;
+  }
 
-    if (!email) {
-      printError('Email is required.');
-      process.exitCode = 1;
-      return;
-    }
-
-    const defaultName = email.split('@')[0] ?? '';
-    const nameInput = await prompt(`Name [${defaultName}]: `);
-    const name = nameInput.trim() || defaultName;
-
-    const password = await promptPassword('Password: ');
+  if (mode === 'terminal') {
+    const password = opts.password?.trim() ?? await promptPassword('Password: ');
     if (!password) {
       printError('Password is required.');
       process.exitCode = 1;
       return;
     }
-
-    const confirm = await promptPassword('Confirm password: ');
-    if (password !== confirm) {
-      printError('Passwords do not match.');
-      process.exitCode = 1;
-      return;
+    if (!opts.password) {
+      const confirm = await promptPassword('Confirm password: ');
+      if (password !== confirm) {
+        printError('Passwords do not match.');
+        process.exitCode = 1;
+        return;
+      }
     }
-
     console.log();
-    const createSpinnerInst = createSpinner('Creating admin account…');
-    createSpinnerInst.start();
-
-    const result = await createFirstAdmin({
-      synapUrl,
-      provisioningToken,
-      mode: 'prompt',
-      email,
-      password,
-      name,
-    });
-
-    if (!result) {
-      createSpinnerInst.fail('Failed to create admin account.');
-      printError('Check the pod logs for details.');
+    const s = createSpinner('Creating admin via synap CLI…');
+    s.start();
+    const ok = await runPreseed(email, password);
+    if (!ok) {
+      s.fail('synap setup admin failed — see preceding output.');
       process.exitCode = 1;
       return;
     }
-
-    createSpinnerInst.succeed('Admin account created.');
+    s.succeed('Admin account created.');
     console.log();
     printSuccess(`Admin created: ${email}`);
-    printInfo(`  User ID:      ${result.userId}`);
-    printInfo(`  Workspace ID: ${result.workspaceId}`);
-    printInfo(`  Log in at:    ${synapUrl}`);
-    console.log();
-  } else {
-    // Magic-link mode
-    console.log();
-    printInfo(`Generating a one-hour setup link for ${synapUrl}…`);
-    console.log();
-
-    const pollSpinner = createSpinner('Waiting for you to complete setup in your browser…');
-
-    const result = await createFirstAdmin({
-      synapUrl,
-      provisioningToken,
-      mode: 'magic-link',
-      publicUrl,
-    });
-
-    // createFirstAdmin prints the URL before it starts polling
-    pollSpinner.start();
-
-    if (!result) {
-      pollSpinner.fail('Setup timed out (5 min) or failed.');
-      printWarning('Generate a new link by running `eve setup admin` again.');
-      process.exitCode = 1;
-      return;
-    }
-
-    pollSpinner.succeed('Admin account created via browser setup.');
-    console.log();
-    printSuccess('Pod is now ready. Run `eve auth provision` to mint agent keys.');
-    console.log();
+    return;
   }
+
+  // magic-link mode
+  console.log();
+  printInfo('Minting one-hour setup URL via synap CLI…');
+  const url = await runMagicLinkMint(email);
+  if (!url) {
+    printError('Could not mint magic link.');
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`\n  Open this link in your browser to complete setup:\n  ${url}\n  Link expires in 1 hour.\n`);
+  const pollSpinner = createSpinner('Waiting for you to complete setup in browser…');
+  pollSpinner.start();
+  const ok = await pollUntilReady();
+  if (!ok) {
+    pollSpinner.fail('Setup timed out (5 min) or failed.');
+    printWarning('Generate a new link by running `eve setup admin --magic-link` again.');
+    process.exitCode = 1;
+    return;
+  }
+  pollSpinner.succeed('Admin account created via browser setup.');
+  console.log();
+  printSuccess('Pod is now ready. Run `eve auth provision` to mint agent keys.');
+  console.log();
 }
 
 // ---------------------------------------------------------------------------
@@ -400,6 +275,8 @@ export function setupAdminCommand(setupParent: Command): void {
     .command('admin')
     .description('Create the first admin account on a fresh Synap pod')
     .option('--email <email>', 'Admin email (skips the interactive prompt)')
+    .option('--password <secret>', 'Admin password (fully scripted — implies --terminal)')
+    .option('--terminal', 'Force terminal-mode entry (default in interactive sessions)')
     .option('--magic-link', 'Generate a browser setup link instead of entering credentials here')
     .action(async (opts: SetupAdminOptions) => {
       try {

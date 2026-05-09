@@ -21,6 +21,7 @@ import {
 import { getGlobalCliFlags, outputJson } from '@eve/cli-kit';
 import { runBrainInit, runInferenceInit, resolveSynapDelegate } from '@eve/brain';
 import { runLegsProxySetup } from '@eve/legs';
+import { probeAdminStatus } from '../setup-admin.js';
 import { text } from '@clack/prompts';
 import {
   colors,
@@ -44,7 +45,6 @@ import { RSSHubService } from '@eve/eyes';
 import {
   runBackendPreflight,
   provisionAllAgents,
-  checkNeedsAdmin,
   materializeTargets,
 } from '@eve/lifecycle';
 
@@ -391,8 +391,8 @@ async function runPostInstallProvision(installedComponents: string[]): Promise<v
     return;
   }
 
-  const needsAdmin = await checkNeedsAdmin(synapUrl, provisioningToken);
-  if (needsAdmin) {
+  const adminStatus = await probeAdminStatus();
+  if (adminStatus === 'needed') {
     spinner.warn('Backend is up — first admin account required');
     const secrets = await readEveSecrets(process.cwd());
     const domain = secrets?.domain?.primary;

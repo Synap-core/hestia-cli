@@ -11,11 +11,11 @@ import {
   runActionToCompletion,
   runBackendPreflight,
   provisionAllAgents,
-  checkNeedsAdmin,
 } from '@eve/lifecycle';
 import { findPodDeployDir, entityStateManager, readEveSecrets } from '@eve/dna';
 import { runSynapCli } from '@eve/brain';
 import { installDashboardContainer, dashboardIsRunning } from '@eve/legs';
+import { probeAdminStatus } from '../setup-admin.js';
 import { randomBytes } from 'node:crypto';
 import {
   printInfo,
@@ -145,9 +145,9 @@ async function tryPostUpdateProvision(_deployDir: string): Promise<{ subLines: s
   const eveCwd = process.cwd(); // Eve home — where secrets.json lives
   try {
     const preflight = await runBackendPreflight({ cwd: eveCwd });
-    const needsAdmin = await checkNeedsAdmin(preflight.synapUrl, preflight.provisioningToken);
-    if (needsAdmin) {
-      subLines.push(`Admin setup required — run: eve auth provision`);
+    const adminStatus = await probeAdminStatus();
+    if (adminStatus === 'needed') {
+      subLines.push(`Admin setup required — run: eve setup admin`);
       return { subLines };
     }
     const installed = await entityStateManager.getInstalledComponents().catch(() => [] as string[]);

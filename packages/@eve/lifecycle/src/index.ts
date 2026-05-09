@@ -2424,8 +2424,6 @@ export {
   migrateLegacyToAgents,
   ensurePodProvisioningToken,
   resolveProvisioningToken,
-  checkNeedsAdmin,
-  createFirstAdmin,
   type AuthStatus,
   type AuthFailure,
   type AuthFailReason,
@@ -2436,7 +2434,6 @@ export {
   type ProvisionAgentOptions,
   type ProvisionResult,
   type EnsureProvisioningTokenResult,
-  type FirstAdminOptions,
 } from "./auth.js";
 
 // OpenClaw reconciliation — re-applies Eve's expected `allowedOrigins`

@@ -68,7 +68,8 @@ export type SynapCliSubcommand =
   | 'restore'
   | 'clean'
   | 'errors'
-  | 'diagnose';
+  | 'diagnose'
+  | 'setup';
 
 export interface RunSynapCliOptions {
   /** Domain to expose to the CLI as `DOMAIN=...`. Defaults to whatever is in .env. */

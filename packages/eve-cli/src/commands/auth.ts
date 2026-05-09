@@ -28,7 +28,6 @@
 
 import { Command } from 'commander';
 import {
-  checkNeedsAdmin,
   ensurePodProvisioningToken,
   getAuthStatus,
   provisionAgent,
@@ -61,7 +60,7 @@ import {
   printWarning,
   createSpinner,
 } from '../lib/ui.js';
-import { runSetupAdminInline } from './setup-admin.js';
+import { probeAdminStatus } from './setup-admin.js';
 
 // ---------------------------------------------------------------------------
 // Resolve pod URL + per-agent key
@@ -491,22 +490,21 @@ async function runProvision(opts: { agent?: string; email?: string }): Promise<v
   }
 
   // ------------------------------------------------------------------
-  // Check if the pod has a first admin yet. If not, run setup-admin
-  // inline so provision has a workspace to associate agents with.
+  // Refuse to provision agents on a pod that has no admin yet.
+  // Admin creation is its own command — `eve setup admin` — so each
+  // step has a single clear responsibility.
   // ------------------------------------------------------------------
-  const needsSetup = await checkNeedsAdmin(synapUrl, provisioningToken);
-  if (needsSetup) {
-    printWarning('No admin account found on this pod.');
-    printInfo('Running first-admin setup before provisioning agent keys…');
-    console.log();
-
-    const secrets = await readEveSecrets(process.cwd());
-    const domain = secrets?.domain?.primary;
-    const publicUrl = domain ? `https://pod.${domain}` : undefined;
-
-    const mode = opts.email ? 'prompt' : 'magic-link';
-    await runSetupAdminInline({ synapUrl, provisioningToken, mode, email: opts.email, publicUrl });
-    console.log();
+  const adminStatus = await probeAdminStatus();
+  if (adminStatus === 'needed') {
+    printError('No admin account on this pod yet.');
+    printInfo('  Run: eve setup admin');
+    printInfo('  Then re-run: eve auth provision');
+    process.exitCode = 1;
+    return;
+  }
+  if (adminStatus === 'unknown') {
+    printWarning('Could not verify admin status (synap CLI returned no result).');
+    printInfo('  Continuing anyway — provision will fail clearly if admin is actually missing.');
   }
 
   if (opts.agent) {
