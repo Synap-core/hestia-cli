@@ -94,6 +94,8 @@ export interface SynapCliResult {
   ok: boolean;
   exitCode: number;
   paths: SynapDelegatePaths | null;
+  /** Stdout captured when inherit=false. Empty when inherit=true. */
+  stdout: string;
   /** Stderr captured when inherit=false. Empty when inherit=true. */
   stderr: string;
 }
@@ -144,6 +146,7 @@ export function runSynapCli(
       ok: false,
       exitCode: -1,
       paths: null,
+      stdout: '',
       stderr: options.repoRoot
         ? `synap CLI not found at ${options.repoRoot} — expected ${options.repoRoot}/synap and ${options.repoRoot}/deploy/docker-compose.yml`
         : diagnoseMissingSynapCli(),
@@ -185,6 +188,7 @@ export function runSynapCli(
     ok: result.status === 0,
     exitCode: result.status ?? -1,
     paths,
+    stdout: inherit ? '' : (result.stdout?.toString() ?? ''),
     stderr: inherit ? '' : (result.stderr?.toString() ?? ''),
   };
 }

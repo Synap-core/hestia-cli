@@ -12,11 +12,26 @@ function reconnectSynapToEveNetwork(): void {
       { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
     ).trim().split('\n')[0]?.trim();
     if (!name) return;
+    // Alias 'eve-brain-synap' so OWUI/Hermes resolve the pod by the hostname
+    // every compose template + default base URL assumes. Without it, the
+    // OpenAI-compat /v1/models call from OWUI fails with NXDOMAIN.
     try {
-      execSync(`docker network connect eve-network ${name}`, { stdio: ['pipe', 'pipe', 'ignore'] });
-      console.log(`  Reconnected ${name} → eve-network`);
+      const inspect = execSync(
+        `docker inspect --format "{{json .NetworkSettings.Networks}}" ${name}`,
+        { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
+      ).trim();
+      const networks = JSON.parse(inspect) as Record<string, { Aliases?: string[] | null }>;
+      const eve = networks['eve-network'];
+      if (eve && (eve.Aliases ?? []).includes('eve-brain-synap')) return;
+      if (eve) {
+        try { execSync(`docker network disconnect eve-network ${name}`, { stdio: ['pipe', 'pipe', 'ignore'] }); } catch { /* ignore */ }
+      }
+    } catch { /* fall through */ }
+    try {
+      execSync(`docker network connect --alias eve-brain-synap eve-network ${name}`, { stdio: ['pipe', 'pipe', 'ignore'] });
+      console.log(`  Reconnected ${name} → eve-network (alias: eve-brain-synap)`);
     } catch {
-      // Already connected
+      // connect failed — already connected with right alias, or container gone
     }
   } catch {
     // Synap not running — skip

@@ -36,10 +36,47 @@ function getSynapBackendContainer(): string | null {
   }
 }
 
-/** Connects a container to eve-network (no-op if already connected or container absent). */
-function connectToEveNetwork(containerName: string): void {
+/**
+ * Connect a container to eve-network with an optional DNS alias.
+ *
+ * Eve's compose templates (OpenWebUI, Hermes, Pipelines) and `wire-ai`
+ * defaults call the Synap backend by the hostname `eve-brain-synap`, but
+ * the Synap pod is installed via `synap-backend`'s own compose project,
+ * yielding a runtime container name of `synap-backend-backend-1`. Without
+ * an alias, OWUI sees `socket.gaierror: Name or service not known` when
+ * fetching `/v1/models` — which silently empties the user-side model
+ * picker. Passing `alias` registers the expected name on the network.
+ *
+ * If the container is already on eve-network without the alias, we
+ * disconnect and reconnect with it so existing installs are repaired.
+ */
+function connectToEveNetwork(containerName: string, alias?: string): void {
+  if (alias) {
+    try {
+      const inspect = execSync(
+        `docker inspect --format "{{json .NetworkSettings.Networks}}" ${containerName}`,
+        { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
+      ).trim();
+      const networks = JSON.parse(inspect) as Record<string, { Aliases?: string[] | null }>;
+      const eve = networks['eve-network'];
+      if (eve) {
+        if ((eve.Aliases ?? []).includes(alias)) return; // already correct
+        try {
+          execSync(`docker network disconnect eve-network ${containerName}`, {
+            stdio: ['pipe', 'pipe', 'ignore'],
+          });
+        } catch {
+          // disconnect failed — try connect anyway; worst case it's still wrong
+        }
+      }
+    } catch {
+      // inspect failed — proceed with connect attempt
+    }
+  }
+
+  const aliasArg = alias ? ` --alias ${alias}` : '';
   try {
-    execSync(`docker network connect eve-network ${containerName}`, {
+    execSync(`docker network connect${aliasArg} eve-network ${containerName}`, {
       stdio: ['pipe', 'pipe', 'ignore'],
     });
   } catch {
@@ -194,8 +231,10 @@ export class TraefikService {
     // eve-network so Traefik (also on eve-network) can resolve it by name.
     const synapContainer = getSynapBackendContainer();
     if (synapContainer) {
-      connectToEveNetwork(synapContainer);
-      console.log(`  Connected ${synapContainer} → eve-network`);
+      // Alias 'eve-brain-synap' so OWUI/Hermes/wire-ai can resolve the pod
+      // by the hostname every compose template + default base URL assumes.
+      connectToEveNetwork(synapContainer, 'eve-brain-synap');
+      console.log(`  Connected ${synapContainer} → eve-network (alias: eve-brain-synap)`);
     } else if (!installedComponents || installedComponents.includes('synap')) {
       console.warn('  Warning: Synap backend container not found — pod.domain routing will 502 until `eve brain init` is run');
     }

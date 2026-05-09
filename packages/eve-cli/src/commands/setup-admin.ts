@@ -1,26 +1,22 @@
 /**
  * `eve setup admin` — create the first human admin on a fresh Synap pod.
  *
- * Two modes:
- *   1) Enter credentials here (email + password) — prompt mode.
- *   2) Open magic link in browser — generates a one-hour JWT, prints the
- *      URL, then polls until the user completes setup in their browser.
+ * Delegates to the canonical synap CLI's `synap setup admin` subcommand.
+ * Three modes:
+ *   1. --terminal (default if interactive): prompt for email + password,
+ *      then `synap setup admin --email e --password p` (preseed via
+ *      container exec).
+ *   2. --magic-link: `synap setup admin --email e --magic-link` mints
+ *      a one-hour browser URL, eve polls `synap setup admin --status`
+ *      until the operator finishes in their browser.
+ *   3. --password (fully scripted): `synap setup admin --email e --password p`.
  */
 
 import * as readline from 'node:readline';
 import { Command } from 'commander';
-import {
-  checkNeedsAdmin,
-  createFirstAdmin,
-  resolveProvisioningToken,
-} from '@eve/lifecycle';
-import {
-  readEveSecrets,
-  resolveSynapUrlOnHost,
-} from '@eve/dna';
+import { runSynapCli } from '@eve/brain';
 import {
   colors,
-  emojis,
   printHeader,
   printSuccess,
   printError,
@@ -109,12 +105,59 @@ function promptPassword(question: string): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
+// Synap CLI delegation
+// ---------------------------------------------------------------------------
+
+/**
+ * `synap setup admin --status` returns "needed" / "ready" / "unknown".
+ * Maps to a tri-state for callers.
+ */
+async function probeAdminStatus(): Promise<'needed' | 'ready' | 'unknown'> {
+  const result = runSynapCli('setup', ['admin', '--status'], { inherit: false });
+  if (!result.ok && result.exitCode !== 2) {
+    return 'unknown';
+  }
+  const out = result.stdout.trim();
+  if (out === 'needed') return 'needed';
+  if (out === 'ready') return 'ready';
+  return 'unknown';
+}
+
+async function runPreseed(email: string, password: string): Promise<boolean> {
+  const result = runSynapCli('setup', ['admin', '--email', email, '--password', password]);
+  return result.ok;
+}
+
+async function runMagicLinkMint(email: string): Promise<string | null> {
+  const result = runSynapCli('setup', ['admin', '--email', email, '--magic-link'], { inherit: false });
+  if (!result.ok) {
+    if (result.stderr) printWarning(result.stderr.trim());
+    return null;
+  }
+  // The synap CLI prints the URL on stdout, one line.
+  const url = result.stdout.trim().split('\n').pop()?.trim() ?? '';
+  return url || null;
+}
+
+async function pollUntilReady(timeoutMs = 5 * 60 * 1000, intervalMs = 3000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, intervalMs));
+    const status = await probeAdminStatus();
+    if (status === 'ready') return true;
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // Core flow
 // ---------------------------------------------------------------------------
 
 interface SetupAdminOptions {
   email?: string;
+  password?: string;
   magicLink?: boolean;
+  terminal?: boolean;
 }
 
 export interface SetupAdminInlineOptions {

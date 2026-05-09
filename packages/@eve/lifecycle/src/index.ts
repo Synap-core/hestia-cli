@@ -1529,19 +1529,22 @@ async function* runInstallRecipe(
       throw new Error("Install Traefik from the CLI: `eve add traefik`. The dashboard runs on top of it.");
 
     case "synap": {
-      const repo = opts.synapRepo ?? process.env.SYNAP_REPO_ROOT;
-      if (!repo || !existsSync(repo)) {
-        throw new Error(
-          "Synap install needs a synap-backend checkout. " +
-          "Set SYNAP_REPO_ROOT or pass --synap-repo on the host CLI.",
-        );
-      }
-      // Defer to the brain organ's installer. We import lazily so the dashboard
-      // bundle doesn't pull in `@eve/brain` until it's actually needed.
+      // No more "checkout required" guard — `installSynapFromImage` (called
+      // by `runBrainInit`) clones the synap-backend repo into the deploy
+      // dir if missing. Operator can still pin a custom path via SYNAP_REPO_ROOT.
       const { runBrainInit } = await import("@eve/brain");
+      const explicitRepo = opts.synapRepo ?? process.env.SYNAP_REPO_ROOT;
+      // Pull domain + email from configStore so a fresh install on a
+      // configured-domain host doesn't error on "non-localhost domain
+      // requires --email". When unset, runBrainInit auto-discovers from
+      // disk artefacts and falls back to localhost.
+      const secrets = await configStore.get();
+      const domain = secrets?.domain?.primary ?? "localhost";
+      const email = secrets?.domain?.email;
       await runBrainInit({
-        synapRepo: repo,
-        domain: "localhost",
+        synapRepo: explicitRepo,
+        domain,
+        email,
         adminBootstrapMode: "token",
         withAi: false,
         withOpenclaw: false,

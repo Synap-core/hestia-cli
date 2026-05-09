@@ -85,9 +85,37 @@ function getSynapBackendContainer(): string | null {
   }
 }
 
-function connectToEveNetwork(containerName: string): void {
+/**
+ * Connect a container to eve-network with an optional DNS alias. See the
+ * mirror in `@eve/legs/src/lib/traefik.ts` for full rationale — short
+ * version: OWUI/Hermes/wire-ai default to `eve-brain-synap` as the pod
+ * hostname, but the Synap container is named `synap-backend-backend-1`
+ * by Synap's own compose project, so we have to register the alias
+ * explicitly. Repairs already-connected containers by reconnecting.
+ */
+function connectToEveNetwork(containerName: string, alias?: string): void {
+  if (alias) {
+    try {
+      const inspect = execSync(
+        `docker inspect --format "{{json .NetworkSettings.Networks}}" ${containerName}`,
+        { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
+      ).trim();
+      const networks = JSON.parse(inspect) as Record<string, { Aliases?: string[] | null }>;
+      const eve = networks['eve-network'];
+      if (eve) {
+        if ((eve.Aliases ?? []).includes(alias)) return;
+        try {
+          execSync(`docker network disconnect eve-network ${containerName}`, {
+            stdio: ['pipe', 'pipe', 'ignore'],
+          });
+        } catch { /* fall through */ }
+      }
+    } catch { /* inspect failed — proceed */ }
+  }
+
+  const aliasArg = alias ? ` --alias ${alias}` : '';
   try {
-    execSync(`docker network connect eve-network ${containerName}`, {
+    execSync(`docker network connect${aliasArg} eve-network ${containerName}`, {
       stdio: ['pipe', 'pipe', 'ignore'],
     });
   } catch {
@@ -205,8 +233,8 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
   //    container should already be visible to `docker ps`.
   const containerName = getSynapBackendContainer();
   if (containerName) {
-    connectToEveNetwork(containerName);
-    console.log(`  Connected ${containerName} → eve-network`);
+    connectToEveNetwork(containerName, 'eve-brain-synap');
+    console.log(`  Connected ${containerName} → eve-network (alias: eve-brain-synap)`);
   } else {
     console.warn('  Backend container not found after synap install — skipping eve-network attach');
   }
