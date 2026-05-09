@@ -95,7 +95,7 @@ export function loginCommand(program: Command): void {
 // ---------------------------------------------------------------------------
 
 async function runLogin(opts: {
-  ghr?: string;
+  ghcr?: string;
   coolifyStaging?: string;
   coolifyProd?: string;
   clear?: boolean;
@@ -145,8 +145,8 @@ async function runLogin(opts: {
   // Store values
   const creds = loadCreds();
 
-  if (opts.ghr) {
-    creds.ghcr = opts.ghr;
+  if (opts.ghcr) {
+    creds.ghcr = opts.ghcr;
     printSuccess('GHCR token stored');
   }
   if (opts.coolifyStaging) {

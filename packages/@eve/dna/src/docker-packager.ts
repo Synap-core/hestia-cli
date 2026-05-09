@@ -193,6 +193,7 @@ export async function buildAndPackageImage(
   org: string = 'synap-core',
   ghcrToken?: string,
   buildOnly = false,
+  customTag?: string,
 ): Promise<BuildResult> {
   const startTime = Date.now();
   const step = (msg: string) => console.log(`    ${msg}`);
@@ -300,7 +301,7 @@ export async function buildAndPackageImage(
     }).trim();
   } catch {}
 
-  const tag = `${cleanBranch}-${sha.slice(0, 7)}`;
+  const tag = customTag || `${cleanBranch}-${sha.slice(0, 7)}`;
   const fullImage = `${org}/${appImageName}:${tag}`;
 
   // ------------------------------------------------------------------
@@ -310,10 +311,12 @@ export async function buildAndPackageImage(
   step(`Image: ${fullImage}`);
 
   try {
-    execSync(`docker build -t "${fullImage}" ${tmpDir}`, {
+    execSync(`docker build --cache-from ${org}/${appImageName}:latest -t "${fullImage}" ${tmpDir}`, {
       stdio: 'inherit',
       timeout: 600_000, // 10 min for Docker build
     });
+    // Tag as latest for next build cache
+    execSync(`docker tag "${fullImage}" ${org}/${appImageName}:latest`);
   } catch (err) {
     console.error(
       `\n✖ Docker build failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -333,7 +336,7 @@ export async function buildAndPackageImage(
 
     if (ghcrToken) {
       try {
-        execSync(`echo ${ghcrToken} | docker login ghcr.io -u USER --password-stdin`, {
+        execSync(`docker login ghcr.io -u USER --password-stdin <<< '${ghcrToken}'`, {
           stdio: 'pipe',
           timeout: 30_000,
         });

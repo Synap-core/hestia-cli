@@ -1,7 +1,7 @@
 {
   "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"docker ps --format '{{.Names}} {{.Image}} {{.Status}}'\",\"description\":\"List all docker containers\"}",
-  "error": "Exit code 1",
-  "timestamp": "2026-05-08T15:41:17.341Z",
+  "tool_input_preview": "{\"command\":\"cd /Users/antoine/Documents/Code/synap/hestia-cli/packages/@eve/dna && npx tsc --noEmit 2>&1\",\"timeout\":60000}",
+  "error": "Exit code 2",
+  "timestamp": "2026-05-09T10:41:19.044Z",
   "retry_count": 1
 }

@@ -768,26 +768,13 @@ export function buildOpenwebuiModelSources(
     const hasCached = p.models && p.models.length > 0;
     if (!hasLiveUrl && !hasCached) continue;
 
-    if (hasLiveUrl) {
-      const liveUrl = p.baseUrl!;
-      modelSources.push({
-        url: liveUrl.replace(/\/v1$/, '') + '/v1',
-        apiKey: p.apiKey ?? '',
-        displayName: p.name ?? p.id,
-        models: p.models,
-      });
-    } else {
-      // No live URL but we have cached models — create a model source
-      // with the cached model list so it appears in the OpenWebUI picker.
-      // Use a placeholder URL (the backend must be reachable for model
-      // discovery to work; this just seeds the picker with known models).
-      modelSources.push({
-        url: p.baseUrl ?? `http://custom-${p.id}/v1`,
-        apiKey: p.apiKey ?? '',
-        displayName: p.name ?? p.id,
-        models: p.models,
-      });
-    }
+    if (!hasLiveUrl) continue;
+    modelSources.push({
+      url: p.baseUrl!.replace(/\/v1$/, '') + '/v1',
+      apiKey: p.apiKey ?? '',
+      displayName: p.name ?? p.id,
+      models: p.models,
+    });
   }
 
   return { modelSources, pipelinesKey, pipelinesUrl };

@@ -77,6 +77,10 @@ function detectStandalone(framework: Framework, pkg: Record<string, unknown> | n
 
   const nc = readJSON<{ standalone?: boolean; output?: string }>(
     join(cwd, 'next.config.ts')
+  ) || readJSON<{ standalone?: boolean; output?: string }>(
+    join(cwd, 'next.config.js')
+  ) || readJSON<{ standalone?: boolean; output?: string }>(
+    join(cwd, 'next.config.mjs')
   );
 
   if (!nc) return false;

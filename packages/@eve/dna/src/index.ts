@@ -119,6 +119,12 @@ export {
   isCpSessionStale,
 } from './secrets-contract.js';
 
+// Centralized config store
+export { configStore, type ConfigStore } from './config-store.js';
+
+// Config change cascade
+export { reconcile, type ReconcileOptions, type ReconcileResult } from './reconcile.js';
+
 // Agent registry — single source of truth for which Synap agents Eve
 // provisions on the pod (eve, openclaw, hermes, openwebui-pipelines, coder).
 export {
@@ -250,6 +256,7 @@ export {
 export {
   type DiscoveredPodConfig,
   discoverPodConfig,
+  discoverAndBackfillPodUrl,
 } from './discover.js';
 
 // Shared Docker helpers — pod deploy-dir resolution, backend restart,

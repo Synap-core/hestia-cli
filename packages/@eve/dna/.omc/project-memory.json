@@ -32,7 +32,7 @@
     "runtime": null
   },
   "build": {
-    "buildCommand": "cd /Users/antoine/Documents/Code/synap/hestia-cli/packages/@eve/dna && pnpm build 2>&1",
+    "buildCommand": "npx tsc --noEmit 2>&1 | head -50",
     "testCommand": "npm test",
     "lintCommand": null,
     "devCommand": "npm run dev",
@@ -102,8 +102,86 @@
   "hotPaths": [
     {
       "path": "src/wire-ai.ts",
+      "accessCount": 24,
+      "lastAccessed": 1778324323073,
+      "type": "file"
+    },
+    {
+      "path": "src",
+      "accessCount": 8,
+      "lastAccessed": 1778324511721,
+      "type": "directory"
+    },
+    {
+      "path": "src/openwebui-admin.ts",
+      "accessCount": 7,
+      "lastAccessed": 1778324235970,
+      "type": "file"
+    },
+    {
+      "path": "",
+      "accessCount": 5,
+      "lastAccessed": 1778258516514,
+      "type": "directory"
+    },
+    {
+      "path": "src/reconcile.ts",
+      "accessCount": 5,
+      "lastAccessed": 1778324668330,
+      "type": "file"
+    },
+    {
+      "path": "src/docker-helpers.ts",
+      "accessCount": 4,
+      "lastAccessed": 1778324147167,
+      "type": "directory"
+    },
+    {
+      "path": "src/secrets-contract.ts",
+      "accessCount": 3,
+      "lastAccessed": 1778257526736,
+      "type": "file"
+    },
+    {
+      "path": "src/config-store.ts",
+      "accessCount": 3,
+      "lastAccessed": 1778324695067,
+      "type": "directory"
+    },
+    {
+      "path": "src/components.ts",
       "accessCount": 2,
-      "lastAccessed": 1778256981830,
+      "lastAccessed": 1778324382092,
+      "type": "file"
+    },
+    {
+      "path": "src/types.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778257526632,
+      "type": "file"
+    },
+    {
+      "path": "src/app-detector.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778257526655,
+      "type": "file"
+    },
+    {
+      "path": "src/synap-overrides.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778324427583,
+      "type": "directory"
+    },
+    {
+      "path": "src/discover.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778324668359,
+      "type": "file"
+    },
+    {
+      "path": "src/pod-url.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778324668382,
       "type": "file"
     }
   ],

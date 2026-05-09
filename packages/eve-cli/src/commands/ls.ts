@@ -19,8 +19,35 @@ import {
 import {
   listCoolifyApps,
   getCoolifyTargetsFromEnv,
-  detectCoolifyTargets,
+  type CoolifyTarget,
+  type CoolifyApp,
 } from '@eve/dna';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function resolveTargets(
+  opts: { staging?: boolean; production?: boolean },
+): { env: string; label: string; target: CoolifyTarget }[] {
+  const envVars = getCoolifyTargetsFromEnv();
+  const results: { env: string; label: string; target: CoolifyTarget }[] = [];
+
+  if (!opts.staging && envVars.staging) {
+    results.push({ env: 'staging', label: 'Staging (CT 104)', target: envVars.staging });
+  }
+  if (!opts.production && envVars.staging && opts.staging) {
+    results.push({ env: 'staging', label: 'Staging (CT 104)', target: envVars.staging });
+  }
+  if (!opts.staging && envVars.production) {
+    results.push({ env: 'production', label: 'Production (CT 103)', target: envVars.production });
+  }
+  if (!opts.production && envVars.production && opts.production) {
+    results.push({ env: 'production', label: 'Production (CT 103)', target: envVars.production });
+  }
+
+  return results;
+}
 
 // ---------------------------------------------------------------------------
 // Main
@@ -30,6 +57,13 @@ interface LsOptions {
   staging?: boolean;
   production?: boolean;
   json?: boolean;
+}
+
+interface LsApp {
+  name: string;
+  env: string;
+  url: string;
+  status: string;
 }
 
 export function lsCommand(program: Command): void {
@@ -53,78 +87,68 @@ export function lsCommand(program: Command): void {
 // Implementation
 // ---------------------------------------------------------------------------
 
-interface DeployedApp {
-  name: string;
-  env: string;
-  url: string;
-  status: string;
-  image: string;
-}
-
 async function runLs(opts: LsOptions): Promise<void> {
   console.log();
-  printHeader('eve ls');
 
-  const envVars = getCoolifyTargetsFromEnv();
-  const envOverrides: NonNullable<Parameters<typeof detectCoolifyTargets>[0]> = {};
+  const targets = resolveTargets(opts);
 
-  if (opts.production || (!opts.staging && !opts.production)) envOverrides.COOLIFY_PROD_URL = process.env.COOLIFY_PROD_URL;
-  if (opts.production || (!opts.staging && !opts.production)) envOverrides.COOLIFY_PROD_TOKEN = process.env.COOLIFY_PROD_TOKEN;
-  if (opts.staging || (!opts.staging && !opts.production)) envOverrides.COOLIFY_STAGING_URL = process.env.COOLIFY_STAGING_URL;
-  if (opts.staging || (!opts.staging && !opts.production)) envOverrides.COOLIFY_STAGING_TOKEN = process.env.COOLIFY_STAGING_TOKEN;
+  const allApps: LsApp[] = [];
 
-  const targets = detectCoolifyTargets(envOverrides);
-  const entries: Array<{ env: string; label: string; apps: Record<string, unknown>[] }> = [];
-
-  if (!!targets.staging || opts.staging || (!opts.staging && !opts.production)) {
-    if (envVars.staging) {
-      try {
-        const apps = await listCoolifyApps(envVars.staging);
-        entries.push({ env: 'staging', label: 'Staging (CT 104)', apps });
-      } catch {
-        entries.push({ env: 'staging', label: 'Staging (CT 104)', apps: [] });
-      }
-    }
-  }
-
-  if (!!targets.production || opts.production || (!opts.staging && !opts.production)) {
-    if (envVars.production) {
-      try {
-        const apps = await listCoolifyApps(envVars.production);
-        entries.push({ env: 'production', label: 'Production (CT 103)', apps });
-      } catch {
-        entries.push({ env: 'production', label: 'Production (CT 103)', apps: [] });
-      }
-    }
-  }
-
-  if (entries.length === 0) {
+  if (targets.length === 0) {
+    printHeader('eve ls');
     printInfo('No Coolify targets configured.');
     printInfo('Set env vars: COOLIFY_STAGING_URL + COOLIFY_STAGING_TOKEN, COOLIFY_PROD_URL + COOLIFY_PROD_TOKEN');
     return;
   }
 
-  const allApps: DeployedApp[] = [];
+  if (!opts.json) {
+    printHeader('eve ls');
+  }
 
-  for (const entry of entries) {
-    console.log(`\n  ${colors.primary.bold(entry.label)} (${entry.env}):`);
+  for (const target of targets) {
+    try {
+      const apps = await listCoolifyApps(target.target);
 
-    if (entry.apps.length === 0) {
-      console.log(`    ${colors.muted('  No apps deployed')}`);
-      continue;
-    }
+      if (opts.json) {
+        for (const app of apps) {
+          allApps.push({
+            name: app.name || '<unnamed>',
+            env: target.env,
+            url: app.url || '',
+            status: app.status || 'unknown',
+          });
+        }
+        continue;
+      }
 
-    for (const app of entry.apps as unknown as Record<string, string>[]) {
-      const name = app.name || '<unnamed>';
-      const url = app.url || '';
-      const status = app.status || 'unknown';
-      allApps.push({ name, env: entry.env, url, status, image: '' });
-      console.log(`    ${colors.info('•')} ${colors.muted(name.padEnd(30))} ${status}`);
-      if (url) {
-        console.log(`                           ${url}`);
+      console.log(`\n  ${colors.primary.bold(target.label)} (${target.env}):`);
+
+      if (apps.length === 0) {
+        console.log(`    ${colors.muted('  No apps deployed')}`);
+        continue;
+      }
+
+      for (const app of apps) {
+        const name = app.name || '<unnamed>';
+        const url = app.url || '';
+        const status = app.status || 'unknown';
+        allApps.push({ name, env: target.env, url, status });
+        console.log(`    ${colors.info('•')} ${colors.muted(name.padEnd(30))} ${status}`);
+        if (url) {
+          console.log(`                           ${url}`);
+        }
+      }
+    } catch {
+      if (!opts.json) {
+        console.log(`\n  ${colors.primary.bold(target.label)} (${target.env}):`);
+        console.log(`    ${colors.warning('  Failed to connect')}`);
       }
     }
   }
 
-  console.log();
+  if (opts.json) {
+    console.log(JSON.stringify(allApps, null, 2));
+  } else {
+    console.log();
+  }
 }

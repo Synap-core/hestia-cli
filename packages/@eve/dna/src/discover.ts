@@ -13,6 +13,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
+import { readEveSecrets, writeEveSecrets } from "./secrets-contract.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -290,4 +291,27 @@ export function discoverPodConfig(): DiscoveredPodConfig {
   }
 
   return { synapUrl, domain, provisioningToken, sources };
+}
+
+/**
+ * Discover the pod URL from on-disk artifacts and write it back to
+ * secrets.json if synap.apiUrl is not already set. This prevents future
+ * reads from falling through to discovery — once backfilled, the URL
+ * is read from secrets.json (the canonical store) on all subsequent calls.
+ *
+ * Returns the discovered URL on success, or null if nothing was found
+ * or backfill was skipped (apiUrl already set).
+ */
+export async function discoverAndBackfillPodUrl(): Promise<string | null> {
+  const discovered = discoverPodConfig();
+  if (discovered.synapUrl) {
+    const secrets = await readEveSecrets();
+    if (secrets) {
+      if (!secrets.synap?.apiUrl) {
+        await writeEveSecrets({ synap: { apiUrl: discovered.synapUrl } });
+      }
+      return discovered.synapUrl;
+    }
+  }
+  return null;
 }

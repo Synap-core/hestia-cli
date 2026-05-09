@@ -1,7 +1,7 @@
 {
-  "tool_name": "Read",
-  "tool_input_preview": "{\"file_path\":\"/Users/antoine/.claude/projects/-Users-antoine-Documents-Code-synap/586a9152-46dc-449d-962c-b6ba680c68e4.jsonl\",\"offset\":0,\"limit\":100}",
-  "error": "File content (73105 tokens) exceeds maximum allowed tokens (25000). Use offset and limit parameters to read specific portions of the file, or search for specific content instead of reading the whole file.",
-  "timestamp": "2026-05-08T14:14:04.435Z",
+  "tool_name": "WebFetch",
+  "tool_input_preview": "{\"url\":\"https://docs.openwebui.com/pipelines/manifold/\",\"prompt\":\"Find all information about manifold pipelines, how models are listed in the UI, how the model picker discovers models from registered ...",
+  "error": "Request failed with status code 404",
+  "timestamp": "2026-05-09T10:24:16.525Z",
   "retry_count": 1
 }

@@ -47,7 +47,7 @@
     "runtime": null
   },
   "build": {
-    "buildCommand": "npm run build",
+    "buildCommand": "cd /Users/antoine/Documents/Code/synap/hestia-cli/packages/@eve/dna && npx tsc --noEmit 2>&1 | head -50",
     "testCommand": "npm test",
     "lintCommand": null,
     "devCommand": "npm run dev",

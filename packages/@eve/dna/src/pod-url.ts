@@ -33,13 +33,12 @@
  */
 
 import { Socket } from "node:net";
-import { readEveSecrets } from "./secrets-contract";
-import { discoverPodConfig } from "./discover";
+import { configStore } from "./config-store";
+import { discoverPodConfig, discoverAndBackfillPodUrl } from "./discover";
 
 let cachedUrl: string | undefined;
 let cachedProbe: boolean | undefined;
 let cachedDerive: string | undefined;
-let cachedSecrets: string | undefined;
 
 const LOOPBACK_HOST = "127.0.0.1";
 const LOOPBACK_PORT = 14000;
@@ -141,7 +140,7 @@ async function isDockerDnsReachable(): Promise<boolean> {
 // ---------------------------------------------------------------------------
 
 /**
- * Read the pod URL from secrets.json.
+ * Read the pod URL from secrets.json via ConfigStore.
  * Resolution order within secrets:
  *   1. `secrets.synap.apiUrl` (the primary configured URL)
  *   2. `secrets.pod.url` (back-compat alias)
@@ -149,34 +148,21 @@ async function isDockerDnsReachable(): Promise<boolean> {
  * Returns the first non-empty string found, or undefined.
  */
 async function readPodUrlFromSecrets(): Promise<string | undefined> {
-  if (cachedSecrets !== undefined) return cachedSecrets;
+  const secrets = await configStore.get();
+  if (!secrets) return undefined;
 
-  try {
-    const secrets = await readEveSecrets();
-    if (!secrets) {
-      cachedSecrets = "";
-      return undefined;
-    }
+  const apiUrl = secrets.synap?.apiUrl?.trim();
+  if (apiUrl) return apiUrl;
 
-    const apiUrl = secrets.synap?.apiUrl?.trim();
-    if (apiUrl) { cachedSecrets = apiUrl; return apiUrl; }
+  const podUrl = secrets.pod?.url?.trim();
+  if (podUrl) return podUrl;
 
-    const podUrl = secrets.pod?.url?.trim();
-    if (podUrl) { cachedSecrets = podUrl; return podUrl; }
-
-    const domain = secrets.domain?.primary?.trim();
-    if (domain && domain.includes(".") && !domain.startsWith("127.") && !domain.startsWith("localhost")) {
-      const derived = `https://pod.${domain}`;
-      cachedSecrets = derived;
-      return derived;
-    }
-
-    cachedSecrets = "";
-    return undefined;
-  } catch {
-    cachedSecrets = "";
-    return undefined;
+  const domain = secrets.domain?.primary?.trim();
+  if (domain && domain.includes(".") && !domain.startsWith("127.") && !domain.startsWith("localhost")) {
+    return `https://pod.${domain}`;
   }
+
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -225,9 +211,9 @@ export async function resolvePodUrl(
     } catch { /* not a full URL — nothing else to try */ }
   }
 
-  // Step 4: discoverPodConfig() — on-disk discovery.
-  const discovered = discoverPodConfig();
-  if (discovered.synapUrl) return discovered.synapUrl;
+  // Step 4: discoverPodConfig() — on-disk discovery with write-back.
+  const fromDiscovery = await discoverAndBackfillPodUrl();
+  if (fromDiscovery) return fromDiscovery;
 
   // Step 5: loopback probe.
   if (await probePort(LOOPBACK_HOST, LOOPBACK_PORT, 200)) {
@@ -248,5 +234,4 @@ export function resetPodUrlCache(): void {
   cachedProbe = undefined;
   cachedUrl = undefined;
   cachedDerive = undefined;
-  cachedSecrets = undefined;
 }

@@ -624,6 +624,19 @@ export async function writeEveSecrets(
   const path = secretsPath(cwd);
   await mkdir(join(cwd, '.eve', 'secrets'), { recursive: true });
   await writeFile(path, JSON.stringify(parsed, null, 2), { mode: 0o600 });
+
+  // Best-effort downstream cascade — wire reconcile() after write.
+  // Dynamic import to avoid circular dep at module load time.
+  try {
+    const { reconcile } = await import('./reconcile.js');
+    const changedSections = Object.keys(partial as Record<string, unknown>)
+      .filter((k) => (partial as Record<string, unknown>)[k] !== undefined)
+      .map((k) => `${k}`);
+    await reconcile(parsed, changedSections);
+  } catch {
+    /* non-fatal — cascade failures must never block the write */
+  }
+
   return parsed;
 }
 
