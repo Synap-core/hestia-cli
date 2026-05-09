@@ -2,9 +2,9 @@
 
 > Working document. Each item carries: **Symptom**, **Why it matters**, **Where it lives**, **What's actually happening**, **What needs to happen**, **Investigation needed**, **Size**. Mark items `[shipped: YYYY-MM-DD · <commit>]` as they land.
 >
-> Last refreshed: 2026-05-09. Reflects the state after Wave 1+2+3 of the centralised-state-of-Eve hardening pass (skills/knowledge/tools sync to OpenWebUI, channel credential validation, doctor coherence checks, blocking reconcile in `wireHermesIntoOpenwebui`).
+> Last refreshed: 2026-05-10. Reflects the state after the OpenWebUI recovery pass: structured admin-registration outcomes, `eve openwebui sync`, dashboard OpenWebUI coherence/resync controls, and the async `wireOpenwebui` cascade have landed.
 >
-> **Operator focus right now:** UI-side experience, not CLI. The team should not need to fill forms — workspaces in OpenWebUI should auto-populate from Synap + user data. Today they are empty for the user (only Ollama appears) even though the admin Connections panel shows the configured providers.
+> **Operator focus right now:** UI-side experience, not CLI. The team should not need to fill forms — OpenWebUI users should inherit Synap models, prompts, knowledge, tools, and user/workspace context automatically. The model-source recovery path now exists; the remaining gap is per-user bootstrap from Synap into OpenWebUI.
 
 ---
 
@@ -18,7 +18,36 @@
 
 ---
 
+## 0.1 Current state — 2026-05-10
+
+### Shipped since the previous refresh
+
+- **#1.A/#1.B/#1.C shipped** — `registerOpenwebuiAdminApi()` now returns a structured `RegisterOutcome` with stages (`health`, `secret-key`, `admin-row`, `jwt-rejected`, `reconcile`), and `eve openwebui sync` exists as the focused recovery command with an extended health budget.
+- **#1.D mostly shipped** — `eve doctor` / `runStateCoherenceChecks()` probes OpenWebUI extras (Prompts, Knowledge, tool server) and reports drift with fixes. It still uses the standard `getAdminJwt()` path; if we want exact parity with registration diagnostics, add a detailed admin-JWT probe that reports the same `RegisterStage` labels.
+- **#4.A/#4.B partially shipped** — the Eve Dashboard OpenWebUI config panel renders the `openwebui-coherence` checklist and exposes Force re-sync buttons for model sources, prompts/skills, knowledge, and tool server.
+- **#5 shipped** — `wireOpenwebui()`, `wireComponentAi()`, `wireAllInstalledComponents()`, and reconcile/materialize call sites are async. The old OWUI fire-and-forget admin upsert path has been replaced with awaited registration warnings.
+
+### What is next now
+
+The next highest-leverage work is **#2.A: Synap → OpenWebUI user sync**, but do the upstream contract first:
+
+1. **Confirm or add `GET /api/hub/users` in `synap-backend`.** Current backend code exposes `/api/hub/users/me`, `/api/hub/users/:id/context`, and `/api/hub/agent-users`; I did not find a general human-user list endpoint. Without this, Eve cannot mirror Synap users into OpenWebUI.
+2. **Reverse-engineer the exact OpenWebUI user admin endpoints for the pinned version.** The plan assumes `GET /api/v1/users/`, `POST /api/v1/auths/add`, and `/api/v1/users/{id}/settings/update`; verify against the shipped container/source before coding.
+3. **Implement `openwebui-users-sync.ts` in `@eve/dna` with idempotent create/update semantics.** Start with flat per-user sync. Leave workspace-to-group mapping out until the product decision below is made.
+4. **Wire it behind `eve openwebui sync --users` first.** Once proven, add it to the update/materialize flow after extras sync.
+
+### Decisions still blocking larger UX work
+
+- **#2.C:** keep OWUI flat for now, or map Synap workspace memberships to OWUI groups?
+- **#3.A:** which surface is canon for direct Synap access: Synap app, OpenWebUI, or Eve Dashboard?
+- **#6:** confirm Ansible-first for bare-metal install before USB image work.
+- **#11:** confirm whether event-driven intents are launch-critical or cron is enough for now.
+
+---
+
 ## 1. **HERO** · OpenWebUI user-side surfacing is empty
+
+**Status: mostly shipped as of 2026-05-10.** Keep this section as historical context and as the runbook for diagnosing future OpenWebUI surfacing failures. Remaining follow-up: make doctor's admin-JWT probe report the same structured stage labels as registration.
 
 ### Symptom
 
@@ -74,7 +103,7 @@ We do **not** know yet which step inside `registerOpenwebuiAdminApi` is returnin
 
 ### What needs to happen
 
-#### A — Make the failure mode visible (do this first)
+#### A — Make the failure mode visible (do this first) `[shipped: 2026-05-10 · a778ed3/fad1e40]`
 
 The current "failed after retries" message is uninformative. Operators have no way to know which of the four sub-steps failed. **Replace the boolean return with a structured outcome.**
 
@@ -89,7 +118,7 @@ export async function registerOpenwebuiAdminApi(...): Promise<RegisterOutcome>
 
 Update the three call sites to log the stage + reason. The cost is low and the debug payoff is enormous — every operator hit will produce a self-diagnosing log line.
 
-#### B — Add a recovery command
+#### B — Add a recovery command `[shipped: 2026-05-10 · a778ed3/fad1e40]`
 
 Today an operator who hits the failure has only `eve update openwebui` to retry. Provide a focused retry:
 
@@ -99,15 +128,17 @@ eve openwebui sync       # alias: eve ai apply --extras-only
 
 That command should: re-read secrets, run `registerOpenwebuiAdminApi` with extended health budget (180s), then `syncOpenwebuiExtras`. Surface the structured outcome from (A) directly.
 
-#### C — Extend the health wait when called from a recovery command
+#### C — Extend the health wait when called from a recovery command `[shipped: 2026-05-10 · a778ed3/fad1e40]`
 
 Default 60s is fine for the inline update flow (we don't want `eve update` to hang). For `eve openwebui sync` and the fully blocking `wireHermesIntoOpenwebui` post-Hermes install, allow `waitForHealth({ budgetMs: 180000 })`.
 
-#### D — Doctor: surface the same diagnosis
+#### D — Doctor: surface the same diagnosis `[partially shipped: 2026-05-10 · a778ed3/fad1e40]`
 
 The W2.C `runStateCoherenceChecks` already probes OWUI for skills/knowledge/tools presence. Extend with one more check that *attempts* the same admin JWT acquisition the reconcile uses, so `eve doctor` can answer "would registration work right now?" before the operator runs `eve update`.
 
-#### E — Fix the `wire-ai.ts:441` fire-and-forget asymmetry
+Current code probes OpenWebUI extras and reports drift. The remaining improvement is narrower: use the detailed admin-JWT acquisition path so doctor can distinguish `secret-key`, `admin-row`, and `jwt-rejected`, instead of collapsing them into "admin JWT not available."
+
+#### E — Fix the `wire-ai.ts:441` fire-and-forget asymmetry `[shipped: 2026-05-10 · fb695fb]`
 
 See item **#5** for the full design. Until that lands, the OWUI-side admin upsert from the OWUI update flow itself is silently fire-and-forget — no operator feedback. The Pipelines flow's blocking call is the only one that surfaces.
 
@@ -149,11 +180,13 @@ The output of (1) and (2) alone narrows the hypothesis from 4 to 1.
 - (D) doctor enhancement: **XS** (~30 LOC in `doctor-state-coherence.ts`)
 - (E) async cascade refactor: see item #5
 
-Bundle (A)+(B)+(C)+(D) — about a half-day. (E) is independent and bigger.
+Bundle status: (A)+(B)+(C) are done; (D) has one diagnostic refinement left; (E) is done.
 
 ---
 
 ## 2. **HERO** · Per-user OpenWebUI bootstrap from Synap
+
+**Status: next active work.** Do not start with OWUI groups/workspaces. Start with the missing source-of-truth contract: Eve needs a Hub Protocol endpoint that lists human Synap users. Current backend discovery found `/api/hub/users/me`, `/api/hub/users/:id/context`, and `/api/hub/agent-users`, but no general `/api/hub/users` endpoint.
 
 ### Symptom (operator)
 
@@ -200,6 +233,8 @@ For each Synap user (queried from Hub Protocol):
 3. If present → no-op (don't touch passwords)
 4. Tag the user with metadata `{ synap_user_id, synced_at }` if OWUI's user model allows it
 
+**Next implementation slice:** add or confirm `GET /api/hub/users` first, then build this helper behind a CLI-only `eve openwebui sync --users` path. Keep it flat/idempotent: create missing OWUI users, no password resets for existing users, no workspace/group mapping yet.
+
 #### B — Per-user defaults helper
 
 For each synced/existing user, push their per-user defaults via OWUI admin API:
@@ -234,7 +269,7 @@ Eve Dashboard adds a "OpenWebUI users" panel showing: synced users, last sync ti
 
 ### Investigation needed
 
-1. **Does Synap have `GET /api/hub/users`?** Check `synap-backend/packages/api/src/routers/hub-protocol/rest/users.ts`. If it exists, what's the shape? If not, that's a Synap-side ticket before this work can start.
+1. **Does Synap have `GET /api/hub/users`?** Initial check says no. `synap-backend/packages/api/src/routers/hub-protocol/rest/users.ts` exposes `/users/me`; workspace context and agent-user endpoints exist elsewhere. Add a human-user list endpoint or choose a different authoritative source before building Eve-side sync.
 2. **OWUI per-user settings API.** Confirm endpoints exist for: list users, add user without password (or with auto-generated), update user settings, set per-user default model, set per-user pinned prompts. Search OWUI source `backend/apps/webui/routers/users.py`.
 3. **OWUI group/permissions model.** OWUI v0.5+ added per-model RBAC and groups. Confirm the API and whether it can be driven from admin endpoints.
 
@@ -321,6 +356,8 @@ When the LLM calls a Synap tool (`synap_entity_get`, `synap_search`, etc.), the 
 
 ## 4. Eve Dashboard parity with OpenWebUI
 
+**Status: partially shipped as of 2026-05-10.** The dashboard now has an OpenWebUI coherence panel plus Force re-sync buttons for model sources, prompts/skills, knowledge, and tool server. Remaining work is richer readback detail and the user/workspace bootstrap state once item #2 lands.
+
 ### Symptom
 
 When the operator updates AI providers, channels, or skills via Eve Dashboard, the OpenWebUI surface should update in lockstep. Today the dashboard ↔ OWUI contract has 5 invariants (storage shape, routing semantics, required-creds map, reconcile cascade, WhatsApp ownership) — these are documented but not visualised.
@@ -342,13 +379,15 @@ The dashboard is informed about secrets writes and triggers reconciles. It does 
 
 ### What needs to happen
 
-#### A — Mirror the W2.C doctor coherence checks in the dashboard
+#### A — Mirror the W2.C doctor coherence checks in the dashboard `[shipped: 2026-05-10 · a778ed3/fad1e40]`
 
 Use `runStateCoherenceChecks(secrets, { probeRemote: true })` from a dashboard API route, render the results as a panel: each surface as a row with status, last-checked time, fix link.
 
-#### B — Add a "Force re-sync" button per surface
+#### B — Add a "Force re-sync" button per surface `[partially shipped: 2026-05-10 · a778ed3/fad1e40]`
 
 Each row gets a button that calls the appropriate sync helper (`pushSynapSkillsToOpenwebuiPrompts`, `syncSynapKnowledgeToOpenwebui`, `registerSynapAsOpenwebuiToolServer`). Reports the result inline.
+
+Current implementation calls `/api/actions/owui-sync` and can re-run model sources or extras. The next refinement is to make single-surface sync truly single-surface internally; today the route still calls `syncOpenwebuiExtras()` and reports only the selected surface.
 
 #### C — Add the user/workspace bootstrap state once item #2 lands
 
@@ -363,6 +402,8 @@ Same pattern: list of synced users, drift indicator, force-resync.
 ---
 
 ## 5. Async cascade refactor of `wireOpenwebui`
+
+**Status: shipped as of 2026-05-10 (`fb695fb`).** Keep this section as the rationale for the async cascade. The fire-and-forget OpenWebUI registration block is gone from `wire-ai.ts`.
 
 ### Symptom
 
@@ -388,7 +429,7 @@ The whole wire-* chain returns sync `WireAiResult` objects. The OWUI-specific as
 
 ### What needs to happen
 
-#### A — Make `wireOpenwebui` async
+#### A — Make `wireOpenwebui` async `[shipped: 2026-05-10 · fb695fb]`
 
 ```ts
 async function wireOpenwebui(secrets): Promise<WireAiResult>
@@ -396,29 +437,28 @@ async function wireOpenwebui(secrets): Promise<WireAiResult>
 
 The result type stays the same; await within the function. The fire-and-forget block becomes inline `await`.
 
-#### B — Cascade async through wireComponentAi and wireAllInstalledComponents
+#### B — Cascade async through wireComponentAi and wireAllInstalledComponents `[shipped: 2026-05-10 · fb695fb]`
 
 ```ts
 async function wireComponentAi(componentId, secrets): Promise<WireAiResult>
 async function wireAllInstalledComponents(secrets, components): Promise<WireAiResult[]>
 ```
 
-#### C — Update all callers
+#### C — Update all callers `[shipped: 2026-05-10 · fb695fb]`
 
 Find all `wireComponentAi(...)` and `wireAllInstalledComponents(...)` callers; await them. Most are already in async contexts (lifecycle generators, dashboard API routes). The few sync ones need to be made async.
 
-#### D — Preserve "non-fatal" semantics
+#### D — Preserve "non-fatal" semantics `[shipped: 2026-05-10 · fb695fb]`
 
 The current fire-and-forget block exists because the operator was OK with silent failure of the admin API. After this refactor, errors will propagate. Wrap the admin API call in a try/catch that converts to a `WireAiResult` warning, so existing error semantics persist while gaining visibility.
 
 ### Investigation needed
 
-1. **Caller graph.** Run `grep -rn "wireComponentAi\|wireAllInstalledComponents" packages/` and audit each caller for async-readiness.
-2. **`reconcile.ts` shape.** Some reconcile entry points may be called from synchronous code (e.g., a settings setter); these need a small refactor or a parallel async variant.
+Done. Current caller graph shows async uses in `reconcile.ts`, lifecycle materialization, and AI apply routes.
 
 ### Size
 
-- **M** (~half-day, ~400 LOC across 6-8 files, mostly mechanical async-ifying)
+Completed.
 
 ---
 
@@ -891,7 +931,7 @@ These are small but shouldn't be lost:
 - **Empty knowledge collection** — `syncSynapKnowledgeToOpenwebui` creates a collection even when the namespace has zero entries. Add a "skip create when empty" branch. **XS**
 - **`ai.fallbackProvider` is unused** — schema has it but no consumer. Either implement (per-component fallback when primary is unreachable) or delete. **S**
 - **`secrets.inference.gatewayUrl/User/Pass`** — verified in use (`@eve/legs/inference-gateway.ts` writes them, `arms install` + `builder/openclaude` + `setup` read them). **No action.**
-- **OWUI reconcile internal retries** — currently 12×5s = 60s. For `eve openwebui sync` (recovery command per item #1), allow override to 36×5s = 180s. **XS**
+- **OWUI reconcile internal retries** — recovery override is now available through `eve openwebui sync --max-retries <n>` (default 24×5s = 120s). **Shipped; optional tweak:** decide whether the default should be 36×5s = 180s.
 - **`channelRouting` UI affordance** — when not set, defaults to `'hermes'` silently. Dashboard channels panel should show the effective default explicitly. **XS**
 - **Update log readability** — the operator's update log is dense and mixes successful steps with the one critical failure. Group by component, summarise critical failures at the top. **S**
 
@@ -925,16 +965,16 @@ The question is product, not technical. None of #3's implementation can start un
 
 ## 17. Suggested ordering for "ship a perfect internal product"
 
-If we get all of the above, in the right order, the timeline is roughly 2–3 weeks of focused work. The minimum viable subset:
+If we get all of the above, in the right order, the timeline is roughly 2–3 weeks of focused work. The minimum viable subset has shifted because #1/#4/#5 partially or fully landed:
 
 | Week | Items |
 |---|---|
-| 1 | #1 (HERO — OWUI surfacing diagnosis + structured outcome + recovery command), #4 (dashboard parity panel) |
-| 2 | #2 (per-user bootstrap, parts A+B), #3 (decision A + sidebar link from B), #5 (async cascade) |
+| 1 | Finish #1.D diagnostic parity, then #2 prerequisite: add/confirm `GET /api/hub/users`; implement #2.A flat user sync behind `eve openwebui sync --users` |
+| 2 | #2.B per-user defaults, #4.C user/workspace bootstrap state, #3 decision A + sidebar link from B |
 | 3 | #7 (WhatsApp Cloud API), #9 (skills hot-reload A+B), #12 (CI gates), #13 (E2E smoke test scaffolding) |
 | Stretch | #6 (bare metal), #8 (pod webhooks), #10 (voice), #11 (intent events), #14 (ADRs) |
 
-The critical path is **#1 → #5 → #2 → #3**. Until #1 is fixed, nothing else in OpenWebUI matters because the surfaces are empty. Until #5 lands, #1's fix is invisible from one of the three call sites. Until #2 ships, the experience is "admin only."
+The critical path is now **#2 user source contract → #2 flat OWUI user sync → #2 per-user defaults → #3 direct Synap access decision**. #1 and #5 removed the diagnostic/visibility blockers; the remaining product blocker is that OpenWebUI still has no per-user Synap context by default.
 
 ---
 

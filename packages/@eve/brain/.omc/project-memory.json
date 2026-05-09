@@ -1,0 +1,92 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1778366637521,
+  "projectRoot": "/Users/antoine/Documents/Code/synap/hestia-cli/packages/@eve/brain",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      },
+      {
+        "name": "TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "tsconfig.json"
+        ]
+      }
+    ],
+    "frameworks": [],
+    "packageManager": "npm",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": "npm run build",
+    "testCommand": null,
+    "lintCommand": null,
+    "devCommand": "npm run dev",
+    "scripts": {
+      "build": "tsup src/index.ts --format esm --dts",
+      "dev": "tsup src/index.ts --format esm --dts --watch",
+      "typecheck": "tsc --noEmit"
+    }
+  },
+  "conventions": {
+    "namingStyle": "camelCase",
+    "importStyle": "ES modules",
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "src"
+    ],
+    "gitBranches": null
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "dist": {
+      "path": "dist",
+      "purpose": "Distribution/build output",
+      "fileCount": 66,
+      "lastAccessed": 1778366637501,
+      "keyFiles": [
+        "chunk-3ZTTTMP2.js",
+        "chunk-44WLWYA7.js",
+        "chunk-57WFHTR3.js",
+        "chunk-6LVSBFWE.js",
+        "chunk-7LELDEOP.js"
+      ]
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 2,
+      "lastAccessed": 1778366637502,
+      "keyFiles": [
+        "index.ts",
+        "inference-init.ts"
+      ]
+    },
+    "src/lib": {
+      "path": "src/lib",
+      "purpose": "Library code",
+      "fileCount": 8,
+      "lastAccessed": 1778366637506,
+      "keyFiles": [
+        "exec.ts",
+        "model-service.ts",
+        "ollama.ts"
+      ]
+    }
+  },
+  "hotPaths": [],
+  "userDirectives": []
+}

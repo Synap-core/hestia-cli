@@ -16,7 +16,7 @@ import { createRequire } from 'node:module';
 import { COMPONENTS } from './components.js';
 
 const require = createRequire(import.meta.url);
-const { createHmac } = require('node:crypto');
+const { createHmac, randomUUID } = require('node:crypto');
 
 // ── Types ──
 
@@ -146,7 +146,7 @@ function probeHealthInternal(): { ok: boolean; reason?: string } {
     const out = execSync(
       `docker exec hestia-openwebui python3 -c "import urllib.request,sys
 try:
-    r=urllib.request.urlopen('http://localhost:8080/health',timeout=5)
+    r=urllib.request.urlopen('http://localhost:8080/api/version',timeout=5)
     sys.stdout.write(f'{r.status}\\n')
     sys.stdout.write(r.read(200).decode('utf-8','ignore'))
 except Exception as e:
@@ -187,10 +187,15 @@ function isContainerRunning(containerName = 'hestia-openwebui'): boolean {
 }
 
 /**
- * Wait for OpenWebUI to be healthy (HTTP 200 returning JSON, not HTML).
- * Polls up to `maxAttempts * 5s` (default 60s).
+ * Wait for OpenWebUI's API to be live by probing `GET /api/version`.
  *
- * Returns true if the health endpoint is reachable AND returns a non-HTML response.
+ * `/api/version` is an explicit FastAPI endpoint registered in OWUI's
+ * `main.py` and is therefore NOT swallowed by the SvelteKit static-file
+ * catch-all. The older `/health` endpoint became SPA-shadowed in OWUI v0.9+
+ * (200 OK with HTML body). We confirm a JSON response so that the SPA
+ * shell — even if it happens to leak through — is rejected.
+ *
+ * Polls up to `maxAttempts * 5s` (default 60s).
  */
 async function waitUntilHealthy(
   baseUrl: string,
@@ -200,15 +205,16 @@ async function waitUntilHealthy(
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 5000);
-      const res = await fetch(`${baseUrl}/health`, { signal: controller.signal });
+      const res = await fetch(`${baseUrl}/api/version`, { signal: controller.signal });
       clearTimeout(timer);
       if (res.ok) {
-        // Verify it's not HTML (OpenWebUI serves HTML while booting)
         const contentType = res.headers.get('content-type') || '';
-        if (contentType.includes('json') || !contentType.includes('html')) {
+        if (contentType.includes('json')) {
           return true;
         }
-        // Check body for HTML tag
+        // Defensive: if content-type wasn't json, peek at the body. /api/version
+        // always returns `{"version":"..."}` on a real OWUI; HTML means we hit
+        // the SPA shell — keep waiting.
         const text = await res.text();
         if (!text.trimStart().startsWith('<')) return true;
       }
@@ -271,14 +277,21 @@ function getAdminUser(): AdminUser | null {
 /**
  * Forge an admin JWT for OpenWebUI.
  *
- * OpenWebUI accepts a JWT with {id, email, role: "admin"} claims
- * signed with WEBUI_SECRET_KEY (HS256).
+ * OWUI's `decode_token()` (backend/open_webui/utils/auth.py) extracts:
+ *   - `id`     — REQUIRED, used to look up the user row
+ *   - `jti`    — REQUIRED in v0.9+, checked against the Redis revocation list
+ *   - `iat`    — issued-at; recorded for revocation checks
+ *   - `exp`    — optional; if missing, token doesn't expire
+ *
+ * `aud` and `iss` are NOT validated. We include `email` for log readability
+ * but the middleware ignores it.
  */
 function forgeAdminJwt(secretKey: string, admin: AdminUser): string {
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
   const payload = Buffer.from(JSON.stringify({
     id: admin.id,
     email: admin.email,
+    jti: randomUUID(),
     iat: Math.floor(Date.now() / 1000),
     exp: Math.floor(Date.now() / 1000) + 300,
   })).toString('base64url');
@@ -507,7 +520,10 @@ export async function probeAdminAuth(
 ): Promise<{ ok: boolean; status: number; body: string }> {
   const baseUrl = resolveAdminUrl(hostPort);
   try {
-    const res = await fetch(`${baseUrl}/api/v1/configs/`, {
+    // Probe an admin-gated endpoint that's explicitly registered in v0.9.4
+    // (so it can't be shadowed by the SPA catch-all). `/api/v1/configs/export`
+    // requires admin auth — a 401/403 here is unambiguous JWT-rejection.
+    const res = await fetch(`${baseUrl}/api/v1/configs/export`, {
       headers: { Authorization: `Bearer ${jwt}` },
       signal: AbortSignal.timeout(8000),
     });
@@ -528,10 +544,12 @@ export async function getConfig(jwt: string, hostPort?: number): Promise<OpenWeb
 }
 
 /**
- * Read the current OpenWebUI config via admin API with structured failure
- * info. Returns the actual HTTP status and a body preview when the read
- * fails — used by `registerOpenwebuiAdminApi` to construct an actionable
- * `stage='reconcile'` reason instead of "returned null".
+ * Read the current OpenWebUI persisted config via the admin export endpoint.
+ *
+ * v0.9.4 split the old `GET /api/v1/configs/` (which now returns the SPA
+ * shell) into per-resource sub-routes. The closest equivalent for "give me
+ * the full snapshot so I can reconcile" is `GET /api/v1/configs/export`.
+ * Source: `backend/open_webui/routers/configs.py` at v0.9.4.
  */
 export async function getConfigDetailed(
   jwt: string,
@@ -544,7 +562,7 @@ export async function getConfigDetailed(
   let status = 0;
   let body = '';
   try {
-    const res = await fetch(`${baseUrl}/api/v1/configs/`, {
+    const res = await fetch(`${baseUrl}/api/v1/configs/export`, {
       headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
     });
     status = res.status;
@@ -557,7 +575,7 @@ export async function getConfigDetailed(
         ok: false,
         status,
         bodyPreview: body.slice(0, 200),
-        reason: 'OWUI returned HTML at /api/v1/configs/ (likely SPA shell — admin route may have moved or middleware bailed pre-router)',
+        reason: 'OWUI returned HTML at /api/v1/configs/export (admin endpoint not registered or SPA shell intercepted the request)',
       };
     }
     try {
@@ -595,9 +613,10 @@ export async function saveConfig(
 }
 
 /**
- * Save OpenWebUI config via admin API with structured failure info. The
- * preview body lets `registerOpenwebuiAdminApi` quote OWUI's actual error
- * (e.g. "field 'x' is read-only") inside `stage='reconcile'` reasons.
+ * Save OpenWebUI persisted config via the admin import endpoint.
+ *
+ * v0.9.4: `POST /api/v1/configs/import` accepts `{ config: <full snapshot> }`.
+ * Source: `backend/open_webui/routers/configs.py` at v0.9.4.
  */
 export async function saveConfigDetailed(
   jwt: string,
@@ -611,10 +630,10 @@ export async function saveConfigDetailed(
   let status = 0;
   let body = '';
   try {
-    const res = await fetch(`${baseUrl}/api/v1/configs/`, {
+    const res = await fetch(`${baseUrl}/api/v1/configs/import`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(config),
+      body: JSON.stringify({ config }),
     });
     status = res.status;
     if (res.ok) return { ok: true };

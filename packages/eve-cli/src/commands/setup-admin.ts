@@ -13,8 +13,11 @@
  */
 
 import * as readline from 'node:readline';
+import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { Command } from 'commander';
 import { runSynapCli } from '@eve/brain';
+import { readEveSecrets, resolveSynapUrlOnHost, findPodDeployDir } from '@eve/dna';
 import {
   colors,
   printHeader,
@@ -105,38 +108,109 @@ function promptPassword(question: string): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// Synap CLI delegation
+// Pod transport
 // ---------------------------------------------------------------------------
+//
+// Status probe and magic-link mint are pure HTTP calls — same pattern
+// `eve auth provision` uses. We resolve the pod URL via
+// `resolveSynapUrlOnHost(secrets)` (loopback :14000 first, public Traefik
+// URL fallback) and read the bootstrap token from the synap deploy `.env`.
+// Preseed (`--password` mode) still delegates to the bash CLI because it
+// needs `docker compose exec` against the backend container.
+
+function readPodEnvVar(deployDir: string, key: string): string | undefined {
+  const envPath = join(deployDir, '.env');
+  if (!existsSync(envPath)) return undefined;
+  const content = readFileSync(envPath, 'utf-8');
+  const match = content.match(new RegExp(`^${key}=(.*)$`, 'm'));
+  return match?.[1]?.trim().replace(/^"|"$/g, '') || undefined;
+}
+
+interface PodTransport {
+  podUrl: string;
+  bootstrapToken?: string;
+}
+
+async function resolvePodTransport(): Promise<PodTransport | { error: string }> {
+  const cwd = process.env.EVE_HOME ?? process.cwd();
+  const secrets = await readEveSecrets(cwd);
+  const podUrl = (await resolveSynapUrlOnHost(secrets)).trim();
+  if (!podUrl) {
+    return {
+      error: secrets
+        ? 'synap pod URL unresolved — set domain.primary or synap.apiUrl in ~/.eve/secrets.json'
+        : '~/.eve/secrets.json not found — run `eve install synap` first',
+    };
+  }
+  const deployDir = findPodDeployDir();
+  const bootstrapToken =
+    process.env.ADMIN_BOOTSTRAP_TOKEN?.trim() ||
+    (deployDir ? readPodEnvVar(deployDir, 'ADMIN_BOOTSTRAP_TOKEN') : undefined);
+  return { podUrl, bootstrapToken };
+}
 
 /**
- * `synap setup admin --status` returns "needed" / "ready" / "unknown".
- * Maps to a tri-state for callers.
+ * GET `${podUrl}/api/hub/setup/status` → `{ needsSetup: boolean }`.
+ * Returns 'unknown' for any network error or unparseable response.
  */
 export async function probeAdminStatus(): Promise<'needed' | 'ready' | 'unknown'> {
-  const result = runSynapCli('setup', ['admin', '--status'], { inherit: false });
-  if (!result.ok && result.exitCode !== 2) {
+  const t = await resolvePodTransport();
+  if ('error' in t) return 'unknown';
+  try {
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (t.bootstrapToken) headers.Authorization = `Bearer ${t.bootstrapToken}`;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);
+    const res = await fetch(`${t.podUrl}/api/hub/setup/status`, { headers, signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!res.ok) return 'unknown';
+    const body = await res.json() as { needsSetup?: boolean };
+    if (body.needsSetup === true) return 'needed';
+    if (body.needsSetup === false) return 'ready';
+    return 'unknown';
+  } catch {
     return 'unknown';
   }
-  const out = result.stdout.trim();
-  if (out === 'needed') return 'needed';
-  if (out === 'ready') return 'ready';
-  return 'unknown';
 }
 
 async function runPreseed(email: string, password: string): Promise<boolean> {
+  // Preseed runs `docker compose exec backend node setup-admin.js …`. Stays
+  // inside the bash CLI because it needs container access, not HTTP.
   const result = runSynapCli('setup', ['admin', '--email', email, '--password', password]);
   return result.ok;
 }
 
 async function runMagicLinkMint(email: string): Promise<string | null> {
-  const result = runSynapCli('setup', ['admin', '--email', email, '--magic-link'], { inherit: false });
-  if (!result.ok) {
-    if (result.stderr) printWarning(result.stderr.trim());
+  const t = await resolvePodTransport();
+  if ('error' in t) {
+    printWarning(t.error);
     return null;
   }
-  // The synap CLI prints the URL on stdout, one line.
-  const url = result.stdout.trim().split('\n').pop()?.trim() ?? '';
-  return url || null;
+  if (!t.bootstrapToken) {
+    printWarning('ADMIN_BOOTSTRAP_TOKEN not found — check synap deploy/.env or set ADMIN_BOOTSTRAP_TOKEN env var.');
+    return null;
+  }
+  try {
+    const res = await fetch(`${t.podUrl}/setup/magic-link`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        Authorization: `Bearer ${t.bootstrapToken}`,
+      },
+      body: JSON.stringify({ email }),
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      printWarning(`Pod returned ${res.status} — ${detail.slice(0, 200)}`);
+      return null;
+    }
+    const body = await res.json() as { url?: string };
+    return body.url?.trim() || null;
+  } catch (err) {
+    printWarning(`Failed to reach pod: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
 }
 
 async function pollUntilReady(timeoutMs = 5 * 60 * 1000, intervalMs = 3000): Promise<boolean> {
