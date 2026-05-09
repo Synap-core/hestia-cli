@@ -238,6 +238,32 @@ export class TaskPoller {
     this.retryCount = 0;
     this.currentBackoff = 0;
   }
+
+  /** Create a Synap memory note with the given content. Best-effort — returns false on failure. */
+  async createMemoryNote(params: {
+    userId?: string;
+    content: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.config.apiUrl}/api/hub/entities`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.config.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          profileSlug: 'note',
+          content: params.content,
+          ...(params.userId ? { userId: params.userId } : {}),
+          metadata: params.metadata ?? {},
+        }),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
 }
 
 export class PollError extends Error {

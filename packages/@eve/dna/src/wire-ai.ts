@@ -28,6 +28,7 @@ import { writeHermesConfigYamlSync, generateSynapPlugin } from './builder-hub-wi
 import { syncOpenwebuiExtras } from './openwebui-extras.js';
 import {
   getAdminJwt,
+  getAdminJwtPostHealth,
   reconcileOpenwebuiManagedConfigViaAdmin,
   registerPipeline,
   waitForHealth,
@@ -99,11 +100,13 @@ export function pickPrimaryProvider(
     }
   }
 
-  // 2. Global default
+  // 2. Global default, then fallback
   if (!base) {
     const def = secrets?.ai?.defaultProvider;
+    const fallback = secrets?.ai?.fallbackProvider;
     base = (
       usable.find(p => p.id === def) ??
+      usable.find(p => p.id === fallback) ??
       usable.find(p => p.enabled !== false) ??
       usable[0]
     );
@@ -439,6 +442,9 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
   }
   // Fire-and-forget: register model sources + pipelines via admin API so they
   // appear in the picker. Uses centralized build + register helpers.
+  // NOTE: errors are logged to stderr here. The async cascade refactor
+  // (SYN-20) will convert this to a proper awaited call with structured
+  // outcome propagation. Until then, `eve openwebui sync` is the recovery path.
   void (async () => {
     try {
       const { modelSources, pipelinesKey, pipelinesUrl } = buildOpenwebuiModelSources(secrets, deployDir);
@@ -451,15 +457,27 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
       if (hermesIdx >= 0) {
         modelSources[hermesIdx].apiKey = hermesApiServerKey ?? '';
       }
-      await registerOpenwebuiAdminApi(modelSources, {
+      const ok = await registerOpenwebuiAdminApi(modelSources, {
         pipelinesUrl,
         pipelinesKey,
         managedConfig: buildOpenwebuiManagedConfig(secrets),
       });
+      if (!ok) {
+        process.stderr.write(
+          '[eve] OpenWebUI model source registration failed (health timeout or JWT error)' +
+          ' — run `eve openwebui sync` to retry\n',
+        );
+        return;
+      }
       // Push Synap surfaces into OpenWebUI: SKILL.md → Prompts, knowledge →
       // Knowledge collection, Hub OpenAPI → external tool server. Best-effort.
       await syncOpenwebuiExtras(process.cwd(), secrets);
-    } catch { /* non-fatal admin API upsert */ }
+    } catch (err) {
+      process.stderr.write(
+        `[eve] OpenWebUI admin API error: ${err instanceof Error ? err.message : String(err)}` +
+        ' — run `eve openwebui sync` to retry\n',
+      );
+    }
   })();
 
   const hermesNote = hermesApiServerKey ? ' + Hermes gateway' : '';
@@ -782,12 +800,19 @@ export async function registerOpenwebuiAdminApi(
     pipelinesUrl?: string | null;
     pipelinesKey?: string;
     managedConfig?: Omit<OpenWebuiManagedConfig, 'modelSources'>;
+    /** Override the health-check attempt count (default: 12 × 5 s = 60 s). */
+    maxRetries?: number;
+    /** Override the sidecar probe attempt count (default: 5 × 3 s = 15 s). */
+    retryInterval?: number;
   },
 ): Promise<boolean> {
+  const healthAttempts = options.maxRetries ?? 12;
+  const sidecarAttempts = options.retryInterval ?? 5;
+
   // Step 1: Start sidecar probe and OpenWebUI health wait in parallel
   const sidecarPromise = (async () => {
     if (!options.pipelinesUrl || !options.pipelinesKey) return false;
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < sidecarAttempts; i++) {
       try {
         const r = await fetch(`${options.pipelinesUrl}/health`, { signal: AbortSignal.timeout(3000) });
         if (r.ok || r.status >= 400) return true;
@@ -797,14 +822,17 @@ export async function registerOpenwebuiAdminApi(
     return false;
   })();
 
-  // Step 2: Wait for health once using waitForHealth() (12×5s = 60s internal poll).
+  // Step 2: Wait for health once using waitForHealth() (attempts × 5 s poll).
   // This avoids the old bug where getStatus() internally called waitUntilHealthy()
   // on every retry attempt, causing the retry loop to exhaust before health passed.
-  if (!(await waitForHealth())) {
+  if (!(await waitForHealth(undefined, healthAttempts))) {
     return false;
   }
 
-  const jwt = await getAdminJwt();
+  // Use the post-health fast path — health is already confirmed above.
+  // getAdminJwt() would re-run waitUntilHealthy() (another 30 s budget),
+  // which wastes time and can race-fail even though health just passed.
+  const jwt = await getAdminJwtPostHealth();
   if (!jwt) return false;
 
   // Step 3: OpenWebUI is healthy and admin auth works — resolve sidecar probe result

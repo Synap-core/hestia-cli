@@ -20,7 +20,9 @@ jobs:
           cache: 'pnpm'
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck
       - run: pnpm -r run build
       - run: pnpm run check:manifest
       - run: node packages/eve-cli/dist/index.js --help
-      - run: pnpm --filter @eve/cli test
+      - run: pnpm -r run test
+      - run: pnpm run lint

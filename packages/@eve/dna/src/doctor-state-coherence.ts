@@ -61,6 +61,7 @@ export async function runStateCoherenceChecks(
     ...checkProviders(secrets),
     ...checkServiceRouting(secrets),
     ...checkChannels(secrets),
+    ...checkTranscription(secrets),
     ...checkWiringStatus(secrets, opts.now ?? (() => new Date())),
   ];
 
@@ -248,6 +249,44 @@ function checkWiringStatus(secrets: EveSecrets, now: () => Date): DoctorCheck[] 
   return checks;
 }
 
+
+function checkTranscription(secrets: EveSecrets): DoctorCheck[] {
+  const tc = secrets.arms?.transcription;
+  if (!tc?.engine) {
+    return [{
+      group: 'integrations',
+      name: 'Voice transcription',
+      status: 'warn',
+      message: 'Not configured — voice memos will be dropped',
+      fix: 'Run `eve arms voice transcription configure --engine whisper-local` to enable',
+    }];
+  }
+  const engine = tc.engine;
+  if (engine === 'whisper-local') {
+    return [{
+      group: 'integrations',
+      name: 'Voice transcription',
+      status: 'pass',
+      message: `whisper-local, model: ${tc.modelSize ?? 'base'} (install: pip install openai-whisper)`,
+    }];
+  }
+  if (!tc.apiKey) {
+    return [{
+      group: 'integrations',
+      name: 'Voice transcription',
+      status: 'fail',
+      message: `${engine} configured but no API key set`,
+      fix: `Run \`eve arms voice transcription configure --engine ${engine} --api-key <key>\``,
+    }];
+  }
+  return [{
+    group: 'integrations',
+    name: 'Voice transcription',
+    status: 'pass',
+    message: `${engine}, API key configured`,
+  }];
+}
+
 // ─── Remote probes ───────────────────────────────────────────────────────────
 
 async function probeSynapHub(secrets: EveSecrets, opts: StateCoherenceOptions): Promise<DoctorCheck[]> {
@@ -346,6 +385,7 @@ async function probeOpenwebuiExtras(secrets: EveSecrets, opts: StateCoherenceOpt
         ? `All 3 SKILL.md packages present (${SKILL_COMMANDS.join(', ')})`
         : `Missing: ${missing.join(', ')}`,
       fix: missing.length === 0 ? undefined : 'Run `eve ai apply` to re-trigger the extras sync',
+      integrationId: 'openwebui-coherence',
     });
   } catch (err) {
     checks.push({
@@ -368,6 +408,7 @@ async function probeOpenwebuiExtras(secrets: EveSecrets, opts: StateCoherenceOpt
       status: found ? 'pass' : 'warn',
       message: found ? `"${KNOWLEDGE_COLLECTION_PREFIX}…" collection present` : `No collection starting with "${KNOWLEDGE_COLLECTION_PREFIX}" found`,
       fix: found ? undefined : 'Run `eve ai apply` to re-trigger the extras sync',
+      integrationId: 'openwebui-coherence',
     });
   } catch (err) {
     checks.push({
@@ -392,6 +433,7 @@ async function probeOpenwebuiExtras(secrets: EveSecrets, opts: StateCoherenceOpt
       status: found ? 'pass' : 'warn',
       message: found ? `"${SYNAP_TOOL_SERVER_NAME}" registered` : 'Synap Hub Protocol not in tool_server.connections',
       fix: found ? undefined : 'Run `eve ai apply` to re-trigger the extras sync',
+      integrationId: 'openwebui-coherence',
     });
   } catch (err) {
     checks.push({

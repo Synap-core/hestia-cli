@@ -212,7 +212,7 @@ async function runSetupAdmin(opts: SetupAdminOptions): Promise<void> {
 
   // Resolve provisioning token — checks env vars, /opt/synap-backend/.env,
   // /opt/synap-backend/deploy/.env, and docker inspect (in that order).
-  const provisioningToken = resolveProvisioningToken() ?? '';
+  const provisioningToken = await resolveProvisioningToken() ?? '';
 
   if (!provisioningToken) {
     printError('PROVISIONING_TOKEN not found.');

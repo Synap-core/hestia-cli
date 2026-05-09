@@ -1,11 +1,12 @@
 import process from 'node:process';
-import { type BackgroundTask, type Task } from '@eve/dna';
+import { type BackgroundTask, type Task, readEveSecrets } from '@eve/dna';
 import { DEFAULT_HERMES_CONFIG } from '@eve/dna';
 import {
   TaskPoller,
   type PollConfig,
   TransientError,
 } from './task-poll.js';
+import { VoiceTranscriber, type WhisperModelSize } from './voice-transcriber.js';
 import {
   TaskExecutor,
   type TaskExecutorConfig,
@@ -360,6 +361,12 @@ export class HermesDaemon {
       const intentSource = this.intentSources.get(task.id);
       const isIntentTask = intentSource !== undefined;
 
+      // Transcription tasks are handled inline — no subprocess.
+      if (this._isTranscribeTask(task)) {
+        await this._handleTranscribeTask(task);
+        continue;
+      }
+
       // For real entity tasks: tell Synap we're starting. Intent-derived
       // tasks have no entity row to update — bookkeeping happens via
       // the IntentPoller after completion.
@@ -481,6 +488,97 @@ export class HermesDaemon {
       displayName: record.displayName,
       overrides,
     };
+  }
+
+  private _isTranscribeTask(task: Task): boolean {
+    const ctx = task.context ?? {};
+    return (
+      (ctx as Record<string, unknown>)['action'] === 'hermes.transcribe' ||
+      task.title.startsWith('[voice]') ||
+      task.title.startsWith('[transcribe]')
+    );
+  }
+
+  private async _handleTranscribeTask(task: Task): Promise<void> {
+    const ctx = (task.context ?? {}) as Record<string, unknown>;
+    const audioUrl = ctx['audioUrl'] as string | undefined;
+
+    if (!audioUrl) {
+      console.error(`[Hermes] Transcription task ${task.id} missing context.audioUrl`);
+      await this.poller.updateTaskStatus(task.id, 'failed');
+      this._stats.tasksFailed++;
+      return;
+    }
+
+    await this.poller.updateTaskStatus(task.id, 'in-progress');
+
+    try {
+      const secrets = await readEveSecrets(this.config.workspaceDir);
+      const tConfig = secrets?.arms?.transcription;
+      const engine = tConfig?.engine ?? 'whisper-local';
+      const transcriber = new VoiceTranscriber();
+
+      const result = await transcriber.transcribe(audioUrl, {
+        engine,
+        modelSize: tConfig?.modelSize as WhisperModelSize | undefined,
+        apiKey: tConfig?.apiKey,
+        language: tConfig?.language,
+      });
+
+      await this.poller.submitResult(task.id, {
+        transcript: result.transcript,
+        engine: result.engine,
+        durationMs: result.durationMs,
+        audioUrl,
+      });
+
+      // Best-effort: write transcript as a note to Synap memory
+      await this._writeTranscriptToMemory(task, result.transcript, secrets);
+
+      this._stats.tasksCompleted++;
+      console.log(`[Hermes] Transcribed voice memo (${result.durationMs}ms, engine=${engine}): ${result.transcript.slice(0, 80)}…`);
+    } catch (error) {
+      const message = (error as Error).message;
+      console.error(`[Hermes] Transcription failed for task ${task.id}: ${message}`);
+      this._stats.tasksFailed++;
+      await this.poller.submitResult(task.id, {
+        error: message,
+        pending_transcription: true,
+        audioUrl,
+      });
+      await this.poller.updateTaskStatus(task.id, 'failed');
+    }
+  }
+
+  private async _writeTranscriptToMemory(
+    task: Task,
+    transcript: string,
+    secrets: Awaited<ReturnType<typeof readEveSecrets>>,
+  ): Promise<void> {
+    if (!secrets?.agents?.hermes?.hubApiKey || !this.config.apiUrl) return;
+    const ctx = (task.context ?? {}) as Record<string, unknown>;
+    try {
+      await fetch(`${this.config.apiUrl}/api/hub/entities`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${secrets.agents.hermes.hubApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          profileSlug: 'note',
+          title: `Voice memo — ${new Date().toLocaleDateString()}`,
+          content: transcript,
+          userId: ctx['userId'],
+          metadata: {
+            source: 'voice-memo',
+            platform: ctx['platform'] ?? 'unknown',
+            taskId: task.id,
+          },
+        }),
+      });
+    } catch {
+      // Non-fatal — memory write failing must not mark the task failed
+    }
   }
 
   private _sleep(ms: number): Promise<void> {

@@ -431,6 +431,12 @@ export async function syncSynapKnowledgeToOpenwebui(
     namespace,
     maxEntries,
   );
+
+  if (synapEntries.length === 0) {
+    // Nothing to sync — skip all OWUI API calls and return a clean zero result.
+    return { collectionId: '', added: 0, updated: 0, removed: 0, skipped: [] };
+  }
+
   const { byFilename: desired, skipped } = indexEntries(synapEntries, maxEntries);
 
   // 2) Resolve the collection (create if missing) and snapshot its files.

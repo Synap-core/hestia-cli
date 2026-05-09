@@ -201,7 +201,7 @@ export async function POST(req: Request) {
         if (agentForComp) {
           const runner = new FetchRunner();
           const podUrl = await resolvePodUrl(undefined, req.url, req.headers) ?? undefined;
-          const provisioningToken = resolveProvisioningToken() ?? undefined;
+          const provisioningToken = await resolveProvisioningToken() ?? undefined;
           try {
             const results: ProvisionResult[] = await provisionWithRetry({
               installedComponentIds: [body.componentId],
@@ -243,7 +243,7 @@ export async function POST(req: Request) {
       // Run targeted provision
       const runner = new FetchRunner();
       const podUrl = await resolvePodUrl(undefined, req.url, req.headers) ?? undefined;
-      const provisioningToken = resolveProvisioningToken() ?? undefined;
+      const provisioningToken = await resolveProvisioningToken() ?? undefined;
       let provisioned: AgentResult[];
       try {
         const results: ProvisionResult[] = await provisionWithRetry({

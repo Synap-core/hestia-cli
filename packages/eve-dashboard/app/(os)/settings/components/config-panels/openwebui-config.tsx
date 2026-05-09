@@ -8,24 +8,22 @@
  * OpenAI-compat hub) and via the Pipelines sidecar (memory injection,
  * channel sync, slash dispatch).
  *
- * The panel surfaces two things the user actually needs to know:
+ * The panel surfaces:
  *   1. Where to open it (URL + first-time setup guidance).
  *   2. Whether the Synap wiring is working end-to-end (integration
- *      checklist — calls /api/doctor with `integrationId="openwebui-synap"`,
- *      includes a real `/v1/models` probe inside the container).
- *
- * No daemon settings or per-component config here yet — when the user
- * needs to override env, they edit `/opt/openwebui/.env` directly. The
- * compose YAML is regenerated on every update so manual YAML edits
- * would be lost; we surface that warning explicitly.
+ *      checklist — calls /api/doctor with `integrationId="openwebui-synap"`).
+ *   3. Coherence state — per-surface health for Prompts, Knowledge, and
+ *      tool server, with force re-sync buttons per surface.
+ *   4. User bootstrap state placeholder (pending SYN-16).
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
-  Spinner, Chip, Accordion, AccordionItem,
+  Spinner, Chip, Accordion, AccordionItem, Button, addToast,
 } from "@heroui/react";
 import {
   ExternalLink, MessagesSquare, BookOpen, Wand2, Zap,
+  RefreshCw, BookMarked, Wrench, Users, BrainCircuit, ShieldCheck,
 } from "lucide-react";
 import { IntegrationChecklist } from "../integration-checklist";
 
@@ -275,6 +273,164 @@ export function OpenwebuiConfigPanel() {
           directory is regenerated on every update, so don&apos;t edit it
           directly. Need a structural override? Add a sibling
           <code className="font-mono text-xs"> docker-compose.override.yml</code>.
+        </p>
+      </div>
+
+      {/* Coherence panel — per-surface OWUI health + force re-sync */}
+      <OwuiCoherencePanel />
+
+      {/* User bootstrap state — placeholder until SYN-16 lands */}
+      <UserBootstrapPanel />
+    </div>
+  );
+}
+
+// ─── Coherence panel ─────────────────────────────────────────────────────────
+
+type SyncSurface = "model-sources" | "skills" | "knowledge" | "tools" | "extras";
+
+interface SyncButton {
+  surface: SyncSurface;
+  label: string;
+  icon: React.ReactNode;
+  description: string;
+}
+
+const SYNC_BUTTONS: SyncButton[] = [
+  {
+    surface: "model-sources",
+    label: "Re-sync models",
+    icon: <BrainCircuit className="h-3.5 w-3.5" />,
+    description: "Re-wire AI providers into Open WebUI (runs `eve ai apply`)",
+  },
+  {
+    surface: "skills",
+    label: "Re-sync prompts",
+    icon: <Wrench className="h-3.5 w-3.5" />,
+    description: "Push Synap SKILL.md packages as Open WebUI Prompts",
+  },
+  {
+    surface: "knowledge",
+    label: "Re-sync knowledge",
+    icon: <BookMarked className="h-3.5 w-3.5" />,
+    description: "Sync Synap knowledge entries to the Open WebUI collection",
+  },
+  {
+    surface: "tools",
+    label: "Re-sync tool server",
+    icon: <ShieldCheck className="h-3.5 w-3.5" />,
+    description: "Re-register Synap Hub Protocol as an Open WebUI tool server",
+  },
+];
+
+function OwuiCoherencePanel() {
+  const [syncing, setSyncing] = useState<SyncSurface | null>(null);
+
+  const runSync = useCallback(async (surface: SyncSurface) => {
+    setSyncing(surface);
+    try {
+      const res = await fetch("/api/actions/owui-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ surface }),
+      });
+      const data = await res.json().catch(() => ({})) as { ok?: boolean; summary?: string; error?: string };
+      if (res.ok && data.ok !== false) {
+        addToast({ title: data.summary ?? "Sync complete", color: "success" });
+      } else {
+        addToast({
+          title: data.error ?? data.summary ?? "Sync failed",
+          color: "danger",
+        });
+      }
+    } catch (err) {
+      addToast({
+        title: err instanceof Error ? err.message : "Sync request failed",
+        color: "danger",
+      });
+    } finally {
+      setSyncing(null);
+    }
+  }, []);
+
+  return (
+    <div className="space-y-3">
+      {/* Coherence checks — live state from /api/doctor */}
+      <IntegrationChecklist
+        integrationId="openwebui-coherence"
+        title="Open WebUI coherence"
+        description="Whether Synap surfaces (Prompts, Knowledge, tool server) are registered inside Open WebUI."
+      />
+
+      {/* Force re-sync buttons */}
+      <div className="rounded-lg border border-divider bg-content2/40 p-4 space-y-3">
+        <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-default-500">
+          <RefreshCw className="h-3.5 w-3.5" />
+          <span>Force re-sync</span>
+        </div>
+        <p className="text-xs text-default-500">
+          Run any sync without needing CLI access. Each button targets one surface
+          so a failed knowledge sync doesn&apos;t block a prompts re-push.
+        </p>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {SYNC_BUTTONS.map(({ surface, label, icon, description }) => (
+            <button
+              key={surface}
+              onClick={() => void runSync(surface)}
+              disabled={syncing !== null}
+              className={[
+                "flex items-start gap-3 rounded-md border px-3 py-2.5 text-left transition-colors",
+                syncing === surface
+                  ? "border-primary/40 bg-primary/5 cursor-wait"
+                  : syncing !== null
+                  ? "border-divider bg-content1 opacity-50 cursor-not-allowed"
+                  : "border-divider bg-content1 hover:border-primary/40 hover:bg-primary/5 cursor-pointer",
+              ].join(" ")}
+            >
+              <span className={[
+                "mt-0.5 shrink-0",
+                syncing === surface ? "text-primary" : "text-default-400",
+              ].join(" ")}>
+                {syncing === surface
+                  ? <Spinner size="sm" color="primary" />
+                  : icon}
+              </span>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-foreground">{label}</p>
+                <p className="text-xs text-default-500 mt-0.5">{description}</p>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── User bootstrap panel ────────────────────────────────────────────────────
+
+function UserBootstrapPanel() {
+  return (
+    <div className="rounded-lg border border-divider bg-content2/40 p-4 space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-default-500">
+          <Users className="h-3.5 w-3.5" />
+          <span>User bootstrap state</span>
+        </div>
+        <Chip size="sm" variant="flat" radius="sm" color="default">
+          Coming soon
+        </Chip>
+      </div>
+      <p className="text-xs text-default-500">
+        This panel will show per-user bootstrap status — which workspace members
+        have been provisioned in Open WebUI and which are pending. It requires
+        per-user OWUI bootstrap (SYN-16) to be implemented first.
+      </p>
+      <div className="flex items-center gap-2 rounded-md border border-divider bg-content1 px-3 py-2">
+        <Users className="h-4 w-4 shrink-0 text-default-300" />
+        <p className="text-xs text-default-400 italic">
+          No bootstrap data available yet — waiting on SYN-16.
         </p>
       </div>
     </div>

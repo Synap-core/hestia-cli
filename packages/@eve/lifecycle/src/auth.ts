@@ -27,7 +27,10 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { execSync } from "node:child_process";
+import { exec as execCallback } from "node:child_process";
+import { promisify } from "node:util";
+
+const execAsync = promisify(execCallback);
 import { randomBytes } from "node:crypto";
 import { writeEnvVar } from "./env-files.js";
 import {
@@ -848,8 +851,8 @@ interface TokenLookup {
  * deploy/.env files, docker inspect). Returns null when unavailable.
  * Exported so CLI commands can reuse the same lookup without re-implementing it.
  */
-export function resolveProvisioningToken(): string | null {
-  return resolveProvisioningTokenWithDiagnostics().token;
+export async function resolveProvisioningToken(): Promise<string | null> {
+  return (await resolveProvisioningTokenWithDiagnostics()).token;
 }
 
 /**
@@ -955,7 +958,7 @@ export async function ensurePodProvisioningToken(): Promise<EnsureProvisioningTo
  *     SILENT footgun — the pod boots fine, but `/api/hub/setup/agent`
  *     can never authenticate because the secret is the empty string.
  */
-function resolveProvisioningTokenWithDiagnostics(): TokenLookup {
+async function resolveProvisioningTokenWithDiagnostics(): Promise<TokenLookup> {
   // 1. Env vars — operator override.
   const envName = process.env.EVE_PROVISIONING_TOKEN !== undefined
     ? "EVE_PROVISIONING_TOKEN"
@@ -1004,7 +1007,7 @@ function resolveProvisioningTokenWithDiagnostics(): TokenLookup {
   }
 
   // 3. Running container's env — works when files aren't readable.
-  const dockerProbe = readProvisioningTokenFromDockerWithStatus();
+  const dockerProbe = await readProvisioningTokenFromDockerWithStatus();
   if (dockerProbe.value) {
     return { token: dockerProbe.value, source: "docker", diagnosticReason: "" };
   }
@@ -1069,17 +1072,17 @@ function readEnvFileVarWithStatus(envPath: string, key: string): EnvProbe {
 
 // SYNAP_BACKEND_CONTAINERS — imported from @eve/dna/docker-helpers
 
-function readProvisioningTokenFromDocker(): string | null {
-  return readProvisioningTokenFromDockerWithStatus().value;
+async function readProvisioningTokenFromDocker(): Promise<string | null> {
+  return (await readProvisioningTokenFromDockerWithStatus()).value;
 }
 
-function readProvisioningTokenFromDockerWithStatus(): EnvProbe {
+async function readProvisioningTokenFromDockerWithStatus(): Promise<EnvProbe> {
   let sawEmpty = false;
   for (const container of SYNAP_BACKEND_CONTAINERS) {
     try {
-      const out = execSync(
+      const { stdout: out } = await execAsync(
         `docker inspect --format='{{range .Config.Env}}{{println .}}{{end}}' ${container}`,
-        { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], timeout: 4000 },
+        { encoding: "utf-8", timeout: 4000 },
       );
       for (const raw of out.split(/\r?\n/)) {
         const line = raw.trim();

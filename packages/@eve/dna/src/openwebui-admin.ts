@@ -228,9 +228,9 @@ export async function isHealthEndpointReady(hostPort?: number): Promise<boolean>
  * Returns true if health passes. Used internally by code paths that
  * manage their own retry budget for the secret key / admin steps.
  */
-export async function waitForHealth(hostPort?: number): Promise<boolean> {
+export async function waitForHealth(hostPort?: number, maxAttempts = 12): Promise<boolean> {
   const baseUrl = resolveAdminUrl(hostPort);
-  return waitUntilHealthy(baseUrl, 12);
+  return waitUntilHealthy(baseUrl, maxAttempts);
 }
 
 /**
@@ -302,6 +302,23 @@ export async function getAdminJwt(hostPort?: number): Promise<string | null> {
   if (!secretKey) return null;
 
   return forgeAdminJwt(secretKey, status.adminUser!);
+}
+
+/**
+ * Forge an admin JWT, skipping the health wait.
+ *
+ * Use this when `waitForHealth()` has already confirmed OpenWebUI is
+ * healthy — calling `getAdminJwt()` afterwards repeats `waitUntilHealthy`
+ * (up to 30 s), which is wasteful and can produce a race-condition failure
+ * even though health just passed. This variant goes straight to
+ * `getAdminReadyStatus()` (secret key + DB query only).
+ */
+export async function getAdminJwtPostHealth(): Promise<string | null> {
+  const status = await getAdminReadyStatus();
+  if (status.status !== 'healthy' || !status.adminUser) return null;
+  const secretKey = readWebuiSecretKey();
+  if (!secretKey) return null;
+  return forgeAdminJwt(secretKey, status.adminUser);
 }
 
 /**

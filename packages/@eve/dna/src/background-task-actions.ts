@@ -55,6 +55,10 @@ export const EVE_BACKGROUND_ACTIONS: Record<string, EveBackgroundTaskAction> = {
     description: 'Refactor code in a project',
     requiresWorkspace: true,
   },
+  'hermes.transcribe': {
+    id: 'hermes.transcribe',
+    description: 'Transcribe a voice memo audio file and store transcript in Synap memory',
+  },
   'hermes.summarize': {
     id: 'hermes.summarize',
     description: 'Summarize entities or conversations',

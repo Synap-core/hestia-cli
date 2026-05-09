@@ -24,7 +24,7 @@ export interface ComponentLifecycle {
 
 export interface ComponentDoctorMetadata {
   critical: boolean;
-  integrationId?: 'synap' | 'hermes-synap' | 'openclaw-synap' | 'openwebui-synap' | 'openwebui-pipelines';
+  integrationId?: 'synap' | 'hermes-synap' | 'openclaw-synap' | 'openwebui-synap' | 'openwebui-pipelines' | 'openwebui-coherence';
 }
 
 export type DoctorGroup = 'platform' | 'containers' | 'network' | 'ai' | 'wiring' | 'integrations' | 'config';

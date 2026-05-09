@@ -43,12 +43,23 @@ function readdirSafe(dir: string): string[] {
 }
 
 export interface SynapImageInstallOptions {
+  /** Synap-backend git repo root (defaults to /opt/synap-backend). */
   deployDir?: string;
   domain?: string;
   email?: string;
   adminEmail?: string;
   adminPassword?: string;
   adminBootstrapMode?: 'token' | 'preseed';
+  /**
+   * Build images from source instead of pulling pre-built images. Routes
+   * to `synap install --from-source`. Requires the deployDir to be a real
+   * git checkout (not just an extracted tarball).
+   */
+  fromSource?: boolean;
+  /** Pass `--with-openclaw` so the synap CLI provisions OpenClaw alongside the pod. */
+  withOpenclaw?: boolean;
+  /** Pass `--with-rsshub` so the synap CLI starts the rsshub compose profile. */
+  withRsshub?: boolean;
 }
 
 export interface SynapImageInstallResult {
@@ -136,18 +147,20 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
   //    .env scaffolding, kratos.yml generation, image pulls, migrations,
   //    container bring-up, and (on update) the canary force-recreate.
   const cliArgs = [
-    '--from-image',
     '--non-interactive',
     '--dir', repoRoot,
     '--domain', podDomain,
     '--admin-bootstrap-mode', adminBootstrapMode,
   ];
+  cliArgs.push(opts.fromSource ? '--from-source' : '--from-image');
   if (opts.email) cliArgs.push('--email', opts.email);
   if (opts.adminEmail) cliArgs.push('--admin-email', opts.adminEmail);
   if (opts.adminPassword) cliArgs.push('--admin-password', opts.adminPassword);
   if (adminBootstrapMode === 'token') cliArgs.push('--admin-bootstrap-token', bootstrapToken);
+  if (opts.withOpenclaw) cliArgs.push('--with-openclaw');
+  if (opts.withRsshub) cliArgs.push('--with-rsshub');
 
-  const cliResult = runSynapCli('install', cliArgs);
+  const cliResult = runSynapCli('install', cliArgs, { repoRoot });
   if (!cliResult.ok) {
     throw new Error(
       `synap install exited ${cliResult.exitCode}` +
@@ -160,16 +173,15 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
   //    no-op when the token is already present.
   selfHealEveSpecificEnv(envPath);
 
-  // 6. Connect to eve-network so Traefik can route to the backend.
-  let containerName: string | null = null;
-  for (let i = 0; i < 10; i++) {
-    containerName = getSynapBackendContainer();
-    if (containerName) break;
-    await new Promise(r => setTimeout(r, 2000));
-  }
+  // 6. Connect to eve-network so Traefik can route to the backend. The
+  //    synap CLI waited for container health before returning, so the
+  //    container should already be visible to `docker ps`.
+  const containerName = getSynapBackendContainer();
   if (containerName) {
     connectToEveNetwork(containerName);
     console.log(`  Connected ${containerName} → eve-network`);
+  } else {
+    console.warn('  Backend container not found after synap install — skipping eve-network attach');
   }
 
   // 7. Reclaim disk by pruning old image versions. Failures are non-fatal.

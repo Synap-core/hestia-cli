@@ -1,8 +1,10 @@
 import { Command } from 'commander';
 import { readFile } from 'node:fs/promises';
-import { configManager } from '@eve/dna';
+import { configManager, readEveSecrets } from '@eve/dna';
 import { getGlobalCliFlags, outputJson } from '@eve/cli-kit';
 import { colors, printInfo, printError } from '../../lib/ui.js';
+
+const CHANNEL_PLATFORMS = ['telegram', 'discord', 'whatsapp', 'signal', 'matrix', 'slack'] as const;
 
 export function configCommands(program: Command): void {
   const cfg = program.command('config').description('Eve YAML config (~/.config/eve/config.yaml)');
@@ -25,10 +27,24 @@ export function configCommands(program: Command): void {
           createdAt: c.createdAt instanceof Date ? c.createdAt.toISOString() : c.createdAt,
           updatedAt: c.updatedAt instanceof Date ? c.updatedAt.toISOString() : c.updatedAt,
         };
+
+        // Augment with effective channel routing from secrets so the default
+        // ("hermes" for any unconfigured platform) is visible without reading
+        // secrets.json directly.
+        const secrets = await readEveSecrets().catch(() => null);
+        const routing = secrets?.channelRouting ?? {};
+        const effectiveChannelRouting = Object.fromEntries(
+          CHANNEL_PLATFORMS.map(p => [
+            p,
+            routing[p] ? routing[p] : `hermes (default)`,
+          ]),
+        );
+
+        const output = { ...plain, effectiveChannelRouting };
         if (getGlobalCliFlags().json) {
-          outputJson(plain);
+          outputJson(output);
         } else {
-          console.log(JSON.stringify(plain, null, 2));
+          console.log(JSON.stringify(output, null, 2));
         }
       } catch (e) {
         printError(e instanceof Error ? e.message : String(e));

@@ -237,8 +237,11 @@ export class EntityStateManager {
         validated = ensureV2(v1) as unknown as z.infer<typeof StateSchema>;
       }
 
+      // If installed map is absent the file is V1 — populate it from organs
+      const migrated = validated.installed ? validated : ensureV2(validated);
+
       const mergedState: EntityState = {
-        ...validated,
+        ...migrated,
         version: '0.2.0', // always report v2
         organs: {
           ...DEFAULT_ENTITY_STATE.organs,

@@ -17,6 +17,11 @@ import { probeRoutes, probeVerdict, type RouteProbe } from '../lib/probe-routes.
 import { diagnoseFailedRoute, type DeepDiagnostic } from '../lib/diagnose-route.js';
 import { buildPodRunner } from '../lib/doctor-runners.js';
 import {
+  waitForHealth,
+  getAdminJwtPostHealth,
+  listModelSources,
+} from '@eve/dna';
+import {
   colors,
   emojis,
   printHeader,
@@ -517,6 +522,59 @@ async function runDiagnostics(opts: DoctorOptions = { verbose: false, skipProbes
             }
           }
         } catch { /* non-fatal */ }
+      }
+
+      // Open WebUI — verify model sources are actually registered via the admin API
+      if (installed.includes('openwebui')) {
+        const owuiSourceSpinner = createSpinner('Probing OpenWebUI model source registration…');
+        owuiSourceSpinner.start();
+        try {
+          // Short health budget — doctor shouldn't block for 60 s on OWUI.
+          const healthy = await waitForHealth(undefined, 3); // 3 × 5 s = 15 s max
+          if (!healthy) {
+            owuiSourceSpinner.warn('OpenWebUI not reachable — skipping model source check');
+            checks.push({
+              name: 'Open WebUI model sources',
+              status: 'warn',
+              message: 'OpenWebUI health endpoint did not respond within 15 s — container may be starting',
+              fix: 'docker start hestia-openwebui  (or wait and re-run `eve doctor`)',
+            });
+          } else {
+            const jwt = await getAdminJwtPostHealth();
+            if (!jwt) {
+              owuiSourceSpinner.warn('Could not forge admin JWT');
+              checks.push({
+                name: 'Open WebUI model sources',
+                status: 'warn',
+                message: 'Admin JWT could not be forged — WEBUI_SECRET_KEY missing or no admin user in DB',
+                fix: 'Check /opt/openwebui/.env has WEBUI_SECRET_KEY; if missing: eve ai apply',
+              });
+            } else {
+              const sources = await listModelSources(jwt);
+              const hasSynap = sources.some(
+                s => s.url.includes('eve-brain-synap') || s.url.includes(':4000'),
+              );
+              if (hasSynap) {
+                owuiSourceSpinner.succeed(`Open WebUI model sources: ${sources.length} registered`);
+                checks.push({
+                  name: 'Open WebUI model sources',
+                  status: 'pass',
+                  message: `${sources.length} source(s) registered — Synap IS present in model picker`,
+                });
+              } else {
+                owuiSourceSpinner.fail('Synap IS missing from OpenWebUI model sources');
+                checks.push({
+                  name: 'Open WebUI model sources',
+                  status: 'fail',
+                  message: `${sources.length} source(s) registered but Synap IS is not among them — users see only Ollama`,
+                  fix: 'eve openwebui sync',
+                });
+              }
+            }
+          }
+        } catch {
+          owuiSourceSpinner.warn('Could not probe OpenWebUI model sources');
+        }
       }
 
       // Synap IS — check that deploy/.env has at least one provider key

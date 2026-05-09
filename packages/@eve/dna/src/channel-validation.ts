@@ -48,6 +48,8 @@ export async function validateChannelCredentials(
         return await validateMatrix(input.homeserverUrl, input.accessToken, f, ctrl);
       case 'signal':
         return { ok: true, skipped: true, details: 'no remote validation endpoint' };
+      case 'whatsapp':
+        return await validateWhatsAppCloudApi(input.phoneNumberId, input.accessToken, f, ctrl);
     }
   } catch (err) {
     return { ok: false, error: errorMessage(err) };
@@ -114,6 +116,29 @@ async function validateMatrix(
   if (!res.ok) return { ok: false, error: `Matrix whoami ${res.status}` };
   const body = (await res.json()) as { user_id?: string };
   return { ok: true, details: body.user_id ?? 'authenticated' };
+}
+
+async function validateWhatsAppCloudApi(
+  phoneNumberId: string,
+  accessToken: string,
+  f: typeof fetch,
+  signal: AbortSignal,
+): Promise<ChannelValidationResult> {
+  const url = `https://graph.facebook.com/v17.0/${encodeURIComponent(phoneNumberId)}?fields=display_phone_number%2Cverified_name&access_token=${encodeURIComponent(accessToken)}`;
+  const res = await f(url, { signal });
+  const body = (await res.json()) as {
+    display_phone_number?: string;
+    verified_name?: string;
+    id?: string;
+    error?: { message?: string; code?: number };
+  };
+  if (!res.ok || body.error) {
+    const msg = body.error?.message ?? `Meta Graph API ${res.status}`;
+    return { ok: false, error: msg };
+  }
+  const label = body.display_phone_number ?? body.id ?? phoneNumberId;
+  const name = body.verified_name ? ` (${body.verified_name})` : '';
+  return { ok: true, details: `${label}${name}` };
 }
 
 function errorMessage(err: unknown): string {

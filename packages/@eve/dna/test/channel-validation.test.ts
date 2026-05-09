@@ -112,6 +112,47 @@ describe('validateChannelCredentials', () => {
     });
   });
 
+  describe('whatsapp cloud-api', () => {
+    it('returns ok with display_phone_number and verified_name', async () => {
+      const f = mockFetch((url) => {
+        expect(url).toContain('graph.facebook.com/v17.0/');
+        expect(url).toContain('pn-123');
+        expect(url).toContain('EAAxxxx');
+        return { body: { display_phone_number: '+1 555-555-5555', verified_name: 'Eve Bot', id: 'pn-123' } };
+      });
+      const r = await validateChannelCredentials(
+        { platform: 'whatsapp', mode: 'cloud-api', phoneNumberId: 'pn-123', accessToken: 'EAAxxxx', verifyToken: 'vt' },
+        { fetch: f },
+      );
+      expect(r.ok).toBe(true);
+      expect(r.details).toBe('+1 555-555-5555 (Eve Bot)');
+    });
+
+    it('returns error message from Meta on auth failure', async () => {
+      const f = mockFetch(() => ({
+        status: 400,
+        ok: false,
+        body: { error: { message: 'Invalid OAuth access token', code: 190 } },
+      }));
+      const r = await validateChannelCredentials(
+        { platform: 'whatsapp', mode: 'cloud-api', phoneNumberId: 'pn-bad', accessToken: 'bad', verifyToken: 'vt' },
+        { fetch: f },
+      );
+      expect(r.ok).toBe(false);
+      expect(r.error).toBe('Invalid OAuth access token');
+    });
+
+    it('falls back to phone number id when display fields are absent', async () => {
+      const f = mockFetch(() => ({ body: { id: 'pn-123' } }));
+      const r = await validateChannelCredentials(
+        { platform: 'whatsapp', mode: 'cloud-api', phoneNumberId: 'pn-123', accessToken: 'tok', verifyToken: 'vt' },
+        { fetch: f },
+      );
+      expect(r.ok).toBe(true);
+      expect(r.details).toBe('pn-123');
+    });
+  });
+
   it('reports network errors', async () => {
     const f = (() => { throw new Error('connect ECONNREFUSED'); }) as unknown as typeof fetch;
     const r = await validateChannelCredentials({ platform: 'telegram', botToken: 'tok' }, { fetch: f });

@@ -20,7 +20,7 @@
     "prepush": "pnpm -r run build && pnpm run check:manifest",
     "setup:hooks": "git config core.hooksPath .githooks",
     "typecheck": "pnpm -r run typecheck",
-    "lint": "pnpm -r run lint",
+    "lint": "eslint packages/@eve packages/eve-cli packages/cli-kit",
     "test": "pnpm -r run test",
     "cli": "pnpm --filter @eve/cli",
     "validate": "pnpm --filter @eve/cli run validate",
@@ -28,11 +28,16 @@
     "check:manifest": "node scripts/check-manifest.mjs",
     "release:bundle": "bash scripts/create-release-bundle.sh"
   },
+  "type": "module",
   "engines": {
     "node": ">=18.0.0"
   },
   "devDependencies": {
-    "@eve/cli": "workspace:*"
+    "@eve/cli": "workspace:*",
+    "@typescript-eslint/eslint-plugin": "^8.59.2",
+    "@typescript-eslint/parser": "^8.59.2",
+    "eslint": "^10.3.0",
+    "eslint-plugin-import": "^2.32.0"
   },
   "keywords": [
     "eve",

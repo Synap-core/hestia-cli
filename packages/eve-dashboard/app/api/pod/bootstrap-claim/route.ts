@@ -47,7 +47,7 @@ interface ClaimBody {
   role?: unknown;
 }
 
-function resolveBootstrapToken(secrets: Awaited<ReturnType<typeof readEveSecrets>>): string {
+async function resolveBootstrapToken(secrets: Awaited<ReturnType<typeof readEveSecrets>>): Promise<string> {
   // 1. `pod.bootstrapToken` — typed slot populated by `eve install`/`eve setup admin`.
   const fromPod = secrets?.pod?.bootstrapToken?.trim() ?? "";
   if (fromPod) return fromPod;
@@ -69,7 +69,7 @@ function resolveBootstrapToken(secrets: Awaited<ReturnType<typeof readEveSecrets
   // 4. Rich resolver: probes env vars → .env files → docker inspect.
   //    Mirrors what `eve setup admin` does in the CLI so the dashboard
   //    always has the same discovery power as the CLI.
-  return resolveProvisioningToken() ?? "";
+  return await resolveProvisioningToken() ?? "";
 }
 
 export async function POST(req: Request) {
@@ -110,7 +110,7 @@ export async function POST(req: Request) {
   }
 
   const secrets = await readEveSecrets();
-  const token = resolveBootstrapToken(secrets);
+  const token = await resolveBootstrapToken(secrets);
   if (!token) {
     return NextResponse.json(
       { error: "no-bootstrap-token" },

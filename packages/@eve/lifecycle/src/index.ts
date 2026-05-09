@@ -390,6 +390,8 @@ async function* runUpdatePlan(
     return;
   }
   if (plan.compose) {
+    yield { type: "step", label: `${comp.label} — prepare` };
+
     // Regenerate the compose YAML for components we own end-to-end.
     // This guarantees the file is always our latest template and
     // recovers from drift caused by older install versions, manual
@@ -464,6 +466,7 @@ async function* runUpdatePlan(
     yield* ensureEveNetwork();
 
     const services = plan.compose.services ?? [];
+    yield { type: "step", label: `${comp.label} — pull images` };
     let code = yield* runCommand(
       "docker",
       ["compose", "pull", ...services, "--ignore-pull-failures"],
@@ -476,6 +479,7 @@ async function* runUpdatePlan(
     // services in a multi-service file (synap), so drop it when the
     // services list is empty (openwebui, openwebui-pipelines — single
     // service per file → bringing up the whole file is what we want).
+    yield { type: "step", label: `${comp.label} — start containers` };
     const upArgs = services.length > 0
       ? ["compose", "up", "-d", "--no-deps", ...services]
       : ["compose", "up", "-d"];
@@ -672,6 +676,7 @@ async function* runDelegatePlan(
 // ---------------------------------------------------------------------------
 
 async function* runPostUpdateHooks(comp: ComponentInfo): AsyncGenerator<LifecycleEvent> {
+  yield { type: "step", label: `${comp.label} — post-update wiring` };
   if (comp.id === "openclaw") {
     yield* postUpdateReconcileOpenclaw();
     yield* postUpdateReconcileAiWiring();

@@ -77,10 +77,17 @@ export interface RunSynapCliOptions {
   inherit?: boolean;
   /**
    * Pull the latest synap-backend git checkout before invoking the CLI.
-   * Keeps the bash binary in lockstep with the docker images. Skipped silently
-   * when the deploy dir is not a git checkout.
+   * Keeps the bash binary in lockstep with the docker images. Logs a warning
+   * if the repo has uncommitted edits (`git pull --ff-only` rejects); skipped
+   * silently when the deploy dir is not a git checkout.
    */
   refreshGit?: boolean;
+  /**
+   * Explicit synap-backend git repo root. Bypasses `resolveSynapDelegate`
+   * — required when installing into a non-default path (e.g. `/srv/...`).
+   * Must contain `synap` script and `deploy/docker-compose.yml`.
+   */
+  repoRoot?: string;
 }
 
 export interface SynapCliResult {
@@ -96,7 +103,22 @@ const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 function refreshGitCheckout(repoRoot: string): void {
   if (!existsSync(`${repoRoot}/.git`)) return;
   spawnSync('git', ['-C', repoRoot, 'fetch', '--quiet'], { stdio: 'ignore' });
-  spawnSync('git', ['-C', repoRoot, 'pull', '--ff-only', '--quiet'], { stdio: 'ignore' });
+  const pull = spawnSync('git', ['-C', repoRoot, 'pull', '--ff-only'], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+  });
+  if (pull.status !== 0) {
+    const detail = (pull.stderr ?? '').toString().trim() || 'rejected (likely local edits or non-fast-forward).';
+    console.warn(`  Warning: git pull on ${repoRoot} failed — ${detail}\n  Continuing with the on-disk synap-backend (may be older than upstream).`);
+  }
+}
+
+function resolveExplicitRepo(repoRoot: string): SynapDelegatePaths | null {
+  const synapScript = `${repoRoot}/synap`;
+  const deployDir = `${repoRoot}/deploy`;
+  if (!existsSync(synapScript)) return null;
+  if (!existsSync(`${deployDir}/docker-compose.yml`)) return null;
+  return { repoRoot, synapScript, deployDir };
 }
 
 /**
@@ -114,13 +136,17 @@ export function runSynapCli(
   args: string[] = [],
   options: RunSynapCliOptions = {},
 ): SynapCliResult {
-  const paths = resolveSynapDelegate();
+  const paths = options.repoRoot
+    ? resolveExplicitRepo(options.repoRoot)
+    : resolveSynapDelegate();
   if (!paths) {
     return {
       ok: false,
       exitCode: -1,
       paths: null,
-      stderr: 'synap CLI not found — set SYNAP_REPO_ROOT or install synap-backend',
+      stderr: options.repoRoot
+        ? `synap CLI not found at ${options.repoRoot} — expected ${options.repoRoot}/synap and ${options.repoRoot}/deploy/docker-compose.yml`
+        : diagnoseMissingSynapCli(),
     };
   }
 
@@ -161,4 +187,41 @@ export function runSynapCli(
     paths,
     stderr: inherit ? '' : (result.stderr?.toString() ?? ''),
   };
+}
+
+/**
+ * Build a useful error when `resolveSynapDelegate` returns null.
+ *
+ * Distinguishes the two real cases:
+ *   1. No `/opt/synap-backend` at all — fresh server, never installed.
+ *   2. A FLAT-layout install exists (compose at `<root>/docker-compose.yml`
+ *      with no `.git` and no `synap` script). This is a pre-Phase-3 install;
+ *      eve no longer ships its own compose so the user must migrate to the
+ *      canonical synap-backend git-checkout layout.
+ */
+function diagnoseMissingSynapCli(): string {
+  const candidate = process.env.SYNAP_REPO_ROOT?.trim() || '/opt/synap-backend';
+  const hasFlatCompose = existsSync(`${candidate}/docker-compose.yml`);
+  const hasGit = existsSync(`${candidate}/.git`);
+  const hasScript = existsSync(`${candidate}/synap`);
+
+  if (hasFlatCompose && !hasGit && !hasScript) {
+    return [
+      'synap CLI not found — pre-cutover flat-layout install detected at ' + candidate + '.',
+      '',
+      'Eve no longer bundles its own compose file; the canonical synap-backend git checkout is required.',
+      'Migrate (preserves docker volumes — your data is safe):',
+      '',
+      '  docker compose -f ' + candidate + '/docker-compose.yml down',
+      '  sudo mv ' + candidate + ' ' + candidate + '.legacy',
+      '  sudo git clone --depth 1 https://github.com/synap-core/backend.git ' + candidate,
+      '  sudo mv ' + candidate + '.legacy/.env ' + candidate + '/deploy/.env',
+      '  sudo mv ' + candidate + '.legacy/docker-compose.override.yml ' + candidate + '/deploy/ 2>/dev/null || true',
+      '  eve update synap   # synap CLI now visible; runs canonical update + reconnects eve-network',
+      '',
+      'After verifying the pod is healthy, you can `sudo rm -rf ' + candidate + '.legacy`.',
+    ].join('\n');
+  }
+
+  return 'synap CLI not found at ' + candidate + '/synap — set SYNAP_REPO_ROOT, or run `eve install synap`.';
 }

@@ -1,0 +1,93 @@
+import { Command } from 'commander';
+import {
+  readEveSecrets,
+  readAgentKeyOrLegacySync,
+  buildOpenwebuiModelSources,
+  buildOpenwebuiManagedConfig,
+  registerOpenwebuiAdminApi,
+  syncOpenwebuiExtras,
+  formatExtrasSummary,
+} from '@eve/dna';
+import { createSpinner, printSuccess, printError, printWarning, colors } from '../lib/ui.js';
+
+export function openwebuiCommand(program: Command): void {
+  const owui = program
+    .command('openwebui')
+    .alias('owui')
+    .description('OpenWebUI management commands');
+
+  owui
+    .command('sync')
+    .description(
+      'Re-register all model sources in OpenWebUI via the admin API.\n' +
+      'Use this to recover when `eve start` or `eve ai apply` succeeded\n' +
+      'but models are missing from the OpenWebUI model picker.',
+    )
+    .option(
+      '--max-retries <n>',
+      'Health check attempts before giving up (each attempt waits 5 s, default: 24 = 2 min)',
+      '24',
+    )
+    .option('--skip-extras', 'Skip the extras sync (skills / knowledge / tools)')
+    .action(async (opts: { maxRetries: string; skipExtras?: boolean }) => {
+      const maxRetries = Math.max(1, parseInt(opts.maxRetries, 10) || 24);
+      const secrets = await readEveSecrets(process.cwd());
+
+      const synapApiKey = readAgentKeyOrLegacySync('openwebui-pipelines', secrets);
+      if (!synapApiKey) {
+        printError('No Synap API key found for openwebui-pipelines — install Synap first (`eve add synap`)');
+        process.exit(1);
+      }
+
+      const { modelSources, pipelinesKey, pipelinesUrl } = buildOpenwebuiModelSources(secrets, '/opt/openwebui');
+
+      // Apply correct keys (same logic as wireOpenwebui in wire-ai.ts)
+      if (modelSources.length > 0) modelSources[0].apiKey = synapApiKey;
+      const hermesApiServerKey = secrets?.builder?.hermes?.apiServerKey;
+      const hermesIdx = modelSources.findIndex(m => m.displayName === 'Hermes Gateway');
+      if (hermesIdx >= 0) modelSources[hermesIdx].apiKey = hermesApiServerKey ?? '';
+
+      console.log(colors.muted(`  ${modelSources.length} model source(s) to register`));
+      console.log(colors.muted(`  Health check budget: ${maxRetries} × 5 s = ${maxRetries * 5} s`));
+      console.log();
+
+      const spinner = createSpinner(`Waiting for OpenWebUI (up to ${maxRetries * 5} s)…`);
+      spinner.start();
+
+      const ok = await registerOpenwebuiAdminApi(modelSources, {
+        pipelinesUrl,
+        pipelinesKey,
+        managedConfig: buildOpenwebuiManagedConfig(secrets),
+        maxRetries,
+      });
+
+      if (!ok) {
+        spinner.fail('Registration failed');
+        printError('OpenWebUI did not become healthy within the budget, or the admin JWT could not be forged.');
+        console.log();
+        printWarning('Checks to run:');
+        console.log(colors.muted('  1. docker ps | grep openwebui'));
+        console.log(colors.muted('  2. docker logs hestia-openwebui --tail 30'));
+        console.log(colors.muted('  3. cat /opt/openwebui/.env | grep WEBUI_SECRET_KEY'));
+        console.log(colors.muted('  4. eve doctor'));
+        process.exit(1);
+      }
+
+      spinner.succeed(`${modelSources.length} model source(s) registered in OpenWebUI`);
+
+      if (!opts.skipExtras) {
+        const extrasSpinner = createSpinner('Syncing extras (skills / knowledge / tools)…');
+        extrasSpinner.start();
+        try {
+          const extras = await syncOpenwebuiExtras(process.cwd(), secrets);
+          extrasSpinner.succeed(formatExtrasSummary(extras));
+        } catch (err) {
+          extrasSpinner.warn(`Extras sync failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+
+      console.log();
+      printSuccess('Sync complete. Models should now appear in the OpenWebUI model picker.');
+      printSuccess('Run `eve doctor` to verify the full registration status.');
+    });
+}

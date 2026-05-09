@@ -8,8 +8,9 @@
  * Single source of truth: secrets.json. Switching the active agent (Hermes,
  * OpenClaw, …) only requires a routing change — credentials never move.
  *
- * WhatsApp is intentionally NOT exposed here: it must be onboarded via the
- * Agents browser app (Baileys QR-scan flow), not from a CLI flag.
+ * WhatsApp supports two modes:
+ *   - cloud-api: Meta WhatsApp Cloud API (phoneNumberId + accessToken + verifyToken)
+ *   - browser:   Baileys QR-scan via the Agents browser app (no CLI path)
  */
 
 import type { EveSecrets } from './secrets-contract.js';
@@ -29,7 +30,8 @@ export type ChannelCredentialInput =
   | { platform: 'discord'; botToken: string; guildId?: string; applicationId?: string }
   | { platform: 'slack'; botToken: string; signingSecret?: string; appToken?: string }
   | { platform: 'signal'; phoneNumber: string; apiUrl?: string }
-  | { platform: 'matrix'; homeserverUrl: string; accessToken: string; roomId?: string };
+  | { platform: 'matrix'; homeserverUrl: string; accessToken: string; roomId?: string }
+  | { platform: 'whatsapp'; mode: 'cloud-api'; phoneNumberId: string; accessToken: string; verifyToken: string };
 
 export interface ConfigureChannelOptions {
   /**
@@ -110,6 +112,15 @@ function buildChannelEntry(input: ChannelCredentialInput): ChannelsSection {
           ...(input.roomId ? { roomId: input.roomId } : {}),
         },
       };
+    case 'whatsapp':
+      return {
+        whatsapp: {
+          enabled: true,
+          phoneNumberId: input.phoneNumberId,
+          accessToken: input.accessToken,
+          verifyToken: input.verifyToken,
+        },
+      };
   }
 }
 
@@ -139,12 +150,13 @@ export async function configureChannel(
   input: ChannelCredentialInput,
   opts: ConfigureChannelOptions = {},
 ): Promise<ConfigureChannelResult> {
-  // The discriminated union excludes whatsapp at the type level, but guard
-  // anyway in case an untyped caller slips through.
+  // Guard against browser-mode WhatsApp — only cloud-api mode is supported via CLI.
   const inputPlatform = (input as { platform: string }).platform;
-  if (inputPlatform === 'whatsapp') {
+  const inputMode = (input as { mode?: string }).mode;
+  if (inputPlatform === 'whatsapp' && inputMode !== 'cloud-api') {
     throw new Error(
-      'WhatsApp must be onboarded via the Agents browser app (Baileys QR-scan), not the CLI.',
+      'WhatsApp browser/QR-scan must be onboarded via the Agents browser app, not the CLI. ' +
+      'For WhatsApp Cloud API, use --cloud-api.',
     );
   }
 

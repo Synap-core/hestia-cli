@@ -301,6 +301,18 @@ const SecretsSchema = z.object({
           sipUri: z.string().optional(),
         })
         .optional(),
+      /** Voice memo transcription engine config */
+      transcription: z
+        .object({
+          engine: z.enum(['whisper-local', 'openai', 'deepgram']).optional(),
+          /** For whisper-local: tiny|base|small|medium|large-v3. Default: base */
+          modelSize: z.enum(['tiny', 'base', 'small', 'medium', 'large-v3']).optional(),
+          /** API key for openai or deepgram engines */
+          apiKey: z.string().optional(),
+          /** BCP-47 language code hint for accuracy (e.g. 'en'). Optional. */
+          language: z.string().optional(),
+        })
+        .optional(),
     })
     .optional(),
   /** Eve web dashboard config */

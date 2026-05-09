@@ -30,7 +30,7 @@ interface BootstrapTokenResponse {
   error?: string;
 }
 
-function resolveBootstrapToken(secrets: Awaited<ReturnType<typeof readEveSecrets>>): string {
+async function resolveBootstrapToken(secrets: Awaited<ReturnType<typeof readEveSecrets>>): Promise<string> {
   const fromPod = secrets?.pod?.bootstrapToken?.trim() ?? "";
   if (fromPod) return fromPod;
 
@@ -46,7 +46,7 @@ function resolveBootstrapToken(secrets: Awaited<ReturnType<typeof readEveSecrets
     "";
   if (fromEnv) return fromEnv;
 
-  return resolveProvisioningToken() ?? "";
+  return await resolveProvisioningToken() ?? "";
 }
 
 export async function POST(req: Request) {
@@ -62,7 +62,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const token = resolveBootstrapToken(secrets);
+  const token = await resolveBootstrapToken(secrets);
   if (!token) {
     return NextResponse.json(
       { error: "no-bootstrap-token" },

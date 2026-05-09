@@ -201,3 +201,101 @@ describe('v2 component state', () => {
     expect(state.installed).toBeUndefined();
   });
 });
+
+// =============================================================================
+// V1 → V2 migration assertion test
+// =============================================================================
+
+describe('V1 → V2 state migration', () => {
+  let stateHome: string;
+
+  beforeEach(() => {
+    stateHome = mkdtempSync(join(tmpdir(), 'eve-state-v1-'));
+    process.env.EVE_STATE_HOME = stateHome;
+  });
+
+  afterEach(() => {
+    if (ORIGINAL_EVE_STATE_HOME === undefined) {
+      delete process.env.EVE_STATE_HOME;
+    } else {
+      process.env.EVE_STATE_HOME = ORIGINAL_EVE_STATE_HOME;
+    }
+    rmSync(stateHome, { recursive: true, force: true });
+  });
+
+  function writeV1State(organs: Record<string, { state: string; version?: string }>): void {
+    const v1: Record<string, unknown> = {
+      version: '0.1.0',
+      initializedAt: '2024-01-01T00:00:00.000Z',
+      aiModel: 'none',
+      organs,
+      metadata: { platform: 'linux', arch: 'x64', hostname: 'test-host' },
+    };
+    mkdirSync(stateHome, { recursive: true });
+    writeFileSync(getEveStatePath(), JSON.stringify(v1, null, 2));
+  }
+
+  it('migrates V1 state to V2 shape with installed map populated', async () => {
+    writeV1State({
+      brain: { state: 'ready', version: '1.0.0' },
+      arms: { state: 'missing' },
+      builder: { state: 'error' },
+      eyes: { state: 'stopped' },
+      legs: { state: 'ready', version: '2.0.0' },
+    });
+
+    const mgr = new EntityStateManager();
+    const state = await mgr.getState();
+
+    // Must report v2
+    expect(state.version).toBe('0.2.0');
+
+    // installed map must exist after migration
+    expect(state.installed).toBeDefined();
+
+    // brain → synap
+    expect(state.installed?.['synap']?.organ).toBe('brain');
+    expect(state.installed?.['synap']?.state).toBe('ready');
+    expect(state.installed?.['synap']?.version).toBe('1.0.0');
+
+    // legs → traefik
+    expect(state.installed?.['traefik']?.organ).toBe('legs');
+    expect(state.installed?.['traefik']?.state).toBe('ready');
+    expect(state.installed?.['traefik']?.version).toBe('2.0.0');
+
+    // arms → openclaw
+    expect(state.installed?.['openclaw']?.organ).toBe('arms');
+    expect(state.installed?.['openclaw']?.state).toBe('missing');
+
+    // organs map still populated (backward compat)
+    expect(state.organs.brain.state).toBe('ready');
+    expect(state.organs.legs.state).toBe('ready');
+  });
+
+  it('saves migrated state back to disk (idempotent upgrade)', async () => {
+    writeV1State({
+      brain: { state: 'ready' },
+      arms: { state: 'missing' },
+      builder: { state: 'missing' },
+      eyes: { state: 'missing' },
+      legs: { state: 'missing' },
+    });
+
+    const mgr1 = new EntityStateManager();
+    await mgr1.getState();
+
+    // Second manager reads the already-migrated file — must parse as v2 without error
+    const mgr2 = new EntityStateManager();
+    const state2 = await mgr2.getState();
+    expect(state2.version).toBe('0.2.0');
+    expect(state2.installed).toBeDefined();
+  });
+
+  it('V1 state without setupProfile results in undefined setupProfile after migration', async () => {
+    writeV1State({ brain: { state: 'missing' }, arms: { state: 'missing' }, builder: { state: 'missing' }, eyes: { state: 'missing' }, legs: { state: 'missing' } });
+
+    const mgr = new EntityStateManager();
+    const state = await mgr.getState();
+    expect(state.setupProfile).toBeUndefined();
+  });
+});

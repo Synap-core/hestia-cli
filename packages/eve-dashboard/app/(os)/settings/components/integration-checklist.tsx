@@ -19,7 +19,8 @@ type IntegrationId =
   | "hermes-synap"
   | "openclaw-synap"
   | "openwebui-synap"
-  | "openwebui-pipelines";
+  | "openwebui-pipelines"
+  | "openwebui-coherence";
 
 type RepairKind = "create-eve-network" | "start-container" | "rewire-openclaw";
 

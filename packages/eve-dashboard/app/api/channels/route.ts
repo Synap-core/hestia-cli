@@ -67,8 +67,14 @@ export async function GET() {
   const channels = secrets?.channels ?? {};
   const routing = secrets?.channelRouting ?? {};
 
+  // Effective routing: each platform's configured agent, or "hermes" when not set.
+  const effectiveRouting = Object.fromEntries(
+    PLATFORMS.map(p => [p, routing[p] ?? 'hermes']),
+  );
+
   return NextResponse.json({
     routing,
+    effectiveRouting,
     telegram: {
       enabled: channels.telegram?.enabled ?? false,
       hasToken: hasToken(channels.telegram?.botToken),

@@ -1,3 +1,4 @@
+import { createInterface } from 'node:readline';
 import { Command } from 'commander';
 import {
   configureChannel,
@@ -48,6 +49,22 @@ interface ConfigureFlags {
   routing?: string;
   /** Commander turns `--no-validate` into `validate: false`. Default true. */
   validate?: boolean;
+  /** WhatsApp Cloud API mode — triggers the Meta Graph API path. */
+  cloudApi?: boolean;
+  /** WhatsApp Cloud API: Meta phone number ID. */
+  phoneNumberId?: string;
+  /** WhatsApp Cloud API: webhook verify token. */
+  verifyToken?: string;
+}
+
+async function promptValue(question: string): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
 }
 
 function buildInput(platform: ChannelPlatform, opts: ConfigureFlags): ChannelCredentialInput {
@@ -102,8 +119,17 @@ function buildInput(platform: ChannelPlatform, opts: ConfigureFlags): ChannelCre
       };
     }
     case 'whatsapp': {
-      // Caller-side guard — handled before reaching this builder.
-      throw new Error('WhatsApp must be onboarded via the Agents browser app.');
+      // Only reached for --cloud-api; caller ensures all three fields are set.
+      if (!opts.phoneNumberId) fail('WhatsApp Cloud API requires --phone-number-id <id>.');
+      if (!opts.accessToken) fail('WhatsApp Cloud API requires --access-token <token>.');
+      if (!opts.verifyToken) fail('WhatsApp Cloud API requires --verify-token <token>.');
+      return {
+        platform: 'whatsapp',
+        mode: 'cloud-api',
+        phoneNumberId: opts.phoneNumberId,
+        accessToken: opts.accessToken,
+        verifyToken: opts.verifyToken,
+      };
     }
   }
 }
@@ -156,10 +182,13 @@ export function messagingCommand(program: Command): void {
     .option('--phone-number <num>', 'Signal phone number (E.164)')
     .option('--api-url <url>', 'Signal CLI REST API base URL')
     .option('--homeserver-url <url>', 'Matrix homeserver URL')
-    .option('--access-token <token>', 'Matrix access token')
+    .option('--access-token <token>', 'Matrix or WhatsApp Cloud API access token')
     .option('--room-id <id>', 'Matrix room ID')
     .option('--routing <agent>', "Agent that handles this platform: 'hermes' (default) or 'openclaw'")
     .option('--no-validate', 'Skip the platform credential probe (use for self-hosted Matrix on private networks)')
+    .option('--cloud-api', 'WhatsApp Cloud API mode (Meta Graph API — no browser/QR scan required)')
+    .option('--phone-number-id <id>', 'WhatsApp Cloud API: Meta phone number ID')
+    .option('--verify-token <token>', 'WhatsApp Cloud API: webhook verify token')
     .action(async (platformArg: string, opts: ConfigureFlags) => {
       try {
         if (!isKnownPlatform(platformArg)) {
@@ -169,15 +198,34 @@ export function messagingCommand(program: Command): void {
         }
         const platform: ChannelPlatform = platformArg;
 
-        if (platform === 'whatsapp') {
-          console.log('WhatsApp uses the Agents browser app for onboarding.');
+        if (platform === 'whatsapp' && !opts.cloudApi) {
+          console.log('WhatsApp supports two onboarding paths:');
           console.log('');
-          console.log('Open the Agents app, click "Connect Channel" → WhatsApp,');
-          console.log('and scan the QR code with the WhatsApp mobile app');
-          console.log('(Settings → Linked Devices → Link a Device).');
+          console.log('  --cloud-api   Meta WhatsApp Cloud API (recommended)');
+          console.log('                Requires a Meta Business account with a verified phone number.');
+          console.log('                Run: eve arms messaging configure whatsapp --cloud-api');
           console.log('');
-          console.log('Baileys QR-scan persists the session locally and Eve picks it up automatically.');
+          console.log('  --browser     QR-scan via the Agents browser app');
+          console.log('                Open the Agents app → "Connect Channel" → WhatsApp');
+          console.log('                and scan the QR code with WhatsApp mobile');
+          console.log('                (Settings → Linked Devices → Link a Device).');
           return;
+        }
+
+        if (platform === 'whatsapp' && opts.cloudApi) {
+          // Prompt for any missing Cloud API fields interactively.
+          if (!opts.phoneNumberId) {
+            opts.phoneNumberId = await promptValue('Phone Number ID (from Meta Business Manager): ');
+            if (!opts.phoneNumberId) fail('Phone Number ID is required for WhatsApp Cloud API.');
+          }
+          if (!opts.accessToken) {
+            opts.accessToken = await promptValue('Access Token (permanent system user token): ');
+            if (!opts.accessToken) fail('Access Token is required for WhatsApp Cloud API.');
+          }
+          if (!opts.verifyToken) {
+            opts.verifyToken = await promptValue('Verify Token (webhook secret you choose): ');
+            if (!opts.verifyToken) fail('Verify Token is required for WhatsApp Cloud API.');
+          }
         }
 
         const routing = parseRouting(opts.routing);

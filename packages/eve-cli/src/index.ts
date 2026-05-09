@@ -27,6 +27,7 @@ import { purgeCommand } from './commands/manage/purge.js';
 import { modeCommands } from './commands/mode.js';
 import { authCommand } from './commands/auth.js';
 import { aiCommandGroup } from './commands/ai.js';
+import { openwebuiCommand } from './commands/openwebui.js';
 import { uiCommand } from './commands/ui.js';
 import { domainCommand } from './commands/domain.js';
 import { intentCommand } from './commands/intent.js';
@@ -149,6 +150,9 @@ purgeCommand(program);
 
 // --- AI ---
 aiCommandGroup(program);
+
+// --- OpenWebUI ---
+openwebuiCommand(program);
 
 // --- UI ---
 uiCommand(program);

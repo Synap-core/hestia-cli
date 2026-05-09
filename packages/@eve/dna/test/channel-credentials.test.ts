@@ -166,10 +166,29 @@ describe('configureChannel', () => {
     expect(secrets?.channels?.matrix?.accessToken).toBe('tok');
   });
 
-  it('rejects whatsapp as a CLI configuration target', async () => {
+  it('persists whatsapp cloud-api credentials', async () => {
+    const result = await configureChannel(cwd, {
+      platform: 'whatsapp',
+      mode: 'cloud-api',
+      phoneNumberId: 'pn-123',
+      accessToken: 'EAAxxxx',
+      verifyToken: 'my-verify-secret',
+    });
+
+    expect(result.wired).toBe(true);
+    const secrets = await readEveSecrets(cwd);
+    expect(secrets?.channels?.whatsapp).toEqual({
+      enabled: true,
+      phoneNumberId: 'pn-123',
+      accessToken: 'EAAxxxx',
+      verifyToken: 'my-verify-secret',
+    });
+  });
+
+  it('rejects whatsapp without cloud-api mode', async () => {
     await expect(
       configureChannel(cwd, {
-        // Force the rejected branch even though the public type excludes it.
+        // Force the rejected branch — no mode field.
         platform: 'whatsapp',
         // @ts-expect-error — intentionally exercising the runtime guard.
         accessToken: 'x',
