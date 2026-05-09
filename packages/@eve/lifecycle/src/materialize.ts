@@ -110,7 +110,7 @@ export async function materializeTargets(
         }
 
         case 'openclaw-config': {
-          const results = wireAllInstalledComponents(resolvedSecrets, ['openclaw']);
+          const results = await wireAllInstalledComponents(resolvedSecrets, ['openclaw']);
           const failed = results.filter((r) => r.outcome === 'failed');
           result = {
             target,
@@ -125,7 +125,7 @@ export async function materializeTargets(
 
         case 'openwebui-config': {
           const components = ['openwebui', 'openwebui-pipelines'];
-          const results = wireAllInstalledComponents(resolvedSecrets, components);
+          const results = await wireAllInstalledComponents(resolvedSecrets, components);
           const failed = results.filter((r) => r.outcome === 'failed');
           result = {
             target,
@@ -140,7 +140,7 @@ export async function materializeTargets(
 
         case 'ai-wiring': {
           const components = options.components ?? Array.from(AI_CONSUMERS);
-          const results = wireAllInstalledComponents(resolvedSecrets, components);
+          const results = await wireAllInstalledComponents(resolvedSecrets, components);
           const failed = results.filter((r) => r.outcome === 'failed');
           result = {
             target,

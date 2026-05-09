@@ -38,11 +38,11 @@ describe('reconcile', () => {
     mocks.writeHermesEnvFile.mockResolvedValue('/tmp/hermes.env');
     mocks.findPodDeployDir.mockReturnValue(null);
     mocks.restartBackendContainer.mockReturnValue(false);
-    mocks.wireAllInstalledComponents.mockReturnValue([]);
+    mocks.wireAllInstalledComponents.mockResolvedValue([]);
   });
 
   it('wires known AI consumers and reports env-bound recreates', async () => {
-    mocks.wireAllInstalledComponents.mockReturnValue([
+    mocks.wireAllInstalledComponents.mockResolvedValue([
       { id: 'openclaw', outcome: 'ok', summary: 'wired' },
       { id: 'synap', outcome: 'ok', summary: 'wired' },
       { id: 'hermes', outcome: 'failed', summary: 'missing' },

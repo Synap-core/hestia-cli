@@ -1248,41 +1248,13 @@ async function* wireHermesIntoOpenwebui(): AsyncGenerator<LifecycleEvent> {
     };
   }
 
-  // Wire via shared utility — handles .env update with all providers.
-  const result = wireComponentAi('openwebui', secrets);
+  // Wire .env, restart container, and await admin API registration.
+  // wireComponentAi now propagates registration errors as outcome warnings
+  // instead of swallowing them in a fire-and-forget.
+  const result = await wireComponentAi('openwebui', secrets);
   yield { type: "log", line: result.summary };
-
-  // Blocking admin API upsert so `eve update hermes` returns only after OWUI
-  // has been reconciled (or after registerOpenwebuiAdminApi's internal 60s
-  // health wait + sidecar probe gives up cleanly). Surfacing the outcome to
-  // the operator is more useful than returning early with stale state.
-  try {
-    const { modelSources, pipelinesKey, pipelinesUrl } = buildOpenwebuiModelSources(secrets, '/opt/openwebui');
-    if (modelSources.length > 0) {
-      const ok = await registerOpenwebuiAdminApi(modelSources, {
-        pipelinesUrl,
-        pipelinesKey,
-        managedConfig: buildOpenwebuiManagedConfig(secrets),
-      });
-      if (ok) {
-        await markOpenwebuiConfigReconciled(secrets);
-        yield { type: "log", line: "OpenWebUI admin reconcile ✓" };
-        // Push Synap SKILL.md → Prompts, knowledge → Knowledge collection,
-        // Hub OpenAPI → external tool server.
-        const extras = await syncOpenwebuiExtras(process.cwd(), secrets);
-        yield { type: "log", line: formatExtrasSummary(extras) };
-      } else {
-        yield {
-          type: "log",
-          line: "OpenWebUI admin reconcile skipped — health check or admin JWT unavailable. Run `eve ai apply` once OpenWebUI is up.",
-        };
-      }
-    }
-  } catch (err) {
-    yield {
-      type: "log",
-      line: `OpenWebUI admin reconcile failed: ${err instanceof Error ? err.message : String(err)}`,
-    };
+  if (result.outcome === 'ok') {
+    await markOpenwebuiConfigReconciled(secrets);
   }
 }
 
@@ -1475,7 +1447,7 @@ async function* installOne(
   if (AI_CONSUMERS.has(comp.id)) {
     try {
       const secrets = await readEveSecrets();
-      const result = wireComponentAi(comp.id, secrets);
+      const result = await wireComponentAi(comp.id, secrets);
       if (result.outcome === "ok") {
         yield { type: "log", line: `AI config seeded: ${result.summary}` };
       } else if (result.outcome === "skipped") {

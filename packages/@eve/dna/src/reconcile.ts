@@ -71,7 +71,7 @@ export async function reconcile(
 
   if (changed(changedSections, 'ai')) {
     const consumers = installedAiConsumers(secrets);
-    const wiring = wireAllInstalledComponents(secrets, consumers);
+    const wiring = await wireAllInstalledComponents(secrets, consumers);
     result.aiWiring = wiring.map(({ id, outcome, summary }) => ({ id, outcome, summary }));
     result.containerRecreates.push(
       ...wiring

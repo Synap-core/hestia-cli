@@ -311,7 +311,7 @@ function wireOpenclaw(secrets: EveSecrets | null): WireAiResult {
  * container. OpenWebUI reads the env vars on boot and seeds the DB — no admin
  * API needed for model-source wiring.
  */
-function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
+async function wireOpenwebui(secrets: EveSecrets | null): Promise<WireAiResult> {
   // OpenWebUI's OPENAI_API_KEY is what the chat UI uses to call Synap IS.
   // When Pipelines is installed, its agent identity is the right one
   // (channels sync + memory inject originate there). With no pipelines,
@@ -440,47 +440,43 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
       detail: errMsg,
     };
   }
-  // Fire-and-forget: register model sources + pipelines via admin API so they
-  // appear in the picker. Uses centralized build + register helpers.
-  // NOTE: errors are logged to stderr here. The async cascade refactor
-  // (SYN-20) will convert this to a proper awaited call with structured
-  // outcome propagation. Until then, `eve openwebui sync` is the recovery path.
-  void (async () => {
-    try {
-      const { modelSources, pipelinesKey, pipelinesUrl } = buildOpenwebuiModelSources(secrets, deployDir);
-      // Override Synap IS key with the correct agent key
-      if (modelSources.length > 0) {
-        modelSources[0].apiKey = synapApiKey;
-      }
-      // Override Hermes key
-      const hermesIdx = modelSources.findIndex(m => m.displayName === 'Hermes Gateway');
-      if (hermesIdx >= 0) {
-        modelSources[hermesIdx].apiKey = hermesApiServerKey ?? '';
-      }
-      const ok = await registerOpenwebuiAdminApi(modelSources, {
-        pipelinesUrl,
-        pipelinesKey,
-        managedConfig: buildOpenwebuiManagedConfig(secrets),
-      });
-      if (!ok) {
-        process.stderr.write(
-          '[eve] OpenWebUI model source registration failed (health timeout or JWT error)' +
-          ' — run `eve openwebui sync` to retry\n',
-        );
-        return;
-      }
-      // Push Synap surfaces into OpenWebUI: SKILL.md → Prompts, knowledge →
-      // Knowledge collection, Hub OpenAPI → external tool server. Best-effort.
-      await syncOpenwebuiExtras(process.cwd(), secrets);
-    } catch (err) {
-      process.stderr.write(
-        `[eve] OpenWebUI admin API error: ${err instanceof Error ? err.message : String(err)}` +
-        ' — run `eve openwebui sync` to retry\n',
-      );
-    }
-  })();
-
   const hermesNote = hermesApiServerKey ? ' + Hermes gateway' : '';
+  try {
+    const { modelSources, pipelinesKey, pipelinesUrl } = buildOpenwebuiModelSources(secrets, deployDir);
+    // Override Synap IS key with the correct agent key
+    if (modelSources.length > 0) {
+      modelSources[0].apiKey = synapApiKey;
+    }
+    // Override Hermes key
+    const hermesIdx = modelSources.findIndex(m => m.displayName === 'Hermes Gateway');
+    if (hermesIdx >= 0) {
+      modelSources[hermesIdx].apiKey = hermesApiServerKey ?? '';
+    }
+    const ok = await registerOpenwebuiAdminApi(modelSources, {
+      pipelinesUrl,
+      pipelinesKey,
+      managedConfig: buildOpenwebuiManagedConfig(secrets),
+    });
+    if (!ok) {
+      return {
+        id: 'openwebui',
+        outcome: 'ok',
+        summary: `Open WebUI wired to Synap IS${hermesNote} (registration warning: health timeout or JWT error — run \`eve openwebui sync\` to retry)`,
+        detail: envPath,
+      };
+    }
+    // Push Synap surfaces into OpenWebUI: SKILL.md → Prompts, knowledge →
+    // Knowledge collection, Hub OpenAPI → external tool server. Best-effort.
+    await syncOpenwebuiExtras(process.cwd(), secrets);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      id: 'openwebui',
+      outcome: 'ok',
+      summary: `Open WebUI wired to Synap IS${hermesNote} (registration warning: ${msg} — run \`eve openwebui sync\` to retry)`,
+      detail: envPath,
+    };
+  }
   return {
     id: 'openwebui',
     outcome: 'ok',
@@ -661,7 +657,7 @@ export const AI_CONSUMERS_NEEDING_RECREATE: ReadonlySet<string> = new Set([
  * Wire AI for one component. Caller catches errors; this function returns
  * a typed result instead of throwing.
  */
-export function wireComponentAi(componentId: string, secrets: EveSecrets | null): WireAiResult {
+export async function wireComponentAi(componentId: string, secrets: EveSecrets | null): Promise<WireAiResult> {
   const comp = COMPONENTS.find(c => c.id === componentId);
   if (!comp) {
     return { id: componentId, outcome: 'failed', summary: `unknown component: ${componentId}` };
@@ -689,11 +685,11 @@ export function wireComponentAi(componentId: string, secrets: EveSecrets | null)
  * Wire AI for every installed component. Useful from `eve install`,
  * `eve ai apply`, and `eve ai providers add`.
  */
-export function wireAllInstalledComponents(
+export async function wireAllInstalledComponents(
   secrets: EveSecrets | null,
   installedComponents: string[],
-): WireAiResult[] {
-  return installedComponents.map(id => wireComponentAi(id, secrets));
+): Promise<WireAiResult[]> {
+  return Promise.all(installedComponents.map(id => wireComponentAi(id, secrets)));
 }
 
 /**
@@ -845,11 +841,16 @@ export async function registerOpenwebuiAdminApi(
 
   // Step 5: Reconcile Eve-managed persisted config. This is the headless
   // equivalent of using OpenWebUI's Admin Settings UI after first boot.
-  await reconcileOpenwebuiManagedConfigViaAdmin(jwt, {
+  // null means the config read or write failed (JWT rejected, API unreachable).
+  // With ENABLE_PERSISTENT_CONFIG=true the DB overrides env vars for the model
+  // picker, so a silent write failure = users see only Ollama even though
+  // admin Connections shows the env-var entries.
+  const reconcileResult = await reconcileOpenwebuiManagedConfigViaAdmin(jwt, {
     ...(options.managedConfig ?? {}),
     modelSources,
   });
 
+  if (!reconcileResult) return false;
   return true;
 }
 
