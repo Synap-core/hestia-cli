@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { exportJWK, generateKeyPair } from 'jose';
 import { z } from 'zod';
 
@@ -428,6 +428,12 @@ const SecretsSchema = z.object({
       userTokenExpiresAt: z.string().optional(),
       /** Email of the operator the userToken was minted for. */
       userEmail: z.string().optional(),
+      /**
+       * Short fingerprint of the active user token — 12-char hex prefix of
+       * SHA-256(userToken). Safe to surface in UI / logs without exposing the
+       * credential. Populated by `writePodUserToken`.
+       */
+      podKeyFingerprint: z.string().optional(),
       /**
        * Optional bootstrap token cached from `eve install` — feeds the
        * Phase 5 "create first admin" UI without env-var fallback.
@@ -987,6 +993,7 @@ export async function writePodUserToken(
   email: string,
   cwd: string = defaultEveCwd(),
 ): Promise<EveSecrets> {
+  const podKeyFingerprint = createHash('sha256').update(token).digest('hex').slice(0, 12);
   return writeEveSecrets(
     {
       pod: {
@@ -994,6 +1001,7 @@ export async function writePodUserToken(
         userTokenExpiresAt: expiresAt,
         userTokenIssuedAt: new Date().toISOString(),
         userEmail: email,
+        podKeyFingerprint,
       },
     },
     cwd,

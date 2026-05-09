@@ -238,11 +238,32 @@ function CallbackInner() {
 
       setState({ phase: "done" });
 
-      // Brief flash of the success state, then forward. `/` currently
-      // redirects to `/dashboard` (the stack-pulse home); when the
-      // OS Home ships in Phase 2, this no-op'd redirect will land on
-      // it directly without changing this page.
-      setTimeout(() => router.replace("/"), 600);
+      // Brief flash of the success state, then route based on pairing state:
+      //   • Already paired → "/" (returning user, OS lights up directly).
+      //   • Not yet paired  → "/setup/pair-pod" (first-launch wizard).
+      setTimeout(async () => {
+        try {
+          const pairingRes = await fetch("/api/pod/pairing-status", {
+            credentials: "include",
+            cache: "no-store",
+          });
+          if (pairingRes.ok) {
+            const pairing = (await pairingRes.json().catch(() => null)) as
+              | { state: string }
+              | null;
+            if (
+              pairing?.state === "paired" ||
+              pairing?.state === "needs-refresh"
+            ) {
+              router.replace("/");
+              return;
+            }
+          }
+        } catch {
+          // Network blip — fall through to pair-pod setup.
+        }
+        router.replace("/setup/pair-pod");
+      }, 600);
     }
   }, [params, router]);
 
