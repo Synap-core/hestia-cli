@@ -268,7 +268,7 @@ export async function runAdd(
   printInfo('Next steps:');
   printInfo(`  - Run "eve status" to check entity state`);
   if (comp.organ) printInfo(`  - Run "eve ${comp.organ} status" for ${comp.label} status`);
-  if (refresh.refreshed) printInfo(`  - Run "eve domain check" to verify routing`);
+  if (refresh?.changed) printInfo(`  - Run "eve domain check" to verify routing`);
   console.log();
 }
 

@@ -42,16 +42,14 @@ import {
 } from '@eve/lifecycle';
 import {
   AGENTS,
-  discoverAndBackfillPodConfig,
   entityStateManager,
-  findPodDeployDir,
   readAgentKey,
   readEveSecrets,
   resolveAgent,
   resolveSynapUrlOnHost,
   type AgentInfo,
 } from '@eve/dna';
-import { ensureKratosRunning } from '@eve/brain';
+import { runSynapCli } from '@eve/brain';
 import { buildPodRunner } from '../lib/doctor-runners.js';
 import {
   colors,
@@ -480,30 +478,16 @@ async function runProvision(opts: { agent?: string; email?: string }): Promise<v
   }
 
   // ------------------------------------------------------------------
-  // Ensure Kratos is running — it may never have been started on older
-  // installs or when the backend was started independently of eve install.
-  // We print plain output here (no spinner) so docker compose logs are
-  // visible to the operator.
+  // Ensure Kratos is running. The synap CLI's `start kratos` is idempotent —
+  // brings up the kratos service if it isn't already, no-ops if it is. For
+  // a stale schema or new image, the operator runs `eve update synap`.
   // ------------------------------------------------------------------
-  try {
-    const secrets = await readEveSecrets(process.cwd());
-    // Start with the explicitly configured domain; if it's still 'localhost'
-    // (the install-time default), probe on-disk artefacts for the real domain.
-    let domain = secrets?.domain?.primary ?? 'localhost';
-    if (!domain || domain === 'localhost') {
-      const discovered = await discoverAndBackfillPodConfig(process.cwd());
-      if (discovered.domain) {
-        domain = discovered.domain;
-        console.log(`  Discovered domain from disk: ${domain}`);
-      }
-    }
-    const deployDir = findPodDeployDir() ?? '/opt/synap-backend';
-    printInfo(`Ensuring Kratos is running (deploy dir: ${deployDir})…`);
-    await ensureKratosRunning(deployDir, domain);
+  printInfo('Ensuring Kratos is running…');
+  const kratosStart = runSynapCli('start', ['kratos']);
+  if (!kratosStart.ok) {
+    printWarning(`Could not start Kratos via synap CLI (exit ${kratosStart.exitCode}). Run \`eve update synap\` to reconcile.`);
+  } else {
     printSuccess('Kratos ready');
-  } catch (err) {
-    // Non-fatal — log and continue; createAdminUser will give a clear error if kratos is still down
-    printWarning(`Could not ensure Kratos: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   // ------------------------------------------------------------------

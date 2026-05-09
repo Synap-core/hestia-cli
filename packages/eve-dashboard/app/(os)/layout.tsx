@@ -15,13 +15,14 @@ import type { ReactNode } from "react";
 import { Wallpaper } from "./components/wallpaper";
 import { Pane } from "./components/pane";
 import { Dock } from "./components/dock";
+import { PinContextProvider } from "./components/pin-context";
 
 export default function OSLayout({ children }: { children: ReactNode }) {
   return (
-    <>
+    <PinContextProvider>
       <Wallpaper />
       <Pane>{children}</Pane>
       <Dock />
-    </>
+    </PinContextProvider>
   );
 }

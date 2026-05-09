@@ -4,7 +4,7 @@
  * Coverage (per PR #2 spec §6):
  *   • PKCE: code_challenge is BASE64URL(SHA256(code_verifier))
  *   • State generator produces unique tokens
- *   • fetchMarketplaceApps attaches a bearer header
+ *   • fetchMarketplaceApps uses the same-origin marketplace proxy
  *   • 401 response triggers the re-auth callback
  *
  * The OAuth helpers live in the browser, so we stub `sessionStorage`,
@@ -96,17 +96,11 @@ describe("generateState", () => {
   });
 });
 
-// ─── fetchMarketplaceApps: bearer header ──────────────────────────────────────
+// ─── fetchMarketplaceApps: same-origin marketplace proxy ─────────────────────
 
 describe("fetchMarketplaceApps", () => {
-  it("attaches the user token as a Bearer header", async () => {
+  it("calls the same-origin marketplace proxy without exposing a bearer", async () => {
     const fetchMock = vi.fn().mockImplementation(async (input: string) => {
-      if (input === "/api/secrets/cp-token") {
-        return new Response(
-          JSON.stringify({ userToken: "test-jwt-aaa.bbb.ccc" }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        );
-      }
       if (input.endsWith("/api/marketplace/apps")) {
         return new Response(JSON.stringify({ apps: [] }), {
           status: 200,
@@ -122,7 +116,8 @@ describe("fetchMarketplaceApps", () => {
 
     expect(result).toEqual({ apps: [] });
 
-    // The CP-bound call must carry the bearer.
+    // The browser calls Eve's same-origin proxy. The proxy attaches
+    // server-side auth, so the browser must not expose the bearer.
     const cpCall = fetchMock.mock.calls.find(([url]) =>
       String(url).endsWith("/api/marketplace/apps"),
     );
@@ -131,7 +126,8 @@ describe("fetchMarketplaceApps", () => {
     const init = cpCall![1] as RequestInit | undefined;
     expect(init).toBeDefined();
     const headers = new Headers(init!.headers);
-    expect(headers.get("Authorization")).toBe("Bearer test-jwt-aaa.bbb.ccc");
+    expect(headers.get("Authorization")).toBeNull();
+    expect(init!.credentials).toBe("include");
   });
 
   it("triggers re-auth on 401", async () => {
@@ -166,10 +162,10 @@ describe("fetchMarketplaceApps", () => {
     expect(onUnauthorized).toHaveBeenCalledTimes(1);
   });
 
-  it("triggers re-auth when there is no token at all", async () => {
+  it("does not read the CP token before listing marketplace apps", async () => {
     const fetchMock = vi.fn().mockImplementation(async (input: string) => {
-      if (input === "/api/secrets/cp-token") {
-        return new Response(JSON.stringify({ userToken: null }), {
+      if (input.endsWith("/api/marketplace/apps")) {
+        return new Response(JSON.stringify({ apps: [] }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         });
@@ -178,20 +174,15 @@ describe("fetchMarketplaceApps", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const { fetchMarketplaceApps, CpUnauthorizedError } = await import(
-      "../marketplace-client"
-    );
+    const { fetchMarketplaceApps } = await import("../marketplace-client");
 
     const onUnauthorized = vi.fn();
-    await expect(
-      fetchMarketplaceApps({ onUnauthorized }),
-    ).rejects.toBeInstanceOf(CpUnauthorizedError);
+    await expect(fetchMarketplaceApps({ onUnauthorized })).resolves.toEqual({ apps: [] });
 
-    expect(onUnauthorized).toHaveBeenCalledTimes(1);
-    // CP itself was never hit — we short-circuited at the missing token.
+    expect(onUnauthorized).not.toHaveBeenCalled();
     expect(
       fetchMock.mock.calls.find(([url]) =>
-        String(url).endsWith("/api/marketplace/apps"),
+        String(url) === "/api/secrets/cp-token",
       ),
     ).toBeUndefined();
   });

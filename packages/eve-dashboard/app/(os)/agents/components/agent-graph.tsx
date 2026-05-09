@@ -47,6 +47,7 @@ import { computeDagreLayout } from "../lib/dagre-layout";
 import type { AgentEvent } from "../lib/event-types";
 import type { UnifiedChannel } from "../lib/channel-types";
 import { AgentNode, type AgentRFNode } from "./graph/agent-node";
+import { ChannelNode, type ChannelRFNode, type ChannelNodeData } from "./graph/channel-node";
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
@@ -71,14 +72,52 @@ export function AgentGraph(props: AgentGraphProps) {
 
 const laneKey = (a: AgentId, b: AgentId) => `${a}->${b}`;
 
-const nodeTypes: NodeTypes = { agent: AgentNode };
+const nodeTypes: NodeTypes = { agent: AgentNode, channel: ChannelNode };
 const edgeTypes: EdgeTypes = {};
+
+// Well-known channels that should always appear in the graph (as "coming soon"
+// when not configured). Matches the design spec §5.1.
+const DEFAULT_CHANNEL_PLACEHOLDERS: ReadonlyArray<
+  Pick<UnifiedChannel, "id" | "kind" | "label" | "connectionStatus">
+> = [
+  { id: "telegram:placeholder", kind: "telegram", label: "Telegram", connectionStatus: "disconnected" },
+  { id: "discord:placeholder",  kind: "discord",  label: "Discord",  connectionStatus: "disconnected" },
+  { id: "whatsapp:placeholder", kind: "whatsapp", label: "WhatsApp", connectionStatus: "disconnected" },
+];
+
+const CHANNEL_ACCENT: Partial<Record<string, string>> = {
+  telegram:  "#229ED9",
+  discord:   "#5865F2",
+  whatsapp:  "#25D366",
+  signal:    "#3A76F0",
+  matrix:    "#0DBD8B",
+  synap:     "#8B5CF6",
+  a2a:       "#6366F1",
+};
+
+const CHANNEL_NODE_SIZE = 44;
+const CHANNEL_GAP_Y     = 62;
+
+/**
+ * Merge live channels with the default placeholders. Placeholders for a kind
+ * that already has a configured channel are suppressed.
+ */
+function buildEffectiveChannels(
+  live: UnifiedChannel[],
+): Array<Pick<UnifiedChannel, "id" | "kind" | "label" | "connectionStatus">> {
+  const seenKinds = new Set(live.map((c) => c.kind));
+  const placeholders = DEFAULT_CHANNEL_PLACEHOLDERS.filter(
+    (p) => !seenKinds.has(p.kind),
+  );
+  return [...live, ...placeholders];
+}
 
 function AgentGraphCanvas({
   events,
   agentStatuses,
   selectedAgent,
   onSelectAgent,
+  channels,
   highlightedLane,
 }: AgentGraphProps) {
   // The dagre computation is pure — same input always returns same
@@ -143,6 +182,65 @@ function AgentGraphCanvas({
     });
   }, [layout, agentStatuses, selectedAgent]);
 
+  // ── Build channel nodes ────────────────────────────────────────────────────
+  // Channel nodes are positioned manually to the left of OpenClaw. They are
+  // NOT in the dagre graph so they don't perturb the agent layout; React Flow
+  // renders them alongside the dagre-positioned agent nodes.
+  const channelNodes = useMemo<ChannelRFNode[]>(() => {
+    const effectiveChannels = buildEffectiveChannels(channels);
+    const openclawLayout = layout.nodes.find((n) => n.id === "openclaw");
+    if (!openclawLayout || effectiveChannels.length === 0) return [];
+
+    const ocHalfW = (openclawLayout.size ?? 72) / 2;
+    // Anchor channel column: right edge of column == left edge of openclaw - gap
+    const colGap = 28;
+    const channelCenterX = openclawLayout.x - ocHalfW - colGap - CHANNEL_NODE_SIZE / 2;
+
+    const totalH = (effectiveChannels.length - 1) * CHANNEL_GAP_Y;
+    const startY = openclawLayout.y - totalH / 2;
+
+    return effectiveChannels.map((ch, i): ChannelRFNode => ({
+      id: `ch-${ch.id}`,
+      type: "channel",
+      position: {
+        x: channelCenterX - CHANNEL_NODE_SIZE / 2,
+        y: startY + i * CHANNEL_GAP_Y - CHANNEL_NODE_SIZE / 2,
+      },
+      data: {
+        label: ch.label,
+        kind: ch.kind,
+        connectionStatus: ch.connectionStatus,
+        size: CHANNEL_NODE_SIZE,
+        accent: CHANNEL_ACCENT[ch.kind] ?? "#888",
+      } satisfies ChannelNodeData,
+      draggable: true,
+      selectable: false,
+    }));
+  }, [channels, layout]);
+
+  // ── Build channel → OpenClaw edges ─────────────────────────────────────────
+  const channelEdges = useMemo<RFEdge[]>(() => {
+    return channelNodes.map((node) => {
+      const data = node.data;
+      const isConnected =
+        data.connectionStatus === "connected" ||
+        data.connectionStatus === "connecting";
+      const accent = data.accent as string;
+      return {
+        id: `${node.id}__openclaw`,
+        source: node.id,
+        target: "openclaw",
+        animated: false,
+        style: {
+          stroke: isConnected ? `${accent}66` : "rgba(255,255,255,0.08)",
+          strokeWidth: isConnected ? 1.2 : 0.8,
+          strokeDasharray: isConnected ? undefined : "4 4",
+          opacity: isConnected ? 0.7 : 0.35,
+        },
+      };
+    });
+  }, [channelNodes]);
+
   // ── Build edges ────────────────────────────────────────────────────────────
   const edges = useMemo<RFEdge[]>(() => {
     return layout.edges.map((e) => {
@@ -178,11 +276,20 @@ function AgentGraphCanvas({
     });
   }, [layout.edges, events, highlightedLane]);
 
+  const allNodes = useMemo(
+    () => [...nodes, ...channelNodes],
+    [nodes, channelNodes],
+  );
+  const allEdges = useMemo(
+    () => [...edges, ...channelEdges],
+    [edges, channelEdges],
+  );
+
   return (
     <div className="absolute inset-0">
       <ReactFlow
-        nodes={nodes}
-        edges={edges}
+        nodes={allNodes}
+        edges={allEdges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         nodesDraggable

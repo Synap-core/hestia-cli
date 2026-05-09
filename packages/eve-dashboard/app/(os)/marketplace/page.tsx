@@ -42,6 +42,7 @@ import {
   useRef,
   useState,
 } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Card,
@@ -443,7 +444,11 @@ function MarketplaceCard({
         </span>
       )}
 
-      <div className={"flex items-start gap-3 " + (isLocked ? "opacity-75" : "")}>
+      <Link
+        href={`/marketplace/${encodeURIComponent(app.slug)}`}
+        className={"flex items-start gap-3 " + (isLocked ? "opacity-75" : "")}
+        aria-label={`View details for ${app.name}`}
+      >
         <span
           className="
             glass-icon
@@ -477,7 +482,7 @@ function MarketplaceCard({
             {app.description ?? ""}
           </p>
         </div>
-      </div>
+      </Link>
 
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-[11px] text-foreground/55 min-w-0 truncate">

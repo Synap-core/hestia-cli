@@ -26,20 +26,35 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Provider not found" }, { status: 404 });
   }
 
-  if (!provider.baseUrl) {
+  const BUILTIN_BASE_URLS: Record<string, string> = {
+    anthropic:  "https://api.anthropic.com",
+    openai:     "https://api.openai.com",
+    openrouter: "https://openrouter.ai/api",
+    ollama:     "http://localhost:11434",
+  };
+
+  const rawBaseUrl = provider.baseUrl || BUILTIN_BASE_URLS[provider.id];
+  if (!rawBaseUrl) {
     return NextResponse.json({ error: "Provider has no baseUrl" }, { status: 400 });
   }
 
   // For ollama, test /api/tags; for others, test /v1/models.
-  const baseUrl = provider.baseUrl.replace(/\/v1$/, "");
+  const baseUrl = rawBaseUrl.replace(/\/v1$/, "");
   const testUrl = provider.id === "ollama"
     ? `${baseUrl}/api/tags`
     : `${baseUrl}/v1/models`;
 
+  // Anthropic uses x-api-key header; everyone else uses Bearer.
+  const authHeaders: Record<string, string> = provider.apiKey
+    ? provider.id === "anthropic"
+      ? { "x-api-key": provider.apiKey, "anthropic-version": "2023-06-01" }
+      : { Authorization: `Bearer ${provider.apiKey}` }
+    : {};
+
   const start = Date.now();
   try {
     const res = await fetch(testUrl, {
-      headers: provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {},
+      headers: authHeaders,
       signal: AbortSignal.timeout(10_000),
     });
     const elapsed = Date.now() - start;
@@ -52,12 +67,17 @@ export async function POST(req: Request) {
       });
     }
 
-    const data = await res.json() as { data?: Array<{ id: string }> };
+    // Ollama /api/tags returns { models: [{ name }] }; others return { data: [{ id }] }.
+    const data = await res.json() as {
+      data?: Array<{ id: string }>;
+      models?: Array<{ name: string }>;
+    };
+    const ids = data.data?.map(m => m.id) ?? data.models?.map(m => m.name) ?? [];
     return NextResponse.json({
       ok: true,
       latency: elapsed,
-      modelCount: data.data?.length ?? 0,
-      models: (data.data ?? []).slice(0, 10).map(m => m.id),
+      modelCount: ids.length,
+      models: ids.slice(0, 10),
     });
   } catch (err) {
     const elapsed = Date.now() - start;

@@ -30,6 +30,7 @@ import { AppIcon } from "./app-icon";
 import { AddAppIcon } from "./add-app-icon";
 import { SkeletonIcon } from "./skeleton-icon";
 import { CoreTile, type CoreTileSpec } from "./core-tile";
+import { PinAppMenu } from "./pin-app-menu";
 import type { HomeApp } from "../hooks/use-home-apps";
 
 export interface AppGridProps {
@@ -152,7 +153,11 @@ export function AppGrid({
                 role="listitem"
                 className="animate-icon-fade-in"
               >
-                <AppIcon app={app} />
+                <PinAppMenu
+                  app={{ id: app.id, name: app.name, slug: app.id, url: app.url, iconUrl: app.iconUrl }}
+                >
+                  <AppIcon app={app} />
+                </PinAppMenu>
               </div>
             ))}
           </div>
@@ -168,7 +173,11 @@ export function AppGrid({
                 role="listitem"
                 className="animate-icon-fade-in"
               >
-                <AppIcon app={app} />
+                <PinAppMenu
+                  app={{ id: app.id, name: app.name, slug: app.id, url: app.url, iconUrl: app.iconUrl }}
+                >
+                  <AppIcon app={app} />
+                </PinAppMenu>
               </div>
             ))}
             {!hideAdd && (

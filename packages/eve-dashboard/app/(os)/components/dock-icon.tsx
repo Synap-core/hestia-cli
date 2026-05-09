@@ -59,41 +59,60 @@ export interface DockIconProps {
 export function DockIcon({ app, active, iconUrl }: DockIconProps) {
   const palette = brandColorFor(app.slug);
   const useRemote = !palette.glyph && iconUrl;
+  const isExternal = app.path.startsWith("http");
+
+  const iconContent = useRemote ? (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={iconUrl}
+      alt=""
+      width={20}
+      height={20}
+      className="h-5 w-5 object-contain"
+      referrerPolicy="no-referrer"
+    />
+  ) : (
+    <GlyphFor
+      glyph={palette.glyph}
+      className="h-5 w-5 text-white"
+      strokeWidth={2}
+      aria-hidden
+    />
+  );
+
+  const sharedClassName = `
+    glass-icon
+    flex h-10 w-10 items-center justify-center
+    transition-transform duration-200 ease-out
+    hover:scale-[1.10] active:scale-[0.95] active:duration-[80ms]
+    focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50
+  `;
 
   return (
     <div className="relative flex h-10 w-10 shrink-0 items-center justify-center">
-      <Link
-        href={app.path}
-        aria-label={`Open ${app.name}`}
-        title={app.name}
-        className="
-          glass-icon
-          flex h-10 w-10 items-center justify-center
-          transition-transform duration-200 ease-out
-          hover:scale-[1.10] active:scale-[0.95] active:duration-[80ms]
-          focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50
-        "
-        style={{ background: palette.bg }}
-      >
-        {useRemote ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={iconUrl}
-            alt=""
-            width={20}
-            height={20}
-            className="h-5 w-5 object-contain"
-            referrerPolicy="no-referrer"
-          />
-        ) : (
-          <GlyphFor
-            glyph={palette.glyph}
-            className="h-5 w-5 text-white"
-            strokeWidth={2}
-            aria-hidden
-          />
-        )}
-      </Link>
+      {isExternal ? (
+        <a
+          href={app.path}
+          target="_blank"
+          rel="noreferrer"
+          aria-label={`Open ${app.name}`}
+          title={app.name}
+          className={sharedClassName}
+          style={{ background: palette.bg }}
+        >
+          {iconContent}
+        </a>
+      ) : (
+        <Link
+          href={app.path}
+          aria-label={`Open ${app.name}`}
+          title={app.name}
+          className={sharedClassName}
+          style={{ background: palette.bg }}
+        >
+          {iconContent}
+        </Link>
+      )}
 
       {/* Active indicator pill — 3px tall x 10px wide, ~6px below the icon. */}
       {active && (

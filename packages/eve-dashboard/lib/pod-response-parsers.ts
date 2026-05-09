@@ -42,6 +42,7 @@ interface KratosUiNode {
 }
 
 interface KratosUi {
+  action?: string;
   messages?: KratosUiMessage[];
   nodes?: KratosUiNode[];
 }
@@ -170,6 +171,7 @@ function parseKratosUi(value: unknown): KratosUi | undefined {
   if (!isRecord(value)) return undefined;
 
   return {
+    action: getString(value, "action"),
     messages: parseKratosMessages(value.messages),
     nodes: Array.isArray(value.nodes)
       ? value.nodes.map((node) => ({

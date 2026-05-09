@@ -27,7 +27,7 @@ import { parseSetupStatusResponse } from "@/lib/pod-response-parsers";
 export async function GET(req: Request) {
   const context = await getPodRuntimeContext(req);
 
-  if (!context) {
+  if (!context.podUrl || !context.trpcBaseUrl) {
     console.error("[setup-status] podUrl is empty — resolvePodUrl returned falsy");
     console.error("[setup-status] req.url =", req.url);
     console.error("[setup-status] process.env.NEXT_PUBLIC_POD_URL =", process.env.NEXT_PUBLIC_POD_URL);
@@ -70,6 +70,7 @@ export async function GET(req: Request) {
       initialized: data.initialized,
       version: data.version ?? null,
       podUrl: context.podBaseUrl,
+      podUrlSource: context.podUrlSource,
     });
   } catch (err) {
     console.error("[setup-status] fetch threw:", err);

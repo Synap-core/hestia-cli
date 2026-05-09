@@ -7,10 +7,16 @@ import { stopCommand } from './commands/stop.js';
 // Services
 export { SynapService, type SynapHealth } from './lib/synap.js';
 export { resolveSynapDelegate, type SynapDelegatePaths } from './lib/synap-delegate.js';
+export {
+  runSynapCli,
+  type SynapCliSubcommand,
+  type RunSynapCliOptions,
+  type SynapCliResult,
+} from './lib/synap-cli-delegate.js';
 export { execa, ensureNetwork } from './lib/exec.js';
 export { OllamaService, type AIModelStatus } from './lib/ollama.js';
 export { ModelService, type ProviderModel, type ProviderModels } from './lib/model-service.js';
-export { installSynapFromImage, ensureKratosRunning, type SynapImageInstallOptions, type SynapImageInstallResult } from './lib/synap-image-install.js';
+export { installSynapFromImage, type SynapImageInstallOptions, type SynapImageInstallResult } from './lib/synap-image-install.js';
 
 // Commands (re-export for advanced use)
 export { initCommand, runBrainInit, type BrainInitOptions } from './commands/init.js';

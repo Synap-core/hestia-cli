@@ -1,24 +1,17 @@
 "use client";
 
 /**
- * `useDockApps` — merges core apps + user-pinned + marketplace contributions
- * into the persistent dock.
+ * `useDockApps` — merges core apps + user-pinned apps into the dock list.
  *
- * The dock is what the operator uses to switch apps. v1 pins three core
- * apps (Home, Agents, Settings) plus whichever apps the operator
- * explicitly pinned from the Home grid via the contextual menu. v1 does
- * not surface every installed app on the dock — that's what the Home
- * grid is for.
- *
- * For Phase 2A we just hard-code the core apps. Pinning persistence
- * (`~/.eve/preferences.json` `home.pinnedAppIds`) wires up alongside the
- * Home rebuild — the hook returns an empty `pinned` array until that
- * lands.
+ * Core apps (Home, Agents, Settings) are always first and cannot be removed.
+ * Pinned apps are loaded from `~/.eve/preferences.json` via the
+ * `/api/preferences/home` endpoint, managed by `PinContextProvider`.
  *
  * See: synap-team-docs/content/team/platform/eve-os-shell.mdx §5
  */
 
 import { useMemo } from "react";
+import { usePinContext } from "./pin-context";
 
 export interface DockApp {
   id: string;
@@ -26,8 +19,10 @@ export interface DockApp {
   slug: string;
   /** Display name (used in tooltip). */
   name: string;
-  /** Path the dock click navigates to. Only same-origin paths supported. */
+  /** Path the dock click navigates to. External URLs open in a new tab. */
   path: string;
+  /** Remote icon URL for apps without a brand-color glyph. */
+  iconUrl?: string | null;
   /** Distinguishes the seeded core apps (cannot be unpinned) from pins. */
   kind: "core" | "pinned";
 }
@@ -39,8 +34,20 @@ const CORE_APPS: DockApp[] = [
 ];
 
 export function useDockApps(): DockApp[] {
-  // Pinning persistence ships with the Home rebuild — v1 dock is just
-  // the three core apps. Returning a memoized constant keeps the dock
-  // referentially stable across renders.
-  return useMemo(() => CORE_APPS.slice(), []);
+  const { pinnedApps } = usePinContext();
+
+  return useMemo(
+    () => [
+      ...CORE_APPS,
+      ...pinnedApps.map((a) => ({
+        id: a.id,
+        slug: a.slug,
+        name: a.name,
+        path: a.url,
+        iconUrl: a.iconUrl,
+        kind: "pinned" as const,
+      })),
+    ],
+    [pinnedApps],
+  );
 }

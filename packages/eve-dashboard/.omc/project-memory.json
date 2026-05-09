@@ -47,7 +47,7 @@
     "runtime": null
   },
   "build": {
-    "buildCommand": "cd /Users/antoine/Documents/Code/synap/hestia-cli/packages/@eve/dna && npx tsc --noEmit 2>&1 | head -50",
+    "buildCommand": "pnpm tsc --noEmit 2>&1",
     "testCommand": "npm test",
     "lintCommand": null,
     "devCommand": "npm run dev",
@@ -153,6 +153,12 @@
   },
   "hotPaths": [
     {
+      "path": "app/(os)/settings/ai/page.tsx",
+      "accessCount": 18,
+      "lastAccessed": 1778352294852,
+      "type": "file"
+    },
+    {
       "path": "app/api/pod/setup-status/route.ts",
       "accessCount": 3,
       "lastAccessed": 1778254776723,
@@ -168,6 +174,30 @@
       "path": "app/api/debug/pod-url/route.ts",
       "accessCount": 1,
       "lastAccessed": 1778255121079,
+      "type": "file"
+    },
+    {
+      "path": "app/api/ai/providers/route.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778351667522,
+      "type": "file"
+    },
+    {
+      "path": "app/api/ai/ollama-models/route.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778351668534,
+      "type": "file"
+    },
+    {
+      "path": "app/api/ai/test/route.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778351668840,
+      "type": "file"
+    },
+    {
+      "path": "app/api/ai/route.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778351732317,
       "type": "file"
     }
   ],

@@ -18,7 +18,13 @@ export interface KratosAuthInput {
 }
 
 export function createEveKratosClient(context: PodRuntimeContext) {
-  const kratosBase = context.kratosPublicBaseUrl;
+  const kratosBase = context.kratosPublicUrl;
+  if (!kratosBase) {
+    throw new DashboardApiException(
+      { error: "pod-url-not-configured" },
+      400,
+    );
+  }
 
   return {
     async submitPasswordAuth(input: KratosAuthInput): Promise<KratosSuccessResponse> {

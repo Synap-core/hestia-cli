@@ -1,7 +1,7 @@
 {
   "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"docker ps --filter \\\"name=hestia-openwebui\\\" --format \\\"{{.Names}} {{.Status}}\\\"\",\"description\":\"Check if OpenWebUI container is running\"}",
-  "error": "Exit code 1",
-  "timestamp": "2026-05-08T15:07:53.252Z",
-  "retry_count": 3
+  "tool_input_preview": "{\"command\":\"ls /Users/antoine/Documents/Code/synap/hestia-cli/packages/@eve/dna/src/lifecycle/ 2>&1\",\"description\":\"Check if lifecycle directory exists\"}",
+  "error": "Exit code 1\nls: /Users/antoine/Documents/Code/synap/hestia-cli/packages/@eve/dna/src/lifecycle/: No such file or directory",
+  "timestamp": "2026-05-09T18:33:17.665Z",
+  "retry_count": 1
 }

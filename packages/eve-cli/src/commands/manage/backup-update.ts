@@ -14,7 +14,7 @@ import {
   checkNeedsAdmin,
 } from '@eve/lifecycle';
 import { findPodDeployDir, entityStateManager, readEveSecrets } from '@eve/dna';
-import { ensureKratosRunning } from '@eve/brain';
+import { runSynapCli } from '@eve/brain';
 import { installDashboardContainer, dashboardIsRunning } from '@eve/legs';
 import { randomBytes } from 'node:crypto';
 import {
@@ -44,39 +44,6 @@ function connectToEveNetwork(name: string): void {
   try {
     execSync(`docker network connect eve-network ${name}`, { stdio: ['pipe', 'pipe', 'ignore'] });
   } catch { /* already connected */ }
-}
-
-async function resolveSynapUpdateDomain(deployDir: string): Promise<string> {
-  const secrets = await readEveSecrets().catch(() => null);
-  const fromSecrets = secrets?.domain?.primary?.trim();
-  if (fromSecrets) return fromSecrets;
-
-  try {
-    const out = execSync(
-      `docker compose config --format json`,
-      { cwd: deployDir, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
-    );
-    const parsed = JSON.parse(out) as { services?: { kratos?: { environment?: string[] | Record<string, string> } } };
-    const env = parsed.services?.kratos?.environment;
-    if (Array.isArray(env)) {
-      const domainLine = env.find((line) => line.startsWith('DOMAIN='));
-      const domain = domainLine?.slice('DOMAIN='.length).trim();
-      if (domain) return domain;
-    } else if (env?.DOMAIN?.trim()) {
-      return env.DOMAIN.trim();
-    }
-  } catch {
-    // Fall through to .env parsing.
-  }
-
-  const envPath = join(deployDir, '.env');
-  if (existsSync(envPath)) {
-    const envText = readFileSync(envPath, 'utf-8');
-    const domain = envText.match(/^DOMAIN=(.+)$/m)?.[1]?.trim();
-    if (domain) return domain;
-  }
-
-  return 'localhost';
 }
 
 interface UpdateTarget {
@@ -234,33 +201,23 @@ async function buildUpdateTargets(deployDir: string | undefined): Promise<Update
     },
   });
 
-  // Synap stays bespoke — its update path runs a `compose run --rm
-  // backend-migrate` step before bringing the backend up so schema
-  // changes land before code that depends on them. The lifecycle's
-  // generic UPDATE_PLAN doesn't model migrations yet.
+  // Synap delegates to the canonical synap-backend bash CLI, which owns the
+  // canary-first update flow, kratos-migrate force-recreate, CREATE DATABASE
+  // idempotency, and migration sequencing. Eve still handles the cross-project
+  // plumbing (eve-network attach, agent provisioning) afterwards.
+  // See: hestia-cli/.docs/synap-cli-as-source-of-truth.md
   if (deployDir) {
     targets.push({
       id: 'synap',
       label: '🧠 Synap Data Pod',
       update: async () => {
-        const env = { ...process.env, COMPOSE_PROJECT_NAME: 'synap-backend' };
-        // Pull the backend image — no --ignore-pull-failures so a registry
-        // auth failure or missing tag surfaces as an error rather than
-        // silently keeping the old image. backend-migrate shares the same
-        // image as backend; realtime has its own separate image.
-        await execa('docker', ['compose', 'pull', 'backend', 'backend-migrate', 'realtime'], { cwd: deployDir, env, stdio: 'inherit' });
-        // Mirror synap-backend/deploy/update-pod.sh: Kratos image refresh is
-        // best-effort so a registry hiccup does not block a backend security
-        // update, but migrations still run below against the available image.
-        try {
-          await execa('docker', ['compose', 'pull', 'kratos', 'kratos-migrate'], { cwd: deployDir, env, stdio: 'inherit' });
-        } catch {
-          printWarning('Kratos image pull failed — continuing with the currently available Kratos image.');
+        const result = runSynapCli('update', ['--from-image'], { refreshGit: true });
+        if (!result.ok) {
+          throw new Error(
+            `synap update exited ${result.exitCode}` +
+            (result.stderr ? `: ${result.stderr}` : ''),
+          );
         }
-        await execa('docker', ['compose', 'run', '--rm', 'backend-migrate'], { cwd: deployDir, env, stdio: 'inherit' });
-        await execa('docker', ['compose', 'up', '-d', '--no-deps', 'backend', 'realtime'], { cwd: deployDir, env, stdio: 'inherit' });
-        const domain = await resolveSynapUpdateDomain(deployDir);
-        await ensureKratosRunning(deployDir, domain);
         const name = getSynapBackendContainer();
         if (name) connectToEveNetwork(name);
 

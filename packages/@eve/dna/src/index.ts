@@ -60,13 +60,6 @@ export { ConfigManager, configManager } from './config.js';
 export { CredentialsManager, credentialsManager } from './credentials.js';
 export { EntityStateManager, entityStateManager, migrateStateDirectory } from './entity-state.js';
 
-// Kratos config generation
-export {
-  generateKratosConfig,
-  parseKratosSecretsFromEnv,
-  type KratosSecrets,
-} from './kratos-config.js';
-
 // Setup profile (three-path Eve) + USB manifest + hardware facts
 export {
   type SetupProfile,
@@ -153,6 +146,27 @@ export { configStore, type ConfigStore } from './config-store.js';
 
 // Config change cascade
 export { reconcile, type ReconcileOptions, type ReconcileResult } from './reconcile.js';
+
+// Centralised channel credentials — durable secrets for Telegram, Discord,
+// Slack, Signal, Matrix. WhatsApp is onboarded via the Agents browser app.
+export {
+  type ChannelPlatform,
+  type ChannelCredentialInput,
+  type ConfigureChannelOptions,
+  type ConfigureChannelResult,
+  type ChannelStatusEntry,
+  configureChannel,
+  disableChannel,
+  readChannelStatus,
+} from './channel-credentials.js';
+
+// Channel credential validation — calls each platform's "who am I" endpoint
+// before persistence so `eve arms messaging configure` refuses bad tokens.
+export {
+  validateChannelCredentials,
+  type ChannelValidationResult,
+  type ValidateChannelOptions,
+} from './channel-validation.js';
 
 // Agent registry — single source of truth for which Synap agents Eve
 // provisions on the pod (eve, openclaw, hermes, openwebui-pipelines, coder).
@@ -283,6 +297,30 @@ export {
   type WriteOpenwebuiEnvOptions,
   type WriteOpenwebuiEnvResult,
 } from './openwebui-bootstrap.js';
+
+// Push Synap surfaces into OpenWebUI: SKILL.md → Prompts, knowledge entries
+// → Knowledge collection, Hub Protocol OpenAPI → external tool server.
+export {
+  pushSynapSkillsToOpenwebuiPrompts,
+  type SkillsSyncResult,
+  type SyncedSkillPrompt,
+} from './openwebui-skills-sync.js';
+export {
+  syncSynapKnowledgeToOpenwebui,
+  type KnowledgeSyncOptions,
+  type KnowledgeSyncResult,
+} from './openwebui-knowledge-sync.js';
+export {
+  registerSynapAsOpenwebuiToolServer,
+  type ToolsSyncResult,
+} from './openwebui-tools-sync.js';
+export {
+  syncOpenwebuiExtras,
+  formatExtrasSummary,
+  type OpenwebuiExtrasResult,
+  type ExtrasOutcome,
+  type SyncOpenwebuiExtrasOptions,
+} from './openwebui-extras.js';
 
 export {
   DEFAULT_HUB_PATH,

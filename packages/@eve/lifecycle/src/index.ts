@@ -40,6 +40,8 @@ import {
   buildOpenwebuiModelSources,
   buildOpenwebuiManagedConfig,
   registerOpenwebuiAdminApi,
+  syncOpenwebuiExtras,
+  formatExtrasSummary,
   ensureOpenWebuiBootstrapSecrets,
   writeOpenwebuiEnv,
   appendOperationalEvent,
@@ -55,7 +57,7 @@ import {
   installDashboardContainer,
   uninstallDashboardContainer,
 } from "@eve/legs";
-import { ensureKratosRunning } from "@eve/brain";
+import { runSynapCli } from "@eve/brain";
 import {
   reconcileOpenclawConfig,
   type OpenclawReconcileResult,
@@ -192,6 +194,28 @@ interface UpdatePlan {
      */
     pruneImages?: { repositories: string[]; keep?: number };
   };
+  /**
+   * Delegate the update to an external CLI script that owns the install /
+   * migrate / restart sequence (currently: synap-backend's `synap` bash
+   * binary). Eve performs its own pre-steps (loopback override, eve-network)
+   * and post-steps (image prune, post-update hooks) around the delegate
+   * call, but the canary + DB migration + container recreation are entirely
+   * the delegate's responsibility.
+   */
+  delegate?: {
+    /** Compose dir Eve checks for existence + writes overrides into. */
+    cwd: string;
+    /** Subcommand to run (e.g. 'update'). */
+    subcommand: 'update' | 'install' | 'restart';
+    /** Args passed after the subcommand. */
+    args?: string[];
+    /** Optional pre-CLI loopback override hook (same shape as compose.ensureOverride). */
+    ensureOverride?: () => EnsureOverrideResult;
+    /** Pull the synap-backend git checkout before invoking the CLI. */
+    refreshGit?: boolean;
+    /** Same prune policy as the compose branch — applied AFTER the CLI returns. */
+    pruneImages?: { repositories: string[]; keep?: number };
+  };
 }
 
 const UPDATE_PLAN: Record<string, UpdatePlan> = {
@@ -224,14 +248,24 @@ const UPDATE_PLAN: Record<string, UpdatePlan> = {
     },
   },
   synap: {
-    compose: {
-      cwd: "/opt/synap-backend",
-      services: ["backend", "realtime"],
+    // Synap delegates to the canonical synap-backend bash CLI, which owns the
+    // canary-first update flow, kratos-migrate force-recreate, CREATE DATABASE
+    // idempotency, and migration sequencing. Eve still owns: loopback override,
+    // eve-network attach, post-update hooks (Traefik/agent/AI wiring).
+    // See: hestia-cli/.docs/synap-cli-as-source-of-truth.md
+    delegate: {
+      // Compose dir: synap-backend uses a git-checkout layout where the
+      // compose file lives in `<repoRoot>/deploy/`. Eve clones into
+      // `/opt/synap-backend/`, so the compose dir is `/opt/synap-backend/deploy/`.
+      cwd: "/opt/synap-backend/deploy",
+      subcommand: "update",
+      args: ["--from-image"],
       // Idempotently write the loopback host-port override so the on-host
       // CLI can reach the backend at 127.0.0.1:4000 without going through
-      // Traefik. Runs before compose pull/up so the new container starts
-      // with the binding already in place.
-      ensureOverride: () => ensureSynapLoopbackOverride("/opt/synap-backend"),
+      // Traefik. Runs before the synap CLI so the recreated container
+      // starts with the binding already in place.
+      ensureOverride: () => ensureSynapLoopbackOverride("/opt/synap-backend/deploy"),
+      refreshGit: true,
       // synap-backend, backend-canary, backend-migrate, realtime — all
       // share the same `ghcr.io/synap-core/backend` image. pod-agent
       // ships separately. Keep three so the user can still roll back
@@ -253,7 +287,7 @@ function removePlanFor(comp: ComponentInfo): RemovePlan {
   const containerNames = comp.service?.containerName ? [comp.service.containerName] : [];
   switch (comp.id) {
     case "synap":
-      return { composeDir: "/opt/synap-backend", containerNames };
+      return { composeDir: "/opt/synap-backend/deploy", containerNames };
     case "openwebui":
       return { composeDir: "/opt/openwebui", containerNames };
     case "openwebui-pipelines":
@@ -338,6 +372,10 @@ async function* runUpdatePlan(
   comp: ComponentInfo,
   plan: UpdatePlan,
 ): AsyncGenerator<LifecycleEvent> {
+  if (plan.delegate) {
+    yield* runDelegatePlan(comp, plan.delegate);
+    return;
+  }
   if (plan.compose) {
     // Regenerate the compose YAML for components we own end-to-end.
     // This guarantees the file is always our latest template and
@@ -514,6 +552,90 @@ async function* runUpdatePlan(
   }
 }
 
+/**
+ * Delegate-plan runner — invoke an external CLI script (synap-backend's bash
+ * `synap` binary) for the install/migrate/recreate sequence, with eve's
+ * pre-steps (loopback override, eve-network) and post-steps (image prune)
+ * around it. The post-update hooks (Traefik attach, agent provisioning, AI
+ * wiring) still fire from `runPostUpdateHooks`, AFTER this returns ok.
+ */
+async function* runDelegatePlan(
+  comp: ComponentInfo,
+  plan: NonNullable<UpdatePlan["delegate"]>,
+): AsyncGenerator<LifecycleEvent> {
+  if (plan.ensureOverride) {
+    try {
+      const r = plan.ensureOverride();
+      yield {
+        type: "log",
+        line: r.outcome === "wrote"
+          ? `Refreshed ${r.path}`
+          : `Left ${r.path} alone — ${r.reason ?? "user-owned"}`,
+      };
+    } catch (err) {
+      yield {
+        type: "log",
+        line: `Could not ensure compose override: ${err instanceof Error ? err.message : String(err)} (continuing)`,
+      };
+    }
+  }
+
+  if (!existsSync(plan.cwd)) {
+    yield { type: "error", message: `Compose dir not found: ${plan.cwd}.` };
+    return;
+  }
+
+  // The synap CLI's compose file references `eve-network` as `external: true`.
+  // If the network was ever pruned, `compose up` aborts. Create it before the
+  // CLI runs so the delegate is self-recovering.
+  yield* ensureEveNetwork();
+
+  yield {
+    type: "log",
+    line: `Delegating ${comp.label} ${plan.subcommand} to synap CLI…`,
+  };
+
+  const result = runSynapCli(plan.subcommand, plan.args ?? [], {
+    refreshGit: plan.refreshGit,
+  });
+
+  if (!result.ok) {
+    yield {
+      type: "error",
+      message: `synap ${plan.subcommand} exited ${result.exitCode}${result.stderr ? `: ${result.stderr}` : ""}`,
+    };
+    return;
+  }
+
+  if (plan.pruneImages) {
+    const keep = plan.pruneImages.keep ?? 3;
+    for (const repo of plan.pruneImages.repositories) {
+      try {
+        const pruneResult = pruneOldImagesForRepo(repo, keep);
+        if (pruneResult.removed.length > 0) {
+          yield {
+            type: "log",
+            line: `Pruned ${pruneResult.removed.length} old ${repo} image(s) — kept latest ${keep} (${pruneResult.kept.length} remain).`,
+          };
+        }
+        if (pruneResult.skipped.length > 0) {
+          yield {
+            type: "log",
+            line: `Skipped ${pruneResult.skipped.length} ${repo} image(s) still in use by other containers.`,
+          };
+        }
+      } catch (err) {
+        yield {
+          type: "log",
+          line: `Image prune for ${repo} skipped: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+    }
+  }
+
+  yield { type: "done", summary: `${comp.label} updated via synap CLI` };
+}
+
 // ---------------------------------------------------------------------------
 // Post-update hooks — component-specific reconciliation that runs AFTER the
 // generic update path succeeded. These exist because Docker images
@@ -530,7 +652,9 @@ async function* runPostUpdateHooks(comp: ComponentInfo): AsyncGenerator<Lifecycl
     yield* postUpdateReconcileAiWiring();
   }
   if (comp.id === "synap") {
-    yield* postUpdateReconcileKratos();
+    // Kratos lifecycle (config regen, migrate, force-recreate) is now owned
+    // by the synap CLI delegate. Eve only handles the cross-project plumbing
+    // (Traefik attach, agent key verify, AI wiring cascade) below.
     yield* postUpdateConnectTraefik();
     yield* postUpdateReconcileAuth();
     yield* postUpdateReconcileAiWiring();
@@ -574,52 +698,6 @@ async function* postUpdateReconcileAiWiring(): AsyncGenerator<LifecycleEvent> {
     }
   } catch (err) {
     yield { type: "log", line: `Warning: AI wiring reconciliation failed — ${err}` };
-  }
-}
-
-async function resolveSynapDomainForUpdate(deployDir: string): Promise<string> {
-  const secrets = await readEveSecrets().catch(() => null);
-  const fromSecrets = secrets?.domain?.primary?.trim();
-  if (fromSecrets) return fromSecrets;
-
-  const envPath = join(deployDir, ".env");
-  if (existsSync(envPath)) {
-    const envText = readFileSync(envPath, "utf-8");
-    const domain = envText.match(/^DOMAIN=(.+)$/m)?.[1]?.trim();
-    if (domain) return domain;
-  }
-
-  return "localhost";
-}
-
-async function* postUpdateReconcileKratos(): AsyncGenerator<LifecycleEvent> {
-  const deployDir = findPodDeployDir() ?? "/opt/synap-backend";
-  if (!existsSync(deployDir)) {
-    yield { type: "log", line: "Kratos reconciliation skipped — Synap deploy dir not found" };
-    return;
-  }
-
-  try {
-    const domain = await resolveSynapDomainForUpdate(deployDir);
-    yield { type: "log", line: `Reconciling Kratos config and migrations for ${domain}` };
-    const pullCode = yield* runCommand(
-      "docker",
-      ["compose", "pull", "kratos", "kratos-migrate"],
-      { cwd: deployDir },
-    );
-    if (pullCode !== 0) {
-      yield {
-        type: "log",
-        line: "Kratos image pull failed — continuing with the currently available Kratos image",
-      };
-    }
-    await ensureKratosRunning(deployDir, domain);
-    yield { type: "log", line: "Kratos config, migrations, and service health reconciled ✓" };
-  } catch (err) {
-    yield {
-      type: "error",
-      message: `Kratos reconciliation failed: ${err instanceof Error ? err.message : String(err)}`,
-    };
   }
 }
 
@@ -1156,6 +1234,9 @@ async function* wireHermesIntoOpenwebui(): AsyncGenerator<LifecycleEvent> {
         });
         if (ok) {
           await markOpenwebuiConfigReconciled(secrets);
+          // Push Synap SKILL.md → Prompts, knowledge → Knowledge collection,
+          // Hub OpenAPI → external tool server. Best-effort.
+          await syncOpenwebuiExtras(process.cwd(), secrets);
         }
       }
     } catch { /* non-fatal — admin API may come up later */ }
@@ -1805,6 +1886,17 @@ async function* registerPipelinesInOpenwebui(deployDir: string): AsyncGenerator<
       await markOpenwebuiConfigReconciled(secrets);
       const count = modelSources.length;
       yield { type: "log", line: `Model sources registered in OpenWebUI ✓ — ${count} source(s) visible in model picker` };
+      // Push Synap surfaces into OpenWebUI: skills as Prompts, knowledge as a
+      // Knowledge collection, Hub Protocol OpenAPI as an external tool server.
+      try {
+        const extras = await syncOpenwebuiExtras(process.cwd(), secrets);
+        yield { type: "log", line: formatExtrasSummary(extras) };
+      } catch (err) {
+        yield {
+          type: "log",
+          line: `OpenWebUI extras sync failed: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
     } else {
       yield { type: "log", line: "Model source registration failed after retries — add manually: OpenWebUI Admin → Settings → OpenAI" };
     }

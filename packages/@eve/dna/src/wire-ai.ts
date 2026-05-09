@@ -25,6 +25,7 @@ import type { EveSecrets } from './secrets-contract.js';
 import { readAgentKeyOrLegacySync } from './secrets-contract.js';
 import { COMPONENTS } from './components.js';
 import { writeHermesConfigYamlSync, generateSynapPlugin } from './builder-hub-wiring.js';
+import { syncOpenwebuiExtras } from './openwebui-extras.js';
 import {
   getAdminJwt,
   reconcileOpenwebuiManagedConfigViaAdmin,
@@ -375,7 +376,7 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
 
   // Append enabled custom providers (now in unified list).
   for (const p of providers) {
-    if (!p.enabled || !p.id.startsWith('custom-')) continue;
+    if (p.enabled === false || !p.id.startsWith('custom-')) continue;
     if (!p.baseUrl) continue;
     // Normalise: strip trailing /v1 so we don't end up with /v1/v1
     const url = p.baseUrl.replace(/\/v1$/, '');
@@ -455,6 +456,9 @@ function wireOpenwebui(secrets: EveSecrets | null): WireAiResult {
         pipelinesKey,
         managedConfig: buildOpenwebuiManagedConfig(secrets),
       });
+      // Push Synap surfaces into OpenWebUI: SKILL.md → Prompts, knowledge →
+      // Knowledge collection, Hub OpenAPI → external tool server. Best-effort.
+      await syncOpenwebuiExtras(process.cwd(), secrets);
     } catch { /* non-fatal admin API upsert */ }
   })();
 
@@ -709,6 +713,7 @@ export function buildOpenwebuiModelSources(
   });
 
   // Hermes Gateway
+  // If Hermes is down at reconcile time, it's omitted from OWUI sources — operators must re-apply once Hermes is up.
   const hermesApiKey = secrets?.builder?.hermes?.apiServerKey ?? '';
   if (hermesApiKey && isContainerRunning('eve-builder-hermes')) {
     modelSources.push({
@@ -720,11 +725,8 @@ export function buildOpenwebuiModelSources(
 
   // Enabled custom providers — with baseUrl (live) or without (cached models)
   for (const p of providers) {
-    if (!p.enabled || !p.id.startsWith('custom-')) continue;
+    if (p.enabled === false || !p.id.startsWith('custom-')) continue;
     const hasLiveUrl = !!(p.baseUrl && p.apiKey);
-    const hasCached = p.models && p.models.length > 0;
-    if (!hasLiveUrl && !hasCached) continue;
-
     if (!hasLiveUrl) continue;
     modelSources.push({
       url: p.baseUrl!.replace(/\/v1$/, '') + '/v1',

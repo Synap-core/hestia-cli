@@ -30,6 +30,10 @@ const DEFAULT_MODELS: Record<ProviderId, string> = {
   ollama: "llama3.1:8b",
 };
 
+const DEFAULT_BASE_URLS: Partial<Record<ProviderId, string>> = {
+  ollama: "http://localhost:11434",
+};
+
 /**
  * Apply AI config changes to running services.
  */
@@ -130,10 +134,10 @@ export async function POST(req: Request) {
   const idx = list.findIndex((p) => p.id === resolvedId);
   const existing = idx >= 0 ? list[idx] : undefined;
 
-  // Built-in cloud providers require an API key.
+  // Built-in cloud providers require an API key (Ollama is local — no key needed).
   if (!isCustom && isBuiltIn(resolvedId)) {
     const apiKey = body.apiKey ?? existing?.apiKey;
-    if (!apiKey || apiKey.trim().length === 0) {
+    if (resolvedId !== "ollama" && (!apiKey || apiKey.trim().length === 0)) {
       return NextResponse.json({ error: `${resolvedId} requires an API key` }, { status: 400 });
     }
 
@@ -142,7 +146,7 @@ export async function POST(req: Request) {
       name: withName(resolvedId, body.name),
       enabled: body.enabled ?? existing?.enabled ?? true,
       apiKey: apiKey ?? undefined,
-      baseUrl: body.baseUrl ?? existing?.baseUrl,
+      baseUrl: body.baseUrl ?? existing?.baseUrl ?? DEFAULT_BASE_URLS[resolvedId],
       defaultModel: body.defaultModel ?? existing?.defaultModel ?? DEFAULT_MODELS[resolvedId],
     };
 

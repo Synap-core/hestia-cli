@@ -78,7 +78,7 @@ export async function POST(req: Request) {
   }
 
   const context = await getPodRuntimeContext(req);
-  if (!context) {
+  if (!context.podUrl || !context.kratosPublicUrl) {
     return NextResponse.json(
       { error: "pod-url-not-configured" },
       { status: 400 },

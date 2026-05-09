@@ -141,64 +141,63 @@ Every preset includes Traefik **and** the Eve Dashboard (always-on infrastructur
 
 ---
 
-## Eve Dashboard (web UI)
+## Eve OS Dashboard
 
-Once `eve install` completes, you can reach the dashboard three ways:
+Once `eve install` completes, Eve's web interface is a **visionOS-style personal OS** running locally at `localhost:7979`. It is not a traditional web dashboard — it is a three-layer shell with an animated wallpaper, a floating frosted-glass popup pane, and a persistent dock at the bottom.
+
+You can reach it three ways:
 - `http://localhost:7979` — direct, on the host itself.
 - `http://<server-ip>:7979` — direct, from another machine on the LAN.
 - `https://eve.<your-domain>` — via Traefik with SSL (after `eve domain set`).
 
-You unlock it with the **dashboard key** generated during install (also shown by `eve ui` on the host).
+### Shell architecture
 
-### Page taxonomy
+Three layers compose every screen inside the `(os)` route group:
 
-The dashboard is organized into six focused pages, each owning one mental model:
+| Layer        | What it is                                                                                              |
+| ------------ | ------------------------------------------------------------------------------------------------------- |
+| **Wallpaper** | Animated CSS mesh-gradient blobs (indigo + emerald tints) drifting over a near-black base. GPU-accelerated, zero image assets. |
+| **App pane** | Rounded frosted-glass popup (`border-radius: 24px`, `backdrop-filter: blur(40px)`) that floats over the wallpaper. App content swaps inside the pane on navigation — the wallpaper and dock never reload. |
+| **Dock**     | Persistent pill centered at the bottom of the screen. The only navigation surface. 48×48px vivid app icons, full-pill shape. |
 
-| Page         | Mental model                                  | What lives here                                                                                                            |
-| ------------ | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Home         | "Is my stack alive, and where do I go?"       | Setup checklist (only when something's missing) · stack pulse (organ chips, click to restart) · service launcher tiles     |
-| Components   | "What's installed and what isn't?"            | Full catalog grouped by category, status / version / subdomain per row, click any row → detail drawer                      |
-| AI Providers | "What model serves my agents?"                | Per-provider CRUD with API keys + default models · "Apply to components" · "Wired components" view                         |
-| Networking   | "How is my stack reachable from the world?"   | Domain & SSL form (set/edit/reset) · subdomain map with live DNS check · read-only Traefik dynamic + static config preview |
-| Doctor       | "What's broken and can you fix it for me?"    | Mirror of `eve doctor` (platform / network / containers / AI / wiring) with inline Repair buttons for fix-able issues       |
-| Settings     | "Stuff about Eve itself, not my stack"        | Rotate dashboard key (one-shot reveal) · explicit theme picker · backup snippet · Eve version + hostname + init timestamp  |
+### The four apps
 
-### Component detail drawer
-
-Click any row on the Components page → a side drawer slides in with everything about that component:
-- **About** — multi-paragraph plain-language explanation: what it is, why a sovereign stack uses it, what it pairs with. Copy comes from `longDescription` on the registry.
-- **Lifecycle actions** — real **Install / Start / Stop / Restart / Update / Remove** buttons (no more "copy this command and run it on the host"). Progress streams live over SSE; **Update** and **Remove** ask for confirmation. The dashboard and the CLI share the same code path via `@eve/lifecycle`.
-- **Streaming logs** — Follow / Stop / Clear controls, replacing the old static last-50 snapshot.
-- **Per-component config panels** — appear in the drawer when the component supports them:
-  - **RSSHub** — feed CRUD persisted at `~/.eve/feeds.json`.
-  - **OpenClaw** — MCP server list + 5 preset installers (filesystem / github / postgres / sqlite / puppeteer), voice config (Twilio / Signal / SIP), messaging config (Telegram / Signal / Matrix bot tokens).
-  - **Hermes** — daemon settings (enabled, poll interval, max concurrent), an explainer about the "no UI by design" model, plus host CLI command cards.
-  - **Synap** — pod identity, admin bootstrap state, deep link to the Synap dashboard, Docker volume list with one-click backup buttons (runs `docker run --rm alpine tar czf` against each volume into `$EVE_HOME/backups`) plus copy-cmd fallbacks.
-- **Endpoints** — container name, image, ID, internal/host ports, subdomain.
-- **Wiring** — "depends on" + "required by" chips so you can see ripple effects of removing something.
-
-### Lifecycle (`eve ui` on the host)
-
-The dashboard is a Docker container (`eve-dashboard`) joined to `eve-network` and routed by Traefik just like every other service. The `eve ui` family of commands manages it:
-
-| Command                   | What it does                                                                  |
-| ------------------------- | ----------------------------------------------------------------------------- |
-| `eve ui`                  | Print the dashboard URL + key, optionally open the browser                    |
-| `eve ui --rebuild`        | Rebuild the Docker image and restart the container                            |
-| `eve ui --stop`           | Stop and remove the container (use `eve add eve-dashboard` to bring it back)  |
-| `eve ui --status`         | Whether the container is running                                              |
-
-### Design system
-
-- **Fonts:** Fraunces (display/headings) + DM Sans (body) + JetBrains Mono (keys, container names, CLI snippets) — all loaded via `next/font`.
-- **Colors:** emerald primary, warm slate neutrals, full HeroUI light + dark themes living in `tailwind.config.js`.
-- **No shadows** — depth comes from 1px borders on `bg-content1` surfaces.
-- **HeroUI components** are the default for inputs, buttons, chips, switches, drawers, dropdowns, toasts. Custom HTML only when HeroUI's outside-label slot doesn't fit.
-- **Light + dark** with system-default detection via `next-themes`. Toggle in the rail and explicit picker in Settings.
+| App              | Route          | What it does                                                                                                     |
+| ---------------- | -------------- | ---------------------------------------------------------------------------------------------------------------- |
+| **Home**         | `/`            | App launcher — time-of-day greeting, three stat cards (Agents / Today / Updates), colorful app icon grid, capsule search (`Cmd+K`) |
+| **Agents**       | `/agents`      | Agentic triangle visualization — Flow view (ReactFlow pulse edges) + Timeline view. Connect Channels modal for Telegram, Discord, and WhatsApp. |
+| **Settings**     | `/settings`    | Tabbed admin: Components (install / start / stop / update / remove + streaming logs), AI providers, Networking, Doctor, Channels, and Stack Pulse. |
+| **Marketplace**  | `/marketplace` | Browse and install apps from the Synap marketplace. The `+ Add` icon on the Home grid opens this surface.        |
 
 ### Auth model
 
-Single dashboard key — a 32-byte hex secret stored in `.eve/secrets/secrets.json`. The login screen verifies the typed key against `secrets.dashboard.secret`, signs a 48h JWT with that secret, sets it as an httpOnly + SameSite=strict cookie. Middleware (`proxy.ts`) verifies the JWT on every request that isn't `/login` or `/api/auth/verify`. Rotating the key in Settings invalidates the current session.
+Eve OS authenticates via **Synap CP OAuth** (PKCE). The flow on first launch:
+
+1. Run `eve ui` on the host → opens `http://localhost:7979`.
+2. Click **Sign in to Synap CP** → PKCE handshake with `cp.synap.sh`.
+3. First visit: pair a pod — pick an existing Synap pod from your CP entitlements, or create a new one.
+4. CP issues a per-pod API key → Eve writes it to `~/.eve/secrets.json` → the OS Home loads.
+
+Returning visitors skip steps 2–3 (token is cached). `eve ui` on the host prints the URL; there is no local secret key to type.
+
+### `eve ui` lifecycle
+
+The dashboard runs as a Docker container (`eve-dashboard`) joined to `eve-network` and routed by Traefik:
+
+| Command            | What it does                                                                 |
+| ------------------ | ---------------------------------------------------------------------------- |
+| `eve ui`           | Print the dashboard URL, optionally open the browser                         |
+| `eve ui --rebuild` | Rebuild the Docker image and restart the container                           |
+| `eve ui --stop`    | Stop and remove the container (use `eve add eve-dashboard` to bring it back) |
+| `eve ui --status`  | Whether the container is running                                             |
+
+### Design system
+
+- **Fonts:** Fraunces (display/headings) + DM Sans (body) + JetBrains Mono (keys, CLI snippets) — loaded via `next/font`.
+- **Wallpaper:** three CSS `radial-gradient` blobs on a `#0A0A14` base, animated with `transform: translate3d` on 60–90s loops. Respects `prefers-reduced-motion`.
+- **Pane:** `backdrop-filter: blur(40px) saturate(140%)` over `rgba(20,20,28,0.55)`. Drop shadow only on the pane — no shadows anywhere else inside the OS.
+- **Colors:** per-app brand palette in `app/(os)/lib/brand-colors.ts` (shared by dock icons and the Home grid). HeroUI v3 for interactive primitives.
+- **Light + dark** — both modes ship from day one. `prefers-color-scheme` is the default; explicit toggle lives in Settings.
 
 ---
 

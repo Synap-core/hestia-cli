@@ -25,7 +25,7 @@
  * See: synap-team-docs/content/team/platform/eve-agents-design.mdx
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, ButtonGroup, Chip, Tooltip } from "@heroui/react";
 import { Plug, AlertTriangle, RefreshCw, Activity, LayoutDashboard, ListOrdered, Beaker, PanelRightClose, PanelRightOpen } from "lucide-react";
 import type { EventName } from "./lib/event-types";
@@ -39,7 +39,8 @@ import { TimelineCanvas } from "./components/timeline-canvas";
 import { ConnectChannelsModal } from "./components/connect-channels-modal";
 import { useRealtimeEvents } from "./hooks/use-realtime-events";
 import { useChannels } from "./hooks/use-channels";
-import type { AgentId, Lane } from "./lib/agent-registry";
+import { useComponentStatus } from "./hooks/use-component-status";
+import type { AgentId, AgentStatusSnapshot, Lane } from "./lib/agent-registry";
 
 type ViewMode = "compact" | "timeline";
 const VIEW_MODE_PREF_KEY = "eve.agents.viewMode";
@@ -108,6 +109,26 @@ export default function AgentsPage() {
     },
     [pushSynthetic],
   );
+
+  const { componentOverrides } = useComponentStatus();
+
+  // Merge component health into event-derived statuses. Component health wins
+  // only when it signals "error" (container down / entity-state error). When
+  // the component is healthy, event-derived status (active / idle) takes
+  // precedence so the graph continues to reflect live traffic.
+  const mergedStatuses = useMemo<Record<AgentId, AgentStatusSnapshot>>(() => {
+    if (Object.keys(componentOverrides).length === 0) return agentStatuses;
+    const result = { ...agentStatuses };
+    for (const agentId of Object.keys(componentOverrides) as AgentId[]) {
+      const override = componentOverrides[agentId];
+      if (!override || override.agentStatus !== "error") continue;
+      const snap = result[agentId];
+      if (snap && snap.status !== "error") {
+        result[agentId] = { ...snap, status: "error" };
+      }
+    }
+    return result;
+  }, [agentStatuses, componentOverrides]);
 
   const {
     channels,
@@ -280,7 +301,7 @@ export default function AgentsPage() {
               <>
                 <AgentGraph
                   events={events}
-                  agentStatuses={agentStatuses}
+                  agentStatuses={mergedStatuses}
                   selectedAgent={selectedAgent}
                   onSelectAgent={(id) =>
                     setSelectedAgent((prev) => (prev === id ? null : id))
@@ -294,7 +315,7 @@ export default function AgentsPage() {
                   <NodePanel
                     agentId={selectedAgent}
                     events={byAgent[selectedAgent] ?? []}
-                    status={agentStatuses[selectedAgent]}
+                    status={mergedStatuses[selectedAgent]}
                     onClose={() => setSelectedAgent(null)}
                     onSelectAgent={(id) => setSelectedAgent(id)}
                   />
@@ -303,7 +324,7 @@ export default function AgentsPage() {
             ) : (
               <TimelineCanvas
                 events={events}
-                agentStatuses={agentStatuses}
+                agentStatuses={mergedStatuses}
                 isEmpty={isEmpty}
                 onSelectAgent={setSelectedAgent}
                 onSendTestEvent={() => void sendTestEvent()}

@@ -99,6 +99,13 @@ const PROVIDER_TAGLINE: Record<string, string> = {
   ollama:     "Local models, no key required.",
 };
 
+const BUILT_IN_DEFS = [
+  { id: "anthropic",  name: "Anthropic",     tagline: "Claude models",         defaultBaseUrl: "" },
+  { id: "openai",     name: "OpenAI",         tagline: "GPT models",            defaultBaseUrl: "" },
+  { id: "openrouter", name: "OpenRouter",     tagline: "500+ models, one key",  defaultBaseUrl: "" },
+  { id: "ollama",     name: "Ollama (local)", tagline: "Local, no key needed",  defaultBaseUrl: "http://localhost:11434" },
+] as const;
+
 const DEFAULT_MODEL_PLACEHOLDERS: Record<string, string> = {
   anthropic:  "claude-sonnet-4-7",
   openai:     "gpt-5",
@@ -157,7 +164,7 @@ export default function AiProvidersPage() {
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
-  const [testResults, setTestResults] = useState<Record<string, { ok: boolean; latency: number; modelCount: number; models: string[]; error?: string }>>({});
+  const [testResults, setTestResults] = useState<Record<string, { ok: boolean; latency: number; modelCount: number; models: string[]; error?: string } | undefined>>({});
   const [applying, setApplying] = useState(false);
   const [editing, setEditing] = useState<Record<string, { apiKey?: string; defaultModel?: string; baseUrl?: string; name?: string }>>({});
   const [adding, setAdding] = useState<{
@@ -169,6 +176,11 @@ export default function AiProvidersPage() {
     baseUrl?: string;
   } | null>(null);
   const [editingServiceModels, setEditingServiceModels] = useState<Record<string, string>>({});
+  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [detectingOllama, setDetectingOllama] = useState(false);
+  const [cardOllamaModels, setCardOllamaModels] = useState<Record<string, string[]>>({});
+  const [cardDetectingOllama, setCardDetectingOllama] = useState<string | null>(null);
+  const [pendingDefault, setPendingDefault] = useState<string | null>(null);
 
   const fetchConfig = useCallback(async () => {
     try {
@@ -240,7 +252,7 @@ export default function AiProvidersPage() {
 
   async function testProvider(id: string) {
     setTestingId(id);
-    setTestResults(prev => ({ ...prev, [id]: undefined as any }));
+    // Don't blank the old result — keep it visible with a loading overlay while retesting.
     try {
       const res = await fetch("/api/ai/test", {
         method: "POST",
@@ -249,15 +261,43 @@ export default function AiProvidersPage() {
         body: JSON.stringify({ providerId: id }),
       });
       const data = await res.json() as { ok?: boolean; latency?: number; modelCount?: number; models?: string[]; error?: string };
-      setTestResults(prev => ({ ...prev, [id]: data as any }));
+      setTestResults(prev => ({
+        ...prev,
+        [id]: {
+          ok: data.ok ?? false,
+          latency: data.latency ?? 0,
+          modelCount: data.modelCount ?? 0,
+          models: data.models ?? [],
+          error: data.error,
+        },
+      }));
       if (res.ok && data.ok) {
         addToast({ title: `${getProviderLabel(id)}: OK · ${data.modelCount} models`, color: "success" });
-      } else if (!res.ok || !data.ok) {
+      } else {
         addToast({ title: `${getProviderLabel(id)}: ${data.error ?? "Test failed"}`, color: "danger" });
       }
     } catch {
       addToast({ title: `${getProviderLabel(id)}: Network error`, color: "danger" });
     } finally { setTestingId(null); }
+  }
+
+  async function detectOllamaModelsForCard(providerId: string, baseUrl: string) {
+    setCardDetectingOllama(providerId);
+    try {
+      const url = baseUrl || "http://localhost:11434";
+      const res = await fetch(`/api/ai/ollama-models?url=${encodeURIComponent(url)}`, { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json() as { models: string[] };
+        setCardOllamaModels(prev => ({ ...prev, [providerId]: data.models }));
+        if (data.models.length === 0) addToast({ title: "Ollama reachable — no models installed yet", color: "warning" });
+      } else {
+        addToast({ title: "Could not reach Ollama — check the URL in Edit", color: "danger" });
+      }
+    } catch {
+      addToast({ title: "Ollama detection failed", color: "danger" });
+    } finally {
+      setCardDetectingOllama(null);
+    }
   }
 
   async function setDefault(id: string) {
@@ -394,6 +434,30 @@ export default function AiProvidersPage() {
     } finally { setApplying(false); }
   }
 
+  async function detectOllamaModels() {
+    setDetectingOllama(true);
+    try {
+      const url = (adding?.baseUrl?.trim() || "http://localhost:11434");
+      const res = await fetch(`/api/ai/ollama-models?url=${encodeURIComponent(url)}`, { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json() as { models: string[] };
+        setOllamaModels(data.models);
+        if (data.models.length > 0 && !adding?.defaultModel) {
+          setAdding(prev => prev ? { ...prev, defaultModel: data.models[0] } : prev);
+        }
+        if (data.models.length === 0) {
+          addToast({ title: "Ollama reachable but no models installed", color: "warning" });
+        }
+      } else {
+        addToast({ title: "Could not reach Ollama — check the URL", color: "danger" });
+      }
+    } catch {
+      addToast({ title: "Ollama detection failed", color: "danger" });
+    } finally {
+      setDetectingOllama(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -402,7 +466,9 @@ export default function AiProvidersPage() {
     );
   }
 
-  const hasAnyConfigured = (config?.providers ?? []).some(p => p.hasApiKey || p.id === "ollama");
+  const hasAnyConfigured = (config?.providers ?? []).some(
+    p => p.hasApiKey || p.id === "ollama" || (p.baseUrl && p.baseUrl.trim()),
+  );
 
   return (
     <div className="space-y-10">
@@ -485,10 +551,18 @@ export default function AiProvidersPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    {!isDefault && ok && !p.isCustom && (
-                      <Button size="sm" variant="light" radius="md" onPress={() => void setDefault(pid)} isLoading={savingId === `default-${p.id}`} className="text-default-600 hover:text-foreground">
-                        Set default
-                      </Button>
+                    {!isDefault && ok && (
+                      pendingDefault === pid ? (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs text-default-500">Set as default?</span>
+                          <Button size="sm" color="primary" variant="flat" radius="md" isLoading={savingId === `default-${pid}`} onPress={() => { void setDefault(pid); setPendingDefault(null); }}>Yes</Button>
+                          <Button size="sm" variant="light" radius="md" onPress={() => setPendingDefault(null)}>No</Button>
+                        </div>
+                      ) : (
+                        <Button size="sm" variant="light" radius="md" onPress={() => setPendingDefault(pid)} className="text-default-600 hover:text-foreground">
+                          Set default
+                        </Button>
+                      )
                     )}
                     <Button size="sm" variant="light" radius="md" isIconOnly onPress={() => removeProvider(pid)} isDisabled={!!savingId} className="text-default-400 hover:text-danger">
                       <Trash2 className="h-4 w-4" />
@@ -496,55 +570,102 @@ export default function AiProvidersPage() {
                   </div>
                 </div>
 
-                {/* Test result */}
-                {testResults[p.id] && (
-                  <div className={`mt-3 rounded-lg border px-3 py-2 ${
-                    testResults[p.id].ok
-                      ? "border-success/20 bg-success/5"
-                      : "border-danger/20 bg-danger/5"
-                  }`}>
+                {/* Ollama: model discovery on card */}
+                {p.id === "ollama" && !isEditing && (
+                  <div className="mt-3">
                     <div className="flex items-center gap-2">
-                      {testResults[p.id].ok ? (
-                        <CheckCircle2 className="h-3.5 w-3.5 text-success" />
-                      ) : (
-                        <XCircle className="h-3.5 w-3.5 text-danger" />
+                      <Button
+                        size="sm"
+                        variant="flat"
+                        radius="md"
+                        isLoading={cardDetectingOllama === pid}
+                        onPress={() => void detectOllamaModelsForCard(pid, p.baseUrl ?? "http://localhost:11434")}
+                        className="text-default-600"
+                      >
+                        Detect models
+                      </Button>
+                      {(cardOllamaModels[pid] ?? []).length > 0 && (
+                        <span className="text-[11px] text-default-400">{cardOllamaModels[pid].length} model(s) available</span>
                       )}
-                      <span className="text-xs">
-                        {testResults[p.id].ok
-                          ? `${testResults[p.id].modelCount} model(s) · ${testResults[p.id].latency}ms`
-                          : testResults[p.id].error}
-                      </span>
                     </div>
-                    {(testResults[p.id].ok && (testResults[p.id].models?.length ?? 0) > 0 && (
-                      <div className="mt-1.5 flex flex-wrap gap-1">
-                        {(testResults[p.id].models ?? []).slice(0, 8).map(m => (
-                          <Chip key={m} size="sm" variant="flat" radius="sm" className="h-5 px-1.5 text-[10px]">
+                    {(cardOllamaModels[pid] ?? []).length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {cardOllamaModels[pid].map(m => (
+                          <Chip key={m} size="sm" variant="flat" radius="sm" className="h-5 px-1.5 font-mono text-[10px]">
                             {m}
                           </Chip>
                         ))}
-                        {testResults[p.id].modelCount! > 8 && (
-                          <Chip size="sm" variant="flat" radius="sm" className="h-5 px-1.5 text-[10px] text-default-400">
-                            +{testResults[p.id].modelCount! - 8} more
-                          </Chip>
-                        )}
                       </div>
-                    ))}
+                    )}
                   </div>
                 )}
+
+                {/* Test result (kept visible during retests with loading overlay) */}
+                {(() => {
+                  const tr = testResults[p.id];
+                  const isTesting = testingId === p.id;
+                  if (!tr && !isTesting) return null;
+                  if (!tr && isTesting) return (
+                    <div className="mt-3 flex items-center gap-2 rounded-lg border border-divider px-3 py-2">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-default-400" />
+                      <span className="text-xs text-default-400">Testing…</span>
+                    </div>
+                  );
+                  if (!tr) return null;
+                  return (
+                    <div className={`relative mt-3 rounded-lg border px-3 py-2 ${
+                      tr.ok ? "border-success/20 bg-success/5" : "border-danger/20 bg-danger/5"
+                    }`}>
+                      {isTesting && (
+                        <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-content1/60 backdrop-blur-[1px]">
+                          <Loader2 className="h-4 w-4 animate-spin text-default-400" />
+                        </div>
+                      )}
+                      <div className="flex items-center gap-2">
+                        {tr.ok ? (
+                          <CheckCircle2 className="h-3.5 w-3.5 text-success" />
+                        ) : (
+                          <XCircle className="h-3.5 w-3.5 text-danger" />
+                        )}
+                        <span className="text-xs">
+                          {tr.ok ? `${tr.modelCount} model(s) · ${tr.latency}ms` : tr.error}
+                        </span>
+                      </div>
+                      {tr.ok && (tr.models?.length ?? 0) > 0 && (
+                        <div className="mt-1.5 flex flex-wrap gap-1">
+                          {(tr.models ?? []).slice(0, 8).map(m => (
+                            <Chip key={m} size="sm" variant="flat" radius="sm" className="h-5 px-1.5 text-[10px]">
+                              {m}
+                            </Chip>
+                          ))}
+                          {tr.modelCount > 8 && (
+                            <Chip size="sm" variant="flat" radius="sm" className="h-5 px-1.5 text-[10px] text-default-400">
+                              +{tr.modelCount - 8} more
+                            </Chip>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* Edit fields */}
                 {isEditing && (
                   <div className="mt-7 grid grid-cols-1 gap-4 sm:grid-cols-2">
                     {!p.isCustom && p.id !== "ollama" && (
-                      <Input label="API key" labelPlacement="outside" placeholder={p.apiKeyMasked ?? "Click edit to set"} value={editState.apiKey ?? ""} onValueChange={v => setEditing(prev => ({ ...prev, [p.id]: { ...prev[p.id], apiKey: v }}))} type="password" variant="bordered" classNames={{ input: "font-mono text-sm" }} />
+                      <Input label="API key" labelPlacement="outside" placeholder={p.apiKeyMasked ?? "Enter new key"} value={editState.apiKey ?? ""} onValueChange={v => setEditing(prev => ({ ...prev, [p.id]: { ...prev[p.id], apiKey: v }}))} type="password" variant="bordered" classNames={{ input: "font-mono text-sm" }} />
                     )}
                     {p.isCustom && (
                       <>
                         <Input label="Name" labelPlacement="outside" placeholder={p.name ?? "e.g. Local LLaMA"} value={editState.name ?? ""} onValueChange={v => setEditing(prev => ({ ...prev, [p.id]: { ...prev[p.id], name: v }}))} variant="bordered" classNames={{ input: "text-sm" }} />
-                        <Input label="Base URL" labelPlacement="outside" placeholder="https://..." value={editState.baseUrl ?? ""} onValueChange={v => setEditing(prev => ({ ...prev, [p.id]: { ...prev[p.id], baseUrl: v }}))} variant="bordered" classNames={{ input: "font-mono text-sm" }} />
+                        <Input label="Base URL" labelPlacement="outside" placeholder="https://..." value={editState.baseUrl ?? p.baseUrl ?? ""} onValueChange={v => setEditing(prev => ({ ...prev, [p.id]: { ...prev[p.id], baseUrl: v }}))} variant="bordered" classNames={{ input: "font-mono text-sm" }} />
+                        <Input label="API key (optional)" labelPlacement="outside" placeholder={p.apiKeyMasked ?? "Bearer token or API key"} value={editState.apiKey ?? ""} onValueChange={v => setEditing(prev => ({ ...prev, [p.id]: { ...prev[p.id], apiKey: v }}))} type="password" variant="bordered" classNames={{ input: "font-mono text-sm" }} />
                       </>
                     )}
-                    <Input label="Default model" labelPlacement="outside" placeholder="e.g. claude-sonnet-4-7" value={editState.defaultModel ?? p.defaultModel ?? ""} onValueChange={v => setEditing(prev => ({ ...prev, [p.id]: { ...prev[p.id], defaultModel: v }}))} variant="bordered" classNames={{ input: "font-mono text-sm" }} />
+                    {p.id === "ollama" && (
+                      <Input label="Ollama URL" labelPlacement="outside" placeholder="http://localhost:11434" value={editState.baseUrl ?? p.baseUrl ?? "http://localhost:11434"} onValueChange={v => setEditing(prev => ({ ...prev, [p.id]: { ...prev[p.id], baseUrl: v }}))} variant="bordered" classNames={{ input: "font-mono text-sm" }} />
+                    )}
+                    <Input label="Default model" labelPlacement="outside" placeholder={DEFAULT_MODEL_PLACEHOLDERS[p.id] ?? "model-name"} value={editState.defaultModel ?? p.defaultModel ?? ""} onValueChange={v => setEditing(prev => ({ ...prev, [p.id]: { ...prev[p.id], defaultModel: v }}))} variant="bordered" classNames={{ input: "font-mono text-sm" }} />
                   </div>
                 )}
 
@@ -559,7 +680,7 @@ export default function AiProvidersPage() {
                       variant="light"
                       radius="md"
                       className="text-default-500"
-                      isDisabled={!!savingId || !(p.baseUrl && p.baseUrl.trim())}
+                      isDisabled={!!savingId || (!p.hasApiKey && !p.baseUrl && p.id !== "ollama")}
                       isLoading={testingId === p.id}
                       startContent={testingId === p.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Beaker className="h-3.5 w-3.5" />}
                       onPress={() => void testProvider(pid)}
@@ -569,7 +690,7 @@ export default function AiProvidersPage() {
                     {isEditing ? (
                       <>
                         <Button size="sm" variant="light" radius="md" onPress={() => setEditing(prev => { const n = { ...prev }; delete n[p.id]; return n; })}>Cancel</Button>
-                        <Button size="sm" color="primary" radius="md" startContent={<Save className="h-3.5 w-3.5"/>} isLoading={savingId === p.id} onPress={() => void saveProvider(pid, { ...(editState.apiKey ? { apiKey: editState.apiKey } : {}), ...(editState.defaultModel ? { defaultModel: editState.defaultModel } : {}), ...(editState.baseUrl ? { baseUrl: editState.baseUrl } : {}) })}>Save</Button>
+                        <Button size="sm" color="primary" radius="md" startContent={<Save className="h-3.5 w-3.5"/>} isLoading={savingId === p.id} onPress={() => void saveProvider(pid, { ...(editState.apiKey ? { apiKey: editState.apiKey } : {}), ...(editState.defaultModel ? { defaultModel: editState.defaultModel } : {}), ...(editState.baseUrl ? { baseUrl: editState.baseUrl } : {}), ...(editState.name ? { name: editState.name } : {}) })}>Save</Button>
                       </>
                     ) : (
                       <Button size="sm" variant="bordered" radius="md" onPress={() => setEditing(prev => ({ ...prev, [p.id]: {} }))}>Edit</Button>
@@ -589,7 +710,7 @@ export default function AiProvidersPage() {
       {!adding ? (
         <button
           type="button"
-          onClick={() => setAdding({ isCustom: false })}
+          onClick={() => { setAdding({ isCustom: false }); setOllamaModels([]); }}
           className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-divider bg-content1/40 px-4 py-4 text-sm text-default-500 transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
         >
           <Plus className="h-4 w-4" />
@@ -599,55 +720,216 @@ export default function AiProvidersPage() {
         <Surface className="p-5">
           <h3 className="font-medium text-foreground">Add a provider</h3>
           <p className="mt-0.5 text-xs text-default-500">
-            Configure the key, set a default model, then save. You can apply it to components afterwards.
+            Configure the key, set a default model, then save. Changes apply to components automatically.
           </p>
-          <div className="mt-4 space-y-4">
-            <Select label="Type" labelPlacement="outside" variant="bordered" selectedKeys={adding.isCustom ? new Set(["custom"]) : new Set(["builtin"])} onSelectionChange={keys => {
-              const isCustom = Array.from(keys).includes("custom");
-              setAdding({ isCustom, apiKey: "", defaultModel: "", baseUrl: "", name: isCustom ? "" : undefined });
-            }}>
+
+          <div className="mt-4 space-y-5">
+            {/* Type toggle */}
+            <Select
+              label="Type"
+              labelPlacement="outside"
+              variant="bordered"
+              selectedKeys={adding.isCustom ? new Set(["custom"]) : new Set(["builtin"])}
+              onSelectionChange={keys => {
+                const isCustom = Array.from(keys).includes("custom");
+                setAdding({ isCustom, apiKey: "", defaultModel: "", baseUrl: "", name: "" });
+                setOllamaModels([]);
+              }}
+            >
               <SelectItem key="builtin">Built-in provider</SelectItem>
               <SelectItem key="custom">Custom OpenAI-compatible endpoint</SelectItem>
             </Select>
+
+            {/* Built-in: pick a provider */}
+            {!adding.isCustom && (
+              <div>
+                <p className="mb-2 text-xs font-medium text-default-500">Provider</p>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {BUILT_IN_DEFS.map(def => (
+                    <button
+                      key={def.id}
+                      type="button"
+                      onClick={() => {
+                        setAdding(prev => ({
+                          ...prev!,
+                          id: def.id,
+                          apiKey: "",
+                          defaultModel: DEFAULT_MODEL_PLACEHOLDERS[def.id] ?? "",
+                          baseUrl: def.defaultBaseUrl,
+                        }));
+                        setOllamaModels([]);
+                      }}
+                      className={`flex flex-col items-start gap-0.5 rounded-lg border p-3 text-left transition-colors ${
+                        adding.id === def.id
+                          ? "border-primary/60 bg-primary/5"
+                          : "border-divider hover:border-default-300 hover:bg-content2"
+                      }`}
+                    >
+                      <span className="text-sm font-medium text-foreground">{def.name}</span>
+                      <span className="text-[11px] text-default-400">{def.tagline}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Built-in fields */}
+            {!adding.isCustom && adding.id && (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {adding.id !== "ollama" && (
+                  <Input
+                    label="API key"
+                    labelPlacement="outside"
+                    placeholder={KEY_PLACEHOLDERS[adding.id] ?? "sk-..."}
+                    value={adding.apiKey ?? ""}
+                    onValueChange={v => setAdding(prev => ({ ...prev!, apiKey: v }))}
+                    type="password"
+                    variant="bordered"
+                    classNames={{ input: "font-mono text-sm" }}
+                  />
+                )}
+                {adding.id === "ollama" && (
+                  <div className="sm:col-span-2 space-y-2">
+                    <div className="flex items-end gap-2">
+                      <Input
+                        label="Ollama URL"
+                        labelPlacement="outside"
+                        placeholder="http://localhost:11434"
+                        value={adding.baseUrl ?? "http://localhost:11434"}
+                        onValueChange={v => setAdding(prev => ({ ...prev!, baseUrl: v }))}
+                        variant="bordered"
+                        classNames={{ input: "font-mono text-sm" }}
+                        className="flex-1"
+                      />
+                      <Button
+                        size="sm"
+                        variant="bordered"
+                        radius="md"
+                        isLoading={detectingOllama}
+                        className="shrink-0 mb-0.5"
+                        onPress={() => void detectOllamaModels()}
+                      >
+                        Detect models
+                      </Button>
+                    </div>
+                    {ollamaModels.length > 0 && (
+                      <div className="flex flex-wrap gap-1 pt-0.5">
+                        {ollamaModels.map(m => (
+                          <button
+                            key={m}
+                            type="button"
+                            onClick={() => setAdding(prev => ({ ...prev!, defaultModel: m }))}
+                            className={`rounded px-2 py-0.5 text-[11px] font-mono transition-colors border ${
+                              adding.defaultModel === m
+                                ? "border-primary/60 bg-primary/10 text-primary"
+                                : "border-divider text-default-500 hover:border-default-300 hover:text-foreground"
+                            }`}
+                          >
+                            {m}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                <Input
+                  label="Default model"
+                  labelPlacement="outside"
+                  placeholder={DEFAULT_MODEL_PLACEHOLDERS[adding.id] ?? "model-name"}
+                  value={adding.defaultModel ?? ""}
+                  onValueChange={v => setAdding(prev => ({ ...prev!, defaultModel: v }))}
+                  variant="bordered"
+                  classNames={{ input: "font-mono text-sm" }}
+                />
+              </div>
+            )}
+
+            {/* Custom fields */}
             {adding.isCustom && (
-              <>
-                <Input label="Name" labelPlacement="outside" placeholder="e.g. Local LLaMA" value={adding.name ?? ""} onValueChange={v => setAdding({ ...adding, name: v })} variant="bordered" classNames={{ input: "text-sm" }} />
-                <Input label="Base URL" labelPlacement="outside" placeholder="https://..." value={adding.baseUrl ?? ""} onValueChange={v => setAdding({ ...adding, baseUrl: v })} variant="bordered" classNames={{ input: "font-mono text-sm" }} />
-              </>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Input
+                  label="Name"
+                  labelPlacement="outside"
+                  placeholder="e.g. Local LLaMA"
+                  value={adding.name ?? ""}
+                  onValueChange={v => setAdding(prev => ({ ...prev!, name: v }))}
+                  variant="bordered"
+                  classNames={{ input: "text-sm" }}
+                />
+                <Input
+                  label="Base URL"
+                  labelPlacement="outside"
+                  placeholder="https://..."
+                  value={adding.baseUrl ?? ""}
+                  onValueChange={v => setAdding(prev => ({ ...prev!, baseUrl: v }))}
+                  variant="bordered"
+                  classNames={{ input: "font-mono text-sm" }}
+                />
+                <Input
+                  label="API key (optional)"
+                  labelPlacement="outside"
+                  placeholder="Bearer token or API key"
+                  value={adding.apiKey ?? ""}
+                  onValueChange={v => setAdding(prev => ({ ...prev!, apiKey: v }))}
+                  type="password"
+                  variant="bordered"
+                  classNames={{ input: "font-mono text-sm" }}
+                />
+                <Input
+                  label="Default model"
+                  labelPlacement="outside"
+                  placeholder="e.g. llama3.1:8b"
+                  value={adding.defaultModel ?? ""}
+                  onValueChange={v => setAdding(prev => ({ ...prev!, defaultModel: v }))}
+                  variant="bordered"
+                  classNames={{ input: "font-mono text-sm" }}
+                />
+              </div>
             )}
-            {!adding.isCustom && adding.id && adding.id !== "ollama" && (
-              <Input label="API key" labelPlacement="outside" placeholder="sk-..." value={adding.apiKey ?? ""} onValueChange={v => setAdding({ ...adding, apiKey: v })} type="password" variant="bordered" classNames={{ input: "font-mono text-sm" }} />
-            )}
-            <Input label="Default model" labelPlacement="outside" placeholder={adding.isCustom ? "e.g. llama3.1:8b" : "e.g. claude-sonnet-4-7"} value={adding.defaultModel ?? ""} onValueChange={v => setAdding({ ...adding, defaultModel: v })} variant="bordered" classNames={{ input: "font-mono text-sm" }} />
           </div>
+
           <div className="mt-5 flex justify-end gap-2 border-t border-divider pt-4">
-            <Button size="sm" variant="light" radius="md" onPress={() => setAdding(null)}>Cancel</Button>
-            <Button size="sm" color="primary" radius="md" isLoading={!!savingId} startContent={<Save className="h-3.5 w-3.5"/>} onPress={() => {
-              if (adding.isCustom && (!adding.name?.trim() || !adding.baseUrl?.trim())) {
-                addToast({ title: "Name and base URL are required", color: "danger" });
-                return;
-              }
-              // Built-in providers (except Ollama) require an API key.
-              if (!adding.isCustom && adding.id !== "ollama" && (!adding.apiKey || adding.apiKey.trim().length === 0)) {
-                addToast({ title: "API key is required for this provider", color: "danger" });
-                return;
-              }
-              const body: Record<string, unknown> = { defaultModel: adding.defaultModel };
-              if (adding.apiKey) body.apiKey = adding.apiKey;
-              if (adding.isCustom) {
-                body.isCustom = true;
-                body.name = adding.name;
-                body.baseUrl = adding.baseUrl;
-              }
-              const id = adding.isCustom
-                ? `custom-${Date.now()}`
-                : (adding.id ?? "");
-              if (!id) {
-                addToast({ title: "Select a provider first", color: "danger" });
-                return;
-              }
-              void saveProvider(id, body);
-            }}>Add provider</Button>
+            <Button size="sm" variant="light" radius="md" onPress={() => { setAdding(null); setOllamaModels([]); }}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              color="primary"
+              radius="md"
+              isLoading={!!savingId}
+              startContent={<Save className="h-3.5 w-3.5" />}
+              onPress={() => {
+                if (adding.isCustom) {
+                  if (!adding.name?.trim() || !adding.baseUrl?.trim()) {
+                    addToast({ title: "Name and base URL are required", color: "danger" });
+                    return;
+                  }
+                  void saveProvider(`custom-${Date.now()}`, {
+                    isCustom: true,
+                    name: adding.name,
+                    baseUrl: adding.baseUrl,
+                    ...(adding.apiKey ? { apiKey: adding.apiKey } : {}),
+                    defaultModel: adding.defaultModel,
+                  });
+                  return;
+                }
+                if (!adding.id) {
+                  addToast({ title: "Select a provider first", color: "danger" });
+                  return;
+                }
+                if (adding.id !== "ollama" && !adding.apiKey?.trim()) {
+                  addToast({ title: "API key is required for this provider", color: "danger" });
+                  return;
+                }
+                void saveProvider(adding.id, {
+                  ...(adding.apiKey ? { apiKey: adding.apiKey } : {}),
+                  ...(adding.baseUrl ? { baseUrl: adding.baseUrl } : {}),
+                  defaultModel: adding.defaultModel,
+                });
+              }}
+            >
+              Add provider
+            </Button>
           </div>
         </Surface>
       )}
@@ -696,8 +978,8 @@ export default function AiProvidersPage() {
                           : "No provider — pick one above first"}
                         {modelOverride && ` · model: ${modelOverride}`}
                       </p>
-                      {/* Last applied timestamp */}
-                      {config?.wiringStatus?.[c.id] && (
+                      {/* Last applied timestamp / not-yet-applied hint */}
+                      {config?.wiringStatus?.[c.id] ? (
                         <p className="mt-0.5 text-[10px] text-default-400">
                           Last applied: {formatTimestamp(config.wiringStatus[c.id].lastApplied)}
                           {" · "}
@@ -705,7 +987,11 @@ export default function AiProvidersPage() {
                             {config.wiringStatus[c.id].outcome}
                           </span>
                         </p>
-                      )}
+                      ) : c.installed && effective ? (
+                        <p className="mt-0.5 text-[10px] text-warning">
+                          Not yet applied — click &ldquo;Apply to components&rdquo; to push this config
+                        </p>
+                      ) : null}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <Select

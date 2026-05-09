@@ -499,6 +499,7 @@ function CompactPodAuthDiagnostics({
   authState: PodAuthState;
   pairingState: ReturnType<typeof usePodPairing>["state"];
 }) {
+  const [copying, setCopying] = useState(false);
   const setupTone =
     authState.kind === "ready"
       ? "success"
@@ -524,6 +525,27 @@ function CompactPodAuthDiagnostics({
       ? authState.reason
       : null;
 
+  async function copyDiagnosticJson() {
+    setCopying(true);
+    try {
+      const res = await fetch("/api/diagnostics/pod-runtime", {
+        cache: "no-store",
+        credentials: "include",
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok || !body) {
+        addToast({ title: "Couldn't load diagnostics", color: "danger" });
+        return;
+      }
+      await navigator.clipboard.writeText(JSON.stringify(body, null, 2));
+      addToast({ title: "Diagnostics copied", color: "success" });
+    } catch {
+      addToast({ title: "Couldn't copy diagnostics", color: "danger" });
+    } finally {
+      setCopying(false);
+    }
+  }
+
   return (
     <div className="rounded-lg border border-divider bg-content2/40 px-3 py-2.5">
       <div className="flex flex-wrap items-center gap-2">
@@ -536,6 +558,15 @@ function CompactPodAuthDiagnostics({
         <Chip size="sm" color={pairingTone} variant="flat" radius="sm">
           token: {pairingState}
         </Chip>
+        <button
+          type="button"
+          onClick={() => void copyDiagnosticJson()}
+          disabled={copying}
+          className="ml-auto inline-flex items-center gap-1 rounded-md border border-divider bg-content1 px-2 py-1 text-[11px] text-default-500 transition-colors hover:text-foreground disabled:opacity-50"
+        >
+          <Copy className="h-3 w-3" />
+          {copying ? "copying..." : "copy JSON"}
+        </button>
       </div>
       {(version || reason) && (
         <p className="mt-2 text-xs text-default-500">
