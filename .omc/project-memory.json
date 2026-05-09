@@ -132,14 +132,14 @@
     },
     {
       "path": "packages/@eve/dna/src/wire-ai.ts",
-      "accessCount": 132,
-      "lastAccessed": 1778359242709,
+      "accessCount": 134,
+      "lastAccessed": 1778361896129,
       "type": "file"
     },
     {
       "path": "packages/@eve/dna/src/openwebui-admin.ts",
-      "accessCount": 73,
-      "lastAccessed": 1778359171812,
+      "accessCount": 76,
+      "lastAccessed": 1778361895538,
       "type": "file"
     },
     {
@@ -168,8 +168,8 @@
     },
     {
       "path": "packages/@eve/dna/src/index.ts",
-      "accessCount": 18,
-      "lastAccessed": 1778359283552,
+      "accessCount": 19,
+      "lastAccessed": 1778362007865,
       "type": "file"
     },
     {

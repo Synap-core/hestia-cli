@@ -32,6 +32,7 @@ import {
   getAdminJwtPostHealthDetailed,
   probeAdminAuth,
   reconcileOpenwebuiManagedConfigViaAdmin,
+  reconcileOpenwebuiManagedConfigViaAdminDetailed,
   registerPipeline,
   waitForHealth,
   waitForHealthDetailed,
@@ -866,14 +867,20 @@ export async function registerOpenwebuiAdminApi(
   // Step 6: Reconcile Eve-managed persisted config. With ENABLE_PERSISTENT_CONFIG=true
   // the DB overrides env vars for the model picker — a silent write failure here
   // is exactly the bug where users see only Ollama despite admin Connections
-  // showing every entry.
+  // showing every entry. We use the detailed variant so a bad payload, an
+  // HTML SPA shell, or a 4xx response surfaces with status + body preview.
   try {
-    const reconcileResult = await reconcileOpenwebuiManagedConfigViaAdmin(jwt, {
+    const detailed = await reconcileOpenwebuiManagedConfigViaAdminDetailed(jwt, {
       ...(options.managedConfig ?? {}),
       modelSources,
     });
-    if (!reconcileResult) {
-      return { ok: false, stage: 'reconcile', reason: 'managed config read or save returned null' };
+    if (!detailed.ok) {
+      return {
+        ok: false,
+        stage: 'reconcile',
+        reason: `${detailed.step} failed (HTTP ${detailed.status || '?'}): ${detailed.reason}` +
+          (detailed.bodyPreview ? ` | body: ${detailed.bodyPreview}` : ''),
+      };
     }
   } catch (err) {
     return {

@@ -523,17 +523,61 @@ export async function probeAdminAuth(
  * Returns null if the API is unreachable or auth fails.
  */
 export async function getConfig(jwt: string, hostPort?: number): Promise<OpenWebuiConfig | null> {
+  const detailed = await getConfigDetailed(jwt, hostPort);
+  return detailed.ok ? detailed.config : null;
+}
+
+/**
+ * Read the current OpenWebUI config via admin API with structured failure
+ * info. Returns the actual HTTP status and a body preview when the read
+ * fails — used by `registerOpenwebuiAdminApi` to construct an actionable
+ * `stage='reconcile'` reason instead of "returned null".
+ */
+export async function getConfigDetailed(
+  jwt: string,
+  hostPort?: number,
+): Promise<
+  | { ok: true; config: OpenWebuiConfig }
+  | { ok: false; status: number; bodyPreview: string; reason: string }
+> {
   const baseUrl = resolveAdminUrl(hostPort);
+  let status = 0;
+  let body = '';
   try {
     const res = await fetch(`${baseUrl}/api/v1/configs/`, {
       headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
     });
-    if (!res.ok) return null;
-    const text = await res.text();
-    if (text.trimStart().startsWith('<')) return null; // HTML response
-    return JSON.parse(text) as OpenWebuiConfig;
-  } catch {
-    return null;
+    status = res.status;
+    body = await res.text();
+    if (!res.ok) {
+      return { ok: false, status, bodyPreview: body.slice(0, 200), reason: `HTTP ${status}` };
+    }
+    if (body.trimStart().startsWith('<')) {
+      return {
+        ok: false,
+        status,
+        bodyPreview: body.slice(0, 200),
+        reason: 'OWUI returned HTML at /api/v1/configs/ (likely SPA shell — admin route may have moved or middleware bailed pre-router)',
+      };
+    }
+    try {
+      const config = JSON.parse(body) as OpenWebuiConfig;
+      return { ok: true, config };
+    } catch (err) {
+      return {
+        ok: false,
+        status,
+        bodyPreview: body.slice(0, 200),
+        reason: `JSON parse failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      status,
+      bodyPreview: body.slice(0, 200),
+      reason: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
@@ -546,16 +590,43 @@ export async function saveConfig(
   config: OpenWebuiConfig,
   hostPort?: number,
 ): Promise<boolean> {
+  const detailed = await saveConfigDetailed(jwt, config, hostPort);
+  return detailed.ok;
+}
+
+/**
+ * Save OpenWebUI config via admin API with structured failure info. The
+ * preview body lets `registerOpenwebuiAdminApi` quote OWUI's actual error
+ * (e.g. "field 'x' is read-only") inside `stage='reconcile'` reasons.
+ */
+export async function saveConfigDetailed(
+  jwt: string,
+  config: OpenWebuiConfig,
+  hostPort?: number,
+): Promise<
+  | { ok: true }
+  | { ok: false; status: number; bodyPreview: string; reason: string }
+> {
   const baseUrl = resolveAdminUrl(hostPort);
+  let status = 0;
+  let body = '';
   try {
     const res = await fetch(`${baseUrl}/api/v1/configs/`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(config),
     });
-    return res.ok;
-  } catch {
-    return false;
+    status = res.status;
+    if (res.ok) return { ok: true };
+    body = await res.text();
+    return { ok: false, status, bodyPreview: body.slice(0, 200), reason: `HTTP ${status}` };
+  } catch (err) {
+    return {
+      ok: false,
+      status,
+      bodyPreview: body.slice(0, 200),
+      reason: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
@@ -771,14 +842,37 @@ export async function reconcileOpenwebuiManagedConfigViaAdmin(
   desired: OpenWebuiManagedConfig,
   hostPort?: number,
 ): Promise<OpenWebuiConfigReconcileResult | null> {
-  const config = await getConfig(jwt, hostPort);
-  if (!config) return null;
+  const detailed = await reconcileOpenwebuiManagedConfigViaAdminDetailed(jwt, desired, hostPort);
+  return detailed.ok ? detailed.result : null;
+}
 
-  const result = reconcileOpenwebuiManagedConfig(config, desired);
-  if (!result.changed) return result;
+/**
+ * Detailed variant: returns which sub-step failed (`getConfig` or `saveConfig`)
+ * along with the OWUI HTTP status and a body preview. Used by
+ * `registerOpenwebuiAdminApi` to surface concrete `stage='reconcile'` reasons
+ * instead of the opaque "returned null" message.
+ */
+export async function reconcileOpenwebuiManagedConfigViaAdminDetailed(
+  jwt: string,
+  desired: OpenWebuiManagedConfig,
+  hostPort?: number,
+): Promise<
+  | { ok: true; result: OpenWebuiConfigReconcileResult }
+  | { ok: false; step: 'getConfig' | 'saveConfig'; status: number; bodyPreview: string; reason: string }
+> {
+  const read = await getConfigDetailed(jwt, hostPort);
+  if (!read.ok) {
+    return { ok: false, step: 'getConfig', status: read.status, bodyPreview: read.bodyPreview, reason: read.reason };
+  }
 
-  if (!await saveConfig(jwt, result.config, hostPort)) return null;
-  return result;
+  const result = reconcileOpenwebuiManagedConfig(read.config, desired);
+  if (!result.changed) return { ok: true, result };
+
+  const save = await saveConfigDetailed(jwt, result.config, hostPort);
+  if (!save.ok) {
+    return { ok: false, step: 'saveConfig', status: save.status, bodyPreview: save.bodyPreview, reason: save.reason };
+  }
+  return { ok: true, result };
 }
 
 /**

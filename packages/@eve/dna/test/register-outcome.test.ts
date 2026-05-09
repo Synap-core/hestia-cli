@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const waitForHealthDetailedMock = vi.fn();
 const getAdminJwtPostHealthDetailedMock = vi.fn();
 const probeAdminAuthMock = vi.fn();
-const reconcileMock = vi.fn();
+const reconcileDetailedMock = vi.fn();
 const registerPipelineMock = vi.fn();
 
 vi.mock('../src/openwebui-admin.js', async (importOriginal) => {
@@ -16,7 +16,7 @@ vi.mock('../src/openwebui-admin.js', async (importOriginal) => {
     waitForHealthDetailed: (...args: unknown[]) => waitForHealthDetailedMock(...args),
     getAdminJwtPostHealthDetailed: () => getAdminJwtPostHealthDetailedMock(),
     probeAdminAuth: (...args: unknown[]) => probeAdminAuthMock(...args),
-    reconcileOpenwebuiManagedConfigViaAdmin: (...args: unknown[]) => reconcileMock(...args),
+    reconcileOpenwebuiManagedConfigViaAdminDetailed: (...args: unknown[]) => reconcileDetailedMock(...args),
     registerPipeline: (...args: unknown[]) => registerPipelineMock(...args),
   };
 });
@@ -30,7 +30,7 @@ describe('registerOpenwebuiAdminApi → RegisterOutcome', () => {
     waitForHealthDetailedMock.mockReset();
     getAdminJwtPostHealthDetailedMock.mockReset();
     probeAdminAuthMock.mockReset();
-    reconcileMock.mockReset();
+    reconcileDetailedMock.mockReset();
     registerPipelineMock.mockReset();
   });
 
@@ -98,7 +98,7 @@ describe('registerOpenwebuiAdminApi → RegisterOutcome', () => {
       expect(r.stage).toBe('jwt-rejected');
       expect(r.reason).toContain('401');
     }
-    expect(reconcileMock).not.toHaveBeenCalled();
+    expect(reconcileDetailedMock).not.toHaveBeenCalled();
   });
 
   it('stage="jwt-rejected" also fires on 403', async () => {
@@ -114,25 +114,57 @@ describe('registerOpenwebuiAdminApi → RegisterOutcome', () => {
     }
   });
 
-  it('stage="reconcile" when probe is reachable but config save returns null', async () => {
+  it('stage="reconcile" surfaces getConfig HTTP status + body preview', async () => {
     waitForHealthDetailedMock.mockResolvedValue({ ok: true, baseUrl: 'http://127.0.0.1:3011' });
     getAdminJwtPostHealthDetailedMock.mockResolvedValue({ ok: true, jwt: 'forged' });
     probeAdminAuthMock.mockResolvedValue({ ok: true, status: 200, body: '{}' });
-    reconcileMock.mockResolvedValue(null);
+    reconcileDetailedMock.mockResolvedValue({
+      ok: false,
+      step: 'getConfig',
+      status: 200,
+      bodyPreview: '<!DOCTYPE html><html...',
+      reason: 'OWUI returned HTML at /api/v1/configs/ (likely SPA shell)',
+    });
 
     const r = await registerOpenwebuiAdminApi(SOURCES, {});
 
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.stage).toBe('reconcile');
+      expect(r.reason).toContain('getConfig failed');
+      expect(r.reason).toContain('HTML');
+      expect(r.reason).toContain('<!DOCTYPE');
     }
   });
 
-  it('stage="reconcile" when reconcile throws', async () => {
+  it('stage="reconcile" surfaces saveConfig 4xx body', async () => {
     waitForHealthDetailedMock.mockResolvedValue({ ok: true, baseUrl: 'http://127.0.0.1:3011' });
     getAdminJwtPostHealthDetailedMock.mockResolvedValue({ ok: true, jwt: 'forged' });
     probeAdminAuthMock.mockResolvedValue({ ok: true, status: 200, body: '{}' });
-    reconcileMock.mockRejectedValue(new Error('connection reset'));
+    reconcileDetailedMock.mockResolvedValue({
+      ok: false,
+      step: 'saveConfig',
+      status: 422,
+      bodyPreview: '{"detail":"field foo is read-only"}',
+      reason: 'HTTP 422',
+    });
+
+    const r = await registerOpenwebuiAdminApi(SOURCES, {});
+
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.stage).toBe('reconcile');
+      expect(r.reason).toContain('saveConfig failed');
+      expect(r.reason).toContain('422');
+      expect(r.reason).toContain('read-only');
+    }
+  });
+
+  it('stage="reconcile" when reconcile throws unexpectedly', async () => {
+    waitForHealthDetailedMock.mockResolvedValue({ ok: true, baseUrl: 'http://127.0.0.1:3011' });
+    getAdminJwtPostHealthDetailedMock.mockResolvedValue({ ok: true, jwt: 'forged' });
+    probeAdminAuthMock.mockResolvedValue({ ok: true, status: 200, body: '{}' });
+    reconcileDetailedMock.mockRejectedValue(new Error('connection reset'));
 
     const r = await registerOpenwebuiAdminApi(SOURCES, {});
 
@@ -147,7 +179,10 @@ describe('registerOpenwebuiAdminApi → RegisterOutcome', () => {
     waitForHealthDetailedMock.mockResolvedValue({ ok: true, baseUrl: 'http://127.0.0.1:3011' });
     getAdminJwtPostHealthDetailedMock.mockResolvedValue({ ok: true, jwt: 'forged' });
     probeAdminAuthMock.mockResolvedValue({ ok: true, status: 200, body: '{}' });
-    reconcileMock.mockResolvedValue({ config: {}, changed: true, changedKeys: ['openai'] });
+    reconcileDetailedMock.mockResolvedValue({
+      ok: true,
+      result: { config: {}, changed: true, changedKeys: ['openai'] },
+    });
 
     const r = await registerOpenwebuiAdminApi(SOURCES, {});
 

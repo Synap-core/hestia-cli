@@ -176,6 +176,10 @@ export {
   type StateCoherenceOptions,
 } from './doctor-state-coherence.js';
 
+// postMessage origin allowlist — used by the Eve dashboard app-pane to
+// validate incoming synap:ready requests before posting session tokens.
+export { isAllowedEmbedOrigin } from './allowed-origins.js';
+
 // Agent registry — single source of truth for which Synap agents Eve
 // provisions on the pod (eve, openclaw, hermes, openwebui-pipelines, coder).
 export {
@@ -303,6 +307,9 @@ export {
   registerModelSource,
   reconcileOpenwebuiManagedConfig,
   reconcileOpenwebuiManagedConfigViaAdmin,
+  reconcileOpenwebuiManagedConfigViaAdminDetailed,
+  getConfigDetailed,
+  saveConfigDetailed,
   upsertAllModelSources,
 } from './openwebui-admin.js';
 

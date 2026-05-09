@@ -8,6 +8,34 @@
  *     Optional. Cleared via `signOutOfControlPlane()`.
  *   • **Pod layer** — Per-pod Kratos session (`synap:pods` map keyed by
  *     pod URL). One entry per pod the user has connected to. Cleared
+ *
+ * ## iFrame postMessage handshake
+ *
+ * Apps embedded in an Eve `AppPane` receive their session via postMessage
+ * because iFrame origins cannot read the parent's localStorage and
+ * cross-origin cookies are blocked by SameSite=Lax. The protocol:
+ *
+ *   Phase 1 — proactive push (AppPane `onLoad`):
+ *     Eve  →  app : { type: "synap:auth", session: SharedSession }
+ *
+ *   Phase 2 — on-demand pull (if the app misses phase 1):
+ *     app  →  Eve : { type: "synap:ready" }
+ *     Eve  →  app : { type: "synap:auth", session: SharedSession }
+ *
+ * Security: Eve only posts sessions to origins in `isAllowedEmbedOrigin`
+ * (`@eve/dna`), always using the exact target origin, never `"*"`.
+ *
+ * Child-side receiver pattern (in each embedded app):
+ *
+ *   ```ts
+ *   // Request session if not already stored
+ *   window.parent.postMessage({ type: "synap:ready" }, "*");
+ *   window.addEventListener("message", (e) => {
+ *     if (e.data?.type !== "synap:auth") return;
+ *     const { session } = e.data as { session: SharedSession };
+ *     if (session?.sessionToken) storeSharedSession(session);
+ *   });
+ *   ```
  *     per-pod via `signOutOfPod(podUrl)`.
  *
  * A user may have CP only, pod only, both, or neither. Sign-out from

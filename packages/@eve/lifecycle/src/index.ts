@@ -58,7 +58,7 @@ import {
   installDashboardContainer,
   uninstallDashboardContainer,
 } from "@eve/legs";
-import { runSynapCli, reconcileEveEnv } from "@eve/brain";
+import { runSynapCli, reconcileEveEnv, backupPodSecrets, restorePodSecrets } from "@eve/brain";
 import {
   reconcileOpenclawConfig,
   type OpenclawReconcileResult,
@@ -618,17 +618,33 @@ async function* runDelegatePlan(
     };
   }
 
-  // Reconcile eve-specific .env vars BEFORE the synap CLI runs. The CLI's
-  // `cmd_update` does `compose up -d backend realtime ...` after migrate,
-  // which recreates the container if .env content has changed. Healing
-  // here means the new container boots with PROVISIONING_TOKEN intact and
-  // without the legacy KRATOS_CONFIG_DIR=./config/kratos that breaks the
-  // canonical kratos bind mount.
+  // Pre-CLI .env reconciliation:
+  //   1. Strip legacy KRATOS_CONFIG_DIR=./config/kratos (eve-flat-layout artefact).
+  //   2. Restore pod-critical secrets from `secrets.json:synap.podSecrets` if
+  //      the .env is missing them — protects against a half-migrated stub .env
+  //      whose blank POSTGRES_PASSWORD would lock the postgres volume forever.
+  // The CLI's `cmd_update` ends with `compose up -d backend realtime ...`,
+  // which recreates the container if .env content changed — so healing here
+  // means the new container boots with the right env.
   const envPath = join(plan.cwd, ".env");
   if (existsSync(envPath)) {
     const dirty = reconcileEveEnv(envPath);
     if (dirty) {
       yield { type: "log", line: "Reconciled eve-specific .env vars before delegating" };
+    }
+    try {
+      const restored = await restorePodSecrets(envPath);
+      if (restored.restored.length > 0) {
+        yield {
+          type: "log",
+          line: `Restored ${restored.restored.length} pod secret(s) from eve backup: ${restored.restored.join(", ")}`,
+        };
+      }
+    } catch (err) {
+      yield {
+        type: "log",
+        line: `Pod-secrets restore failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
+      };
     }
   }
 
@@ -648,6 +664,26 @@ async function* runDelegatePlan(
       message: `synap ${plan.subcommand} exited ${result.exitCode}${result.stderr ? `: ${result.stderr}` : ""}`,
     };
     return;
+  }
+
+  // Refresh the eve-side backup of pod-critical secrets. Best-effort; never
+  // fails the delegate. Synap CLI's cmd_update may have rotated values
+  // (e.g. SYNAP_SERVICE_ENCRYPTION_KEY self-heal); capture the current state.
+  if (existsSync(envPath)) {
+    try {
+      const captured = await backupPodSecrets(envPath);
+      if (captured.captured.length > 0) {
+        yield {
+          type: "log",
+          line: `Refreshed pod-secrets backup (${captured.captured.length} key(s) captured)`,
+        };
+      }
+    } catch (err) {
+      yield {
+        type: "log",
+        line: `Pod-secrets backup failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
   }
 
   if (plan.pruneImages) {

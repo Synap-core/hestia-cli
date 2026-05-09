@@ -32,7 +32,7 @@
     "runtime": null
   },
   "build": {
-    "buildCommand": "cd /Users/antoine/Documents/Code/synap/hestia-cli/packages/@eve/dna && pnpm build 2>&1 | tail -8",
+    "buildCommand": "cd /Users/antoine/Documents/Code/synap/hestia-cli/packages/@eve/dna && pnpm build 2>&1 | tail -5",
     "testCommand": "npm test",
     "lintCommand": null,
     "devCommand": "npm run dev",
