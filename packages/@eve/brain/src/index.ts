@@ -9,6 +9,7 @@ export { SynapService, type SynapHealth } from './lib/synap.js';
 export { resolveSynapDelegate, type SynapDelegatePaths } from './lib/synap-delegate.js';
 export {
   runSynapCli,
+  toPodFqdn,
   type SynapCliSubcommand,
   type RunSynapCliOptions,
   type SynapCliResult,

@@ -129,6 +129,7 @@ export async function POST(req: Request) {
     ok: true,
     sessionToken,
     expiresAt,
+    podUrl: context.podUrl,
     user: {
       id: identity?.id ?? "",
       email: userEmail,

@@ -211,7 +211,14 @@ async function buildUpdateTargets(deployDir: string | undefined): Promise<Update
       id: 'synap',
       label: '🧠 Synap Data Pod',
       update: async () => {
-        const result = runSynapCli('update', ['--from-image'], { refreshGit: true });
+        // Resolve the bare root domain so the CLI heals an existing .env
+        // whose DOMAIN= line was written before eve enforced the pod FQDN.
+        const secrets = await readEveSecrets().catch(() => null);
+        const bareDomain = secrets?.domain?.primary;
+        const result = runSynapCli('update', ['--from-image'], {
+          refreshGit: true,
+          domain: bareDomain,
+        });
         if (!result.ok) {
           throw new Error(
             `synap update exited ${result.exitCode}` +

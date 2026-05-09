@@ -45,6 +45,7 @@ import {
   ensureOpenWebuiBootstrapSecrets,
   writeOpenwebuiEnv,
   appendOperationalEvent,
+  configStore,
   findPodDeployDir,
   type OpenwebuiStatus,
   type ComponentInfo,
@@ -213,6 +214,12 @@ interface UpdatePlan {
     ensureOverride?: () => EnsureOverrideResult;
     /** Pull the synap-backend git checkout before invoking the CLI. */
     refreshGit?: boolean;
+    /**
+     * Resolve the bare root domain from eve state at runtime. When set,
+     * `runDelegatePlan` derives the pod FQDN (`pod.<root>`) and passes it
+     * to the synap CLI — heals .env files written before the FQDN fix.
+     */
+    resolveDomain?: () => Promise<string | undefined>;
     /** Same prune policy as the compose branch — applied AFTER the CLI returns. */
     pruneImages?: { repositories: string[]; keep?: number };
   };
@@ -266,6 +273,12 @@ const UPDATE_PLAN: Record<string, UpdatePlan> = {
       // starts with the binding already in place.
       ensureOverride: () => ensureSynapLoopbackOverride("/opt/synap-backend/deploy"),
       refreshGit: true,
+      // Heal `.env` if it was written with the bare root domain instead of
+      // the pod FQDN. Reads from the centralised configStore at runtime.
+      resolveDomain: async () => {
+        const secrets = await configStore.get();
+        return secrets?.domain?.primary;
+      },
       // synap-backend, backend-canary, backend-migrate, realtime — all
       // share the same `ghcr.io/synap-core/backend` image. pod-agent
       // ships separately. Keep three so the user can still roll back
@@ -590,6 +603,17 @@ async function* runDelegatePlan(
   // CLI runs so the delegate is self-recovering.
   yield* ensureEveNetwork();
 
+  // Resolve the bare root domain so runSynapCli can heal an existing .env
+  // whose DOMAIN= line was written before eve enforced the pod FQDN
+  // convention. No-op when no resolver is configured.
+  const bareDomain = plan.resolveDomain ? await plan.resolveDomain() : undefined;
+  if (plan.resolveDomain && !bareDomain) {
+    yield {
+      type: "log",
+      line: "No domain in eve secrets — synap CLI will use whatever DOMAIN is already in .env",
+    };
+  }
+
   yield {
     type: "log",
     line: `Delegating ${comp.label} ${plan.subcommand} to synap CLI…`,
@@ -597,6 +621,7 @@ async function* runDelegatePlan(
 
   const result = runSynapCli(plan.subcommand, plan.args ?? [], {
     refreshGit: plan.refreshGit,
+    domain: bareDomain,
   });
 
   if (!result.ok) {

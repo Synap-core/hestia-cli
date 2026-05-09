@@ -1,24 +1,5 @@
 "use client";
 
-/**
- * /setup/pair-pod — First-launch pod pairing wizard.
- *
- * The auth callback redirects here when the user just signed in to Synap CP
- * and no pod is paired yet (`/api/pod/pairing-status` returns anything other
- * than "paired" or "needs-refresh").
- *
- * Returning users (already paired) are bounced back to `/` on mount.
- *
- * Flow:
- *   1. Fetch the user's pods from CP via GET /api/auth/cp/pods.
- *   2. Show pods as selectable cards; each "Connect" CTA calls
- *      POST /api/pod/claim with that pod's URL.
- *   3. On success → redirect to /.
- *   4. If the user has no pods yet → offer "Create a free pod" link.
- *
- * See: synap-team-docs/content/team/platform/eve-os-roadmap.mdx §2.1
- */
-
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Spinner } from "@heroui/react";
@@ -26,6 +7,8 @@ import {
   AlertCircle,
   CheckCircle2,
   ExternalLink,
+  Eye,
+  EyeOff,
   Plus,
   Server,
 } from "lucide-react";
@@ -55,12 +38,23 @@ interface ClaimResponse {
   message?: string;
 }
 
+interface KratosAuthResponse {
+  ok?: boolean;
+  sessionToken?: string;
+  expiresAt?: string;
+  podUrl?: string;
+  user?: { id: string; email: string; name: string };
+  error?: string;
+  messages?: string[];
+}
+
 type Phase =
   | { kind: "loading" }
-  | { kind: "selecting"; pods: CpPod[] }
+  | { kind: "kratos" }
+  | { kind: "with-cp"; pods: CpPod[] }
   | { kind: "claiming"; podUrl: string }
   | { kind: "success"; podUrl: string }
-  | { kind: "error"; message: string };
+  | { kind: "error"; message: string; retryKind: "kratos" | "cp" };
 
 // ─── CP pods helper ───────────────────────────────────────────────────────────
 
@@ -101,7 +95,6 @@ function PairPodInner() {
   const ranRef = useRef(false);
 
   const init = useCallback(async () => {
-    // Already paired? Skip straight to the OS.
     try {
       const res = await fetch("/api/pod/pairing-status", {
         credentials: "include",
@@ -117,11 +110,10 @@ function PairPodInner() {
         }
       }
     } catch {
-      // Can't check — proceed to selection.
+      // Can't check — proceed.
     }
 
-    const pods = await fetchCpPods();
-    setPhase({ kind: "selecting", pods });
+    setPhase({ kind: "kratos" });
   }, [router]);
 
   useEffect(() => {
@@ -129,6 +121,52 @@ function PairPodInner() {
     ranRef.current = true;
     void init();
   }, [init]);
+
+  async function handleKratosSubmit(
+    email: string,
+    password: string,
+    mode: "login" | "registration",
+    name?: string,
+  ): Promise<string | null> {
+    try {
+      const res = await fetch("/api/pod/kratos-auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ mode, email, password, name }),
+      });
+
+      const data = (await res.json().catch(() => null)) as KratosAuthResponse | null;
+
+      if (!res.ok || !data?.ok) {
+        if (data?.error === "pod-url-not-configured") {
+          return "Pod URL is not configured. Run 'eve setup' on the host to point Eve at a pod first.";
+        }
+        if (data?.error === "validation" || data?.error === "kratos-error") {
+          return data.messages?.join(" ") ?? "Authentication failed.";
+        }
+        return data?.messages?.join(" ") ?? "Authentication failed.";
+      }
+
+      storePodSession({
+        podUrl: data.podUrl ?? "",
+        sessionToken: data.sessionToken ?? "",
+        userEmail: data.user?.email ?? email,
+        userId: data.user?.id ?? "",
+      });
+
+      setPhase({ kind: "success", podUrl: data.podUrl ?? "" });
+      setTimeout(() => router.replace("/"), 900);
+      return null;
+    } catch (err) {
+      return err instanceof Error ? err.message : "Couldn't reach the dashboard API.";
+    }
+  }
+
+  async function handleLoadCpPods() {
+    const pods = await fetchCpPods();
+    setPhase({ kind: "with-cp", pods });
+  }
 
   async function handleClaim(podUrl: string) {
     setPhase({ kind: "claiming", podUrl });
@@ -147,11 +185,10 @@ function PairPodInner() {
       const data = (await res.json().catch(() => null)) as ClaimResponse | null;
 
       if (!res.ok || !data?.ok) {
-        setPhase({ kind: "error", message: mapClaimError(data?.error, data?.detail ?? data?.message) });
+        setPhase({ kind: "error", message: mapClaimError(data?.error, data?.detail ?? data?.message), retryKind: "cp" });
         return;
       }
 
-      // Mirror into synap:pods so other Synap surfaces on this domain see it.
       if (data.podUrl && data.sessionToken && sharedSession) {
         storePodSession({
           podUrl: data.podUrl,
@@ -168,18 +205,20 @@ function PairPodInner() {
     } catch (err) {
       setPhase({
         kind: "error",
-        message:
-          err instanceof Error
-            ? err.message
-            : "Couldn't reach the dashboard API.",
+        message: err instanceof Error ? err.message : "Couldn't reach the dashboard API.",
+        retryKind: "cp",
       });
     }
   }
 
   function handleRetry() {
     ranRef.current = false;
-    setPhase({ kind: "loading" });
-    void init();
+    if (phase.kind === "error" && phase.retryKind === "cp") {
+      setPhase({ kind: "loading" });
+      void init();
+    } else {
+      setPhase({ kind: "kratos" });
+    }
   }
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -188,6 +227,14 @@ function PairPodInner() {
     return (
       <PageShell>
         <LoadingCard />
+      </PageShell>
+    );
+  }
+
+  if (phase.kind === "kratos") {
+    return (
+      <PageShell>
+        <KratosForm onSubmit={handleKratosSubmit} onSwitchToCp={handleLoadCpPods} />
       </PageShell>
     );
   }
@@ -251,13 +298,12 @@ function PairPodInner() {
     );
   }
 
-  // Selecting phase
+  // with-cp phase
   const { pods } = phase;
 
   return (
     <PageShell>
       <div className="w-full max-w-md space-y-5">
-        {/* Header */}
         <div className="flex flex-col items-center gap-3 text-center">
           <span
             aria-hidden
@@ -274,8 +320,16 @@ function PairPodInner() {
           </p>
         </div>
 
-        {/* Pod list + create */}
         <div className="rounded-2xl border border-divider bg-content1 p-5 sm:p-6 space-y-3">
+          <Button
+            variant="light"
+            size="sm"
+            onPress={() => setPhase({ kind: "kratos" })}
+            className="text-foreground/50 px-0"
+          >
+            ← Back to direct sign-in
+          </Button>
+
           {pods.length > 0 && (
             <>
               <p className="text-[11px] uppercase tracking-[0.06em] font-medium text-foreground/40 mb-1">
@@ -297,7 +351,6 @@ function PairPodInner() {
             </>
           )}
 
-          {/* Create a free pod */}
           <a
             href="https://synap.live"
             target="_blank"
@@ -343,6 +396,180 @@ function PairPodInner() {
         </div>
       </div>
     </PageShell>
+  );
+}
+
+// ─── KratosForm ───────────────────────────────────────────────────────────────
+
+function KratosForm({
+  onSubmit,
+  onSwitchToCp,
+}: {
+  onSubmit: (
+    email: string,
+    password: string,
+    mode: "login" | "registration",
+    name?: string,
+  ) => Promise<string | null>;
+  onSwitchToCp: () => void;
+}) {
+  const [mode, setMode] = useState<"login" | "registration">("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    const result = await onSubmit(email, password, mode, mode === "registration" ? name : undefined);
+    if (result !== null) {
+      setError(result);
+    }
+    setSubmitting(false);
+  }
+
+  return (
+    <div className="w-full max-w-md rounded-2xl border border-divider bg-content1 p-8 space-y-6">
+      <div className="flex flex-col items-center gap-3 text-center">
+        <span
+          aria-hidden
+          className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 ring-1 ring-inset ring-primary/20 text-primary"
+        >
+          <Server className="h-6 w-6" strokeWidth={1.8} />
+        </span>
+        <h1 className="font-heading text-[24px] font-medium leading-tight tracking-tight text-foreground">
+          {mode === "login" ? "Sign in to your pod" : "Create a pod account"}
+        </h1>
+        <p className="text-[13px] text-foreground/55 max-w-[22rem]">
+          {mode === "login"
+            ? "Enter your credentials to connect Eve to your pod."
+            : "Create an account on your pod."}
+        </p>
+      </div>
+
+      <form onSubmit={(e) => void handleSubmit(e)} className="space-y-3">
+        {mode === "registration" && (
+          <div className="space-y-1.5">
+            <label className="block text-xs font-medium text-foreground/60">
+              Name
+            </label>
+            <div className={`group flex items-center gap-2 rounded-lg border bg-content2 px-3 transition-colors ${error ? "border-danger/60" : "border-divider focus-within:border-primary/60"}`}>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                autoComplete="name"
+                className="flex-1 min-w-0 bg-transparent border-0 outline-none py-3 text-sm text-foreground"
+              />
+            </div>
+          </div>
+        )}
+
+        <div className="space-y-1.5">
+          <label className="block text-xs font-medium text-foreground/60">
+            Email
+          </label>
+          <div className={`group flex items-center gap-2 rounded-lg border bg-content2 px-3 transition-colors ${error ? "border-danger/60" : "border-divider focus-within:border-primary/60"}`}>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
+              required
+              className="flex-1 min-w-0 bg-transparent border-0 outline-none py-3 text-sm text-foreground"
+            />
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <label className="block text-xs font-medium text-foreground/60">
+            Password
+          </label>
+          <div className={`group flex items-center gap-2 rounded-lg border bg-content2 px-3 transition-colors ${error ? "border-danger/60" : "border-divider focus-within:border-primary/60"}`}>
+            <input
+              type={showPassword ? "text" : "password"}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete={mode === "login" ? "current-password" : "new-password"}
+              required
+              className="flex-1 min-w-0 bg-transparent border-0 outline-none py-3 text-sm text-foreground"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              className="shrink-0 text-foreground/40 hover:text-foreground/70 transition-colors"
+              aria-label={showPassword ? "Hide password" : "Show password"}
+            >
+              {showPassword ? (
+                <EyeOff className="h-4 w-4" />
+              ) : (
+                <Eye className="h-4 w-4" />
+              )}
+            </button>
+          </div>
+        </div>
+
+        {error && (
+          <p className="text-xs text-danger" role="alert">
+            {error}
+          </p>
+        )}
+
+        <Button
+          type="submit"
+          color="primary"
+          size="lg"
+          radius="md"
+          className="w-full"
+          isLoading={submitting}
+        >
+          {mode === "login" ? "Sign in" : "Create account"}
+        </Button>
+
+        <div className="text-center text-sm text-default-500">
+          {mode === "login" ? (
+            <>
+              Don&apos;t have an account?{" "}
+              <Button
+                variant="light"
+                size="sm"
+                onPress={() => { setMode("registration"); setError(null); }}
+              >
+                Register
+              </Button>
+            </>
+          ) : (
+            <>
+              Already have one?{" "}
+              <Button
+                variant="light"
+                size="sm"
+                onPress={() => { setMode("login"); setError(null); }}
+              >
+                Sign in
+              </Button>
+            </>
+          )}
+        </div>
+
+        <div className="border-t border-divider/60" />
+
+        <Button
+          variant="light"
+          size="sm"
+          radius="md"
+          className="w-full text-foreground/40 text-[12px]"
+          onPress={onSwitchToCp}
+        >
+          <Server className="h-3.5 w-3.5" />
+          Connect via Synap CP
+        </Button>
+      </form>
+    </div>
   );
 }
 

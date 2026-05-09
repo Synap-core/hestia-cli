@@ -126,8 +126,8 @@
   "hotPaths": [
     {
       "path": "packages/@eve/lifecycle/src/index.ts",
-      "accessCount": 136,
-      "lastAccessed": 1778353987280,
+      "accessCount": 142,
+      "lastAccessed": 1778354674388,
       "type": "file"
     },
     {
@@ -239,16 +239,16 @@
       "type": "directory"
     },
     {
+      "path": "packages/@eve/brain/src/index.ts",
+      "accessCount": 5,
+      "lastAccessed": 1778354588365,
+      "type": "file"
+    },
+    {
       "path": "packages/@eve/brain/src/lib/ollama.ts",
       "accessCount": 4,
       "lastAccessed": 1778238319348,
       "type": "directory"
-    },
-    {
-      "path": "packages/@eve/brain/src/index.ts",
-      "accessCount": 4,
-      "lastAccessed": 1778246130329,
-      "type": "file"
     },
     {
       "path": "packages/eve-dashboard/app/api/pod/auto-provision/route.ts",

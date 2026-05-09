@@ -11,8 +11,43 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { resolveSynapDelegate, type SynapDelegatePaths } from './synap-delegate.js';
+
+/**
+ * Eve convention: the synap pod is reachable at `pod.<root>` where `<root>`
+ * is the bare domain stored in `secrets.domain.primary`. The synap CLI's
+ * `generate_kratos_config` does NOT add this prefix — it templates URLs as
+ * `https://${domain}/...`. So eve must pass the FQDN, not the bare root.
+ *
+ * Idempotent: a value that already starts with `pod.` is returned unchanged.
+ * `localhost` and IP literals are returned unchanged (no subdomain concept).
+ */
+export function toPodFqdn(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed || trimmed === 'localhost') return trimmed;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(trimmed)) return trimmed; // IPv4 literal
+  if (trimmed.startsWith('pod.')) return trimmed;
+  return `pod.${trimmed}`;
+}
+
+/**
+ * Rewrite (or append) a `DOMAIN=...` line in a `.env` file. Used to repair
+ * existing installs whose .env was written with the bare root instead of the
+ * pod FQDN before this fix landed.
+ */
+function rewriteEnvDomain(envPath: string, fqdn: string): boolean {
+  if (!existsSync(envPath)) return false;
+  const current = readFileSync(envPath, 'utf-8');
+  const existing = current.match(/^DOMAIN=(.*)$/m)?.[1]?.trim();
+  if (existing === fqdn) return false;
+  const next = current.match(/^DOMAIN=.*$/m)
+    ? current.replace(/^DOMAIN=.*$/m, `DOMAIN=${fqdn}`)
+    : `${current}${current.endsWith('\n') ? '' : '\n'}DOMAIN=${fqdn}\n`;
+  writeFileSync(envPath, next, { encoding: 'utf-8', mode: 0o600 });
+  return true;
+}
 
 export type SynapCliSubcommand =
   | 'install'
@@ -93,6 +128,15 @@ export function runSynapCli(
     refreshGitCheckout(paths.repoRoot);
   }
 
+  // When the caller supplies a domain, ensure the value matches eve's pod
+  // FQDN convention (pod.<root>) and rewrite the .env's DOMAIN= line to
+  // match. The CLI's `cmd_update` regenerates kratos.yml from .env every
+  // run, so a wrong DOMAIN= here yields wrong kratos URLs.
+  if (options.domain) {
+    const fqdn = toPodFqdn(options.domain);
+    rewriteEnvDomain(join(paths.deployDir, '.env'), fqdn);
+  }
+
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     SYNAP_DEPLOY_DIR: paths.deployDir,
@@ -100,7 +144,7 @@ export function runSynapCli(
     SYNAP_NON_INTERACTIVE: '1',
   };
   if (options.domain) {
-    env.DOMAIN = options.domain;
+    env.DOMAIN = toPodFqdn(options.domain);
   }
 
   const inherit = options.inherit !== false;

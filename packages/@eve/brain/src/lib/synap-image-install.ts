@@ -7,7 +7,7 @@ import {
   pruneOldImagesForRepo,
   discoverAndBackfillPodConfig,
 } from '@eve/dna';
-import { runSynapCli } from './synap-cli-delegate.js';
+import { runSynapCli, toPodFqdn } from './synap-cli-delegate.js';
 
 const SYNAP_BACKEND_REPO = 'https://github.com/synap-core/backend.git';
 
@@ -91,13 +91,18 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
   const repoRoot = opts.deployDir ?? '/opt/synap-backend';
   const composeDir = join(repoRoot, 'deploy');
 
-  let domain = opts.domain ?? 'localhost';
-  if (domain === 'localhost') {
+  // Resolve the bare root domain (eve convention: `secrets.domain.primary`
+  // and discovery both return the bare root, e.g. `team.thearchitech.xyz`).
+  let bareDomain = opts.domain ?? 'localhost';
+  if (bareDomain === 'localhost') {
     const discovered = await discoverAndBackfillPodConfig(process.cwd());
     if (discovered.domain) {
-      domain = discovered.domain;
+      bareDomain = discovered.domain;
     }
   }
+  // The pod is reachable at `pod.<root>`. The synap CLI templates kratos URLs
+  // as `https://${domain}/...` without prefixing — eve must pass the FQDN.
+  const podDomain = toPodFqdn(bareDomain);
 
   const adminBootstrapMode = opts.adminBootstrapMode ?? 'token';
 
@@ -134,7 +139,7 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
     '--from-image',
     '--non-interactive',
     '--dir', repoRoot,
-    '--domain', domain,
+    '--domain', podDomain,
     '--admin-bootstrap-mode', adminBootstrapMode,
   ];
   if (opts.email) cliArgs.push('--email', opts.email);
