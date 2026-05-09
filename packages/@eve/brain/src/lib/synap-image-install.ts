@@ -8,6 +8,7 @@ import {
   discoverAndBackfillPodConfig,
 } from '@eve/dna';
 import { runSynapCli, toPodFqdn } from './synap-cli-delegate.js';
+import { backupPodSecrets, restorePodSecrets } from './pod-secrets-backup.js';
 
 const SYNAP_BACKEND_REPO = 'https://github.com/synap-core/backend.git';
 
@@ -144,15 +145,20 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
   const existingToken = existingEnv.match(/^ADMIN_BOOTSTRAP_TOKEN=(.+)$/m)?.[1];
   const bootstrapToken = existingToken?.trim() ?? gen(16);
 
-  // 3b. Reconcile eve-specific .env vars BEFORE the synap CLI runs. When
-  //     .env exists, the canonical CLI's non-interactive branch preserves
-  //     the file and only mutates 9 specific vars — so eve must inject
-  //     PROVISIONING_TOKEN (and strip the legacy KRATOS_CONFIG_DIR) here,
-  //     so the backend container boots with the correct env on first up.
-  //     For fresh installs (.env missing), this is a no-op; we'll heal
-  //     after the CLI creates the file in step 5.
+  // 3b. Pre-CLI .env reconciliation when .env exists. Two concerns:
+  //     a) Strip legacy KRATOS_CONFIG_DIR=./config/kratos (eve-flat-layout
+  //        artefact) so the canonical compose default (../kratos) takes over.
+  //     b) Restore pod-critical secrets from `secrets.json:synap.podSecrets`
+  //        if the existing .env is missing them. Protects against a half-
+  //        migrated .env (DOMAIN set, secrets blank) corrupting volume access.
+  //     For fresh installs (.env missing), step 5 below captures the freshly-
+  //     generated secrets after the synap CLI creates them.
   if (envExisted) {
     reconcileEveEnv(envPath);
+    const restored = await restorePodSecrets(envPath);
+    if (restored.restored.length > 0) {
+      console.log(`  Restored ${restored.restored.length} pod secret(s) from eve backup: ${restored.restored.join(', ')}`);
+    }
   }
 
   // 4. Delegate the actual install to the canonical synap CLI. It owns
@@ -180,10 +186,19 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
     );
   }
 
-  // (No post-CLI .env reconciliation needed — synap CLI's `cmd_install`
-  // generates PROVISIONING_TOKEN on fresh installs and `cmd_update`
-  // self-heals it on updates. Eve's pre-CLI step covered legacy
-  // KRATOS_CONFIG_DIR cleanup, which is a one-time migration concern.)
+  // 5. Capture pod-critical secrets to eve's secrets.json so a future .env
+  //    loss can be repaired. POSTGRES_PASSWORD / KRATOS_* / MINIO_* /
+  //    TYPESENSE_* / etc. index existing volume data — losing them locks
+  //    the volumes permanently. Best-effort: a backup write failure should
+  //    never fail the install.
+  try {
+    const captured = await backupPodSecrets(envPath);
+    if (captured.captured.length > 0) {
+      console.log(`  Backed up ${captured.captured.length} pod secret(s) to secrets.json:synap.podSecrets`);
+    }
+  } catch (err) {
+    console.warn(`  Could not back up pod secrets: ${err instanceof Error ? err.message : String(err)} (continuing — recovery from .env loss won't be available until next install/update)`);
+  }
 
   // 6. Connect to eve-network so Traefik can route to the backend. The
   //    synap CLI waited for container health before returning, so the

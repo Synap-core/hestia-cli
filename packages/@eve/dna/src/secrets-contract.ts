@@ -101,6 +101,35 @@ const SecretsSchema = z.object({
       apiKey: z.string().optional(),
       /** Full Hub base URL; if unset, Eve derives `${apiUrl}/api/hub` */
       hubBaseUrl: z.string().optional(),
+      /**
+       * Backup of pod-critical secrets from `<repoRoot>/deploy/.env`.
+       * Refreshed on every successful `eve install/update synap`. If the
+       * pod's .env is ever lost or corrupted, eve restores these values
+       * BEFORE delegating to the synap CLI — without this backup, a lost
+       * POSTGRES_PASSWORD permanently locks the postgres volume's data.
+       *
+       * Only secrets that index existing volume data live here. Operator-
+       * configured values (DOMAIN, ADMIN_EMAIL, ADMIN_BOOTSTRAP_TOKEN,
+       * BACKEND_VERSION, LETSENCRYPT_EMAIL) are NOT mirrored — those are
+       * either operator decisions or self-healing on the synap CLI side.
+       */
+      podSecrets: z
+        .object({
+          POSTGRES_PASSWORD: z.string().optional(),
+          JWT_SECRET: z.string().optional(),
+          KRATOS_SECRETS_COOKIE: z.string().optional(),
+          KRATOS_SECRETS_CIPHER: z.string().optional(),
+          KRATOS_WEBHOOK_SECRET: z.string().optional(),
+          MINIO_ACCESS_KEY: z.string().optional(),
+          MINIO_SECRET_KEY: z.string().optional(),
+          TYPESENSE_API_KEY: z.string().optional(),
+          TYPESENSE_ADMIN_API_KEY: z.string().optional(),
+          ORY_HYDRA_SECRETS_SYSTEM: z.string().optional(),
+          SYNAP_SERVICE_ENCRYPTION_KEY: z.string().optional(),
+          PROVISIONING_TOKEN: z.string().optional(),
+          backedUpAt: z.string().optional(),
+        })
+        .optional(),
     })
     .optional(),
   /**

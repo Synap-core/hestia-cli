@@ -18,6 +18,7 @@ export { execa, ensureNetwork } from './lib/exec.js';
 export { OllamaService, type AIModelStatus } from './lib/ollama.js';
 export { ModelService, type ProviderModel, type ProviderModels } from './lib/model-service.js';
 export { installSynapFromImage, reconcileEveEnv, type SynapImageInstallOptions, type SynapImageInstallResult } from './lib/synap-image-install.js';
+export { backupPodSecrets, restorePodSecrets, POD_SECRET_KEYS } from './lib/pod-secrets-backup.js';
 
 // Commands (re-export for advanced use)
 export { initCommand, runBrainInit, type BrainInitOptions } from './commands/init.js';
