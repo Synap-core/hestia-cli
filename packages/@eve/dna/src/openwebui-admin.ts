@@ -605,99 +605,37 @@ export async function listModelSources(jwt: string, hostPort?: number): Promise<
 }
 
 /**
- * Register a single model source as both:
- *   1. An OpenWebUI config entry (api_base_urls + api_keys + metadata)
- *   2. A manifold pipeline in /api/v1/pipelines — so it appears in the model
- *      picker with a proper display name and model list.
+ * Register a single model source in OpenWebUI's persisted config.
  *
- * OpenWebUI manifold pipelines accept:
- *   - `type: "manifold"` — exposes custom models in the selector
- *   - `inlet` hook — runs before every chat, can transform the request
+ * Writes to config.openai (api_base_urls + api_keys + metadata). This is
+ * sufficient for the source to appear in the model picker — OpenWebUI fetches
+ * /v1/models from each registered URL automatically.
  *
- * Idempotent — skips if the URL is already registered.
+ * Note: /api/v1/pipelines/add is for the Python pipelines sidecar only;
+ * it must NOT be called for OpenAI-compatible model sources.
  *
- * Returns true if registered (or already registered), false on error.
+ * Idempotent — skips if the URL is already registered with the same key.
+ * Returns true if registered (or already up-to-date), false on error.
  */
 export async function registerModelSource(
   jwt: string,
   modelSource: ModelSource,
   hostPort?: number,
 ): Promise<boolean> {
-  // 1. Upsert into config.openai
   const result = await reconcileOpenwebuiManagedConfigViaAdmin(
     jwt,
     { modelSources: [modelSource] },
     hostPort,
   );
-  if (!result) return false;
-
-  // 2. Register as manifold pipeline (for model picker visibility)
-  return registerManifoldPipeline(jwt, modelSource, hostPort);
+  return result !== null;
 }
 
 /**
- * Register a manifold pipeline in OpenWebUI so the model source appears
- * in the model picker with its display name and model list.
+ * Bulk upsert all model sources in a single atomic config POST.
  *
- * OpenWebUI manifold pipelines expose models under a custom namespace
- * (e.g. "synap/auto", "synap/balanced") in the chat model selector.
- *
- * The manifold payload sent to /pipelines/add:
- *   {
- *     uid: "<url>",           // unique ID (the URL serves as the namespace)
- *     name: "<displayName>",  // shown in picker
- *     type: "manifold",
- *     hook: "inlet",
- *     models: [...]           // model list (omitted = auto-fetched from /v1/models)
- *   }
- */
-async function registerManifoldPipeline(
-  jwt: string,
-  modelSource: ModelSource,
-  hostPort?: number,
-): Promise<boolean> {
-  const baseUrl = resolveAdminUrl(hostPort);
-
-  // Check if already registered
-  const existing = await listPipelines(jwt, hostPort);
-  if (existing.some(p => p.pipelines?.[0]?.uid === modelSource.url)) {
-    return true; // already registered
-  }
-
-  const pipelineDef: PipelineRegistration = {
-    url: modelSource.url,
-    name: modelSource.displayName,
-    pipelines: [{
-      uid: modelSource.url,
-      name: modelSource.displayName,
-      description: `Model source: ${modelSource.url}`,
-      type: 'manifold',
-      hook: 'inlet',
-      ...(modelSource.models?.length ? { models: modelSource.models } : {}),
-    }],
-  };
-
-  try {
-    const res = await fetch(`${baseUrl}/api/v1/pipelines/add`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(pipelineDef),
-    });
-    if (res.ok) return true;
-    const body = await res.json().catch(() => ({}));
-    if (String(body.detail ?? '').toLowerCase().includes('already')) return true;
-    return false;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Bulk upsert all model sources. Writes all URLs, keys, and metadata
- * in a single config POST (atomic), then registers each as a manifold
- * pipeline (best-effort — individual failures don't roll back the config).
- *
- * Returns the count of model sources successfully registered.
+ * Returns the count of sources written (modelSources.length) on success, 0 on
+ * error. Does not call /api/v1/pipelines/add — that endpoint is for the Python
+ * pipelines sidecar, not for OpenAI-compatible model source registration.
  */
 export async function upsertAllModelSources(
   jwt: string,
@@ -711,15 +649,5 @@ export async function upsertAllModelSources(
     { modelSources },
     hostPort,
   );
-  if (!result) return 0;
-
-  // Register each as manifold pipeline (best-effort)
-  let registered = 0;
-  for (const ms of modelSources) {
-    if (await registerManifoldPipeline(jwt, ms, hostPort)) {
-      registered++;
-    }
-  }
-
-  return registered;
+  return result !== null ? modelSources.length : 0;
 }

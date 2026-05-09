@@ -193,12 +193,13 @@ describe('v2 component state', () => {
     expect(comp!.managedBy).toBe('eve');
   });
 
-  it('v2 installed map is empty by default', async () => {
+  it('v1 file is migrated on first read and installed map is populated', async () => {
     resetStateFile();
     const mgr = new EntityStateManager();
     const state = await mgr.getState();
-    // No writes were made — installed should be undefined
-    expect(state.installed).toBeUndefined();
+    // V1 state has no installed map — migration populates it from organs
+    expect(state.installed).toBeDefined();
+    expect(Object.keys(state.installed!).length).toBeGreaterThan(0);
   });
 });
 

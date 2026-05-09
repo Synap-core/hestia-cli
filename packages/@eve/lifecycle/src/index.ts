@@ -58,7 +58,7 @@ import {
   installDashboardContainer,
   uninstallDashboardContainer,
 } from "@eve/legs";
-import { runSynapCli } from "@eve/brain";
+import { runSynapCli, reconcileEveEnv } from "@eve/brain";
 import {
   reconcileOpenclawConfig,
   type OpenclawReconcileResult,
@@ -616,6 +616,20 @@ async function* runDelegatePlan(
       type: "log",
       line: "No domain in eve secrets — synap CLI will use whatever DOMAIN is already in .env",
     };
+  }
+
+  // Reconcile eve-specific .env vars BEFORE the synap CLI runs. The CLI's
+  // `cmd_update` does `compose up -d backend realtime ...` after migrate,
+  // which recreates the container if .env content has changed. Healing
+  // here means the new container boots with PROVISIONING_TOKEN intact and
+  // without the legacy KRATOS_CONFIG_DIR=./config/kratos that breaks the
+  // canonical kratos bind mount.
+  const envPath = join(plan.cwd, ".env");
+  if (existsSync(envPath)) {
+    const dirty = reconcileEveEnv(envPath);
+    if (dirty) {
+      yield { type: "log", line: "Reconciled eve-specific .env vars before delegating" };
+    }
   }
 
   yield {

@@ -29,8 +29,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { exec as execCallback } from "node:child_process";
 import { promisify } from "node:util";
-
-const execAsync = promisify(execCallback);
 import { randomBytes } from "node:crypto";
 import { writeEnvVar } from "./env-files.js";
 import {
@@ -55,6 +53,8 @@ import {
   FetchRunner,
   type IDoctorRunner,
 } from "./diagnostics.js";
+
+const execAsync = promisify(execCallback);
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -414,7 +414,7 @@ export async function provisionAgent(opts: ProvisionAgentOptions): Promise<Provi
 
   let tokenLookup: TokenLookup = opts.provisioningToken
     ? { token: opts.provisioningToken, source: "explicit", diagnosticReason: "" }
-    : resolveProvisioningTokenWithDiagnostics();
+    : await resolveProvisioningTokenWithDiagnostics();
 
   // Self-heal: if no token is reachable (or the placeholder is empty),
   // mint one and write it into the pod's deploy/.env, then restart the
@@ -917,7 +917,7 @@ export interface EnsureProvisioningTokenResult {
  * the next backend restart will pick it up.
  */
 export async function ensurePodProvisioningToken(): Promise<EnsureProvisioningTokenResult> {
-  const probe = resolveProvisioningTokenWithDiagnostics();
+  const probe = await resolveProvisioningTokenWithDiagnostics();
   if (probe.token) {
     return { token: probe.token, source: "existing" };
   }
