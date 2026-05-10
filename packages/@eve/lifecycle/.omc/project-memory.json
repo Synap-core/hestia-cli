@@ -32,7 +32,7 @@
     "runtime": null
   },
   "build": {
-    "buildCommand": "npm run build",
+    "buildCommand": "cd /Users/antoine/Documents/Code/synap/hestia-cli/packages/@eve/lifecycle && pnpm build 2>&1 | tail -10",
     "testCommand": "npm test",
     "lintCommand": null,
     "devCommand": "npm run dev",

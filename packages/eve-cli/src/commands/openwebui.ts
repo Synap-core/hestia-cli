@@ -90,20 +90,24 @@ export function openwebuiCommand(program: Command): void {
           // signature, mint a fresh key via /setup/agent, then retry once.
           const has401 = formatExtrasSummary(extras).match(/\b401\b|Unauthorized/i);
           if (has401) {
-            extrasSpinner.text = 'Detected 401 on Synap pushes — renewing eve agent key…';
+            extrasSpinner.warn('Detected 401 on Synap pushes — renewing eve agent key…');
             const renew = await renewAgentKey({ agentType: 'eve', reason: 'owui-sync-401-recover' });
             if (renew.renewed) {
-              extrasSpinner.text = 'Retrying extras with fresh eve key…';
+              const retrySpinner = createSpinner('Retrying extras with fresh eve key…');
+              retrySpinner.start();
               const refreshed = await readEveSecrets(process.cwd());
               extras = await syncOpenwebuiExtras(process.cwd(), refreshed);
+              retrySpinner.succeed(formatExtrasSummary(extras));
             } else {
-              extrasSpinner.warn(
+              printWarning(
                 `Skills/knowledge returned 401 and renewal failed (${renew.reason}). ` +
                 `Run \`eve auth provision --agent eve\` then retry.`,
               );
+              printWarning(formatExtrasSummary(extras));
             }
+          } else {
+            extrasSpinner.succeed(formatExtrasSummary(extras));
           }
-          extrasSpinner.succeed(formatExtrasSummary(extras));
         } catch (err) {
           extrasSpinner.warn(`Extras sync failed: ${err instanceof Error ? err.message : String(err)}`);
         }

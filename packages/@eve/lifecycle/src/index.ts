@@ -256,7 +256,15 @@ const UPDATE_PLAN: Record<string, UpdatePlan> = {
       // `/opt/synap-backend/`, so the compose dir is `/opt/synap-backend/deploy/`.
       cwd: "/opt/synap-backend/deploy",
       subcommand: "update",
-      args: ["--from-image"],
+      // Don't pass `--from-image` or `--from-source` — let the synap CLI's
+      // smart default decide. Its rules (synap line ~1838): if `.env` has
+      // `BACKEND_VERSION=local` → build from source (skip the doomed pull
+      // of the `:local` sentinel that never existed upstream); if we're in
+      // a git checkout → build from source; otherwise → pull. Forcing
+      // `--from-image` here meant every update tried to pull `:local`, hit
+      // 404, and fell back to a build that — without `refreshGit` having
+      // already run — was using whatever stale code happened to be on disk.
+      args: [],
       // Idempotently write the loopback host-port override so the on-host
       // CLI can reach the backend at 127.0.0.1:4000 without going through
       // Traefik. Runs before the synap CLI so the recreated container
