@@ -1306,10 +1306,11 @@ async function* installHermes(): AsyncGenerator<LifecycleEvent> {
   // start the OpenAI-compat HTTP gateway + dashboard + MCP server, matching
   // the bundled `docker-compose.yml` (`command: ["gateway", "run"]`).
   //
-  // HERMES_UID / HERMES_GID: the entrypoint drops privileges from root to
-  // an internal `hermes` user (default UID 10000). Eve mounts /root/.eve/*
-  // owned by root — passing UID/GID 0 keeps the in-container user as root
-  // so reads/writes against the bind mount stay coherent.
+  // Do NOT set HERMES_UID=0 / HERMES_GID=0: `hermes gateway` explicitly
+  // refuses to run as root and exits with "Refusing to run the Hermes
+  // gateway as root inside the official Docker image." The entrypoint
+  // defaults to an internal `hermes` user (UID 10000) and chowns the
+  // bind-mount volume itself before dropping privileges.
   const args = [
     "run", "-d",
     "--name", "eve-builder-hermes",
@@ -1329,8 +1330,6 @@ async function* installHermes(): AsyncGenerator<LifecycleEvent> {
     "-v", `${skillsDir}:/opt/data/synap-skills:ro`,
     "--env-file", hermesEnv,
     "-e", "HERMES_HOME=/opt/data",
-    "-e", "HERMES_UID=0",
-    "-e", "HERMES_GID=0",
     "nousresearch/hermes-agent:latest",
     "gateway", "run",
   ];

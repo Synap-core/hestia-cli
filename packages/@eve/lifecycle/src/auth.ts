@@ -579,18 +579,32 @@ export async function provisionAgent(opts: ProvisionAgentOptions): Promise<Provi
     };
   }
   const agentUserId = stringOr(obj.agentUserId, "");
-  const workspaceId = stringOr(obj.workspaceId, "");
+  // Synap's /setup/agent response (synap-backend rest/setup.ts:457-463) returns
+  // `workspaceId: ws?.id ?? null` — null is legitimate for agents that aren't
+  // yet workspace-scoped. On renewal, prefer the existing record's value so
+  // we don't lose the workspace binding just because the mint response is
+  // null. On first mint, accept an empty string and let downstream callers
+  // resolve workspace later.
+  let workspaceId = stringOr(obj.workspaceId, "");
+  if (!workspaceId) {
+    try {
+      const existing = await readAgentKey(agentType, cwd);
+      if (existing?.workspaceId) workspaceId = existing.workspaceId;
+    } catch {
+      // ignore — first-mint case
+    }
+  }
   const keyId = stringOr(obj.keyId, "");
   const keyIdPrefix = stringOr(
     obj.keyIdPrefix,
     keyId.slice(0, 8) || hubApiKey.slice(0, 8),
   );
 
-  if (!agentUserId || !workspaceId) {
+  if (!agentUserId) {
     return {
       provisioned: false,
       agentType,
-      reason: "Mint response missing required fields (agentUserId/workspaceId)",
+      reason: "Mint response missing required field: agentUserId",
     };
   }
 

@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1778249594967,
+  "lastScanned": 1778422823529,
   "projectRoot": "/Users/antoine/Documents/Code/synap/hestia-cli/packages/@eve/dna",
   "techStack": {
     "languages": [
@@ -32,13 +32,13 @@
     "runtime": null
   },
   "build": {
-    "buildCommand": "pnpm build 2>&1 | tail -10",
-    "testCommand": "cd /Users/antoine/Documents/Code/synap/hestia-cli && pnpm -r typecheck 2>&1 | grep -E \"Failed|error TS\" | head -10 && cd packages/@eve/dna && pnpm test -- --run 2>&1 | tail -8",
+    "buildCommand": "npm run build",
+    "testCommand": "npm test",
     "lintCommand": null,
     "devCommand": "npm run dev",
     "scripts": {
-      "build": "tsup src/index.ts --format esm --dts",
-      "dev": "tsup src/index.ts --format esm --dts --watch",
+      "build": "tsup src/index.ts src/browser.ts --format esm --dts",
+      "dev": "tsup src/index.ts src/browser.ts --format esm --dts --watch",
       "test": "vitest run",
       "typecheck": "tsc --noEmit"
     }
@@ -53,6 +53,7 @@
     "isMonorepo": false,
     "workspaces": [],
     "mainDirectories": [
+      "assets",
       "src",
       "test"
     ],
@@ -60,11 +61,18 @@
   },
   "customNotes": [],
   "directoryMap": {
+    "assets": {
+      "path": "assets",
+      "purpose": "Static assets",
+      "fileCount": 0,
+      "lastAccessed": 1778422823509,
+      "keyFiles": []
+    },
     "dist": {
       "path": "dist",
       "purpose": "Distribution/build output",
-      "fileCount": 69,
-      "lastAccessed": 1778249594953,
+      "fileCount": 200,
+      "lastAccessed": 1778422823513,
       "keyFiles": [
         "access-urls.d.ts",
         "access-urls.d.ts.map",
@@ -76,26 +84,27 @@
     "src": {
       "path": "src",
       "purpose": "Source code",
-      "fileCount": 28,
-      "lastAccessed": 1778249594954,
+      "fileCount": 43,
+      "lastAccessed": 1778422823514,
       "keyFiles": [
         "access-urls.ts",
         "agents.ts",
+        "allowed-origins.ts",
         "app-detector.ts",
-        "background-task-actions.ts",
-        "background-tasks-types.ts"
+        "background-task-actions.ts"
       ]
     },
     "test": {
       "path": "test",
       "purpose": "Test files",
-      "fileCount": 4,
-      "lastAccessed": 1778249594957,
+      "fileCount": 22,
+      "lastAccessed": 1778422823515,
       "keyFiles": [
         "agent-keys.test.ts",
         "agents.test.ts",
-        "entity-state.test.ts",
-        "secrets-contract.test.ts"
+        "allowed-origins.test.ts",
+        "channel-credentials.test.ts",
+        "channel-validation.test.ts"
       ]
     }
   },
