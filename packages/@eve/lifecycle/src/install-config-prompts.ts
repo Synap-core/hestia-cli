@@ -97,7 +97,7 @@ export const defaultPrompts: PromptFns = {
         message: "Public hostname for the pod (e.g. pod.example.com)",
         initialValue: initial,
         placeholder: "pod.example.com",
-        validate: (v) =>
+        validate: (v: string) =>
           isValidDomain(v) && v !== "localhost" ? undefined : "Use a public FQDN (not localhost)",
       }),
     );
@@ -117,7 +117,7 @@ export const defaultPrompts: PromptFns = {
         message: "Let's Encrypt contact email (used for cert renewal alerts)",
         initialValue: initial ?? "",
         placeholder: "you@example.com",
-        validate: (v) => (isValidEmail(v) ? undefined : "Enter a valid email"),
+        validate: (v: string) => (isValidEmail(v) ? undefined : "Enter a valid email"),
       }),
     );
   },
@@ -141,7 +141,7 @@ export const defaultPrompts: PromptFns = {
         message: "Admin email for the first account",
         initialValue: initial ?? "",
         placeholder: "admin@example.com",
-        validate: (v) => (isValidEmail(v) ? undefined : "Enter a valid email"),
+        validate: (v: string) => (isValidEmail(v) ? undefined : "Enter a valid email"),
       }),
     );
   },
@@ -152,7 +152,7 @@ export const defaultPrompts: PromptFns = {
         message: "Admin password (preseed bootstrap)",
         initialValue: initial ?? "",
         placeholder: "Choose a strong password",
-        validate: (v) => (v && v.length >= 8 ? undefined : "Use at least 8 characters"),
+        validate: (v: string) => (v && v.length >= 8 ? undefined : "Use at least 8 characters"),
       }),
     );
   },
@@ -216,7 +216,7 @@ export const defaultPrompts: PromptFns = {
         message: "Tunnel hostname (e.g. eve.example.com)",
         initialValue: initial ?? "",
         placeholder: "eve.example.com",
-        validate: (v) =>
+        validate: (v: string) =>
           isValidDomain(v) && v !== "localhost" ? undefined : "Use a public FQDN (not localhost)",
       }),
     );
