@@ -126,9 +126,21 @@
   },
   "hotPaths": [
     {
+      "path": "packages/@eve/lifecycle/src/index.ts",
+      "accessCount": 14,
+      "lastAccessed": 1778377256842,
+      "type": "file"
+    },
+    {
       "path": "packages/@eve/dna/src/openwebui-admin.ts",
-      "accessCount": 10,
-      "lastAccessed": 1778373858459,
+      "accessCount": 13,
+      "lastAccessed": 1778377308594,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/legs/src/lib/traefik.ts",
+      "accessCount": 9,
+      "lastAccessed": 1778377159471,
       "type": "file"
     },
     {
@@ -150,12 +162,6 @@
       "type": "file"
     },
     {
-      "path": "packages/@eve/legs/src/lib/traefik.ts",
-      "accessCount": 6,
-      "lastAccessed": 1778371076056,
-      "type": "file"
-    },
-    {
       "path": "packages/@eve/dna/src/components.ts",
       "accessCount": 6,
       "lastAccessed": 1778372761262,
@@ -165,12 +171,6 @@
       "path": "packages/eve-cli/src/commands/domain.ts",
       "accessCount": 6,
       "lastAccessed": 1778373240816,
-      "type": "file"
-    },
-    {
-      "path": "packages/@eve/lifecycle/src/index.ts",
-      "accessCount": 6,
-      "lastAccessed": 1778373455065,
       "type": "file"
     },
     {
@@ -339,6 +339,12 @@
       "path": "packages/eve-dashboard/app/api/pod/setup-status/route.ts",
       "accessCount": 1,
       "lastAccessed": 1778375309910,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/lifecycle/src/auth.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778377178376,
       "type": "file"
     }
   ],

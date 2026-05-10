@@ -420,7 +420,12 @@ export class TraefikService {
     writeFileSync(this.traefikConfigPath, buildProxyModeStaticConfig());
 
     const synapContainer = getSynapBackendContainer();
-    if (synapContainer) connectToEveNetwork(synapContainer);
+    // Always pass the canonical alias — without it, every other code path
+    // that calls this without the alias would silently strip it on the
+    // disconnect/reconnect cycle, and OWUI's container would lose its
+    // ability to resolve `eve-brain-synap`. Same alias used by the SSL
+    // path above (line ~248) so behavior is symmetric.
+    if (synapContainer) connectToEveNetwork(synapContainer, 'eve-brain-synap');
 
     // Rewrite routes — HTTP only, no SSL
     await this.configureSubdomains(domain, false, undefined, installedComponents, true);

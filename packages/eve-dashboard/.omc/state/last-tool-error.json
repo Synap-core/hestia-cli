@@ -1,7 +1,7 @@
 {
   "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"for app in hub crm canvas devplane; do echo \\\"=== $app redirect ===\\\"; grep \\\"replace\\\\|location\\\" /Users/antoine/Documents/Code/synap/synap-app/apps/$app/lib/mockMode.ts | grep -v \\\"^//\\\"...",
-  "error": "Exit code 1\n=== hub redirect ===\n=== crm redirect ===\n=== canvas redirect ===\n=== devplane redirect ===",
-  "timestamp": "2026-05-10T01:23:44.945Z",
+  "tool_input_preview": "{\"command\":\"cd /Users/antoine/Documents/Code/synap/synap-app && pnpm --filter @synap-core/auth-ui type-check 2>&1\",\"timeout\":120000,\"description\":\"Type-check auth-ui package\"}",
+  "error": "Exit code 2\n\n> @synap-core/auth-ui@0.1.0 type-check /Users/antoine/Documents/Code/synap/synap-app/packages/core/auth-ui\n> tsc --noEmit\n\nsrc/components/TotpEnrollmentWizard.tsx(29,8): error TS2307: Cannot find module '@synap-core/auth' or its corresponding type declarations.\nsrc/components/TotpEnrollmentWizard.tsx(499,21): error TS7006: Parameter 'c' implicitly has an 'any' type.\n/Users/antoine/Documents/Code/synap/synap-app/packages/core/auth-ui:\n ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @synap-core/a...",
+  "timestamp": "2026-05-10T01:28:58.780Z",
   "retry_count": 1
 }

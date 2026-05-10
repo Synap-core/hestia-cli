@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1778252806225,
+  "lastScanned": 1778376517526,
   "projectRoot": "/Users/antoine/Documents/Code/synap/hestia-cli/packages/eve-dashboard",
   "techStack": {
     "languages": [
@@ -47,7 +47,7 @@
     "runtime": null
   },
   "build": {
-    "buildCommand": "pnpm tsc --noEmit 2>&1",
+    "buildCommand": "npm run build",
     "testCommand": "npm test",
     "lintCommand": null,
     "devCommand": "npm run dev",
@@ -84,7 +84,7 @@
       "path": "app",
       "purpose": "Application code",
       "fileCount": 3,
-      "lastAccessed": 1778252806090,
+      "lastAccessed": 1778376517489,
       "keyFiles": [
         "globals.css",
         "layout.tsx",
@@ -95,7 +95,7 @@
       "path": "docs",
       "purpose": "Documentation",
       "fileCount": 1,
-      "lastAccessed": 1778252806094,
+      "lastAccessed": 1778376517494,
       "keyFiles": [
         "ai-provider-model.md"
       ]
@@ -103,21 +103,21 @@
     "lib": {
       "path": "lib",
       "purpose": "Library code",
-      "fileCount": 7,
-      "lastAccessed": 1778252806121,
+      "fileCount": 12,
+      "lastAccessed": 1778376517495,
       "keyFiles": [
         "auth-server.ts",
         "cp-base-url.ts",
         "doctor.ts",
-        "feeds.ts",
-        "openclaw-config.ts"
+        "eve-kratos-client.ts",
+        "feeds.ts"
       ]
     },
     "server": {
       "path": "server",
       "purpose": null,
       "fileCount": 2,
-      "lastAccessed": 1778252806178,
+      "lastAccessed": 1778376517496,
       "keyFiles": [
         "terminal-sidecar.ts",
         "tsconfig.json"
@@ -127,14 +127,14 @@
       "path": "app/api",
       "purpose": "API routes",
       "fileCount": 0,
-      "lastAccessed": 1778252806209,
+      "lastAccessed": 1778376517497,
       "keyFiles": []
     },
     "app/components": {
       "path": "app/components",
       "purpose": "UI components",
       "fileCount": 3,
-      "lastAccessed": 1778252806210,
+      "lastAccessed": 1778376517498,
       "keyFiles": [
         "cp-auth-banner.tsx",
         "theme-toggle.tsx",
@@ -145,7 +145,7 @@
       "path": "app/lib",
       "purpose": "Library code",
       "fileCount": 1,
-      "lastAccessed": 1778252806211,
+      "lastAccessed": 1778376517499,
       "keyFiles": [
         "background-task-actions.client.ts"
       ]

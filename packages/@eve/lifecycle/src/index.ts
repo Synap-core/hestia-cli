@@ -738,7 +738,61 @@ async function* runPostUpdateHooks(comp: ComponentInfo): AsyncGenerator<Lifecycl
     // older installs still have running. No-op when the container, deploy
     // dir, and entity-state row are all already absent.
     yield* decommissionLegacyPipelines();
+    // Validate the agent keys OpenWebUI relies on (eve = the bearer baked
+    // into Synap connection + tool server + functions; hermes = same for
+    // the Hermes Gateway connection). Auto-renew on `key_revoked` /
+    // `expired` so a stale key doesn't silently leave the model picker
+    // empty. Same recovery logic as postUpdateReconcileAuth, just hooked
+    // here too because most users run `eve update openwebui` directly.
+    yield* validateAndRenewKeyIfRevoked("eve");
+    yield* validateAndRenewKeyIfRevoked("hermes");
     yield* postUpdateReconcileAiWiring();
+  }
+}
+
+/**
+ * Probe a per-agent Hub key against Synap and auto-renew on `key_revoked`
+ * or `expired`. Idempotent: silent when the key is healthy, missing, or
+ * the failure is non-recoverable (different code path needed). Designed
+ * to be called from any post-update hook that depends on a working agent
+ * key — currently `synap` (via `postUpdateReconcileAuth`) and `openwebui`.
+ */
+async function* validateAndRenewKeyIfRevoked(agentType: string): AsyncGenerator<LifecycleEvent> {
+  const { getAuthStatus, renewAgentKey } = await import("./auth.js");
+  const { readAgentKey } = await import("@eve/dna");
+
+  const secrets = await readEveSecrets();
+  const synapUrl = await resolveSynapUrlOnHost(secrets);
+  if (!synapUrl) return;
+
+  const agentRecord = await readAgentKey(agentType);
+  const apiKey = agentRecord?.hubApiKey?.trim();
+  if (!apiKey) return; // No key yet — different recovery path (provision, not renew).
+
+  const status = await getAuthStatus({ synapUrl, apiKey });
+  if (status.ok) return;
+
+  const reason = status.failure.reason;
+  if (reason !== "key_revoked" && reason !== "expired") {
+    yield {
+      type: "log",
+      line: `↳ ${agentType} agent key returned ${reason} (${status.failure.message}) — non-recoverable, run \`eve auth status\` for details`,
+    };
+    return;
+  }
+
+  yield { type: "log", line: `↳ ${agentType} agent key invalid (${reason}) — auto-renewing` };
+  const renewed = await renewAgentKey({ agentType, reason: `${reason} during update` });
+  if (renewed.renewed) {
+    yield {
+      type: "log",
+      line: `↳ refreshed ${agentType} agent key — new prefix ${renewed.keyIdPrefix}`,
+    };
+  } else {
+    yield {
+      type: "log",
+      line: `↳ ${agentType} auto-renew failed: ${renewed.reason} — run \`eve auth renew --agent ${agentType}\` manually`,
+    };
   }
 }
 
@@ -1204,12 +1258,17 @@ async function* installHermes(): AsyncGenerator<LifecycleEvent> {
   const skillsDir = join(homedir(), ".eve", "skills");
   mkdirSync(skillsDir, { recursive: true });
 
-  // Use the image's default entrypoint (`hermes gateway`).
-  // API server + messaging platforms + MCP start together, governed by:
-  //   - hermes.env: API_SERVER_ENABLED=true, API_SERVER_KEY=..., channel tokens
-  //   - config.yaml: memory.provider, model block, advanced config
-  // No --entrypoint override needed — bypassing it with `python -m hermes.api_server`
-  // was a bug that only started the API server (no messaging, no MCP, no tools).
+  // The image's default ENTRYPOINT is `hermes`, and its default CMD is the
+  // interactive REPL — running `docker run -d` with no command override
+  // greets the user, sees stdin isn't a TTY, prints "Goodbye! ⚕", exits,
+  // and the restart-policy bounces it forever. We pass `gateway run` to
+  // start the OpenAI-compat HTTP gateway + dashboard + MCP server, matching
+  // the bundled `docker-compose.yml` (`command: ["gateway", "run"]`).
+  //
+  // HERMES_UID / HERMES_GID: the entrypoint drops privileges from root to
+  // an internal `hermes` user (default UID 10000). Eve mounts /root/.eve/*
+  // owned by root — passing UID/GID 0 keeps the in-container user as root
+  // so reads/writes against the bind mount stay coherent.
   const args = [
     "run", "-d",
     "--name", "eve-builder-hermes",
@@ -1222,12 +1281,29 @@ async function* installHermes(): AsyncGenerator<LifecycleEvent> {
     "-v", `${skillsDir}:/opt/data/skills:ro`,   // Synap skill packages
     "--env-file", hermesEnv,
     "-e", "HERMES_HOME=/opt/data",
+    "-e", "HERMES_UID=0",
+    "-e", "HERMES_GID=0",
     "nousresearch/hermes-agent:latest",
+    "gateway", "run",
   ];
   const runCode = yield* runCommand("docker", args);
   if (runCode !== 0) throw new Error(`docker run exited ${runCode}`);
 
-  yield { type: "log", line: "Hermes container running — gateway: :8642, dashboard: :9119, MCP: :9120" };
+  // Wait briefly + verify the gateway didn't crash on boot. The `gateway run`
+  // command typically takes 6-10s to settle (skill sync + plugin install).
+  // A failure here is rarely the docker run itself — almost always a config
+  // problem (bad API_SERVER_KEY, missing model, etc.) that's only visible
+  // in the container logs. Surface it instead of silently moving on.
+  await new Promise((r) => setTimeout(r, 12_000));
+  const stillUp = await isContainerInState("eve-builder-hermes", "running");
+  if (!stillUp) {
+    yield {
+      type: "log",
+      line: "warning: Hermes container exited or is restarting — run `docker logs eve-builder-hermes` for details",
+    };
+  } else {
+    yield { type: "log", line: "Hermes container running — gateway: :8642, dashboard: :9119, MCP: :9120" };
+  }
 
   // Wire Hermes as a model source in OpenWebUI if it is installed.
   yield* wireHermesIntoOpenwebui();
@@ -1306,6 +1382,43 @@ const HAS_INSTALL_RECIPE: ReadonlySet<string> = new Set([
   "hermes",
   "eve-dashboard",
 ]);
+
+/**
+ * True if a container with that name is currently in the requested state
+ * (`running`, `restarting`, `exited`, etc.). Used by post-install probes
+ * to distinguish "container exists but is restart-looping" from "container
+ * came up clean." 4s timeout.
+ */
+async function isContainerInState(name: string, state: string): Promise<boolean> {
+  return new Promise(resolve => {
+    const child = spawn(
+      "docker",
+      ["ps", "--filter", `name=^${name}$`, "--filter", `status=${state}`, "--format", "{{.Names}}"],
+      { stdio: ["ignore", "pipe", "ignore"] },
+    );
+    let out = "";
+    let done = false;
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      child.kill("SIGKILL");
+      resolve(false);
+    }, 4000);
+    child.stdout?.on("data", (chunk) => { out += chunk.toString(); });
+    child.on("close", () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(out.trim() === name);
+    });
+    child.on("error", () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(false);
+    });
+  });
+}
 
 /** True if a container with that name exists (any state). 4s timeout. */
 async function containerExists(name: string): Promise<boolean> {

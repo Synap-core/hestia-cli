@@ -679,6 +679,22 @@ const MANAGED_ROOT_KEY_BY_OPTION = {
   defaultUserRole: 'DEFAULT_USER_ROLE',
 } as const satisfies Record<Exclude<keyof OpenWebuiManagedConfig, 'modelSources' | 'defaultModels'>, string>;
 
+/**
+ * v0.9.4 also reads the same managed values from `config.ui.*` (lowercase,
+ * nested). When the nested path is set, OWUI's runtime gives it precedence
+ * over the legacy root-level uppercase keys we used for v0.8.x. We write
+ * both so the same Eve build works against either OWUI version, but the
+ * canonical home is now the nested path.
+ *
+ * `ui.enable_signup` was the smoking gun for the "env says signup=true but
+ * /api/config says signup=false" bug we hit during the redirect debug —
+ * the persisted DB held the nested path at false, env was ignored.
+ */
+const MANAGED_UI_KEY_BY_OPTION: Partial<Record<keyof OpenWebuiManagedConfig, string>> = {
+  enableSignup: 'enable_signup',
+  defaultUserRole: 'default_user_role',
+};
+
 const DEFAULT_MODELS_KEYS = ['DEFAULT_MODELS', 'default_models'] as const;
 
 function isPlainConfigObject(value: unknown): value is Record<string, unknown> {
@@ -781,6 +797,41 @@ export function reconcileOpenwebuiManagedConfig(
     if (value !== undefined) {
       setIfChanged(config, configKey, value, changedKeys);
     }
+  }
+
+  // Mirror managed keys into v0.9.4's nested `ui.*` paths. OWUI's runtime
+  // prefers these over the root-level uppercase keys we already wrote,
+  // and ONLY checks the nested path for several of them (notably
+  // enable_signup), so without this mirror env-driven defaults silently
+  // lose to whatever the persisted DB has.
+  if (Object.keys(MANAGED_UI_KEY_BY_OPTION).some(
+    k => desired[k as keyof OpenWebuiManagedConfig] !== undefined,
+  )) {
+    const existingUi = isPlainConfigObject(config.ui) ? config.ui : {};
+    const ui: Record<string, unknown> = { ...existingUi };
+    for (const [optionKey, uiKey] of Object.entries(MANAGED_UI_KEY_BY_OPTION)) {
+      const value = desired[optionKey as keyof OpenWebuiManagedConfig];
+      if (value !== undefined) {
+        setIfChanged(ui, uiKey as string, value, changedKeys);
+      }
+    }
+    if (JSON.stringify(config.ui) !== JSON.stringify(ui)) {
+      config.ui = ui;
+      changedKeys.add('ui');
+    }
+  }
+
+  // Strip the legacy v0.8 `tool_server.connections[]` blob if it's still
+  // sitting in the persistent config. v0.9.4 moved tool servers to the
+  // root-level `TOOL_SERVER_CONNECTIONS` array with stricter Pydantic
+  // validation (path/auth_type/config required); the old shape now
+  // crashes `GET /api/v1/configs/tool_servers` with a 500 and bricks the
+  // SPA boot ("infinite redirect" bug). Removing the legacy key is safe:
+  // anything Eve manages is already pushed in the new shape via
+  // openwebui-tools-sync.
+  if ('tool_server' in config) {
+    delete (config as Record<string, unknown>).tool_server;
+    changedKeys.add('tool_server');
   }
 
   return {
