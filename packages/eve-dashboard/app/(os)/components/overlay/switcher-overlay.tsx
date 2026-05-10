@@ -27,7 +27,8 @@ export function SwitcherOverlay({ onClose }: { onClose: () => void }) {
 
       const isMod = e.metaKey || e.ctrlKey;
 
-      if (isMod && e.key === "Tab") {
+      // Cmd+` / Cmd+Shift+` to cycle (same physical key that opens the switcher)
+      if (isMod && e.code === "Backquote") {
         e.preventDefault();
         if (e.shiftKey) {
           setActiveIndex((i) => (i - 1 + apps.length) % apps.length);

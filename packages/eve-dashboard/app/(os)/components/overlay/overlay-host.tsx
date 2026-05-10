@@ -39,15 +39,15 @@ export function OverlayHost() {
         return;
       }
 
-      // Cmd+` — app switcher (Cmd+Tab is OS-level on macOS, use backtick like VS Code / iTerm)
-      if (isMod && e.key === "`") {
+      // Cmd+` — app switcher (physical Backquote key, layout-independent)
+      if (isMod && e.code === "Backquote") {
         e.preventDefault();
         isOpen("switcher") ? close() : open("switcher");
         return;
       }
 
-      // Cmd+\ — agent toggle
-      if (isMod && e.key === "\\") {
+      // Cmd+\ — agent toggle (physical Backslash key, layout-independent)
+      if (isMod && e.code === "Backslash") {
         e.preventDefault();
         isOpen("agent") ? close() : open("agent");
         return;
