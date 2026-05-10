@@ -1,7 +1,7 @@
 import type { Command } from 'commander';
 import { execSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { writeEveSecrets, readEveSecrets, getAccessUrls, getServerIp, entityStateManager } from '@eve/dna';
+import { writeEveSecrets, readEveSecrets, getAccessUrls, getServerIp, entityStateManager, validateBaseDomain } from '@eve/dna';
 import { TraefikService } from '@eve/legs';
 import { materializeTargets } from '@eve/lifecycle';
 import { colors, printSuccess, printInfo, printWarning, printError } from '../lib/ui.js';
@@ -79,13 +79,27 @@ export function domainCommand(program: Command): void {
     .option('--ssl', "Enable SSL with Let's Encrypt")
     .option('--email <email>', "Email for Let's Encrypt notifications")
     .action(async (domainName: string, opts: { ssl?: boolean; email?: string }) => {
-      if (opts.ssl && !opts.email) {
+      const domainError = validateBaseDomain(domainName);
+      if (domainError) {
+        printError(domainError);
+        process.exit(1);
+      }
+
+      // Inherit ssl + behind-proxy + email from prior config when not
+      // explicitly passed. Otherwise calling `eve domain set <new-domain>`
+      // would silently flip an SSL or behind-proxy install back to plain.
+      const prior = await readEveSecrets(process.cwd());
+      const sslExplicit = opts.ssl === true;
+      const ssl = sslExplicit || (!sslExplicit && !!prior?.domain?.ssl);
+      const email = opts.email ?? prior?.domain?.email;
+
+      if (ssl && !email) {
         printWarning("--ssl requires --email <address> for Let's Encrypt certificate provisioning.");
         printWarning("Example: eve domain set " + domainName + " --ssl --email you@example.com");
         process.exit(1);
       }
 
-      await writeEveSecrets({ domain: { primary: domainName, ssl: !!opts.ssl, email: opts.email } });
+      await writeEveSecrets({ domain: { primary: domainName, ssl, email } });
 
       // Read installed components so we only wire routes for what's actually installed
       let installedComponents: string[] | undefined;

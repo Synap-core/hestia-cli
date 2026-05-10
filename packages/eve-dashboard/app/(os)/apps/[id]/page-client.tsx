@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Button } from "@heroui/react";
 import { Check, Copy, ExternalLink, Maximize2, Minimize2 } from "lucide-react";
@@ -108,10 +109,11 @@ export function EmbeddedExternalAppPage({
   );
 
   if (isFullscreen) {
-    return (
-      <div className="fixed inset-0 z-50 flex flex-col bg-background">
+    return createPortal(
+      <div className="fixed inset-0 z-[9999] flex flex-col bg-background">
         {content}
-      </div>
+      </div>,
+      document.body,
     );
   }
 

@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { TraefikService } from '../lib/traefik.js';
-import { writeEveSecrets, entityStateManager } from '@eve/dna';
+import { writeEveSecrets, readEveSecrets, entityStateManager, validateBaseDomain } from '@eve/dna';
 
 /** Register `eve legs domain <subcommand>` (set | status | unset) */
 export function domainCommand(program: Command): void {
@@ -23,29 +23,52 @@ export function domainCommand(program: Command): void {
           process.exit(1);
         }
 
+        const domainError = validateBaseDomain(domainName);
+        if (domainError) {
+          console.error(domainError);
+          process.exit(1);
+        }
+
+        // Mode inheritance: when neither --ssl nor --behind-proxy is passed,
+        // re-use whatever was previously configured. Otherwise a routine
+        // `eve domain set <new-domain>` would silently flip an operator out
+        // of proxy mode and try to bind port 443 to Traefik again.
+        const prior = await readEveSecrets(process.cwd());
+        const explicitMode = options.behindProxy === true || options.ssl === true;
+        const behindProxy = options.behindProxy === true
+          ? true
+          : options.ssl === true
+            ? false
+            : !!prior?.domain?.behindProxy;
+        const ssl = behindProxy ? false : (options.ssl === true || (!explicitMode && !!prior?.domain?.ssl));
+        const email = options.email ?? prior?.domain?.email;
+
         let installedComponents: string[] = [];
         try { installedComponents = await entityStateManager.getInstalledComponents(); } catch {}
 
-        console.log(`Configuring domain: ${domainName}`);
+        const inheritedNote = !explicitMode
+          ? ` (inherited mode: ${behindProxy ? 'behind-proxy' : ssl ? 'ssl' : 'plain'})`
+          : '';
+        console.log(`Configuring domain: ${domainName}${inheritedNote}`);
 
-        if (options.behindProxy) {
+        if (behindProxy) {
           await traefik.enableProxyMode(domainName, installedComponents);
           await writeEveSecrets(
-            { domain: { primary: domainName, ssl: false, behindProxy: true } },
+            { domain: { primary: domainName, ssl: false, behindProxy: true, email } },
             process.cwd(),
           );
           console.log(`Domain configured: ${domainName} (behind-proxy, HTTP only)`);
           console.log('External proxy must forward port 80 and handle SSL termination.');
         } else {
-          await traefik.configureSubdomains(domainName, !!options.ssl, options.email, installedComponents, false);
+          await traefik.configureSubdomains(domainName, ssl, email, installedComponents, false);
           await writeEveSecrets(
-            { domain: { primary: domainName, ssl: !!options.ssl, email: options.email, behindProxy: false } },
+            { domain: { primary: domainName, ssl, email, behindProxy: false } },
             process.cwd(),
           );
-          const protocol = options.ssl ? 'https' : 'http';
-          console.log(`Domain configured: ${domainName}${options.ssl ? ' (SSL)' : ''}`);
+          const protocol = ssl ? 'https' : 'http';
+          console.log(`Domain configured: ${domainName}${ssl ? ' (SSL)' : ''}`);
           console.log('\nExample endpoints:');
-          for (const sub of ['pod', 'dashboard']) {
+          for (const sub of ['pod', 'pod-admin', 'eve']) {
             console.log(`  ${protocol}://${sub}.${domainName}`);
           }
         }

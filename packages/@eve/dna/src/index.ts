@@ -228,6 +228,7 @@ export {
   addonComponentIds,
   selectedIds,
   serviceComponents,
+  validateBaseDomain,
   publicComponentUrl,
   isLoopbackUrl,
   resolveSynapUrl,

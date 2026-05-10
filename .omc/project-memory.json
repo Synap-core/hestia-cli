@@ -144,9 +144,27 @@
       "type": "file"
     },
     {
+      "path": "packages/@eve/dna/src/index.ts",
+      "accessCount": 7,
+      "lastAccessed": 1778372774752,
+      "type": "file"
+    },
+    {
       "path": "packages/@eve/legs/src/lib/traefik.ts",
       "accessCount": 6,
       "lastAccessed": 1778371076056,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/dna/src/components.ts",
+      "accessCount": 6,
+      "lastAccessed": 1778372761262,
+      "type": "file"
+    },
+    {
+      "path": "packages/eve-cli/src/commands/domain.ts",
+      "accessCount": 6,
+      "lastAccessed": 1778373240816,
       "type": "file"
     },
     {
@@ -162,21 +180,15 @@
       "type": "file"
     },
     {
-      "path": "packages/@eve/dna/src/index.ts",
+      "path": "packages/@eve/legs/src/commands/domain.ts",
       "accessCount": 5,
-      "lastAccessed": 1778370761779,
+      "lastAccessed": 1778373203695,
       "type": "file"
     },
     {
       "path": "packages/@eve/dna/src/openwebui-skills-sync.ts",
       "accessCount": 4,
       "lastAccessed": 1778368926539,
-      "type": "file"
-    },
-    {
-      "path": "packages/@eve/dna/src/components.ts",
-      "accessCount": 4,
-      "lastAccessed": 1778370949935,
       "type": "file"
     },
     {
@@ -189,6 +201,12 @@
       "path": "packages/@eve/dna/test/openwebui-skills-sync.test.ts",
       "accessCount": 3,
       "lastAccessed": 1778368951464,
+      "type": "file"
+    },
+    {
+      "path": "packages/eve-dashboard/app/api/networking/domain/route.ts",
+      "accessCount": 3,
+      "lastAccessed": 1778372812030,
       "type": "file"
     },
     {
@@ -219,6 +237,12 @@
       "path": "packages/eve-cli/src/commands/openwebui.ts",
       "accessCount": 2,
       "lastAccessed": 1778371554520,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/dna/src/discover.ts",
+      "accessCount": 2,
+      "lastAccessed": 1778372667799,
       "type": "file"
     },
     {
@@ -291,6 +315,18 @@
       "path": "packages/@eve/dna/test/openwebui-functions-sync.test.ts",
       "accessCount": 1,
       "lastAccessed": 1778370804802,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/legs/src/lib/refresh-routes.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778372617696,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/dna/src/secrets-contract.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778373223188,
       "type": "file"
     }
   ],

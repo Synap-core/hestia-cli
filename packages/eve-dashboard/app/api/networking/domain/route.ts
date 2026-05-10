@@ -9,6 +9,7 @@
 import { NextResponse } from "next/server";
 import {
   writeEveSecrets,
+  validateBaseDomain,
 } from "@eve/dna";
 import { materializeTargets } from "@eve/lifecycle";
 import { requireAuth } from "@/lib/auth-server";
@@ -35,6 +36,11 @@ export async function POST(req: Request) {
       { error: "Enabling SSL requires a Let's Encrypt email." },
       { status: 400 },
     );
+  }
+
+  const baseError = validateBaseDomain(primary);
+  if (baseError) {
+    return NextResponse.json({ error: baseError }, { status: 400 });
   }
 
   // Persist intent first — even if Traefik write fails, the dashboard

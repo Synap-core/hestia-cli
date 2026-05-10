@@ -171,6 +171,18 @@
       "type": "directory"
     },
     {
+      "path": "app/(os)/apps/[id]/page-client.tsx",
+      "accessCount": 3,
+      "lastAccessed": 1778373225182,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/components/app-pane.tsx",
+      "accessCount": 3,
+      "lastAccessed": 1778373239055,
+      "type": "file"
+    },
+    {
       "path": "app/api/pod/auto-provision/route.ts",
       "accessCount": 2,
       "lastAccessed": 1778358816326,
@@ -204,6 +216,36 @@
       "path": "app/api/ai/route.ts",
       "accessCount": 1,
       "lastAccessed": 1778351732317,
+      "type": "file"
+    },
+    {
+      "path": "lib/synap-auth.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778373028123,
+      "type": "file"
+    },
+    {
+      "path": "lib/use-eve-session.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778373028228,
+      "type": "file"
+    },
+    {
+      "path": "lib/auth-server.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778373028465,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/components/auth/EveAccountGate.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1778373180470,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/components/auth/EveSignInScreen.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1778373180551,
       "type": "file"
     }
   ],

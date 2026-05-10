@@ -31,10 +31,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Spinner } from "@heroui/react";
 import { AlertCircle, RefreshCw } from "lucide-react";
-import { getSharedSession } from "@/lib/synap-auth";
+import { getAllPodSessions, getSharedSession, type SharedSession } from "@/lib/synap-auth";
 import { createAllowedEmbedOriginChecker } from "@eve/dna/browser";
 
 type PaneStatus = "loading" | "ready" | "unreachable";
+
+// Returns the best available session for posting to an embedded app.
+// Prefers the CP session; falls back to the first active pod session so
+// pod-direct (Mode B) users aren't locked out of auto-auth.
+function resolveSessionForEmbed(): SharedSession | null {
+  const cp = getSharedSession();
+  if (cp) return cp;
+  const pods = getAllPodSessions();
+  const first = Object.values(pods).find((s) => s?.sessionToken);
+  if (!first) return null;
+  return {
+    podUrl: first.podUrl,
+    sessionToken: first.sessionToken,
+    workspaceId: "",
+    userId: first.userId ?? "",
+    userName: first.userEmail ?? "",
+  };
+}
 
 export interface AppPaneProps {
   /** Stable app identifier — used as the iframe `title` and in error copy. */
@@ -80,7 +98,7 @@ export function AppPane({
     (target: Window) => {
       if (!sendAuth) return;
       if (!targetOrigin) return;
-      const session = getSharedSession();
+      const session = resolveSessionForEmbed();
       if (!session) return;
       target.postMessage({ type: "synap:auth", session }, targetOrigin);
     },

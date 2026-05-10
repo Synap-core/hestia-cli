@@ -398,6 +398,41 @@ export function serviceComponents(): ComponentInfo[] {
 }
 
 /**
+ * Validate that a string passed as a "primary domain" looks like a bare root
+ * (e.g. `example.com` or `team.thearchitech.xyz`) and not a service subdomain
+ * (e.g. `pod.example.com`, `pod-admin.example.com`).
+ *
+ * Why this exists: every registered component owns a Traefik subdomain. When
+ * `eve domain set <X>` is called with `<X>` already prefixed by a known
+ * component subdomain, the Traefik route generator faithfully appends every
+ * subdomain on top — producing `pod.pod.example.com`, `eve.pod.example.com`,
+ * etc. The user has no way to recover except `eve domain set` again with the
+ * right value. Catch it at the entry point instead.
+ *
+ * Returns null if the input is acceptable, or an error message string when
+ * the first label collides with a known service subdomain.
+ */
+export function validateBaseDomain(input: string): string | null {
+  const trimmed = input.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  if (!trimmed.includes('.')) return null; // single-label or localhost — let other checks handle
+  const firstLabel = trimmed.split('.')[0]!;
+  const reserved = new Set(
+    COMPONENTS
+      .map(c => c.service?.subdomain)
+      .filter((s): s is string => typeof s === 'string' && s.length > 0),
+  );
+  if (reserved.has(firstLabel)) {
+    const root = trimmed.slice(firstLabel.length + 1);
+    return (
+      `"${trimmed}" looks like a service subdomain (first label "${firstLabel}" matches a registered component). ` +
+      `Pass the bare root domain instead, e.g. "${root}". ` +
+      `Eve will append component subdomains automatically (pod.${root}, pod-admin.${root}, eve.${root}, …).`
+    );
+  }
+  return null;
+}
+
+/**
  * Build the public Traefik URL for a component, e.g. `https://pod.example.com`
  * for `componentId='synap'` + `domain='example.com'` + `ssl=true`.
  *
