@@ -73,9 +73,11 @@ export async function runBrainInit(options: BrainInitOptions): Promise<void> {
   if (options.fromSource && options.fromImage) {
     throw new Error('--from-image and --from-source are mutually exclusive.');
   }
-  if (domain !== 'localhost' && !email) {
-    throw new Error('Non-localhost domain requires --email (or LETSENCRYPT_EMAIL) for synap install.');
-  }
+  // Note: we no longer hard-require email when domain != 'localhost'.
+  // gatherInstallConfig is the resolution + validation layer; it knows
+  // whether SSL is on (Let's Encrypt requires email) or off (behind an
+  // external HTTPS-terminating proxy — no email needed). Re-checking here
+  // would falsely fail the proxy case.
 
   // Single install path — `installSynapFromImage` clones the synap-backend
   // repo if missing, then delegates to the canonical synap CLI. Source vs

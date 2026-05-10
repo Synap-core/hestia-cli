@@ -391,15 +391,24 @@ export async function runInstall(opts: InstallOptions): Promise<void> {
       spinner.fail(step.label);
       const error = err instanceof Error ? err : new Error(String(err));
       const componentIds = step.componentIds ?? [];
+      const hint = detectInstallHint(error);
       componentIds.forEach((c) => failedComponents.add(c));
-      failures.push({
-        label: step.label,
-        componentIds,
-        error,
-        hint: detectInstallHint(error),
-      });
-      // Continue to the next step — surfacing all failures at once is more
-      // useful than aborting on the first.
+      failures.push({ label: step.label, componentIds, error, hint });
+
+      // Print failure detail INLINE so the operator sees what broke
+      // immediately — not buried in the recap 5 steps later. The recap
+      // still shows the consolidated list at the end.
+      if (!jsonMode) {
+        const firstLine = error.message.split('\n')[0] ?? '(no error message)';
+        printError(`  ${firstLine}`);
+        if (hint) {
+          for (const line of hint.split('\n')) {
+            console.log(`  ${colors.warning(line)}`);
+          }
+        }
+        console.log(colors.muted(`  Continuing with the next step…`));
+        console.log();
+      }
     }
   }
 

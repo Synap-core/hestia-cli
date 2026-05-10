@@ -311,17 +311,27 @@ export async function gatherInstallConfig(
     if (exposure === "local") {
       domain = "localhost";
       domainSource = "prompt";
-    } else if (!domain || domain === "localhost") {
-      // Need a real hostname
+    } else {
+      // Public exposure: ALWAYS show the domain prompt, even when a value
+      // was discovered/saved/in-secrets. Pre-fill with the resolved value
+      // so the user can press Enter to accept or edit. Silently using a
+      // discovered domain felt like the resolver was skipping a question.
       if (prompts.domain) {
-        const d = await prompts.domain("");
+        const initialDomain = domain && domain !== "localhost" ? domain : "";
+        const d = await prompts.domain(initialDomain);
         if (!d || !isValidDomain(d) || d === "localhost") {
           throw new InstallConfigError([{ field: "domain", reason: "public exposure requires FQDN" }]);
         }
         // Normalise so a user-typed "pod.x.y" lands as the bare "x.y" in
         // secrets — same convention as flag/secrets/discovered sources.
-        domain = normalizeBareDomain(d) ?? d.trim();
-        domainSource = "prompt";
+        const normalised = normalizeBareDomain(d) ?? d.trim();
+        // Mark source as 'prompt' only when the user actually changed the
+        // value; otherwise keep the originating source (secrets/discovered/saved)
+        // so the recap shows where it came from.
+        if (normalised !== domain) {
+          domain = normalised;
+          domainSource = "prompt";
+        }
       } else {
         throw new InstallConfigError([{ field: "domain", reason: "public exposure but no domain prompt available" }]);
       }
