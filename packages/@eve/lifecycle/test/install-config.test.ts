@@ -4,6 +4,7 @@ import {
   InstallConfigError,
   isValidDomain,
   isValidEmail,
+  normalizeBareDomain,
   type GatherInstallConfigOptions,
   type PromptFns,
   type ResolverIO,
@@ -56,6 +57,43 @@ describe("validators", () => {
     expect(isValidEmail("a@b.co")).toBe(true);
     expect(isValidEmail("a@b")).toBe(false);
     expect(isValidEmail("")).toBe(false);
+  });
+});
+
+describe("normalizeBareDomain", () => {
+  it("strips a single leading pod. prefix", () => {
+    expect(normalizeBareDomain("pod.team.example.com")).toBe("team.example.com");
+  });
+  it("is idempotent on bare domains", () => {
+    expect(normalizeBareDomain("team.example.com")).toBe("team.example.com");
+  });
+  it("leaves localhost and IPv4 untouched", () => {
+    expect(normalizeBareDomain("localhost")).toBe("localhost");
+    expect(normalizeBareDomain("10.0.0.1")).toBe("10.0.0.1");
+  });
+  it("returns undefined / empty unchanged", () => {
+    expect(normalizeBareDomain(undefined)).toBeUndefined();
+    expect(normalizeBareDomain("")).toBe("");
+  });
+});
+
+describe("gatherInstallConfig — pod. prefix normalisation", () => {
+  it("strips pod. from --domain so secrets stores the bare value", async () => {
+    const cfg = await gatherInstallConfig({
+      cwd: "/tmp/test",
+      flags: { domain: "pod.team.example.com", email: "ops@example.com" },
+      interactive: false,
+      loadSavedProfile: false,
+      io: {
+        readSecrets: async () => null,
+        readSavedProfile: async () => null,
+        discover: async () => ({}),
+        env: {},
+      },
+      prompts: {},
+    });
+    expect(cfg.domain).toBe("team.example.com");
+    expect(cfg.exposure).toBe("public");
   });
 });
 
@@ -112,15 +150,17 @@ describe("gatherInstallConfig — resolution chain", () => {
   it("falls back to secrets.domain.email — the bug-fix path", async () => {
     // Reproduces the user-reported error: install ran with a non-localhost
     // domain in secrets but no --email flag. Resolver should pick it up.
+    // Secrets store the BARE domain (no leading pod.); the resolver
+    // returns it unchanged here. Consumers add their own routing prefix.
     const io = makeIO({
       readSecrets: async () => ({
         version: "1",
         updatedAt: "x",
-        domain: { primary: "pod.team.example.com", email: "ops@team.example.com" },
+        domain: { primary: "team.example.com", email: "ops@team.example.com" },
       }) as never,
     });
     const cfg = await gatherInstallConfig({ ...baseOpts, io, prompts: noPrompts() });
-    expect(cfg.domain).toBe("pod.team.example.com");
+    expect(cfg.domain).toBe("team.example.com");
     expect(cfg.email).toBe("ops@team.example.com");
     expect(cfg.source.email).toBe("secrets");
     expect(cfg.ssl).toBe(true);
@@ -203,12 +243,13 @@ describe("gatherInstallConfig — error paths", () => {
   });
 
   it("ssl=false skips email requirement (behind external proxy)", async () => {
+    // Pass the routing-prefixed form to verify normalisation strips it.
     const cfg = await gatherInstallConfig({
       ...baseOpts,
       flags: { domain: "pod.example.com", ssl: false },
       prompts: noPrompts(),
     });
-    expect(cfg.domain).toBe("pod.example.com");
+    expect(cfg.domain).toBe("example.com"); // pod. stripped → bare
     expect(cfg.ssl).toBe(false);
     expect(cfg.email).toBeUndefined();
     expect(cfg.exposure).toBe("public");
@@ -273,7 +314,8 @@ describe("gatherInstallConfig — interactive", () => {
       prompts,
     });
 
-    expect(cfg.domain).toBe("pod.test.io");
+    // Prompt returned "pod.test.io" — normalised to bare "test.io" before storage.
+    expect(cfg.domain).toBe("test.io");
     expect(cfg.email).toBe("ops@test.io");
     expect(cfg.source.email).toBe("prompt");
     // Email is prompted right after ssl=true is confirmed and no higher-priority

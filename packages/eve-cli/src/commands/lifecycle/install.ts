@@ -854,9 +854,10 @@ interface InstallFailure {
 function detectInstallHint(err: Error): string | undefined {
   const msg = err.message ?? "";
 
-  // Port collision (Caddy/Traefik/anything trying to bind 80/443/4000).
-  // Most common when Eve's Traefik is already on 80/443 and Synap's Caddy
-  // tries to claim them too — the two reverse proxies can't share ports.
+  // Port collision. Most common when Eve's Traefik is already on 80/443
+  // and Synap's Caddy tries to claim them too — two reverse proxies can't
+  // share ports. RSSHub on 1200 hits the same problem when an earlier
+  // attempt already started it.
   const portMatch = msg.match(/Bind for [0-9.:]*:(\d+) failed: port is already allocated/);
   if (portMatch) {
     const port = portMatch[1];
@@ -866,7 +867,14 @@ function detectInstallHint(err: Error): string | undefined {
         `Port ${port} is already bound on this host (likely by Eve's Traefik).`,
         `  → If Eve and Synap share the host, route Synap behind Traefik instead of letting Caddy claim ${port}.`,
         `  → Quick check: \`docker ps --format '{{.Names}}\\t{{.Ports}}' | grep ':${port}'\``,
-        `  → Workaround: stop the conflicting service, then re-run \`eve update synap\`.`,
+        `  → Stop the conflicting service, then re-run \`eve update synap\`.`,
+      ].join("\n");
+    }
+    if (port === "1200") {
+      return [
+        `Port 1200 is already bound — RSSHub from a previous run is still up.`,
+        `  → \`docker ps | grep rsshub\` to identify the existing container.`,
+        `  → \`docker rm -f synap-backend-rsshub\` then re-run \`eve update synap\`.`,
       ].join("\n");
     }
     return `Port ${port} is already bound — check \`sudo lsof -iTCP:${port} -sTCP:LISTEN\`.`;

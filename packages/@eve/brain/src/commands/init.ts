@@ -4,6 +4,7 @@ import { EntityStateManager, entityStateManager, readEveSecrets, getServerIp } f
 import { OllamaService } from '../lib/ollama.js';
 import { execa, ensureNetwork } from '../lib/exec.js';
 import { resolveSynapDelegate } from '../lib/synap-delegate.js';
+import { toPodFqdn } from '../lib/synap-cli-delegate.js';
 
 export interface BrainInitOptions {
   withAi?: boolean;
@@ -142,7 +143,11 @@ export async function runBrainInit(options: BrainInitOptions): Promise<void> {
     console.log(`\n  Complete setup at:`);
     if (configuredDomain) {
       const proto = ssl ? 'https' : 'http';
-      console.log(`    ${proto}://pod.${configuredDomain}/admin/bootstrap`);
+      // toPodFqdn is prefix-aware: returns "pod.example.com" untouched
+      // when the input already starts with "pod.", instead of producing
+      // "pod.pod.example.com" (the bug observed in the wild when users
+      // passed --domain pod.x.y.z).
+      console.log(`    ${proto}://${toPodFqdn(configuredDomain)}/admin/bootstrap`);
     }
     if (serverIp) {
       console.log(`    http://${serverIp}:4000/admin/bootstrap`);

@@ -204,6 +204,24 @@ export function isValidEmail(s: string | undefined): boolean {
   return !!s && EMAIL_RE.test(s.trim());
 }
 
+/**
+ * Strip the leading `pod.` routing prefix from a user-provided domain so
+ * `secrets.domain.primary` always holds the BARE domain. Consumers add
+ * their own subdomain (e.g. `eve.${primary}`, `pod.${primary}` via
+ * `toPodFqdn`) — storing the prefixed form would yield `pod.pod.x.y`
+ * after a second consumer prepends.
+ *
+ * Idempotent. Leaves `localhost`, IPv4 literals, and unprefixed domains
+ * untouched.
+ */
+export function normalizeBareDomain(input: string | undefined): string | undefined {
+  if (!input) return input;
+  const trimmed = input.trim();
+  if (!trimmed || trimmed === "localhost") return trimmed;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(trimmed)) return trimmed;
+  return trimmed.startsWith("pod.") ? trimmed.slice(4) : trimmed;
+}
+
 // ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
@@ -249,28 +267,36 @@ export async function gatherInstallConfig(
   }
 
   // ---------- domain / exposure ----------
-  // Resolution chain: flag → secrets → discovered → saved → prompt → default('localhost')
+  // Resolution chain: flag → secrets → discovered → saved → prompt → default('localhost').
+  // All sources are normalised to the BARE domain (no leading `pod.`) so
+  // downstream consumers can re-add their own routing prefix without
+  // producing `pod.pod.x.y`.
   let domain: string | undefined;
   let domainSource: FieldSource | undefined;
 
-  if (flags.domain && flags.domain.trim() && flags.domain.trim() !== "localhost") {
-    domain = flags.domain.trim();
+  const flagDomain = normalizeBareDomain(flags.domain);
+  const secretsDomain = normalizeBareDomain(secrets?.domain?.primary);
+  const discoveredDomain = normalizeBareDomain(discovered.domain);
+  const savedSynapHost = normalizeBareDomain(saved?.network?.synapHost);
+  const savedHint = normalizeBareDomain(saved?.domainHint);
+
+  if (flagDomain && flagDomain !== "localhost") {
+    domain = flagDomain;
     domainSource = "flag";
-  } else if (flags.domain?.trim() === "localhost") {
-    // explicit --domain localhost is honored
+  } else if (flagDomain === "localhost") {
     domain = "localhost";
     domainSource = "flag";
-  } else if (secrets?.domain?.primary?.trim()) {
-    domain = secrets.domain.primary.trim();
+  } else if (secretsDomain) {
+    domain = secretsDomain;
     domainSource = "secrets";
-  } else if (discovered.domain && discovered.domain !== "localhost") {
-    domain = discovered.domain;
+  } else if (discoveredDomain && discoveredDomain !== "localhost") {
+    domain = discoveredDomain;
     domainSource = "discovered";
-  } else if (saved?.network?.synapHost?.trim() && saved.network.synapHost.trim() !== "localhost") {
-    domain = saved.network.synapHost.trim();
+  } else if (savedSynapHost && savedSynapHost !== "localhost") {
+    domain = savedSynapHost;
     domainSource = "saved-profile";
-  } else if (saved?.domainHint?.trim() && saved.domainHint.trim() !== "localhost") {
-    domain = saved.domainHint.trim();
+  } else if (savedHint && savedHint !== "localhost") {
+    domain = savedHint;
     domainSource = "saved-profile";
   }
 
@@ -292,7 +318,9 @@ export async function gatherInstallConfig(
         if (!d || !isValidDomain(d) || d === "localhost") {
           throw new InstallConfigError([{ field: "domain", reason: "public exposure requires FQDN" }]);
         }
-        domain = d.trim();
+        // Normalise so a user-typed "pod.x.y" lands as the bare "x.y" in
+        // secrets — same convention as flag/secrets/discovered sources.
+        domain = normalizeBareDomain(d) ?? d.trim();
         domainSource = "prompt";
       } else {
         throw new InstallConfigError([{ field: "domain", reason: "public exposure but no domain prompt available" }]);

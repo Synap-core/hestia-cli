@@ -2442,6 +2442,7 @@ export {
   gatherInstallConfig,
   isValidDomain,
   isValidEmail,
+  normalizeBareDomain,
   InstallConfigError,
   type ResolvedInstallConfig,
   type RawInstallFlags,
