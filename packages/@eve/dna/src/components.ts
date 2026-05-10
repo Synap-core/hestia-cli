@@ -447,7 +447,7 @@ export function isLoopbackUrl(url: string | undefined | null): boolean {
  * no DNS for this name (synap-backend's compose project is separate).
  *
  * Use this when WRITING SYNAP_API_URL into a sidecar container's env
- * (openwebui-pipelines, openclaw, sandbox). The container resolves the
+ * (openwebui Functions, openclaw, sandbox). The container resolves the
  * hostname via Docker DNS and connects directly on the bridge — no
  * round-trip out to the public internet, no Traefik in the path.
  *
@@ -462,9 +462,9 @@ export const SYNAP_HOST_LOOPBACK_PORT = 14000;
  * Pure derivation of the Synap pod URL — no I/O, no probing, just
  * reads from the secrets shape. Used in two contexts:
  *
- *   - **Container env files** (openwebui-pipelines `.env`, sandbox
- *     env, etc.): the value baked here is what other containers will
- *     resolve when they call `fetch(SYNAP_API_URL)`. They reach the
+ *   - **Container env files** (sandbox env, OpenClaw env, OpenWebUI
+ *     Function valves, etc.): the value baked here is what other
+ *     containers resolve when they call `fetch(SYNAP_API_URL)`. They reach the
  *     backend via Docker DNS on `eve-network`, not via host loopback,
  *     so this function returns the public URL — that's what bridges
  *     non-eve-network callers AND the off-host case.

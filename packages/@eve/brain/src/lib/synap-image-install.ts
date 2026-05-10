@@ -74,9 +74,17 @@ function gen(bytes = 32): string {
 }
 
 function getSynapBackendContainer(): string | null {
+  return findComposeContainer('backend');
+}
+
+function getSynapPodAdminContainer(): string | null {
+  return findComposeContainer('pod-admin');
+}
+
+function findComposeContainer(service: string): string | null {
   try {
     const out = execSync(
-      'docker ps --filter "label=com.docker.compose.project=synap-backend" --filter "label=com.docker.compose.service=backend" --format "{{.Names}}"',
+      `docker ps --filter "label=com.docker.compose.project=synap-backend" --filter "label=com.docker.compose.service=${service}" --format "{{.Names}}"`,
       { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
     ).trim();
     return out.split('\n')[0]?.trim() || null;
@@ -237,6 +245,16 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
     console.log(`  Connected ${containerName} → eve-network (alias: eve-brain-synap)`);
   } else {
     console.warn('  Backend container not found after synap install — skipping eve-network attach');
+  }
+
+  // Pod-admin ships in the same compose project as the backend; connect it
+  // too so eve-legs-traefik can route pod-admin.<domain> by container alias.
+  // The compose override (synap-overrides.ts) also adds the alias declaratively
+  // — this is a belt-and-braces repair for already-running containers.
+  const podAdminContainer = getSynapPodAdminContainer();
+  if (podAdminContainer) {
+    connectToEveNetwork(podAdminContainer, 'eve-brain-pod-admin');
+    console.log(`  Connected ${podAdminContainer} → eve-network (alias: eve-brain-pod-admin)`);
   }
 
   // 7. Reclaim disk by pruning old image versions. Failures are non-fatal.

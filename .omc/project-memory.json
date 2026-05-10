@@ -180,6 +180,12 @@
       "type": "file"
     },
     {
+      "path": "packages/@eve/brain/src/lib/synap-image-install.ts",
+      "accessCount": 4,
+      "lastAccessed": 1778371102941,
+      "type": "file"
+    },
+    {
       "path": "packages/@eve/dna/test/openwebui-skills-sync.test.ts",
       "accessCount": 3,
       "lastAccessed": 1778368951464,
@@ -207,12 +213,6 @@
       "path": "packages/@eve/dna/src/openwebui-extras.ts",
       "accessCount": 2,
       "lastAccessed": 1778370757464,
-      "type": "file"
-    },
-    {
-      "path": "packages/@eve/brain/src/lib/synap-image-install.ts",
-      "accessCount": 2,
-      "lastAccessed": 1778371083653,
       "type": "file"
     },
     {
