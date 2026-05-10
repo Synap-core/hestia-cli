@@ -2431,3 +2431,38 @@ export {
   type PreflightResult,
   type PreflightOptions,
 } from "./preflight.js";
+
+// Install configuration resolver — single funnel used by `eve install`,
+// `eve init`, `eve setup`, and any future install entry point. Resolves
+// domain/email/SSL/admin/components from CLI flags → env → secrets →
+// discovered → saved profile → interactive prompt → typed default. In
+// non-interactive mode, missing required fields throw `InstallConfigError`
+// with a structured `missing[]` list.
+export {
+  gatherInstallConfig,
+  isValidDomain,
+  isValidEmail,
+  InstallConfigError,
+  type ResolvedInstallConfig,
+  type RawInstallFlags,
+  type GatherInstallConfigOptions,
+  type ResolverIO,
+  type PromptFns,
+  type FieldSource,
+  type AiMode,
+  type AiProvider,
+  type TunnelProvider,
+  type InstallMode,
+  type AdminBootstrapMode,
+  type Exposure,
+  type MissingField,
+} from "./install-config.js";
+
+export { defaultPrompts } from "./install-config-prompts.js";
+
+// One-shot migration: copy domain/email from .eve/setup-profile.json
+// into ~/.eve/secrets.json so secrets is the single source of truth.
+export {
+  migrateSetupProfileToSecrets,
+  type MigrationResult,
+} from "./setup-profile-migration.js";

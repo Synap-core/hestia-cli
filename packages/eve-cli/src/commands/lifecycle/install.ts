@@ -4,7 +4,6 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import {
-  discoverAndBackfillPodConfig,
   entityStateManager,
   type SetupProfileKind,
   writeSetupProfile,
@@ -46,6 +45,10 @@ import {
   runBackendPreflight,
   provisionAllAgents,
   materializeTargets,
+  gatherInstallConfig,
+  defaultPrompts,
+  InstallConfigError,
+  type ResolvedInstallConfig,
 } from '@eve/lifecycle';
 
 // ---------------------------------------------------------------------------
@@ -127,23 +130,66 @@ export async function runInstall(opts: InstallOptions): Promise<void> {
   const installList = selectedIds(componentSet);
 
   // -----------------------------------------------------------------
-  // 2. Resolve shared settings (domain, email, model, AI mode)
+  // 2. Resolve shared settings — single funnel via gatherInstallConfig.
+  //
+  // Per-field source chain: flag → env → secrets.json → discovered →
+  // saved-profile (off here) → interactive prompt → typed default.
+  // Missing required fields in non-interactive mode throw a single
+  // structured InstallConfigError instead of late `process.exit(1)`s.
   // -----------------------------------------------------------------
-  let domain = opts.domain || 'localhost';
-  // When the user didn't pass --domain explicitly, probe on-disk artefacts
-  // so an install on a server that already has a real domain in its .env
-  // gets the right value without the operator needing to re-type it.
-  if (domain === 'localhost') {
-    const discovered = await discoverAndBackfillPodConfig(process.cwd(), { backfill: !opts.dryRun });
-    if (discovered.domain) {
-      domain = discovered.domain;
+  let cfg: ResolvedInstallConfig;
+  try {
+    cfg = await gatherInstallConfig({
+      cwd: process.cwd(),
+      flags: {
+        components: installList,
+        // Commander defaults --domain to "localhost". Treat that as "no
+        // explicit choice" so the resolver can promote a value from secrets.
+        domain: opts.domain && opts.domain !== 'localhost' ? opts.domain : undefined,
+        email: opts.email,
+        adminEmail: opts.adminEmail,
+        adminPassword: opts.adminPassword,
+        adminBootstrapMode: opts.adminBootstrapMode,
+        fromImage: opts.fromImage,
+        fromSource: opts.fromSource,
+        withOpenclaw: opts.withOpenclaw,
+        withRsshub: opts.withRsshub,
+        aiMode: opts.aiMode,
+        aiProvider: opts.aiProvider,
+        fallbackProvider: opts.fallbackProvider,
+        tunnel: opts.tunnel,
+        tunnelDomain: opts.tunnelDomain,
+      },
+      interactive: !nonInteractive && !jsonMode,
+      loadSavedProfile: false,
+      prompts: defaultPrompts,
+    });
+  } catch (err) {
+    if (err instanceof InstallConfigError) {
+      printError(err.message);
+      process.exit(1);
     }
+    throw err;
   }
-  const email = opts.email || process.env.LETSENCRYPT_EMAIL;
 
-  // Legacy flags from the old setup command
-  const withOpenclaw = opts.withOpenclaw || componentSet['openclaw'];
-  const withRsshub = opts.withRsshub || componentSet['rsshub'] || componentSet['rsshub'];
+  // Reflect resolved values back onto opts so the rest of the function
+  // (buildInstallSteps, recap, post-install hooks) reads the canonical
+  // values without taking a second resolution path.
+  const domain = cfg.domain;
+  const email = cfg.email;
+  const withOpenclaw = cfg.withOpenclaw;
+  const withRsshub = cfg.withRsshub;
+  opts.domain = domain;
+  opts.email = email;
+  opts.withOpenclaw = withOpenclaw;
+  opts.withRsshub = withRsshub;
+  opts.adminEmail = cfg.adminEmail;
+  opts.adminPassword = cfg.adminPassword;
+  opts.adminBootstrapMode = cfg.adminBootstrapMode;
+  opts.fromImage = cfg.installMode === 'from_image';
+  opts.fromSource = cfg.installMode === 'from_source';
+  opts.tunnel = cfg.tunnel?.provider;
+  opts.tunnelDomain = cfg.tunnel?.domain;
 
   // Infer legacy profile for setup-profile.json backward compat
   const legacyProfile = inferLegacyProfile(installList);
@@ -269,6 +315,18 @@ export async function runInstall(opts: InstallOptions): Promise<void> {
       };
     }
 
+    // Persist resolved domain → secrets.json. This is the single source of
+    // truth for `domain.primary/ssl/email` (consumed by preflight,
+    // runBrainInit, eve domain commands). Without this write, every later
+    // command would re-prompt for the same values.
+    if (cfg.domain && cfg.domain !== 'localhost') {
+      merge.domain = {
+        primary: cfg.domain,
+        ssl: cfg.ssl,
+        email: cfg.email,
+      };
+    }
+
     await writeEveSecrets(merge, cwd);
     ensureEveSkillsLayout(skillsDir);
   }
@@ -286,7 +344,15 @@ export async function runInstall(opts: InstallOptions): Promise<void> {
       console.log(`  ${colors.success(emojis.check)} ${colors.primary.bold(comp.label)} ${colors.muted(comp.description.split('\n')[0])}${tag}`);
     }
     console.log();
-    printInfo(`Domain: ${colors.info(domain)}${email ? `  TLS: ${colors.info(email)}` : ''}`);
+    const sourceTag = (k: keyof typeof cfg.source) => {
+      const s = cfg.source[k];
+      return s && s !== 'flag' && s !== 'prompt' ? colors.muted(` (${s})`) : '';
+    };
+    printInfo(
+      `Domain: ${colors.info(domain)}${sourceTag('domain')}` +
+        `   SSL: ${colors.info(cfg.ssl ? 'Let\'s Encrypt' : 'off (proxy or HTTP)')}${sourceTag('ssl')}` +
+        (email ? `   TLS email: ${colors.info(email)}${sourceTag('email')}` : ''),
+    );
     console.log();
   }
 
@@ -331,11 +397,9 @@ export async function runInstall(opts: InstallOptions): Promise<void> {
   await updateEntityStateFromComponents(installedComponents, opts);
 
   // -----------------------------------------------------------------
-  // 7b. Optional: domain configuration (interactive only)
+  // 7b. (removed) Domain prompt has moved to upfront resolution via
+  //     gatherInstallConfig — no post-install domain prompt needed.
   // -----------------------------------------------------------------
-  if (!jsonMode && !opts.skipInteractive) {
-    await maybeOfferDomainSetup(installedComponents);
-  }
 
   // -----------------------------------------------------------------
   // 7c. Optional: AI provider setup (interactive only)
@@ -561,79 +625,6 @@ async function printInstallationRecap(installedComponents: string[]): Promise<vo
 // ---------------------------------------------------------------------------
 // Optional post-install steps (interactive prompts)
 // ---------------------------------------------------------------------------
-
-/**
- * Offer to wire up a public domain right after install. Skips silently if a
- * domain is already configured. The user can always run `eve domain set`
- * later — this is purely a convenience prompt.
- */
-async function maybeOfferDomainSetup(installedComponents: string[]): Promise<void> {
-  const existing = await readEveSecrets(process.cwd());
-  if (existing?.domain?.primary) return; // already configured
-
-  console.log();
-  const wantDomain = await confirm({
-    message: 'Want to expose this Eve installation on a public domain?',
-    initialValue: false,
-  });
-  if (isCancel(wantDomain) || !wantDomain) return;
-
-  const domainName = await text({
-    message: 'Domain (e.g. mydomain.com):',
-    placeholder: 'mydomain.com',
-    validate: (value) => {
-      if (!value) return 'Domain is required';
-      if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(value)) return 'Invalid domain format';
-      return undefined;
-    },
-  });
-  if (isCancel(domainName)) return;
-
-  const wantSsl = await confirm({
-    message: "Enable SSL via Let's Encrypt? (recommended for public domains)",
-    initialValue: true,
-  });
-  if (isCancel(wantSsl)) return;
-
-  let email: string | undefined;
-  if (wantSsl) {
-    const emailResult = await text({
-      message: "Email for Let's Encrypt notifications:",
-      placeholder: 'you@example.com',
-      validate: (value) => value && /^[^@]+@[^@]+\.[^@]+$/.test(value) ? undefined : 'Invalid email',
-    });
-    if (isCancel(emailResult)) return;
-    email = emailResult;
-  }
-
-  console.log();
-  const spinner = createSpinner(`Configuring Traefik routes for ${domainName}...`);
-  spinner.start();
-  try {
-    await writeEveSecrets({ domain: { primary: domainName, ssl: !!wantSsl, email } });
-    const [result] = await materializeTargets(null, ['traefik-routes']);
-    if (!result?.ok) throw new Error(result?.error ?? result?.summary ?? 'unknown Traefik error');
-    spinner.succeed(`Domain ${domainName} configured`);
-  } catch (err) {
-    spinner.fail(`Failed to configure domain: ${err instanceof Error ? err.message : String(err)}`);
-    return;
-  }
-
-  const serverIp = getServerIp();
-  console.log();
-  printInfo('Now create these DNS A records at your registrar:');
-  console.log();
-  for (const comp of [{ subdomain: 'eve' }, ...installedComponents.flatMap(id => {
-    const c = COMPONENTS.find(c => c.id === id);
-    return c?.service?.subdomain ? [{ subdomain: c.service.subdomain }] : [];
-  })]) {
-    const value = serverIp ?? '<your-server-ip>';
-    console.log(`  ${colors.muted('A')}    ${`${comp.subdomain}.${domainName}`.padEnd(32)}  ${value}`);
-  }
-  console.log();
-  printInfo('Once DNS propagates, verify with: eve domain check');
-  if (wantSsl) printInfo('SSL certificates provision automatically (1–5 min after DNS works)');
-}
 
 /**
  * Offer to configure an AI provider so OpenClaw / Open WebUI / agents work

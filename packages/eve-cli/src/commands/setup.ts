@@ -23,6 +23,12 @@ import {
 } from '@eve/dna';
 import { runBrainInit, runInferenceInit } from '@eve/brain';
 import { runLegsProxySetup } from '@eve/legs';
+import {
+  gatherInstallConfig,
+  defaultPrompts,
+  InstallConfigError,
+  migrateSetupProfileToSecrets,
+} from '@eve/lifecycle';
 import { getGlobalCliFlags, outputJson } from '@eve/cli-kit';
 import { colors, emojis } from '../lib/ui.js';
 
@@ -478,305 +484,112 @@ export function setupCommand(program: Command): void {
       if (!aiMode) aiMode = 'hybrid';
       if (!defaultProvider && aiMode !== 'local') defaultProvider = 'openrouter';
 
-      if (opts.fromImage && opts.fromSource) {
-        console.error('Use only one of --from-image or --from-source.');
-        process.exit(1);
+      // ---------------------------------------------------------------
+      // One-shot: copy domain/email from .eve/setup-profile.json into
+      // ~/.eve/secrets.json. Idempotent — only writes when secrets are
+      // missing the field. Runs before gatherInstallConfig so the
+      // resolver sees the back-filled values via the secrets source.
+      // ---------------------------------------------------------------
+      if (!opts.dryRun) {
+        await migrateSetupProfileToSecrets(cwd).catch(() => {
+          // Migration is best-effort. If it fails, the resolver still
+          // reads the saved profile directly via its 'saved-profile'
+          // source — operator just doesn't get the canonicalisation.
+        });
       }
 
-      // No Commander default for --domain: a default of "localhost" prevented loading saved synapHost/domainHint.
-      const domainArg = opts.domain?.trim();
-      const explicitDomain = domainArg !== undefined && domainArg.length > 0 ? domainArg : undefined;
-      let installDomain =
-        explicitDomain ??
-        (loadedExistingPrefs
-          ? existing?.network?.synapHost?.trim() || existing?.domainHint?.trim()
-          : undefined) ??
-        'localhost';
-      let installEmail = opts.email?.trim() || process.env.LETSENCRYPT_EMAIL?.trim() || undefined;
-      if (!installEmail && loadedExistingPrefs) {
-        installEmail = existing?.synapInstall?.tlsEmail?.trim() || installEmail;
-      }
-      let installMode: 'auto' | 'from_image' | 'from_source' =
-        opts.fromImage ? 'from_image' : opts.fromSource ? 'from_source' : 'auto';
-      if (!opts.fromImage && !opts.fromSource && loadedExistingPrefs && existing?.synapInstall?.mode) {
-        installMode = existing.synapInstall.mode;
-      }
-      let installWithOpenclaw = Boolean(opts.withOpenclaw);
-      if (!opts.withOpenclaw && loadedExistingPrefs && typeof existing?.synapInstall?.withOpenclaw === 'boolean') {
-        installWithOpenclaw = existing.synapInstall.withOpenclaw;
-      }
-      let installWithRsshub = Boolean(opts.withRsshub);
-      if (!opts.withRsshub && loadedExistingPrefs && typeof existing?.synapInstall?.withRsshub === 'boolean') {
-        installWithRsshub = existing.synapInstall.withRsshub;
-      }
-      let adminBootstrapMode: 'preseed' | 'token' =
-        opts.adminBootstrapMode === 'preseed' || opts.adminBootstrapMode === 'token'
-          ? opts.adminBootstrapMode
-          : 'token';
-      if (
-        !opts.adminBootstrapMode &&
-        loadedExistingPrefs &&
-        (existing?.synapInstall?.adminBootstrapMode === 'preseed' ||
-          existing?.synapInstall?.adminBootstrapMode === 'token')
-      ) {
-        adminBootstrapMode = existing.synapInstall.adminBootstrapMode;
-      }
-      let adminEmail = opts.adminEmail?.trim() || process.env.ADMIN_EMAIL?.trim() || installEmail;
-      if (!opts.adminEmail?.trim() && loadedExistingPrefs && existing?.synapInstall?.adminEmail?.trim()) {
-        adminEmail = existing.synapInstall.adminEmail.trim();
-      }
-      let adminPassword = opts.adminPassword?.trim() || process.env.ADMIN_PASSWORD?.trim();
-      let exposureMode: 'local' | 'public' = installDomain !== 'localhost' ? 'public' : 'local';
-
-      let tunnelProvider = parseTunnel(opts.tunnel) ?? usb?.tunnel_provider;
-      if (!opts.tunnel && !usb?.tunnel_provider && loadedExistingPrefs) {
-        tunnelProvider = existing?.network?.legs?.tunnelProvider ?? existing?.tunnelProvider;
-      }
-      let tunnelDomain =
-        (opts.tunnelDomain?.trim() || usb?.tunnel_domain || '').trim() || undefined;
-      if (!tunnelDomain && loadedExistingPrefs) {
-        tunnelDomain = existing?.network?.legs?.host?.trim() || existing?.tunnelDomain?.trim() || undefined;
-      }
+      // ---------------------------------------------------------------
+      // Resolve install configuration via the shared funnel.
+      //
+      // The wizard owns AI-foundation (above) and the 3-path profile
+      // selector; everything else (domain/SSL/email/admin/tunnel/install
+      // mode) flows through gatherInstallConfig so eve install / eve setup
+      // / eve init all share one resolution chain. Saved-profile loading
+      // is on for setup so re-runs auto-resume.
+      // ---------------------------------------------------------------
+      const usbTunnelDomain = usb?.tunnel_domain?.trim() || undefined;
+      let installDomain: string;
+      let installEmail: string | undefined;
+      let installMode: 'auto' | 'from_image' | 'from_source';
+      let installWithOpenclaw: boolean;
+      let installWithRsshub: boolean;
+      let adminBootstrapMode: 'preseed' | 'token';
+      let adminEmail: string | undefined;
+      let adminPassword: string | undefined;
+      let exposureMode: 'local' | 'public';
+      let tunnelProvider: 'pangolin' | 'cloudflare' | undefined;
+      let tunnelDomain: string | undefined;
       let legsHostStrategy: 'same_as_synap' | 'custom' | undefined;
-      if (loadedExistingPrefs) {
-        const prior = existing?.network?.legs?.hostStrategy;
-        if (prior === 'same_as_synap' || prior === 'custom') {
-          legsHostStrategy = prior;
+      let resolvedSsl = false;
+
+      if (profile === 'inference_only') {
+        // No Synap install — only AI defaults matter. Skip the funnel.
+        installDomain = 'localhost';
+        installEmail = opts.email?.trim() || process.env.LETSENCRYPT_EMAIL?.trim();
+        installMode = opts.fromImage ? 'from_image' : opts.fromSource ? 'from_source' : 'auto';
+        installWithOpenclaw = Boolean(opts.withOpenclaw);
+        installWithRsshub = Boolean(opts.withRsshub);
+        adminBootstrapMode =
+          opts.adminBootstrapMode === 'preseed' || opts.adminBootstrapMode === 'token'
+            ? opts.adminBootstrapMode
+            : 'token';
+        adminEmail = opts.adminEmail?.trim() || process.env.ADMIN_EMAIL?.trim();
+        adminPassword = opts.adminPassword?.trim() || process.env.ADMIN_PASSWORD?.trim();
+        exposureMode = 'local';
+        tunnelProvider = parseTunnel(opts.tunnel) ?? usb?.tunnel_provider;
+        tunnelDomain = opts.tunnelDomain?.trim() || usbTunnelDomain;
+      } else {
+        const seedComponents = profile === 'data_pod'
+          ? ['traefik', 'synap']
+          : ['traefik', 'synap', 'ollama'];
+        try {
+          const cfg = await gatherInstallConfig({
+            cwd,
+            flags: {
+              components: seedComponents,
+              domain: opts.domain?.trim() || usb?.domain_hint || undefined,
+              email: opts.email?.trim() || undefined,
+              adminEmail: opts.adminEmail?.trim() || undefined,
+              adminPassword: opts.adminPassword?.trim() || undefined,
+              adminBootstrapMode: opts.adminBootstrapMode,
+              fromImage: opts.fromImage,
+              fromSource: opts.fromSource,
+              withOpenclaw: opts.withOpenclaw,
+              withRsshub: opts.withRsshub,
+              tunnel: parseTunnel(opts.tunnel) ?? usb?.tunnel_provider,
+              tunnelDomain: opts.tunnelDomain?.trim() || usbTunnelDomain,
+            },
+            interactive: !opts.dryRun && !flags.nonInteractive && !flags.json,
+            loadSavedProfile: true,
+            seed: {
+              ai: { mode: aiMode, defaultProvider, fallbackProvider },
+            },
+            prompts: defaultPrompts,
+          });
+          installDomain = cfg.domain;
+          installEmail = cfg.email;
+          installMode = cfg.installMode;
+          installWithOpenclaw = cfg.withOpenclaw;
+          installWithRsshub = cfg.withRsshub;
+          adminBootstrapMode = cfg.adminBootstrapMode;
+          adminEmail = cfg.adminEmail;
+          adminPassword = cfg.adminPassword;
+          exposureMode = cfg.exposure;
+          tunnelProvider = cfg.tunnel?.provider;
+          tunnelDomain = cfg.tunnel?.domain;
+          legsHostStrategy = cfg.tunnel?.hostStrategy;
+          resolvedSsl = cfg.ssl;
+        } catch (err) {
+          if (err instanceof InstallConfigError) {
+            console.error(err.message);
+            process.exit(1);
+          }
+          throw err;
         }
       }
 
-      if (
-        !opts.dryRun &&
-        (profile === 'data_pod' || profile === 'full') &&
-        !flags.nonInteractive &&
-        !flags.json
-      ) {
-        const accessMode = await select({
-          message: 'How should users reach your Synap Data Pod API/auth endpoint?',
-          options: [
-            {
-              value: 'local' as const,
-              label: 'Local only (this machine / private network)',
-              hint:
-                'Sets Synap to localhost. Eve side services stay local unless you configure Legs exposure separately.',
-            },
-            {
-              value: 'public' as const,
-              label: 'Public domain (internet-accessible)',
-              hint:
-                'Sets Synap public URL (Caddy/API/auth). Eve side services are exposed only if Legs/tunnel is enabled.',
-            },
-          ],
-          initialValue: installDomain !== 'localhost' ? 'public' : 'local',
-        });
-        if (isCancel(accessMode)) {
-          console.log(colors.muted('Cancelled.'));
-          return;
-        }
-
-        exposureMode = accessMode as 'local' | 'public';
-        if (accessMode === 'local') {
-          installDomain = 'localhost';
-        } else {
-          const d = await text({
-            message: 'Public hostname for Synap (Caddy URL for API/auth, e.g. pod.example.com)',
-            initialValue: installDomain !== 'localhost' ? installDomain : '',
-            placeholder: 'pod.example.com',
-          });
-          if (isCancel(d)) {
-            console.log(colors.muted('Cancelled.'));
-            return;
-          }
-          const candidate = d.trim();
-          if (!candidate || candidate === 'localhost') {
-            console.error('Public mode requires a real hostname (not localhost).');
-            process.exit(1);
-          }
-          installDomain = candidate;
-        }
-
-        if (installDomain !== 'localhost' && !installEmail) {
-          const em = await text({
-            message: "Let's Encrypt email for TLS certificates",
-            placeholder: 'you@example.com',
-            initialValue: '',
-          });
-          if (isCancel(em)) {
-            console.log(colors.muted('Cancelled.'));
-            return;
-          }
-          const trimmed = em.trim();
-          if (!trimmed) {
-            console.error('Non-localhost domain requires --email (or LETSENCRYPT_EMAIL).');
-            process.exit(1);
-          }
-          installEmail = trimmed;
-        }
-
-        if (installMode === 'auto') {
-          const mode = await select({
-            message: 'Synap install mode',
-            options: [
-              { value: 'auto' as const, label: 'Auto', hint: 'Let synap decide (repo-aware default)' },
-              { value: 'from_image' as const, label: 'From image', hint: 'Use prebuilt GHCR image' },
-              { value: 'from_source' as const, label: 'From source', hint: 'Build locally from repo checkout' },
-            ],
-            initialValue: 'auto',
-          });
-          if (isCancel(mode)) {
-            console.log(colors.muted('Cancelled.'));
-            return;
-          }
-          installMode = mode as 'auto' | 'from_image' | 'from_source';
-        }
-
-        const bootstrapMode = await select({
-          message: 'Admin bootstrap mode for Synap',
-          options: [
-            {
-              value: 'token' as const,
-              label: 'Token (recommended)',
-              hint: 'Generate bootstrap token; create first admin later in UI/CLI.',
-            },
-            {
-              value: 'preseed' as const,
-              label: 'Preseed admin now',
-              hint: 'Create first admin during install (needs email + password).',
-            },
-          ],
-          initialValue: adminBootstrapMode,
-        });
-        if (isCancel(bootstrapMode)) {
-          console.log(colors.muted('Cancelled.'));
-          return;
-        }
-        adminBootstrapMode = bootstrapMode as 'preseed' | 'token';
-
-        if (adminBootstrapMode === 'preseed') {
-          const ae = await text({
-            message: 'Admin email for initial Synap admin account',
-            initialValue: adminEmail ?? '',
-            placeholder: 'admin@example.com',
-          });
-          if (isCancel(ae)) {
-            console.log(colors.muted('Cancelled.'));
-            return;
-          }
-          adminEmail = ae.trim();
-          if (!adminEmail) {
-            console.error('Preseed mode requires an admin email.');
-            process.exit(1);
-          }
-          if (!adminPassword) {
-            const ap = await text({
-              message: 'Admin password for initial account',
-              initialValue: '',
-              placeholder: 'Choose a strong password',
-            });
-            if (isCancel(ap)) {
-              console.log(colors.muted('Cancelled.'));
-              return;
-            }
-            adminPassword = ap.trim();
-          }
-          if (!adminPassword) {
-            console.error('Preseed mode requires an admin password.');
-            process.exit(1);
-          }
-        }
-
-        const askOpenclaw = await confirm({
-          message:
-            adminBootstrapMode === 'preseed'
-              ? 'Install OpenClaw during Synap install? (A workspace exists after preseed, so the add-on can provision immediately.)'
-              : 'Enable OpenClaw for this pod? (Token bootstrap has no workspace yet — Synap install skips the add-on; the admin UI will offer setup after you register.)',
-          initialValue:
-            adminBootstrapMode === 'preseed' ? installWithOpenclaw : false,
-        });
-        if (isCancel(askOpenclaw)) {
-          console.log(colors.muted('Cancelled.'));
-          return;
-        }
-        installWithOpenclaw = Boolean(askOpenclaw);
-
-        const askRsshub = await confirm({
-          message: 'Enable RSSHub during Synap install?',
-          initialValue: installWithRsshub,
-        });
-        if (isCancel(askRsshub)) {
-          console.log(colors.muted('Cancelled.'));
-          return;
-        }
-        installWithRsshub = Boolean(askRsshub);
-
-        if (!tunnelProvider) {
-          const t = await select({
-            message: 'Expose Eve Legs (Traefik) via a tunnel after Synap install?',
-            options: [
-              { value: 'none' as const, label: 'No tunnel', hint: 'Localhost / manual Traefik only' },
-              {
-                value: 'pangolin' as const,
-                label: 'Pangolin',
-                hint: 'Installs Pangolin CLI and writes config under /opt/hestia/tunnels',
-              },
-              {
-                value: 'cloudflare' as const,
-                label: 'Cloudflare',
-                hint: 'cloudflared + ingress config (stub credentials path)',
-              },
-            ],
-            initialValue: 'none',
-          });
-          if (isCancel(t)) {
-            console.log(colors.muted('Cancelled.'));
-            return;
-          }
-          tunnelProvider =
-            t === 'none' ? undefined : parseTunnel(String(t));
-        }
-        if (tunnelProvider && !tunnelDomain) {
-          if (installDomain !== 'localhost') {
-            const strategy = await select({
-              message: 'Legs ingress hostname',
-              options: [
-                {
-                  value: 'same_as_synap' as const,
-                  label: `Reuse Synap host (${installDomain})`,
-                  hint: 'No extra hostname needed.',
-                },
-                {
-                  value: 'custom' as const,
-                  label: 'Use a different hostname',
-                  hint: 'Example: eve.example.com',
-                },
-              ],
-              initialValue: 'same_as_synap',
-            });
-            if (isCancel(strategy)) {
-              console.log(colors.muted('Cancelled.'));
-              return;
-            }
-            legsHostStrategy = strategy as 'same_as_synap' | 'custom';
-            if (legsHostStrategy === 'same_as_synap') {
-              tunnelDomain = installDomain;
-            }
-          } else {
-            legsHostStrategy = 'custom';
-          }
-          if (!tunnelDomain) {
-            const d = await text({
-              message: 'Public hostname for Eve Legs ingress',
-              placeholder: 'eve.example.com',
-              initialValue: '',
-            });
-            if (isCancel(d)) {
-              console.log(colors.muted('Cancelled.'));
-              return;
-            }
-            tunnelDomain = d.trim() || undefined;
-          }
-        }
-      }
+      // Interactive domain/email/SSL/admin/tunnel prompts have moved to
+      // gatherInstallConfig (above) — single funnel shared with `eve install`.
 
       if (flags.nonInteractive && opts.tunnel && !tunnelProvider) {
         console.error('Invalid --tunnel (use pangolin or cloudflare).');
@@ -799,18 +612,9 @@ export function setupCommand(program: Command): void {
         console.error('Invalid --admin-bootstrap-mode (use token|preseed).');
         process.exit(1);
       }
-      if (installDomain !== 'localhost' && !installEmail) {
-        console.error('Non-localhost domain requires --email (or LETSENCRYPT_EMAIL).');
-        process.exit(1);
-      }
-      if (adminBootstrapMode === 'preseed' && !adminEmail) {
-        console.error('Preseed admin bootstrap requires --admin-email (or ADMIN_EMAIL).');
-        process.exit(1);
-      }
-      if (adminBootstrapMode === 'preseed' && !adminPassword) {
-        console.error('Preseed admin bootstrap requires --admin-password (or ADMIN_PASSWORD).');
-        process.exit(1);
-      }
+      // Domain/email/admin presence is now validated by gatherInstallConfig
+      // (above) — it throws InstallConfigError with a structured missing[]
+      // list before reaching here.
 
       const synapInstallWithOpenclaw =
         installWithOpenclaw && adminBootstrapMode === 'preseed';
@@ -1031,6 +835,15 @@ export function setupCommand(program: Command): void {
           gatewayUrl: prevSecrets?.inference?.gatewayUrl ?? 'http://127.0.0.1:11435',
           gatewayUser: prevSecrets?.inference?.gatewayUser,
           gatewayPass: prevSecrets?.inference?.gatewayPass,
+        };
+      }
+      // Persist resolved domain → secrets.json (single source of truth for
+      // domain/ssl/email; consumed by preflight, runBrainInit, eve domain).
+      if (installDomain && installDomain !== 'localhost') {
+        merge.domain = {
+          primary: installDomain,
+          ssl: resolvedSsl,
+          email: installEmail,
         };
       }
       await writeEveSecrets(merge, cwd);

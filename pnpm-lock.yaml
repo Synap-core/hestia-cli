@@ -170,6 +170,9 @@ importers:
 
   packages/@eve/lifecycle:
     dependencies:
+      '@clack/prompts':
+        specifier: ^0.7.0
+        version: 0.7.0
       '@eve/brain':
         specifier: workspace:*
         version: link:../brain
@@ -192,6 +195,9 @@ importers:
       typescript:
         specifier: ^5.3.0
         version: 5.9.3
+      vitest:
+        specifier: ^1.5.0
+        version: 1.6.1(@types/node@20.19.39)
 
   packages/cli-kit:
     dependencies:

@@ -1,5 +1,5 @@
 import type { Command } from 'commander';
-import { EntityStateManager, entityStateManager, readEveSecrets, getServerIp, discoverAndBackfillPodConfig } from '@eve/dna';
+import { EntityStateManager, entityStateManager, readEveSecrets, getServerIp } from '@eve/dna';
 
 import { OllamaService } from '../lib/ollama.js';
 import { execa, ensureNetwork } from '../lib/exec.js';
@@ -56,26 +56,15 @@ export async function runBrainInit(options: BrainInitOptions): Promise<void> {
     process.env.SYNAP_REPO_ROOT = repo;
   }
 
-  let domain = options.domain?.trim() || 'localhost';
-  if (domain === 'localhost') {
-    const discovered = await discoverAndBackfillPodConfig(process.cwd());
-    if (discovered.domain) {
-      domain = discovered.domain;
-    }
-  }
-  // Read secrets AFTER discovery so we pick up any domain.email written
-  // by an earlier `eve legs domain set --email …` call. Mirrors the
-  // domain auto-discovery above — operators set this once and every
-  // subsequent install/update should honour it without --email.
-  const secretsForEmail = await readEveSecrets(process.cwd()).catch(() => null);
-  if (domain === 'localhost' && secretsForEmail?.domain?.primary) {
-    domain = secretsForEmail.domain.primary;
-  }
+  // Thin executor: trust the resolved inputs. Domain/email auto-discovery
+  // and secrets-fallback live in `gatherInstallConfig` (@eve/lifecycle) —
+  // every orchestrator (eve install, eve setup) resolves there before
+  // calling. Env-var fallbacks are kept for direct `eve brain init` users.
+  const domain = options.domain?.trim() || 'localhost';
   const email =
     options.email?.trim() ||
     process.env.LETSENCRYPT_EMAIL?.trim() ||
-    process.env.SYNAP_LETSENCRYPT_EMAIL?.trim() ||
-    secretsForEmail?.domain?.email?.trim();
+    process.env.SYNAP_LETSENCRYPT_EMAIL?.trim();
   const adminEmail = options.adminEmail?.trim() || process.env.ADMIN_EMAIL?.trim();
   const adminPassword = options.adminPassword?.trim() || process.env.ADMIN_PASSWORD?.trim();
   const adminBootstrapMode = options.adminBootstrapMode ?? 'token';
