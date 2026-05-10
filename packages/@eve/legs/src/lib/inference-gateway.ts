@@ -31,9 +31,18 @@ export class InferenceGateway {
     this.hostPort = process.env.EVE_INFERENCE_GATEWAY_PORT?.trim() || hostPort;
   }
 
-  /** APR1 hash line for Traefik usersFile (user:hash). */
+  /**
+   * APR1 hash line for Traefik usersFile (user:hash).
+   *
+   * Pipe the password via stdin instead of passing it as an arg — base64url
+   * passwords starting with `-` were being interpreted by openssl as a flag
+   * ("Unknown option: -LglNqOAY..."). The `-stdin` form is unambiguous.
+   */
   private htpasswdLine(username: string, plainPassword: string): string {
-    const r = spawnSync('openssl', ['passwd', '-apr1', plainPassword], { encoding: 'utf-8' });
+    const r = spawnSync('openssl', ['passwd', '-apr1', '-stdin'], {
+      input: plainPassword + '\n',
+      encoding: 'utf-8',
+    });
     if (r.error || r.status !== 0) {
       throw new Error(`openssl passwd -apr1 failed: ${r.stderr || r.error?.message || 'unknown'}`);
     }

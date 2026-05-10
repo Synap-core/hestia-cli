@@ -351,28 +351,35 @@ export async function gatherInstallConfig(
 
   // ---------- ssl ----------
   // Default: ssl=true when public, false when local. Explicit --ssl flag
-  // overrides. The "behind external proxy" prompt sets ssl=false explicitly.
+  // overrides. In interactive public mode, ALWAYS prompt — silently
+  // inheriting a stale secrets.domain.ssl value was confusing operators
+  // who'd previously chosen "no" for an unrelated reason. Pre-fill the
+  // prompt with the existing value so Enter accepts it.
   let ssl: boolean;
   let sslSource: FieldSource;
   if (typeof flags.ssl === "boolean") {
     ssl = flags.ssl;
     sslSource = "flag";
-  } else if (typeof secrets?.domain?.ssl === "boolean" && exposure === "public") {
-    ssl = secrets.domain.ssl;
-    sslSource = "secrets";
   } else if (interactive && exposure === "public" && prompts.ssl) {
+    const initialSsl = typeof secrets?.domain?.ssl === "boolean"
+      ? secrets.domain.ssl
+      : true;
     const hasEmail = isValidEmail(
       flags.email ||
         io.env.LETSENCRYPT_EMAIL ||
         io.env.SYNAP_LETSENCRYPT_EMAIL ||
         secrets?.domain?.email,
     );
-    const picked = await prompts.ssl(true, hasEmail);
+    const picked = await prompts.ssl(initialSsl, hasEmail);
     if (typeof picked !== "boolean") {
       throw new InstallConfigError([{ field: "ssl", reason: "canceled" }]);
     }
     ssl = picked;
     sslSource = "prompt";
+  } else if (typeof secrets?.domain?.ssl === "boolean" && exposure === "public") {
+    // Non-interactive: trust secrets.
+    ssl = secrets.domain.ssl;
+    sslSource = "secrets";
   } else {
     ssl = exposure === "public";
     sslSource = "default";
@@ -396,20 +403,36 @@ export async function gatherInstallConfig(
   else if (emailFromSecrets) { email = emailFromSecrets; emailSource = "secrets"; }
   else if (emailFromSaved) { email = emailFromSaved; emailSource = "saved-profile"; }
 
-  if (ssl && exposure === "public" && !email) {
-    if (interactive && prompts.email) {
-      const picked = await prompts.email(undefined);
-      if (!picked || !isValidEmail(picked)) {
-        missing.push({ field: "email", reason: "Let's Encrypt requires a valid email" });
+  // Email contract: synap CLI requires --email for ANY non-localhost domain
+  // (line 1123 of `synap`), regardless of whether SSL is on. Eve must match
+  // that contract — we can't only require email when ssl=true, or synap
+  // install fails with "Error: --email is required for production domains".
+  //
+  // When SSL is off (behind external proxy), email is still passed to synap
+  // CLI but never used for cert renewal. Auto-default to noreply@<domain>
+  // so the operator isn't forced to invent a value for a non-functional
+  // field. When SSL is on, prompt or fail-fast.
+  if (exposure === "public" && resolvedDomain !== "localhost" && !email) {
+    if (ssl) {
+      // Real Let's Encrypt — must be a contactable address.
+      if (interactive && prompts.email) {
+        const picked = await prompts.email(undefined);
+        if (!picked || !isValidEmail(picked)) {
+          missing.push({ field: "email", reason: "Let's Encrypt requires a valid email" });
+        } else {
+          email = picked.trim();
+          emailSource = "prompt";
+        }
       } else {
-        email = picked.trim();
-        emailSource = "prompt";
+        missing.push({
+          field: "email",
+          reason: "Let's Encrypt requires --email (or LETSENCRYPT_EMAIL, or `eve domain set --email`)",
+        });
       }
     } else {
-      missing.push({
-        field: "email",
-        reason: "Let's Encrypt requires --email (or LETSENCRYPT_EMAIL, or `eve domain set --email`)",
-      });
+      // SSL off: synap CLI still wants a non-empty value. Auto-default.
+      email = `noreply@${resolvedDomain}`;
+      emailSource = "default";
     }
   }
   if (email) source.email = emailSource;

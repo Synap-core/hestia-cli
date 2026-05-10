@@ -242,8 +242,11 @@ describe("gatherInstallConfig — error paths", () => {
     ).rejects.toThrow(/mutually exclusive/);
   });
 
-  it("ssl=false skips email requirement (behind external proxy)", async () => {
-    // Pass the routing-prefixed form to verify normalisation strips it.
+  it("ssl=false auto-defaults email so synap CLI's --email contract is met", async () => {
+    // Synap CLI requires --email for any non-localhost domain (synap:1123),
+    // even when SSL is off (behind-proxy mode). Eve auto-defaults to
+    // noreply@<domain> so the operator isn't forced to type a fake address
+    // for a non-functional field.
     const cfg = await gatherInstallConfig({
       ...baseOpts,
       flags: { domain: "pod.example.com", ssl: false },
@@ -251,7 +254,8 @@ describe("gatherInstallConfig — error paths", () => {
     });
     expect(cfg.domain).toBe("example.com"); // pod. stripped → bare
     expect(cfg.ssl).toBe(false);
-    expect(cfg.email).toBeUndefined();
+    expect(cfg.email).toBe("noreply@example.com");
+    expect(cfg.source.email).toBe("default");
     expect(cfg.exposure).toBe("public");
   });
 });
