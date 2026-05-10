@@ -13,7 +13,7 @@
  * translates them into UI toasts.
  */
 
-import { spawn } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -1299,6 +1299,16 @@ async function* installHermes(): AsyncGenerator<LifecycleEvent> {
   const skillsDir = join(homedir(), ".eve", "skills");
   mkdirSync(skillsDir, { recursive: true });
 
+  // Hermes drops to UID 10000 inside the container but does NOT chown the
+  // bind-mount itself before doing so — bundled-skills sync (87 categories
+  // copied into /opt/data/skills/<category>/) then fails with EACCES when
+  // the host dir is owned by root. Chown the host dir to match the
+  // in-container hermes user. Best-effort: ignored on Docker Desktop where
+  // UID mapping differs and on dev hosts where eve isn't running as root.
+  try {
+    execSync(`chown -R 10000:10000 ${JSON.stringify(hermesHome)}`, { stdio: "ignore" });
+  } catch { /* non-fatal — user can run it manually if bundled-skills sync fails */ }
+
   // The image's default ENTRYPOINT is `hermes`, and its default CMD is the
   // interactive REPL — running `docker run -d` with no command override
   // greets the user, sees stdin isn't a TTY, prints "Goodbye! ⚕", exits,
@@ -1309,8 +1319,7 @@ async function* installHermes(): AsyncGenerator<LifecycleEvent> {
   // Do NOT set HERMES_UID=0 / HERMES_GID=0: `hermes gateway` explicitly
   // refuses to run as root and exits with "Refusing to run the Hermes
   // gateway as root inside the official Docker image." The entrypoint
-  // defaults to an internal `hermes` user (UID 10000) and chowns the
-  // bind-mount volume itself before dropping privileges.
+  // defaults to UID 10000 and drops privileges before booting the gateway.
   const args = [
     "run", "-d",
     "--name", "eve-builder-hermes",

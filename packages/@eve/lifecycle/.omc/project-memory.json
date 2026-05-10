@@ -1,0 +1,128 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1778426209225,
+  "projectRoot": "/Users/antoine/Documents/Code/synap/hestia-cli/packages/@eve/lifecycle",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      },
+      {
+        "name": "TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "tsconfig.json"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "vitest",
+        "version": "1.5.0",
+        "category": "testing"
+      }
+    ],
+    "packageManager": "npm",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": "npm run build",
+    "testCommand": "npm test",
+    "lintCommand": null,
+    "devCommand": "npm run dev",
+    "scripts": {
+      "build": "tsup src/index.ts --format esm --dts",
+      "dev": "tsup src/index.ts --format esm --dts --watch",
+      "typecheck": "tsc --noEmit",
+      "test": "vitest run",
+      "sync-builder-template": "node scripts/sync-builder-template.mjs"
+    }
+  },
+  "conventions": {
+    "namingStyle": "camelCase/PascalCase",
+    "importStyle": "ES modules",
+    "testPattern": "*.test.ts",
+    "fileOrganization": "type-based"
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "assets",
+      "scripts",
+      "src",
+      "test"
+    ],
+    "gitBranches": null
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "assets": {
+      "path": "assets",
+      "purpose": "Static assets",
+      "fileCount": 0,
+      "lastAccessed": 1778426209208,
+      "keyFiles": []
+    },
+    "dist": {
+      "path": "dist",
+      "purpose": "Distribution/build output",
+      "fileCount": 34,
+      "lastAccessed": 1778426209209,
+      "keyFiles": [
+        "auth-47QZ5E6N.js",
+        "auth-4QXYU4I3.js",
+        "auth-5WVL4PYJ.js",
+        "auth-5ZA5L454.js",
+        "auth-6XAAYTYD.js"
+      ]
+    },
+    "scripts": {
+      "path": "scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 1,
+      "lastAccessed": 1778426209212,
+      "keyFiles": [
+        "sync-builder-template.mjs"
+      ]
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 11,
+      "lastAccessed": 1778426209212,
+      "keyFiles": [
+        "auth.ts",
+        "builder-workspace.ts",
+        "diagnostics.ts",
+        "doctor.ts",
+        "env-files.ts"
+      ]
+    },
+    "test": {
+      "path": "test",
+      "purpose": "Test files",
+      "fileCount": 2,
+      "lastAccessed": 1778426209212,
+      "keyFiles": [
+        "install-config.test.ts",
+        "setup-profile-migration.test.ts"
+      ]
+    },
+    "src/components": {
+      "path": "src/components",
+      "purpose": "UI components",
+      "fileCount": 0,
+      "lastAccessed": 1778426209213,
+      "keyFiles": []
+    }
+  },
+  "hotPaths": [],
+  "userDirectives": []
+}

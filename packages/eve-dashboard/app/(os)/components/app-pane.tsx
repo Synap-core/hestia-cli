@@ -33,6 +33,15 @@ import { Spinner } from "@heroui/react";
 import { AlertCircle, RefreshCw } from "lucide-react";
 import { getAllPodSessions, getSharedSession, type SharedSession } from "@/lib/synap-auth";
 import { createAllowedEmbedOriginChecker } from "@eve/dna/browser";
+import { useOverlayStore, type SystemOverlayKind } from "../stores/overlay-store";
+
+// Mirror of @synap-core/overlay-protocol — replace with import once published.
+type AppTrustLevel = "trusted" | "installed" | "generated";
+const TRUSTED_OVERLAY_KINDS: Record<AppTrustLevel, SystemOverlayKind[]> = {
+  trusted:   ["command", "switcher", "agent", "vault", "permission", "cell"],
+  installed: ["command", "agent", "vault", "permission"],
+  generated: ["command", "agent"],
+};
 
 type PaneStatus = "loading" | "ready" | "unreachable";
 
@@ -67,6 +76,12 @@ export interface AppPaneProps {
    */
   isActive?: boolean;
   className?: string;
+  /**
+   * Trust level for overlay bridge requests. Determines which overlay
+   * kinds this iframe may request. Defaults to "installed".
+   * srcdoc iframes (origin "null") are always capped at "generated".
+   */
+  trustLevel?: AppTrustLevel;
 }
 
 export function AppPane({
@@ -75,10 +90,12 @@ export function AppPane({
   sendAuth = true,
   isActive = true,
   className,
+  trustLevel = "installed",
 }: AppPaneProps) {
   const [status, setStatus] = useState<PaneStatus>("loading");
   const [reloadKey, setReloadKey] = useState(0);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const openOverlay = useOverlayStore((s) => s.open);
 
   // Derive the exact origin once so we never use "*" when posting the session.
   // Also build a per-pane origin checker that includes this app URL explicitly —
@@ -134,6 +151,45 @@ export function AppPane({
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
   }, [pushSession, isAllowed]);
+
+  // Overlay bridge — iframes may request system overlays via postMessage.
+  // srcdoc iframes have origin "null" and are capped at "generated" trust.
+  useEffect(() => {
+    function handler(e: MessageEvent) {
+      if (e.data?.type !== "eve:overlay:request") return;
+      if (!e.source || e.source !== iframeRef.current?.contentWindow) return;
+      if (e.origin !== "null" && !isAllowed(e.origin)) return;
+
+      const { overlay, requestId } = e.data as {
+        overlay: { kind: SystemOverlayKind };
+        requestId: string;
+      };
+      const effective: AppTrustLevel = e.origin === "null" ? "generated" : trustLevel;
+      const allowed = TRUSTED_OVERLAY_KINDS[effective];
+      const target = e.source as Window;
+      const replyOrigin = e.origin === "null" ? "*" : e.origin;
+
+      if (!allowed.includes(overlay.kind)) {
+        target.postMessage(
+          { type: "eve:overlay:response", requestId, result: "denied" },
+          replyOrigin,
+        );
+        return;
+      }
+
+      openOverlay(overlay.kind, overlay as Record<string, unknown>);
+
+      // vault/permission need async user resolution — response sent by overlay store callback (Phase 4).
+      if (overlay.kind !== "vault" && overlay.kind !== "permission") {
+        target.postMessage(
+          { type: "eve:overlay:response", requestId, result: "approved" },
+          replyOrigin,
+        );
+      }
+    }
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, [isAllowed, trustLevel, openOverlay]);
 
   return (
     <div className={`relative w-full h-full overflow-hidden ${className ?? ""}`}>

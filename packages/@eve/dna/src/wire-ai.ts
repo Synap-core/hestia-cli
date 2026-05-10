@@ -563,7 +563,7 @@ function wireHermes(secrets: EveSecrets | null): WireAiResult {
   //      its default REPL, prints "Goodbye! ⚕" because stdin isn't a TTY,
   //      exits, and the restart-policy bounces it forever.
   // Do NOT add HERMES_UID=0 / HERMES_GID=0: `hermes gateway` refuses to run
-  // as root. The entrypoint defaults to UID 10000 and chowns the bind-mount.
+  // as root. The entrypoint defaults to UID 10000.
   // Fire-and-forget: if docker is down, the next add/update cycle catches up.
   try {
     const home = homedir();
@@ -572,6 +572,14 @@ function wireHermes(secrets: EveSecrets | null): WireAiResult {
     const skillsDir = join(home, '.eve', 'skills');
     mkdirSync(hermesHome, { recursive: true });
     mkdirSync(skillsDir, { recursive: true });
+
+    // Hermes drops to UID 10000 inside the container without chowning the
+    // bind-mount first, so bundled-skills sync fails with EACCES when the
+    // host dir is owned by root. Match the in-container hermes user.
+    // Best-effort: ignored on Docker Desktop / non-root dev environments.
+    try {
+      execSync(`chown -R 10000:10000 ${JSON.stringify(hermesHome)}`, { stdio: 'ignore' });
+    } catch { /* non-fatal */ }
 
     const args = [
       'run', '-d',

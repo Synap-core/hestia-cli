@@ -16,6 +16,7 @@ import { Wallpaper } from "./components/wallpaper";
 import { Pane } from "./components/pane";
 import { Dock } from "./components/dock";
 import { PinContextProvider } from "./components/pin-context";
+import { OverlayHost } from "./components/overlay/overlay-host";
 
 export default function OSLayout({ children }: { children: ReactNode }) {
   return (
@@ -23,6 +24,7 @@ export default function OSLayout({ children }: { children: ReactNode }) {
       <Wallpaper />
       <Pane>{children}</Pane>
       <Dock />
+      <OverlayHost />
     </PinContextProvider>
   );
 }

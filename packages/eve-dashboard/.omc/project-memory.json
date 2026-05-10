@@ -159,6 +159,12 @@
       "type": "file"
     },
     {
+      "path": "app/(os)/components/app-pane.tsx",
+      "accessCount": 8,
+      "lastAccessed": 1778426355341,
+      "type": "file"
+    },
+    {
       "path": "app/(os)/components/auth/EveSignInScreen.tsx",
       "accessCount": 6,
       "lastAccessed": 1778373676065,
@@ -186,12 +192,6 @@
       "path": "app/(os)/apps/[id]/page-client.tsx",
       "accessCount": 3,
       "lastAccessed": 1778373225182,
-      "type": "file"
-    },
-    {
-      "path": "app/(os)/components/app-pane.tsx",
-      "accessCount": 3,
-      "lastAccessed": 1778373239055,
       "type": "file"
     },
     {

@@ -30,17 +30,6 @@ export function SearchBar({ value, onChange }: SearchBarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      const isMod = e.metaKey || e.ctrlKey;
-      if (isMod && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        inputRef.current?.focus();
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     const next = e.target.value;
