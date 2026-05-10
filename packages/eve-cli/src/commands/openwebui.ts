@@ -8,6 +8,7 @@ import {
   syncOpenwebuiExtras,
   formatExtrasSummary,
 } from '@eve/dna';
+import { renewAgentKey } from '@eve/lifecycle';
 import { createSpinner, printSuccess, printError, printWarning, colors } from '../lib/ui.js';
 
 export function openwebuiCommand(program: Command): void {
@@ -81,7 +82,27 @@ export function openwebuiCommand(program: Command): void {
         const extrasSpinner = createSpinner('Syncing extras (skills / knowledge / tools)…');
         extrasSpinner.start();
         try {
-          const extras = await syncOpenwebuiExtras(process.cwd(), secrets);
+          let extras = await syncOpenwebuiExtras(process.cwd(), secrets);
+          // Auto-recover from a stale eve hubApiKey. The skills + knowledge
+          // pushes call Synap's Hub Protocol with `secrets.agents.eve.hubApiKey`;
+          // if that key was revoked / expired, every push returns 401 and the
+          // user is left with no Synap surfaces in OpenWebUI. Detect the 401
+          // signature, mint a fresh key via /setup/agent, then retry once.
+          const has401 = formatExtrasSummary(extras).match(/\b401\b|Unauthorized/i);
+          if (has401) {
+            extrasSpinner.text = 'Detected 401 on Synap pushes — renewing eve agent key…';
+            const renew = await renewAgentKey({ agentType: 'eve', reason: 'owui-sync-401-recover' });
+            if (renew.renewed) {
+              extrasSpinner.text = 'Retrying extras with fresh eve key…';
+              const refreshed = await readEveSecrets(process.cwd());
+              extras = await syncOpenwebuiExtras(process.cwd(), refreshed);
+            } else {
+              extrasSpinner.warn(
+                `Skills/knowledge returned 401 and renewal failed (${renew.reason}). ` +
+                `Run \`eve auth provision --agent eve\` then retry.`,
+              );
+            }
+          }
           extrasSpinner.succeed(formatExtrasSummary(extras));
         } catch (err) {
           extrasSpinner.warn(`Extras sync failed: ${err instanceof Error ? err.message : String(err)}`);

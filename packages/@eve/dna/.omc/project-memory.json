@@ -170,9 +170,21 @@
       "type": "file"
     },
     {
+      "path": "src/openwebui-tools-sync.ts",
+      "accessCount": 3,
+      "lastAccessed": 1778430000748,
+      "type": "file"
+    },
+    {
       "path": "src/agents.ts",
       "accessCount": 2,
       "lastAccessed": 1778371036644,
+      "type": "file"
+    },
+    {
+      "path": "test/openwebui-tools-sync.test.ts",
+      "accessCount": 2,
+      "lastAccessed": 1778430230970,
       "type": "file"
     },
     {

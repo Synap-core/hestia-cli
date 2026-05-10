@@ -107,6 +107,7 @@ describe('registerSynapAsOpenwebuiToolServer', () => {
       auth_type: 'bearer',
       key: 'eve-key',
       name: 'Synap Hub Protocol',
+      config: {},
     });
   });
 

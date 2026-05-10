@@ -317,6 +317,11 @@ export async function registerSynapAsOpenwebuiToolServer(
     };
   }
 
+  // OWUI v0.9.4 Pydantic ToolServerConnection requires `config` even though
+  // the field is typed optional in older schemas. POST without it returns
+  // 422: `loc=["TOOL_SERVER_CONNECTIONS",0,"config"], msg="Field required"`.
+  // An empty object satisfies the model — OWUI uses it for runtime tool
+  // overrides (timeouts, headers per-tool) which we don't need here.
   const updatedEntry: OpenwebuiToolServerConnection = {
     url: endpointUrl,
     path: '',
@@ -324,6 +329,7 @@ export async function registerSynapAsOpenwebuiToolServer(
     auth_type: 'bearer',
     key: apiKey,
     name: SYNAP_TOOL_SERVER_NAME,
+    config: {},
   };
 
   const next = [...connections];
