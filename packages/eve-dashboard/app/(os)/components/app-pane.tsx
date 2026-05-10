@@ -177,10 +177,14 @@ export function AppPane({
         return;
       }
 
-      openOverlay(overlay.kind, overlay as Record<string, unknown>);
+      openOverlay(overlay.kind, { ...overlay, requestId });
 
-      // vault/permission need async user resolution — response sent by overlay store callback (Phase 4).
-      if (overlay.kind !== "vault" && overlay.kind !== "permission") {
+      if (overlay.kind === "vault" || overlay.kind === "permission") {
+        // Register callback — overlay resolves it when user approves/denies.
+        useOverlayStore.getState().registerPending(requestId, (result, data) => {
+          target.postMessage({ type: "eve:overlay:response", requestId, result, data }, replyOrigin);
+        });
+      } else {
         target.postMessage(
           { type: "eve:overlay:response", requestId, result: "approved" },
           replyOrigin,

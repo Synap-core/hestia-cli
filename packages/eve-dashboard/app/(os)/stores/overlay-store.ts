@@ -9,11 +9,15 @@ export type SystemOverlayKind =
   | "permission"
   | "cell";
 
+export type OverlayBridgeResult = "approved" | "denied" | "cancelled";
+
 export interface OverlayEntry {
   id: string;
   kind: SystemOverlayKind;
   payload?: Record<string, unknown>;
 }
+
+type PendingResolver = (result: OverlayBridgeResult, data?: unknown) => void;
 
 interface OverlayStore {
   stack: OverlayEntry[];
@@ -21,34 +25,61 @@ interface OverlayStore {
   close: (id?: string) => void;
   replace: (kind: SystemOverlayKind, payload?: Record<string, unknown>) => void;
   isOpen: (kind: SystemOverlayKind) => boolean;
+  // Pending iframe request callbacks (vault / permission)
+  registerPending: (requestId: string, resolve: PendingResolver) => void;
+  resolvePending: (requestId: string, result: OverlayBridgeResult, data?: unknown) => void;
+  cancelAllPending: () => void;
 }
 
 import { create } from "zustand";
 
 let _counter = 0;
 
-export const useOverlayStore = create<OverlayStore>((set, get) => ({
-  stack: [],
+export const useOverlayStore = create<OverlayStore>((set, get) => {
+  const pending = new Map<string, PendingResolver>();
 
-  open(kind, payload) {
-    const id = `ov-${++_counter}`;
-    set((s) => ({ stack: [...s.stack, { id, kind, payload }] }));
-  },
+  return {
+    stack: [],
 
-  close(id) {
-    set((s) => ({
-      stack: id ? s.stack.filter((e) => e.id !== id) : s.stack.slice(0, -1),
-    }));
-  },
+    open(kind, payload) {
+      const id = `ov-${++_counter}`;
+      set((s) => ({ stack: [...s.stack, { id, kind, payload }] }));
+    },
 
-  replace(kind, payload) {
-    const id = `ov-${++_counter}`;
-    set((s) => ({
-      stack: [...s.stack.slice(0, -1), { id, kind, payload }],
-    }));
-  },
+    close(id) {
+      set((s) => ({
+        stack: id ? s.stack.filter((e) => e.id !== id) : s.stack.slice(0, -1),
+      }));
+    },
 
-  isOpen(kind) {
-    return get().stack.some((e) => e.kind === kind);
-  },
-}));
+    replace(kind, payload) {
+      const id = `ov-${++_counter}`;
+      set((s) => ({
+        stack: [...s.stack.slice(0, -1), { id, kind, payload }],
+      }));
+    },
+
+    isOpen(kind) {
+      return get().stack.some((e) => e.kind === kind);
+    },
+
+    registerPending(requestId, resolve) {
+      pending.set(requestId, resolve);
+    },
+
+    resolvePending(requestId, result, data) {
+      const resolve = pending.get(requestId);
+      if (resolve) {
+        resolve(result, data);
+        pending.delete(requestId);
+      }
+    },
+
+    cancelAllPending() {
+      for (const resolve of pending.values()) {
+        resolve("cancelled");
+      }
+      pending.clear();
+    },
+  };
+});

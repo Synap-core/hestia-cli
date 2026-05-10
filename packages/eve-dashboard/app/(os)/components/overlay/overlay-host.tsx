@@ -17,6 +17,10 @@ const AgentOverlay = dynamic(
   () => import("./agent-overlay").then((m) => ({ default: m.AgentOverlay })),
   { ssr: false },
 );
+const VaultPermissionOverlay = dynamic(
+  () => import("./vault-permission-overlay").then((m) => ({ default: m.VaultPermissionOverlay })),
+  { ssr: false },
+);
 
 export function OverlayHost() {
   const stack = useOverlayStore((s) => s.stack);
@@ -48,6 +52,13 @@ export function OverlayHost() {
         isOpen("agent") ? close() : open("agent");
         return;
       }
+
+      // Cmd+Shift+V — vault
+      if (isMod && e.shiftKey && e.key.toLowerCase() === "v") {
+        e.preventDefault();
+        isOpen("vault") ? close() : open("vault");
+        return;
+      }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -69,6 +80,9 @@ export function OverlayHost() {
           onClose={() => close(top.id)}
           scope={top.payload?.scope as string | undefined}
         />
+      )}
+      {(top?.kind === "vault" || top?.kind === "permission") && (
+        <VaultPermissionOverlay key={top.id} entry={top} onClose={() => close(top.id)} />
       )}
     </AnimatePresence>
   );

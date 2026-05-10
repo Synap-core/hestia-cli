@@ -160,8 +160,8 @@
     },
     {
       "path": "app/(os)/components/app-pane.tsx",
-      "accessCount": 8,
-      "lastAccessed": 1778426355341,
+      "accessCount": 9,
+      "lastAccessed": 1778428037537,
       "type": "file"
     },
     {
@@ -183,6 +183,12 @@
       "type": "file"
     },
     {
+      "path": "app/(os)/components/overlay/overlay-host.tsx",
+      "accessCount": 4,
+      "lastAccessed": 1778428094536,
+      "type": "file"
+    },
+    {
       "path": "app/api/pod/setup-status/route.ts",
       "accessCount": 3,
       "lastAccessed": 1778254776723,
@@ -201,6 +207,12 @@
       "type": "file"
     },
     {
+      "path": "app/(os)/settings/vault/page.tsx",
+      "accessCount": 3,
+      "lastAccessed": 1778428022503,
+      "type": "file"
+    },
+    {
       "path": "app/api/pod/auto-provision/route.ts",
       "accessCount": 2,
       "lastAccessed": 1778358816326,
@@ -216,12 +228,6 @@
       "path": "lib/synap-auth.ts",
       "accessCount": 2,
       "lastAccessed": 1778374143419,
-      "type": "file"
-    },
-    {
-      "path": "app/(os)/settings/vault/page.tsx",
-      "accessCount": 2,
-      "lastAccessed": 1778427854344,
       "type": "file"
     },
     {
@@ -339,12 +345,6 @@
       "type": "file"
     },
     {
-      "path": "app/(os)/components/overlay/overlay-host.tsx",
-      "accessCount": 1,
-      "lastAccessed": 1778427629308,
-      "type": "file"
-    },
-    {
       "path": "app/api/secrets-summary/route.ts",
       "accessCount": 1,
       "lastAccessed": 1778427793860,
@@ -372,6 +372,24 @@
       "path": "app/api/channels/route.ts",
       "accessCount": 1,
       "lastAccessed": 1778427802735,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/settings/vault/vault-components.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1778428017736,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/stores/overlay-store.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778428030176,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/components/overlay/vault-permission-overlay.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1778428083410,
       "type": "file"
     }
   ],
