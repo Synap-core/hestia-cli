@@ -200,13 +200,22 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
   // 4. Delegate the actual install to the canonical synap CLI. It owns
   //    .env scaffolding, kratos.yml generation, image pulls, migrations,
   //    container bring-up, and (on update) the canary force-recreate.
+  //
+  // Source/image: pass an explicit flag ONLY when the caller has decided.
+  // When `opts.fromSource` is undefined, omit both --from-source and
+  // --from-image so the synap CLI's own smart default takes over (synap
+  // line 910-920: existing git repo → --from-source; new clone →
+  // --from-image). Forcing --from-image here was overriding that and
+  // making `eve add synap` always pull stale `:latest` images even when
+  // /opt/synap-backend is a real git checkout.
   const cliArgs = [
     '--non-interactive',
     '--dir', repoRoot,
     '--domain', podDomain,
     '--admin-bootstrap-mode', adminBootstrapMode,
   ];
-  cliArgs.push(opts.fromSource ? '--from-source' : '--from-image');
+  if (opts.fromSource === true) cliArgs.push('--from-source');
+  else if (opts.fromSource === false) cliArgs.push('--from-image');
   if (opts.email) cliArgs.push('--email', opts.email);
   if (opts.adminEmail) cliArgs.push('--admin-email', opts.adminEmail);
   if (opts.adminPassword) cliArgs.push('--admin-password', opts.adminPassword);

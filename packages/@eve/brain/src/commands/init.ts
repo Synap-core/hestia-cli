@@ -96,10 +96,16 @@ export async function runBrainInit(options: BrainInitOptions): Promise<void> {
     await cleanupKnownStaleState(existingDelegate.deployDir);
   }
 
-  console.log(options.fromSource
-    ? 'Installing Synap Data Pod from source (synap CLI delegate)...\n'
-    : 'Installing Synap Data Pod from Docker image (synap CLI delegate)...\n',
-  );
+  // Banner. When fromSource is undefined the synap CLI auto-detects: it
+  // picks --from-source if /opt/synap-backend is a git checkout, else
+  // --from-image. Don't pre-announce a mode we haven't decided.
+  if (options.fromSource === true) {
+    console.log('Installing Synap Data Pod from source (synap CLI delegate)...\n');
+  } else if (options.fromSource === false) {
+    console.log('Installing Synap Data Pod from Docker image (synap CLI delegate)...\n');
+  } else {
+    console.log('Installing Synap Data Pod (synap CLI delegate, auto-detect mode)...\n');
+  }
 
   const { installSynapFromImage } = await import('../lib/synap-image-install.js');
   const result = await installSynapFromImage({
