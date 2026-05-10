@@ -94,6 +94,53 @@ function findComposeContainer(service: string): string | null {
 }
 
 /**
+ * Probe the synap backend container's docker healthcheck. Returns true when
+ * the container is up AND its health is "healthy". Used to decide whether a
+ * non-zero `synap install` exit was a fatal failure or a non-critical
+ * service collision (Caddy fighting Traefik on port 80, etc.).
+ */
+function isBackendHealthy(): boolean {
+  const name = getSynapBackendContainer();
+  if (!name) return false;
+  try {
+    const out = execSync(
+      `docker inspect --format "{{.State.Health.Status}}" ${name}`,
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
+    ).trim();
+    return out === 'healthy';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Detect whether the synap CLI's failure was Caddy losing the port-80 race
+ * vs. eve-legs-traefik. The bash CLI streams compose output to stderr, so
+ * the marker is in the captured (or terminal-inherited) text. We probe the
+ * caddy container state too — failed-to-create + backend-healthy is the
+ * classic edge-collision signature.
+ */
+function isCaddyOnlyFailure(stderr: string): boolean {
+  if (/synap-backend-caddy.*Bind for [0-9.:]*:80\s+failed: port is already allocated/i.test(stderr)) {
+    return true;
+  }
+  // When stderr was inherited (empty here), fall back to container state probe.
+  const caddy = findComposeContainer('caddy');
+  if (!caddy) return false;
+  try {
+    const status = execSync(
+      `docker inspect --format "{{.State.Status}}" ${caddy}`,
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
+    ).trim();
+    // "created" but never started, OR "exited" with non-zero code — both
+    // suggest Caddy never made it past port-bind.
+    return status === 'created' || status === 'exited';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Connect a container to eve-network with an optional DNS alias. See the
  * mirror in `@eve/legs/src/lib/traefik.ts` for full rationale — short
  * version: OWUI/Hermes/wire-ai default to `eve-brain-synap` as the pod
@@ -225,10 +272,23 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
 
   const cliResult = runSynapCli('install', cliArgs, { repoRoot });
   if (!cliResult.ok) {
-    throw new Error(
-      `synap install exited ${cliResult.exitCode}` +
-      (cliResult.stderr ? `: ${cliResult.stderr}` : ''),
-    );
+    // Caddy-only failure (port 80 collision with eve-legs-traefik) is the
+    // signature case: the data plane (postgres / kratos / backend / pod-admin)
+    // is up and the backend is healthy, only the bundled edge proxy lost the
+    // bind race. Eve always provides Traefik so Caddy is redundant — treat
+    // as a non-fatal warning instead of aborting the install.
+    if (isBackendHealthy() && isCaddyOnlyFailure(cliResult.stderr)) {
+      console.warn(
+        `\n  ⚠ Caddy could not bind port 80 (eve-legs-traefik already owns it).` +
+        `\n    Backend is healthy; the data plane is up. Synap install proceeding.` +
+        `\n    To stop the spurious Caddy container: docker rm -f synap-backend-caddy-1\n`,
+      );
+    } else {
+      throw new Error(
+        `synap install exited ${cliResult.exitCode}` +
+        (cliResult.stderr ? `: ${cliResult.stderr}` : ''),
+      );
+    }
   }
 
   // 5. Capture pod-critical secrets to eve's secrets.json so a future .env

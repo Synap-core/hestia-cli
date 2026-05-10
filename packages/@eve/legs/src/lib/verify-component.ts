@@ -37,18 +37,59 @@ function sleep(ms: number): Promise<void> {
  */
 const DOCKER_CALL_TIMEOUT_MS = 4000;
 
-/** True if `docker ps` shows the container running. Async + timed out. */
+/**
+ * True if `docker ps` shows the container running, OR a running container is
+ * registered on eve-network under that name as an alias.
+ *
+ * The alias path matters for components like Synap where the registry stores
+ * `containerName: 'eve-brain-synap'` (the eve-network DNS alias) but the
+ * actual container name is `synap-backend-backend-1` (managed by synap-backend's
+ * compose project). Without the alias probe, verifyComponent kept reporting
+ * "container not running" the moment after a successful install, because the
+ * exact name match always missed.
+ */
 async function isContainerRunning(name: string): Promise<boolean> {
+  // Fast path: exact name match in `docker ps`.
   try {
     const { stdout } = await execFileAsync(
       'docker',
       ['ps', '--filter', `name=^${name}$`, '--format', '{{.Names}}'],
       { timeout: DOCKER_CALL_TIMEOUT_MS },
     );
-    return stdout.trim() === name;
+    if (stdout.trim() === name) return true;
   } catch {
-    return false;
+    // Fall through to alias probe.
   }
+
+  // Alias path: any running container on eve-network registered with `name`
+  // as a network alias. We inspect each running container, not the network,
+  // because `docker network inspect` doesn't always expose Aliases verbatim
+  // across docker engine versions.
+  try {
+    const { stdout: ids } = await execFileAsync(
+      'docker',
+      ['ps', '--filter', `network=eve-network`, '--format', '{{.ID}}'],
+      { timeout: DOCKER_CALL_TIMEOUT_MS },
+    );
+    const containerIds = ids.trim().split('\n').filter(Boolean);
+    for (const id of containerIds) {
+      try {
+        const { stdout: aliasJson } = await execFileAsync(
+          'docker',
+          ['inspect', '--format', '{{json .NetworkSettings.Networks}}', id],
+          { timeout: DOCKER_CALL_TIMEOUT_MS },
+        );
+        const networks = JSON.parse(aliasJson.trim()) as Record<string, { Aliases?: string[] | null }>;
+        const aliases = networks['eve-network']?.Aliases ?? [];
+        if (aliases.includes(name)) return true;
+      } catch {
+        continue;
+      }
+    }
+  } catch {
+    // Network not present, daemon down, etc — treat as not-running.
+  }
+  return false;
 }
 
 /** True if Traefik can curl the upstream successfully (any 2xx/3xx/401/403/404). */

@@ -33,6 +33,7 @@
  */
 
 import { Socket } from "node:net";
+import { existsSync } from "node:fs";
 import { configStore } from "./config-store";
 import { discoverAndBackfillPodUrl } from "./discover";
 
@@ -169,22 +170,61 @@ async function isDockerDnsReachable(): Promise<boolean> {
 // ---------------------------------------------------------------------------
 
 /**
+ * True when this process is running inside a Docker container. Used to
+ * suppress host-loopback URLs from secrets — `127.0.0.1:4000` means
+ * "the host's backend port" when read by an on-host eve CLI, but inside
+ * a container that same string points to the container's own (empty)
+ * loopback. Falling back to docker-dns (`http://eve-brain-synap:4000`)
+ * is the right answer in-container.
+ */
+function isRunningInContainer(): boolean {
+  try {
+    return existsSync("/.dockerenv");
+  } catch {
+    return false;
+  }
+}
+
+/** True when a URL is a host-loopback that won't work from inside a container. */
+function isHostLoopbackUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    const h = u.hostname.toLowerCase();
+    return h === "127.0.0.1" || h === "localhost" || h === "::1";
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Read the pod URL from secrets.json via ConfigStore.
  * Resolution order within secrets:
  *   1. `secrets.synap.apiUrl` (the primary configured URL)
  *   2. `secrets.pod.url` (back-compat alias)
  *   3. Derive from `secrets.domain.primary`
- * Returns the first non-empty string found, or undefined.
+ *
+ * In-container behaviour: any of the above that resolves to a HOST
+ * loopback URL (127.0.0.1 / localhost) is skipped — the dashboard
+ * container would dial its own empty loopback. The resolver then
+ * falls through to Step 6 (docker-dns) which reaches the backend
+ * via `eve-brain-synap:4000`.
+ *
+ * Returns the first usable string found, or undefined.
  */
 async function readPodUrlFromSecrets(): Promise<{ podUrl: string; detail: string } | undefined> {
   const secrets = await configStore.get();
   if (!secrets) return undefined;
+  const inContainer = isRunningInContainer();
 
   const apiUrl = secrets.synap?.apiUrl?.trim();
-  if (apiUrl) return { podUrl: apiUrl, detail: "secrets.synap.apiUrl" };
+  if (apiUrl && !(inContainer && isHostLoopbackUrl(apiUrl))) {
+    return { podUrl: apiUrl, detail: "secrets.synap.apiUrl" };
+  }
 
   const podUrl = secrets.pod?.url?.trim();
-  if (podUrl) return { podUrl, detail: "secrets.pod.url" };
+  if (podUrl && !(inContainer && isHostLoopbackUrl(podUrl))) {
+    return { podUrl, detail: "secrets.pod.url" };
+  }
 
   const domain = secrets.domain?.primary?.trim();
   if (domain && domain.includes(".") && !domain.startsWith("127.") && !domain.startsWith("localhost")) {
