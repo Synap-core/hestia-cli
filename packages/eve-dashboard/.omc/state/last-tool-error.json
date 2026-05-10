@@ -1,7 +1,7 @@
 {
   "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"pnpm type-check 2>&1\",\"timeout\":60000,\"description\":\"Type-check eve-dashboard after use-eve-session update\"}",
-  "error": "Exit code 2\n\n> @eve/dashboard@0.1.0 type-check /Users/antoine/Documents/Code/synap/hestia-cli/packages/eve-dashboard\n> tsc --noEmit && tsc --noEmit -p server/tsconfig.json\n\nlib/use-eve-session.ts(5,3): error TS2305: Module '\"@synap-core/auth\"' has no exported member 'installEmbeddedAuthReceiver'.\nlib/use-eve-session.ts(6,3): error TS2305: Module '\"@synap-core/auth\"' has no exported member 'requestEmbeddedAuth'.\nlib/use-eve-session.ts(25,30): error TS7006: Parameter 'origin' implicitly has an 'an...",
-  "timestamp": "2026-05-10T00:52:59.093Z",
+  "tool_input_preview": "{\"command\":\"for app in hub crm canvas devplane; do echo \\\"=== $app redirect ===\\\"; grep \\\"replace\\\\|location\\\" /Users/antoine/Documents/Code/synap/synap-app/apps/$app/lib/mockMode.ts | grep -v \\\"^//\\\"...",
+  "error": "Exit code 1\n=== hub redirect ===\n=== crm redirect ===\n=== canvas redirect ===\n=== devplane redirect ===",
+  "timestamp": "2026-05-10T01:23:44.945Z",
   "retry_count": 1
 }

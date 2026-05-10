@@ -334,6 +334,12 @@
       "accessCount": 1,
       "lastAccessed": 1778373462549,
       "type": "file"
+    },
+    {
+      "path": "packages/eve-dashboard/app/api/pod/setup-status/route.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778375309910,
+      "type": "file"
     }
   ],
   "userDirectives": []
