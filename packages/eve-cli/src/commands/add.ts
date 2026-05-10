@@ -33,9 +33,9 @@ async function containerExists(name: string): Promise<boolean> {
     return stdout.trim() === name;
   } catch { return false; }
 }
-import { runBrainInit, runInferenceInit } from '@eve/brain';
+import { runBrainInit, runInferenceInit, resolveSynapDelegate } from '@eve/brain';
 import { runLegsProxySetup, verifyComponent, installDashboardContainer } from '@eve/legs';
-import { materializeTargets } from '@eve/lifecycle';
+import { materializeTargets, normalizeBareDomain } from '@eve/lifecycle';
 import {
   colors,
   emojis,
@@ -71,24 +71,43 @@ async function addTraefik(): Promise<void> {
 }
 
 async function addSynap(): Promise<void> {
+  // Resolution chain matches `eve install` (single funnel): explicit flag
+  // → SYNAP_REPO_ROOT → resolveSynapDelegate (auto-detect /opt/synap-backend
+  // and friends). The previous version checked only the env var and bailed
+  // even when /opt/synap-backend was right there.
+  const flags = process.argv.slice(2);
+  const flagRepoIdx = flags.indexOf('--synap-repo');
+  const flagRepo = flagRepoIdx >= 0 ? flags[flagRepoIdx + 1] : undefined;
   const envRepo = process.env.SYNAP_REPO_ROOT;
-  if (!envRepo || !existsSync(envRepo)) {
+  const delegate = resolveSynapDelegate();
+  const repoRoot = flagRepo || envRepo || delegate?.repoRoot;
+  if (!repoRoot || !existsSync(repoRoot)) {
     printWarning(
       'Synap installation requires a synap-backend checkout.\n' +
-      `  Pass --synap-repo <path> or set SYNAP_REPO_ROOT.\n` +
+      `  Pass --synap-repo <path>, set SYNAP_REPO_ROOT, or clone to /opt/synap-backend.\n` +
       '  See: https://github.com/synap/synap-backend',
     );
     process.exit(1);
   }
-  const flags = process.argv.slice(2);
-  const opts = {
-    domain: (flags.includes('--domain') ? flags[flags.indexOf('--domain') + 1] : undefined) || 'localhost',
-    email: process.env.LETSENCRYPT_EMAIL,
-  };
+
+  // Pull domain/email from secrets so an existing pod doesn't get reset to
+  // localhost defaults. Mirrors what gatherInstallConfig does for `eve install`.
+  const secrets = await readEveSecrets(process.cwd()).catch(() => null);
+  const flagDomainIdx = flags.indexOf('--domain');
+  const flagDomain = flagDomainIdx >= 0 ? flags[flagDomainIdx + 1] : undefined;
+  const domain =
+    normalizeBareDomain(flagDomain) ||
+    normalizeBareDomain(secrets?.domain?.primary) ||
+    'localhost';
+  const email =
+    process.env.LETSENCRYPT_EMAIL?.trim() ||
+    secrets?.domain?.email?.trim() ||
+    (domain !== 'localhost' ? `noreply@${domain}` : undefined);
+
   await runBrainInit({
-    synapRepo: envRepo,
-    domain: opts.domain,
-    email: opts.email,
+    synapRepo: repoRoot,
+    domain,
+    email,
     adminBootstrapMode: 'token',
     withAi: false,
     withOpenclaw: false,
