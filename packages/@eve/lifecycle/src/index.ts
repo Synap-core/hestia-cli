@@ -734,6 +734,10 @@ async function* runPostUpdateHooks(comp: ComponentInfo): AsyncGenerator<Lifecycl
     yield* postUpdateReconcileAiWiring();
   }
   if (comp.id === "openwebui") {
+    // One-time migration: tear down the retired Pipelines sidecar that
+    // older installs still have running. No-op when the container, deploy
+    // dir, and entity-state row are all already absent.
+    yield* decommissionLegacyPipelines();
     yield* postUpdateReconcileAiWiring();
   }
 }
@@ -1983,7 +1987,6 @@ const ORGAN_MAP: Record<string, "brain" | "arms" | "builder" | "eyes" | "legs"> 
   rsshub: "eyes",
   traefik: "legs",
   openwebui: "eyes",
-  "openwebui-pipelines": "eyes",
   dokploy: "builder",
   opencode: "builder",
   openclaude: "builder",

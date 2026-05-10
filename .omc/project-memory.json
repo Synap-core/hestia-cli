@@ -216,6 +216,12 @@
       "type": "file"
     },
     {
+      "path": "packages/eve-cli/src/commands/openwebui.ts",
+      "accessCount": 2,
+      "lastAccessed": 1778371554520,
+      "type": "file"
+    },
+    {
       "path": "docs/openwebui-integration-strategy.md",
       "accessCount": 1,
       "lastAccessed": 1778369741054,

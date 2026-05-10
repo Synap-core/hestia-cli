@@ -99,11 +99,14 @@ ENV HOSTNAME=0.0.0.0
 COPY --from=build /workspace/packages/eve-dashboard/.next/standalone ./
 COPY --from=build /workspace/packages/eve-dashboard/.next/static ./packages/eve-dashboard/.next/static
 
-# Pipeline reference scripts — Next's standalone tracer only follows JS
-# imports, so the .py assets in @eve/lifecycle don't get bundled. Copy
-# them into the runner at the path the lifecycle code probes for them
-# (`/app/packages/@eve/lifecycle/assets/pipelines`).
+# Static assets — Next's standalone tracer only follows JS imports, so
+# any .py / template files we read at runtime have to be copied
+# explicitly so they land at the path the resolvers probe for them.
+#   - @eve/lifecycle/assets    → builder workspace templates
+#   - @eve/dna/assets/functions → OpenWebUI Filter Function source files
+#                                  pushed via openwebui-functions-sync.ts
 COPY --from=build /workspace/packages/@eve/lifecycle/assets ./packages/@eve/lifecycle/assets
+COPY --from=build /workspace/packages/@eve/dna/assets ./packages/@eve/dna/assets
 
 EXPOSE 3000
 

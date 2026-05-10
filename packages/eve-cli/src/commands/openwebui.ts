@@ -33,13 +33,13 @@ export function openwebuiCommand(program: Command): void {
       const maxRetries = Math.max(1, parseInt(opts.maxRetries, 10) || 24);
       const secrets = await readEveSecrets(process.cwd());
 
-      const synapApiKey = readAgentKeyOrLegacySync('openwebui-pipelines', secrets);
+      const synapApiKey = readAgentKeyOrLegacySync('eve', secrets);
       if (!synapApiKey) {
-        printError('No Synap API key found for openwebui-pipelines — install Synap first (`eve add synap`)');
+        printError('No Synap API key found for the eve agent — install Synap first (`eve add synap`)');
         process.exit(1);
       }
 
-      const { modelSources, pipelinesKey, pipelinesUrl } = buildOpenwebuiModelSources(secrets, '/opt/openwebui');
+      const { modelSources } = buildOpenwebuiModelSources(secrets, '/opt/openwebui');
 
       // Apply correct keys (same logic as wireOpenwebui in wire-ai.ts)
       if (modelSources.length > 0) modelSources[0].apiKey = synapApiKey;
@@ -55,8 +55,6 @@ export function openwebuiCommand(program: Command): void {
       spinner.start();
 
       const outcome = await registerOpenwebuiAdminApi(modelSources, {
-        pipelinesUrl,
-        pipelinesKey,
         managedConfig: buildOpenwebuiManagedConfig(secrets),
         maxRetries,
       });

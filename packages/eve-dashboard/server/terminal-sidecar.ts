@@ -13,7 +13,7 @@
  * Routes exposed:
  *   GET  /healthz                — liveness
  *   WS   /repl?slug=<agent>      — interactive subprocess (eve | openclaw | coder)
- *   WS   /logs?slug=<agent>      — read-only log tail (hermes | openwebui-pipelines)
+ *   WS   /logs?slug=<agent>      — read-only log tail (hermes)
  *   WS   /recipe                 — sequential step runner (any agent)
  *
  * Auth: token comes from the `eve-session` cookie OR a `?token=` query
@@ -56,7 +56,6 @@ const AGENT_KINDS: Record<string, ReadonlyArray<TerminalKind>> = {
   openclaw: ['repl', 'recipe'],
   coder: ['repl', 'recipe'],
   hermes: ['logs', 'recipe'],
-  'openwebui-pipelines': ['logs', 'recipe'],
 };
 
 // ---------------------------------------------------------------------------
@@ -348,8 +347,8 @@ async function handleLogs(ws: WebSocket, slug: string | null): Promise<void> {
 }
 
 function resolveContainerName(slug: string): string | null {
-  // Some agent slugs are also component ids (openwebui-pipelines, hermes
-  // when present). Look up via COMPONENTS first; fall back to known mapping.
+  // Some agent slugs are also component ids (hermes when present).
+  // Look up via COMPONENTS first; fall back to known mapping.
   const comp = COMPONENTS.find((c) => c.id === slug);
   if (comp?.service?.containerName) return comp.service.containerName;
   // Hermes runs as a CLI helper without a dedicated container in the

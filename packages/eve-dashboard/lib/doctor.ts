@@ -395,9 +395,6 @@ export async function runDoctor(reqUrl?: string): Promise<CheckResult[]> {
   if (installedSet.has("openwebui")) {
     checks.push(...await checkOpenwebuiSynapIntegration(secrets, running, installedSet));
   }
-  if (installedSet.has("openwebui-pipelines")) {
-    checks.push(...await checkOpenwebuiPipelinesIntegration(running));
-  }
 
   return checks;
 }
@@ -656,12 +653,12 @@ async function checkOpenwebuiSynapIntegration(
   }
 
   // Compare Open WebUI's bound SYNAP_API_KEY against the canonical
-  // openwebui-pipelines agent key (legacy synap.apiKey is the fallback
-  // for un-migrated installs). When wiring drifts (manual edit, stale
-  // .env from a pre-rotation install), surface a warn — the apply path
-  // re-runs writeOpenwebuiCompose + .env regen with the fresh value.
+  // `eve` agent key (legacy synap.apiKey is the fallback for un-migrated
+  // installs). The eve key is what the registered tool server, the pushed
+  // Prompts, and the inline Filter Functions all use to talk to Synap —
+  // when the .env drifts from this we surface a warn so re-wire fixes it.
   const expectedOwuiKey =
-    secrets?.agents?.["openwebui-pipelines"]?.hubApiKey ?? secrets?.synap?.apiKey;
+    secrets?.agents?.["eve"]?.hubApiKey ?? secrets?.synap?.apiKey;
   if (
     envCheck.found &&
     expectedOwuiKey &&
@@ -673,50 +670,8 @@ async function checkOpenwebuiSynapIntegration(
       name: "Open WebUI key matches secrets",
       status: "warn",
       message:
-        "Open WebUI's SYNAP_API_KEY differs from the openwebui-pipelines agent key — re-wire to sync",
+        "Open WebUI's SYNAP_API_KEY differs from the eve agent key — re-wire to sync",
       fix: "Open AI page → Save (re-runs wiring)",
-      integrationId,
-    });
-  }
-
-  return out;
-}
-
-/** Open WebUI ↔ Pipelines sidecar ↔ Synap. Sidecar adds memory injection,
- *  channel sync, and Hermes dispatch on top of plain Open WebUI. */
-async function checkOpenwebuiPipelinesIntegration(
-  running: Map<string, string>,
-): Promise<CheckResult[]> {
-  const integrationId = "openwebui-pipelines" as const;
-  const out: CheckResult[] = [];
-
-  const sidecarRunning = running.has("eve-openwebui-pipelines");
-  out.push({
-    group: "integrations",
-    name: "Pipelines sidecar running",
-    status: sidecarRunning ? "pass" : "fail",
-    message: sidecarRunning ? "Sidecar container is up" : "Sidecar is not running",
-    fix: sidecarRunning ? undefined : "Open Pipelines → Start",
-    componentId: "openwebui-pipelines",
-    integrationId,
-    repair: sidecarRunning ? undefined : { kind: "start-container", label: "Start" },
-  });
-
-  // Open WebUI's .env should reference the pipelines URL in OPENAI_API_BASE_URLS.
-  // The install path adds it automatically; if removed, chat won't see the
-  // pipeline filters at all.
-  const envCheck = await readOpenwebuiEnv();
-  if (envCheck.found) {
-    const baseUrls = envCheck.env.OPENAI_API_BASE_URLS ?? "";
-    const wired = baseUrls.includes("eve-openwebui-pipelines");
-    out.push({
-      group: "integrations",
-      name: "Open WebUI calls pipelines",
-      status: wired ? "pass" : "fail",
-      message: wired
-        ? "OPENAI_API_BASE_URLS routes through the sidecar"
-        : "Sidecar isn't in OPENAI_API_BASE_URLS — pipelines won't fire",
-      fix: wired ? undefined : "Re-install Pipelines (`eve add openwebui-pipelines`)",
       integrationId,
     });
   }

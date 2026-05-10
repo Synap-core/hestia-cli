@@ -124,7 +124,7 @@ export async function materializeTargets(
         }
 
         case 'openwebui-config': {
-          const components = ['openwebui', 'openwebui-pipelines'];
+          const components = ['openwebui'];
           const results = await wireAllInstalledComponents(resolvedSecrets, components);
           const failed = results.filter((r) => r.outcome === 'failed');
           result = {

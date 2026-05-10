@@ -32,8 +32,8 @@
     "runtime": null
   },
   "build": {
-    "buildCommand": "pnpm build 2>&1 | tail -20",
-    "testCommand": "cd /Users/antoine/Documents/Code/synap/hestia-cli/packages/@eve/dna && pnpm test -- --run openwebui-functions-sync 2>&1 | tail -50",
+    "buildCommand": "pnpm build 2>&1 | tail -15",
+    "testCommand": "cd /Users/antoine/Documents/Code/synap/hestia-cli && pnpm -r typecheck 2>&1 | grep -E \"Failed|error\" | head -10 && echo \"---\" && cd packages/@eve/dna && pnpm test -- --run 2>&1 | tail -10",
     "lintCommand": null,
     "devCommand": "npm run dev",
     "scripts": {
@@ -206,6 +206,12 @@
       "path": "src/entity-state.ts",
       "accessCount": 1,
       "lastAccessed": 1778371327093,
+      "type": "file"
+    },
+    {
+      "path": "package.json",
+      "accessCount": 1,
+      "lastAccessed": 1778371591907,
       "type": "file"
     }
   ],
