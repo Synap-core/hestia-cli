@@ -1,7 +1,7 @@
 {
-  "tool_name": "WebFetch",
-  "tool_input_preview": "{\"url\":\"https://docs.openwebui.com/pipelines/manifold/\",\"prompt\":\"Find all information about manifold pipelines, how models are listed in the UI, how the model picker discovers models from registered ...",
-  "error": "Request failed with status code 404",
-  "timestamp": "2026-05-09T10:24:16.525Z",
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"grep -n \\\"syncOpenwebuiExtras\\\\(\\\\|formatExtrasSummary\\\\(\\\" /Users/antoine/Documents/Code/synap/hestia-cli/packages/@eve/lifecycle/src/index.ts\",\"description\":\"Find call sites in lifecycle...",
+  "error": "Exit code 2\nugrep: error: error at position 26\n(?m)syncOpenwebuiExtras\\(\\|formatExtrasSummary\\(\n empty (sub)expression___/",
+  "timestamp": "2026-05-10T16:16:52.817Z",
   "retry_count": 1
 }
