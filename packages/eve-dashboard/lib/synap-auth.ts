@@ -44,14 +44,12 @@
  * Disk persistence (`~/.eve/secrets.json`) is a third concern:
  *   • `cp.userSession` — host owner's CP token (for the `eve` CLI).
  *     Single-writer, owner-only. Synced via `POST /api/auth/sync`.
- *   • `pod.userToken`  — host owner's Kratos session on the local pod.
- *     Single-writer, owner-only. Synced via `POST /api/auth/pod-signin`
- *     (first-write-wins). Other users' pod tokens live in their browser
- *     `synap:pods` map only — never on disk.
  *
- * The browser never writes pod sessions to disk via this module. Disk
- * writes happen exclusively through the pod-signin route's
- * first-write-wins logic.
+ * Pod sessions are NEVER persisted by Eve. The operator's
+ * `ory_kratos_session` cookie (set at the parent domain by Kratos)
+ * is the credential. Eve forwards it to the pod via `/api/pod/*` and
+ * mirrors it into `synap:pods` for cross-app surfaces, but holds no
+ * disk copy.
  *
  * NOTE: `@synap-core/auth` is published to npm. Until v1.1.0 is
  * published + installed, the new pod-session helpers
@@ -290,10 +288,9 @@ export function getCurrentPodSession(podUrl: string): StoredPodSession | null {
 }
 
 /**
- * Sign out of `podUrl`. Removes the entry from `synap:pods` AND, if
- * this URL matches the local Eve pod (i.e. this browser is the host
- * owner), clears the disk slot via the existing `pod-signout` route
- * (which calls `clearPodUserToken` from `@eve/dna`).
+ * Sign out of `podUrl`. Removes the entry from `synap:pods` AND asks
+ * the dashboard to initiate a Kratos browser-flow logout (which
+ * clears the parent-domain `ory_kratos_session` cookie).
  *
  * Idempotent — safe to call when no session exists.
  */
@@ -302,16 +299,20 @@ export async function signOutOfPod(podUrl: string): Promise<void> {
   // gate state updates in this tab.
   signOutOfPodCore(podUrl);
 
-  // Server-side: ask the dashboard to clear the disk slot. The route
-  // is a no-op if the disk slot doesn't match this pod URL — the
-  // existing `clearPodUserToken` helper just nukes the slot
-  // unconditionally (which is fine because owner-mode browsers should
-  // only ever sign out of "their" local pod via this path).
+  // Server-side: ask Eve to start a Kratos logout flow and clear the
+  // Kratos cookie defensively. If Kratos returned a logout_url, the
+  // browser navigates there to finalize.
   try {
-    await fetch("/api/auth/pod-signout", {
+    const res = await fetch("/api/auth/pod-signout", {
       method: "POST",
       credentials: "include",
     });
+    const data = (await res
+      .json()
+      .catch(() => null)) as { logoutUrl?: string } | null;
+    if (data?.logoutUrl && typeof window !== "undefined") {
+      window.location.href = data.logoutUrl;
+    }
   } catch {
     /* non-fatal — browser state is already updated */
   }
@@ -319,15 +320,22 @@ export async function signOutOfPod(podUrl: string): Promise<void> {
 
 /**
  * Wrapper around `@synap-core/auth`'s `signOutOfAllPods()` that also
- * tells Eve to clear the disk slot. Use for "sign out everywhere".
+ * triggers a Kratos browser-flow logout to clear the parent-domain
+ * cookie. Use for "sign out everywhere".
  */
 export async function signOutOfAllPodsAndClearDisk(): Promise<void> {
   signOutOfAllPods();
   try {
-    await fetch("/api/auth/pod-signout", {
+    const res = await fetch("/api/auth/pod-signout", {
       method: "POST",
       credentials: "include",
     });
+    const data = (await res
+      .json()
+      .catch(() => null)) as { logoutUrl?: string } | null;
+    if (data?.logoutUrl && typeof window !== "undefined") {
+      window.location.href = data.logoutUrl;
+    }
   } catch {
     /* non-fatal */
   }

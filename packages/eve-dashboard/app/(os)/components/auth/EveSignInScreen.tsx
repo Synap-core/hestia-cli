@@ -389,38 +389,11 @@ export function SelfHostedSignInForm({
       const claimedEmail = data?.email ?? cleanEmail;
       const claimId = ++claimIdRef.current;
 
-      // Attempt to mint a Kratos session via the JWT-Bearer flow and
-      // persist it into `synap:pods`. Succeeds for re-claims / existing
-      // users; fails for first-time bootstrap (user doesn't exist on pod
-      // yet). Non-fatal — fall through to redirect-based signup.
-      try {
-        const signinRes = await fetch("/api/auth/pod-signin", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify({ email: claimedEmail }),
-        });
-        if (signinRes.ok) {
-          const signin = (await signinRes.json().catch(() => null)) as
-            | {
-                ok?: boolean;
-                token?: string;
-                expiresAt?: string;
-                user?: { id: string; email: string; name: string | null };
-              }
-            | null;
-          if (signin?.ok && signin.token && claimedPodUrl) {
-            storePodSession({
-              podUrl: claimedPodUrl,
-              sessionToken: signin.token,
-              userEmail: signin.user?.email ?? claimedEmail,
-              userId: signin.user?.id ?? "",
-            });
-          }
-        }
-      } catch {
-        /* non-fatal */
-      }
+      // Cookie-only auth: there's no eve-side session to mint. The
+      // operator finishes signup at the pod (signupUrl below) and
+      // Kratos sets the parent-domain `ory_kratos_session` cookie
+      // directly. Eve's `/api/pod/*` proxy picks it up on the next
+      // call without any further work here.
 
       // Mint a magic link the operator can copy-paste to the invitee.
       try {

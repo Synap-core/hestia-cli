@@ -6,7 +6,11 @@
  * forward it to the pod's `POST /api/admin/bootstrap/claim` along with
  * the one-time `ADMIN_BOOTSTRAP_TOKEN`. The pod creates a pod-wide
  * invite tied to the email; the user then completes Kratos signup at
- * the pod URL (the dashboard handles redirection).
+ * the pod URL (the dashboard returns a `signupUrl` for redirection).
+ *
+ * Eve persists nothing here. The Kratos session that results from the
+ * pod-side signup is set by Kratos as the parent-domain cookie; eve's
+ * `/api/pod/*` proxy picks it up on the next call.
  *
  * Body: `{ email, name?, role? }`
  *

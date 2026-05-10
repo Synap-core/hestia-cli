@@ -31,6 +31,7 @@ export function OverlayHost() {
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       const isMod = e.metaKey || e.ctrlKey;
+      if (isMod) console.log("[overlay] key:", e.key, "code:", e.code, "shift:", e.shiftKey);
 
       // Cmd+K — command palette
       if (isMod && e.key.toLowerCase() === "k" && !e.shiftKey) {

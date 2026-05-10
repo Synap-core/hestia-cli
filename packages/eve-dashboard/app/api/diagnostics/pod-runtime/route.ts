@@ -1,17 +1,27 @@
 import { NextResponse } from "next/server";
-import { readPodUserToken, secretsPath } from "@eve/dna";
+import { secretsPath } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
 import { getPodRuntimeContext } from "@/lib/pod-runtime-context";
 import { parseKratosFlowResponse, parseSetupStatusResponse } from "@/lib/pod-response-parsers";
+
+function extractKratosSessionCookie(req: Request): string | null {
+  const raw = req.headers.get("cookie");
+  if (!raw) return null;
+  const match = raw.match(/(?:^|;\s*)ory_kratos_session=([^;]+)/);
+  return match ? match[1] : null;
+}
 
 export async function GET(req: Request) {
   const auth = await requireAuth();
   if ("error" in auth) return auth.error;
 
   const context = await getPodRuntimeContext(req);
-  const token = await readPodUserToken().catch(() => null);
   const setup = await probeSetupStatus(context.trpcBaseUrl);
   const kratos = await probeKratos(context.kratosPublicUrl, context.podBaseUrl);
+  const session = await probeKratosSession(
+    context.kratosPublicUrl,
+    extractKratosSessionCookie(req),
+  );
 
   return NextResponse.json({
     pod: {
@@ -23,19 +33,63 @@ export async function GET(req: Request) {
     },
     setup,
     kratos,
-    token: {
-      present: Boolean(token?.token),
-      expiresAt: token?.expiresAt ?? null,
-      userEmail: token?.email ?? null,
-    },
+    session,
     secrets: {
       path: secretsPath(),
       hasSynapApiKey: Boolean(context.secrets?.synap?.apiKey),
       hasDashboardSecret: Boolean(context.secrets?.dashboard?.secret),
-      hasPodUserToken: Boolean(token?.token),
     },
     diagnostics: context.diagnostics,
   });
+}
+
+interface KratosWhoamiBody {
+  expires_at?: string;
+  identity?: { traits?: { email?: string } };
+}
+
+async function probeKratosSession(
+  kratosPublicUrl: string | null,
+  sessionCookie: string | null,
+) {
+  if (!kratosPublicUrl) {
+    return { present: false, reason: "no-pod-url", expiresAt: null, userEmail: null };
+  }
+  if (!sessionCookie) {
+    return { present: false, reason: "no-cookie", expiresAt: null, userEmail: null };
+  }
+  try {
+    const res = await fetch(`${kratosPublicUrl}/sessions/whoami`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Cookie: `ory_kratos_session=${sessionCookie}`,
+      },
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      return {
+        present: false,
+        reason: `whoami-${res.status}`,
+        expiresAt: null,
+        userEmail: null,
+      };
+    }
+    const body = (await res.json().catch(() => null)) as KratosWhoamiBody | null;
+    return {
+      present: true,
+      reason: null,
+      expiresAt: body?.expires_at ?? null,
+      userEmail: body?.identity?.traits?.email ?? null,
+    };
+  } catch (err) {
+    return {
+      present: false,
+      reason: err instanceof Error ? err.message : "fetch-exception",
+      expiresAt: null,
+      userEmail: null,
+    };
+  }
 }
 
 async function probeSetupStatus(trpcBaseUrl: string | null) {

@@ -1,22 +1,19 @@
 /**
  * GET /api/pod/pairing-status
  *
- * Single source of truth for the dashboard UI to know what stage the
- * operator is at in the pod sign-in flow. Powers `usePodPairing()` and
- * the home stat-pill cluster's "pair your pod" CTA swap.
+ * Single source of truth for the dashboard UI to know whether the
+ * operator has a usable pod session. The signal is the
+ * `ory_kratos_session` cookie carried by the inbound browser request,
+ * which we forward to the pod's `/.ory/kratos/public/sessions/whoami`
+ * endpoint to confirm validity.
  *
  * States:
  *   • `unconfigured` — Eve doesn't know a pod URL yet
  *     (no `pod.url` and no `synap.apiUrl`)
- *   • `paired`       — `pod.userToken` exists and is comfortably valid
- *     (>60s before expiry)
- *   • `needs-refresh`— `pod.userToken` exists but expired / about to.
- *     The proxy auto-mints when given an email, so the UX still treats
- *     this as "paired-ish" — we surface it for diagnostics.
- *   • `stale-cred`   — pod URL set, no userToken, AND no `userEmail`
- *     cached; we have nothing to mint with, full email prompt needed.
- *   • `unpaired`     — pod URL set, no userToken, but `userEmail` is
- *     cached so a one-click re-sign-in is possible.
+ *   • `paired`       — Inbound cookie is present AND `whoami` returned
+ *                      a valid session (200 with an identity payload).
+ *   • `unpaired`     — Pod URL set, no inbound cookie or the cookie is
+ *                      rejected. Operator needs to sign in via pod-admin.
  *
  * The token itself is NEVER returned. Only metadata the UI needs.
  *
@@ -24,44 +21,47 @@
  */
 
 import { NextResponse } from "next/server";
-import { readEveSecrets, resolvePodUrl } from "@eve/dna";
+import { resolvePodUrl } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
 
-export type PairingStateApi =
-  | "unconfigured"
-  | "unpaired"
-  | "paired"
-  | "needs-refresh"
-  | "stale-cred";
+export type PairingStateApi = "unconfigured" | "unpaired" | "paired";
 
 export interface PairingStatusResponse {
   state: PairingStateApi;
-  /** Email cached in `pod.userEmail` (if any) — surfaces re-sign-in copy. */
+  /** Email pulled from the Kratos identity when paired. */
   userEmail?: string;
-  /** Pod base URL the operator is paired with (helpful diagnostic). */
+  /** Pod base URL (helpful diagnostic). */
   podUrl?: string;
-  /** ISO-8601 — only present when a token is cached. */
+  /** ISO-8601 expiry from the Kratos session, when available. */
   expiresAt?: string;
+}
+
+interface KratosWhoamiResponse {
+  expires_at?: string;
+  identity?: {
+    traits?: {
+      email?: string;
+    };
+  };
+}
+
+function extractKratosSessionCookie(req: Request): string | null {
+  const raw = req.headers.get("cookie");
+  if (!raw) return null;
+  const match = raw.match(/(?:^|;\s*)ory_kratos_session=([^;]+)/);
+  return match ? match[1] : null;
 }
 
 export async function GET(req: Request) {
   const auth = await requireAuth();
   if ("error" in auth) return auth.error;
 
-  let secrets: Awaited<ReturnType<typeof readEveSecrets>> = null;
-  try {
-    secrets = await readEveSecrets();
-  } catch {
-    // Fall through — `unconfigured` is the safest answer when we can't
-    // read secrets at all (volume mount missing on a fresh container).
-  }
-
   let podUrl: string | undefined;
   try {
     podUrl = await resolvePodUrl(undefined, req.url, req.headers);
   } catch {
-    // Falls through — `unconfigured` is the safest answer when we can't
-    // resolve a pod URL (volume mount missing on a fresh container).
+    // Fall through — `unconfigured` is the safest answer when we can't
+    // resolve a pod URL.
   }
 
   if (!podUrl) {
@@ -70,46 +70,45 @@ export async function GET(req: Request) {
     });
   }
 
-  const userToken = secrets?.pod?.userToken;
-  const userTokenExpiresAt = secrets?.pod?.userTokenExpiresAt;
-  const userEmail = secrets?.pod?.userEmail;
-
-  // No token at all — distinguish "we know your email" from "stale"
-  // (no email cached either). The latter needs the full prompt; the
-  // former is one-click re-sign-in.
-  if (!userToken || !userTokenExpiresAt) {
+  const sessionCookie = extractKratosSessionCookie(req);
+  if (!sessionCookie) {
     return NextResponse.json<PairingStatusResponse>({
-      state: userEmail ? "unpaired" : "stale-cred",
-      userEmail,
+      state: "unpaired",
       podUrl,
     });
   }
 
-  const expiresMs = Date.parse(userTokenExpiresAt);
-  if (Number.isNaN(expiresMs)) {
-    // Garbage timestamp — treat as needing a refresh so the UI nudges.
+  // Probe Kratos `whoami` with the forwarded cookie. A 200 means the
+  // session is live; anything else is treated as unpaired.
+  const base = podUrl.replace(/\/+$/, "");
+  try {
+    const res = await fetch(`${base}/.ory/kratos/public/sessions/whoami`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Cookie: `ory_kratos_session=${sessionCookie}`,
+      },
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      return NextResponse.json<PairingStatusResponse>({
+        state: "unpaired",
+        podUrl,
+      });
+    }
+    const body = (await res.json().catch(() => null)) as KratosWhoamiResponse | null;
     return NextResponse.json<PairingStatusResponse>({
-      state: "needs-refresh",
-      userEmail,
+      state: "paired",
+      userEmail: body?.identity?.traits?.email,
       podUrl,
-      expiresAt: userTokenExpiresAt,
+      expiresAt: body?.expires_at,
+    });
+  } catch {
+    // Pod unreachable — surface as unpaired so the UI nudges, rather
+    // than blocking on an upstream blip.
+    return NextResponse.json<PairingStatusResponse>({
+      state: "unpaired",
+      podUrl,
     });
   }
-
-  const safeUntil = expiresMs - 60_000;
-  if (safeUntil <= Date.now()) {
-    return NextResponse.json<PairingStatusResponse>({
-      state: "needs-refresh",
-      userEmail,
-      podUrl,
-      expiresAt: userTokenExpiresAt,
-    });
-  }
-
-  return NextResponse.json<PairingStatusResponse>({
-    state: "paired",
-    userEmail,
-    podUrl,
-    expiresAt: userTokenExpiresAt,
-  });
 }

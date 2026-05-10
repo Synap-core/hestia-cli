@@ -1,29 +1,21 @@
 "use client";
 
 /**
- * `usePodPairing` — single source of truth for whether the operator's
- * pod user-channel is signed in.
+ * `usePodPairing` — single source of truth for whether the operator
+ * has a usable pod session.
  *
- * Backed by `GET /api/pod/pairing-status` which inspects
- * `~/.eve/secrets.json` (`pod.userToken`, `pod.userEmail`,
- * `pod.userTokenExpiresAt`) and returns a tagged state. The token
- * itself never reaches the browser.
+ * Backed by `GET /api/pod/pairing-status`, which forwards the inbound
+ * `ory_kratos_session` cookie to the pod's `whoami` endpoint and
+ * reports back. Eve persists nothing; the cookie is the only signal.
  *
  * States:
  *   • "loading"        — first fetch in flight (no cache yet)
  *   • "unconfigured"   — no pod URL and no `synap.apiUrl` yet
- *   • "unpaired"       — pod URL set, no token, but `userEmail` cached.
- *                        Re-sign-in is a single click ("Sign in as
- *                        {email}") because the pod-signin route only
- *                        needs the email.
- *   • "paired"         — token exists and is comfortably valid.
- *   • "needs-refresh"  — token exists but expired/about-to. The proxy
- *                        will re-mint on next call when given an email,
- *                        so the UX still treats this as paired.
- *   • "stale-cred"     — pod URL set, no token, AND no `userEmail` cached
- *                        (e.g. fresh install where `eve setup admin`
- *                        wasn't run, or a manual secrets-file wipe).
- *                        Needs the full email prompt path.
+ *   • "unpaired"       — pod URL set, but no valid Kratos cookie. The
+ *                        operator needs to sign in via the pod-admin
+ *                        login (or via Eve's own sign-in dialog, which
+ *                        proxies to the same Kratos flow).
+ *   • "paired"         — Kratos session is live (`whoami` returned 200).
  *
  * Polling: kept light. We refetch on mount and on explicit `refetch()`
  * (post sign-in / sign-out / settings changes). No interval — the
@@ -39,7 +31,15 @@ export type PairingState =
   | "unconfigured"
   | "unpaired"
   | "paired"
+  /**
+   * @deprecated Cookie-only auth doesn't expose token expiry to the
+   * UI any more. Retained in the union so older code that switches on
+   * it still type-checks; the API never returns it.
+   */
   | "needs-refresh"
+  /**
+   * @deprecated Same reason — no eve-side cred to be stale.
+   */
   | "stale-cred";
 
 export interface PodPairingResult {

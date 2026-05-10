@@ -12,9 +12,10 @@
  *   2. **CP-signed-in but local pod NOT in `synap:pods`** → show the
  *      "Claim this Eve as your pod" CTA. The card primary action
  *      calls `POST /api/pod/claim` (CP handshake → pod handshake →
- *      `pod.userToken` written + `synap:pods` updated). Falls back to
- *      the email-prompt bootstrap flow if the pod hasn't been
- *      bootstrapped yet (`needsBootstrap` from setup probe).
+ *      Kratos session cookie set on the parent domain + `synap:pods`
+ *      updated). Falls back to the email-prompt bootstrap flow if
+ *      the pod hasn't been bootstrapped yet (`needsBootstrap` from
+ *      setup probe).
  *   3. **Pod URL not configured** — render the legacy
  *      `ConfigurePodCard` linking to settings.
  *

@@ -8,9 +8,10 @@
  *                     submitting proposals, OpenClaw skill round-trips,
  *                     proactive nudges. NEVER for human inbox / approve
  *                     / mark-read / settings actions.
- *   - `/api/pod/*`  → user identity. Uses `pod.userToken` (Kratos
- *                     session minted via JWT-Bearer exchange). The
- *                     default for any operator-driven UI feature.
+ *   - `/api/pod/*`  → user identity. Forwards the operator's
+ *                     `ory_kratos_session` cookie (parent-domain scoped)
+ *                     to the pod. The default for any operator-driven
+ *                     UI feature.
  *
  * If you're adding a new feature, ask: "if I were doing this manually
  * in a terminal, would I authenticate as me-the-human or me-the-

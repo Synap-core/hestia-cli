@@ -14,32 +14,27 @@
  *   5. Forward that JWT to the pod's `POST /api/handshake`. The pod
  *      verifies via JWKS, mints a Kratos session, and returns
  *      `{ session_token }`.
- *   6. Persist the pod session via `writePodUserToken` (same slot
- *      `pod-signin/route.ts` writes to). Subsequent `/api/pod/*` calls
- *      use the cached token.
+ *   6. Set the parent-domain `ory_kratos_session` cookie on the response
+ *      so subsequent `/api/pod/*` proxy calls (and any sibling Synap
+ *      surface) pick it up automatically. Eve persists nothing.
  *
  * Body: `{}` — no input. The user is implicit (cp.userSession), the
  * pod URL is implicit (host config).
  *
  * Returns:
- *   200 `{ ok: true, podUrl, podSessionExpiresAt }`
+ *   200 `{ ok: true, podUrl, podSessionExpiresAt, sessionToken }`
  *   400 `{ error: "pod-url-not-configured" }`
  *   401 `{ error: "Unauthorized" }`               — eve-session missing.
  *   401 `{ error: "cp-session-required" }`        — no valid CP session on disk.
  *   502 `{ error: "handshake-failed", detail }`   — CP unreachable / rejected.
  *   502 `{ error: "pod-exchange-failed", detail }` — pod handshake rejected.
- *   500 `{ error: "claim_failed", message }`      — anything else.
  *
  * See: synap-team-docs/content/team/platform/eve-credentials.mdx
  *      synap-team-docs/content/team/platform/eve-os-vision.mdx
  */
 
 import { NextResponse } from "next/server";
-import {
-  readCpUserSession,
-  resolvePodUrl,
-  writePodUserToken,
-} from "@eve/dna";
+import { readCpUserSession, readEveSecrets, resolvePodUrl } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
 import { CP_BASE_URL } from "@/lib/cp-base-url";
 
@@ -213,25 +208,9 @@ export async function POST(req: Request) {
     );
   }
 
-  // Pod's /api/handshake doesn't return an ISO expiry directly — fall
-  // back to a 24h window that matches the JWT-Bearer flow's default.
-  // Kratos session lifetime is configured via env on the pod side; the
-  // client refreshes opportunistically when a 401 surfaces.
   const expiresAt =
     podHandshakeBody?.session?.expires_at ??
     new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-
-  try {
-    await writePodUserToken(sessionToken, expiresAt, cpSession.email);
-  } catch (err) {
-    return NextResponse.json(
-      {
-        error: "claim_failed",
-        message: err instanceof Error ? err.message : "Failed to persist token",
-      },
-      { status: 500 },
-    );
-  }
 
   // Fire-and-forget auto-provision: after a successful CP→pod claim,
   // mint per-agent Hub Protocol keys for any running components. This
@@ -247,7 +226,7 @@ export async function POST(req: Request) {
     } catch { /* auto-provision failure is non-critical */ }
   })();
 
-  return NextResponse.json({
+  const response = NextResponse.json({
     ok: true,
     podUrl: podBase,
     podSessionExpiresAt: expiresAt,
@@ -256,4 +235,37 @@ export async function POST(req: Request) {
     // claim, so other Synap surfaces reading synap:pods get a usable Bearer.
     sessionToken,
   });
+
+  // Set the parent-domain Kratos cookie so subsequent `/api/pod/*` calls
+  // (and pod-admin / pod surfaces sharing the root domain) authenticate
+  // via the cookie path automatically.
+  const cookieDomain = await resolveParentDomainForCookie();
+  const expiresMs = Date.parse(expiresAt);
+  const maxAgeSeconds = Number.isFinite(expiresMs)
+    ? Math.max(0, Math.floor((expiresMs - Date.now()) / 1000))
+    : 24 * 60 * 60;
+  const isSecure = podBase.startsWith("https://");
+  const parts = [
+    `ory_kratos_session=${sessionToken}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Max-Age=${maxAgeSeconds}`,
+  ];
+  if (isSecure) parts.push("Secure");
+  if (cookieDomain) parts.push(`Domain=${cookieDomain}`);
+  response.headers.set("Set-Cookie", parts.join("; "));
+
+  return response;
+}
+
+async function resolveParentDomainForCookie(): Promise<string | undefined> {
+  try {
+    const secrets = await readEveSecrets();
+    const primary = secrets?.domain?.primary?.trim();
+    if (primary && primary !== "localhost") return `.${primary}`;
+  } catch {
+    /* fallthrough */
+  }
+  return undefined;
 }

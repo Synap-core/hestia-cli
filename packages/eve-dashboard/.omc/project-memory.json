@@ -47,8 +47,8 @@
     "runtime": null
   },
   "build": {
-    "buildCommand": "npm run build",
-    "testCommand": "npm test",
+    "buildCommand": "pnpm build 2>&1 | tail -80",
+    "testCommand": "cd /Users/antoine/Documents/Code/synap/hestia-cli/packages/@eve/dna && pnpm test 2>&1 | tail -40",
     "lintCommand": null,
     "devCommand": "npm run dev",
     "scripts": {
@@ -166,14 +166,20 @@
     },
     {
       "path": "app/(os)/components/overlay/overlay-host.tsx",
-      "accessCount": 7,
-      "lastAccessed": 1778429090478,
+      "accessCount": 8,
+      "lastAccessed": 1778431273335,
       "type": "file"
     },
     {
       "path": "app/(os)/components/auth/EveSignInScreen.tsx",
+      "accessCount": 8,
+      "lastAccessed": 1778433103714,
+      "type": "file"
+    },
+    {
+      "path": "lib/synap-auth.ts",
       "accessCount": 6,
-      "lastAccessed": 1778373676065,
+      "lastAccessed": 1778433203710,
       "type": "file"
     },
     {
@@ -220,20 +226,14 @@
     },
     {
       "path": "app/api/pod/auto-provision/route.ts",
-      "accessCount": 2,
-      "lastAccessed": 1778358816326,
+      "accessCount": 3,
+      "lastAccessed": 1778432508695,
       "type": "file"
     },
     {
       "path": "app/(os)/components/auth/CpSignInPanel.tsx",
       "accessCount": 2,
       "lastAccessed": 1778373689516,
-      "type": "file"
-    },
-    {
-      "path": "lib/synap-auth.ts",
-      "accessCount": 2,
-      "lastAccessed": 1778374143419,
       "type": "file"
     },
     {
@@ -246,6 +246,48 @@
       "path": "app/(os)/components/overlay/vault-permission-overlay.tsx",
       "accessCount": 2,
       "lastAccessed": 1778428453360,
+      "type": "file"
+    },
+    {
+      "path": "app/api/pod/[...path]/route.ts",
+      "accessCount": 2,
+      "lastAccessed": 1778432825576,
+      "type": "file"
+    },
+    {
+      "path": "app/api/pod/kratos-auth/route.ts",
+      "accessCount": 2,
+      "lastAccessed": 1778432861813,
+      "type": "file"
+    },
+    {
+      "path": "app/api/pod/pairing-status/route.ts",
+      "accessCount": 2,
+      "lastAccessed": 1778432878082,
+      "type": "file"
+    },
+    {
+      "path": "app/api/pod/claim/route.ts",
+      "accessCount": 2,
+      "lastAccessed": 1778432927569,
+      "type": "file"
+    },
+    {
+      "path": "app/api/auth/pod-signout/route.ts",
+      "accessCount": 2,
+      "lastAccessed": 1778432941547,
+      "type": "file"
+    },
+    {
+      "path": "app/api/pod/bootstrap-claim/route.ts",
+      "accessCount": 2,
+      "lastAccessed": 1778432953974,
+      "type": "file"
+    },
+    {
+      "path": "app/setup/pair-pod/page.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1778433250936,
       "type": "file"
     },
     {
@@ -390,6 +432,24 @@
       "path": "app/(os)/stores/overlay-store.ts",
       "accessCount": 1,
       "lastAccessed": 1778428030176,
+      "type": "file"
+    },
+    {
+      "path": "app/api/pod/_lib.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778432496444,
+      "type": "file"
+    },
+    {
+      "path": "app/components/cp-auth-banner.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1778432515918,
+      "type": "file"
+    },
+    {
+      "path": "app/api/auth/pod-signin/route.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778432527587,
       "type": "file"
     }
   ],

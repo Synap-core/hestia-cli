@@ -3,27 +3,26 @@
  *
  * Every operator-driven UI feature in Eve calls this proxy. The path
  * after `/api/pod/` is forwarded to the same path on the operator's
- * pod, with a `Bearer pod.userToken` attached. That token is a Kratos
- * session minted via the JWT-Bearer exchange (RFC 7523) — the operator
- * authenticates as themselves, not as the eve agent.
+ * pod with the operator's authentication attached.
  *
  *   GET  /api/pod/trpc/proposals.list?input=...    → user inbox
  *   POST /api/pod/trpc/proposals.approve            → user approves
  *   GET  /api/pod/api/profile/me                    → user reads
  *
- * Refresh on 401: when the upstream rejects our cached token (Kratos
- * expired, key rotated server-side, etc.) we clear the cache, mint a
- * fresh assertion, exchange it, and retry ONCE. If the second call
- * also 401s the upstream response is returned unchanged so the UI can
- * surface the "sign in again" path.
+ * Auth: cookie-only. The operator signs in to pod-admin (or any other
+ * parent-domain Synap surface) which sets the `ory_kratos_session`
+ * cookie at `Domain=.<root>`. That cookie is visible to eve.<root>,
+ * pod-admin.<root>, and pod.<root> simultaneously, so eve forwards it
+ * verbatim to the pod and the pod's Kratos middleware does the rest.
  *
- * Auth carve-outs: a couple of public pod paths are routed through
- * `/api/pod/*` for URL aesthetics (Phase 5: `setup-status`,
- * `bootstrap-claim`). They live in dedicated route files at
- * `/api/pod/setup-status` and `/api/pod/bootstrap-claim` and Next's
- * routing prefers exact static segments over the catch-all, so this
- * handler is never reached for them. We do NOT special-case them
- * here — Next does it for free.
+ * Eve persists nothing. There is no JWT-Bearer (RFC 7523) mint flow,
+ * no `pod.userToken` slot in secrets.json, no JWKS to publish. Kratos
+ * is the single source of truth.
+ *
+ * 401 handling: when the cookie is missing OR rejected upstream, we
+ * surface a structured `{ error: "no-pod-session", action:
+ * "sign-in-required" }` body so the dashboard UI knows to send the
+ * operator through the pod-admin sign-in flow.
  *
  * Two-channel rule: never route a service action through here. The
  * proxy attaches the user-channel credential. Service actions belong
@@ -33,23 +32,16 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth-server";
-import {
-  clearPodUserToken,
-  readEveSecrets,
-  readPodUserToken,
-  resolvePodUrl,
-} from "@eve/dna";
-import {
-  isTokenStillValid,
-  mintAndStorePodUserToken,
-  PodSigninError,
-} from "../_lib";
+import { resolvePodUrl } from "@eve/dna";
 
 interface RouteCtx {
   params: Promise<{ path: string[] }>;
 }
 
 // Headers we never forward upstream (browser-set or Eve-internal).
+// `cookie` and `authorization` are managed inside `forwardOnce` — `cookie`
+// is replaced with a single `ory_kratos_session=…` value, `authorization`
+// is dropped entirely (we never attach a bearer token here).
 const HOP_BY_HOP_HEADERS = new Set([
   "host",
   "cookie",
@@ -62,9 +54,20 @@ const HOP_BY_HOP_HEADERS = new Set([
   "proxy-authorization",
   "te",
   "trailers",
-  // Authorization: we always set our own.
   "authorization",
 ]);
+
+/**
+ * Extract the `ory_kratos_session` cookie from the inbound browser request.
+ * Returns the full cookie value (the encrypted session token) or null.
+ * This is the only auth signal the proxy uses.
+ */
+function extractKratosSessionCookie(req: NextRequest): string | null {
+  const raw = req.headers.get("cookie");
+  if (!raw) return null;
+  const match = raw.match(/(?:^|;\s*)ory_kratos_session=([^;]+)/);
+  return match ? match[1] : null;
+}
 
 /**
  * Build the upstream URL by joining the catch-all segments and
@@ -80,76 +83,10 @@ function buildUpstreamUrl(podUrl: string, path: string[], req: NextRequest): str
   return `${base}/${joined}${search}`;
 }
 
-/**
- * Resolve a usable user-token: try the cache first, mint on miss/expiry.
- * Returns the token plus a flag the caller uses to decide whether a
- * 401-retry is worth attempting (no point if we just minted).
- */
-async function getUserToken(reqUrl: string, headers: Headers): Promise<
-  | { ok: true; token: string; freshlyMinted: boolean }
-  | { ok: false; status: number; body: Record<string, unknown> }
-> {
-  const secrets = await readEveSecrets();
-  const cachedRaw = secrets?.pod;
-  const userEmail = cachedRaw?.userEmail;
-
-  // Hot path: cached token is still valid.
-  const cached = await readPodUserToken();
-  if (cached && isTokenStillValid(cached.expiresAt)) {
-    return { ok: true, token: cached.token, freshlyMinted: false };
-  }
-
-  // Mint path: we know who the operator is from the cached email.
-  // Without an email we can't sign an assertion (`sub` is required).
-  // The dashboard surfaces this as "sign in to your pod" and prompts
-  // for an email via /api/auth/pod-signin.
-  if (!userEmail) {
-    return {
-      ok: false,
-      status: 401,
-      body: {
-        error: "no-pod-session",
-        action: "sign-in-required",
-        message:
-          "No pod user-session is cached. Sign in via POST /api/auth/pod-signin first.",
-      },
-    };
-  }
-
-  try {
-    const minted = await mintAndStorePodUserToken(userEmail, reqUrl, headers);
-    return { ok: true, token: minted.token, freshlyMinted: true };
-  } catch (err) {
-    if (err instanceof PodSigninError) {
-      return {
-        ok: false,
-        status: err.upstreamStatus,
-        body: {
-          error: err.code,
-          message: err.message,
-          ...(err.description ? { description: err.description } : {}),
-        },
-      };
-    }
-    return {
-      ok: false,
-      status: 500,
-      body: {
-        error: "mint_failed",
-        message: err instanceof Error ? err.message : "Unknown error",
-      },
-    };
-  }
-}
-
-/**
- * Forward the request — single shot. The retry loop in `proxy()`
- * decides whether to call this twice.
- */
 async function forwardOnce(
   req: NextRequest,
   upstreamUrl: string,
-  token: string,
+  sessionCookie: string,
   body: BodyInit | null,
 ): Promise<Response> {
   const headers = new Headers();
@@ -158,9 +95,11 @@ async function forwardOnce(
       headers.set(key, value);
     }
   });
-  // Kratos accepts both header forms; setting both is defensive.
-  headers.set("Authorization", `Bearer ${token}`);
-  headers.set("X-Session-Token", token);
+
+  // Forward only the Kratos session cookie. Other cookies in the
+  // browser request belong to eve.<root> and would leak across origins.
+  headers.set("Cookie", `ory_kratos_session=${sessionCookie}`);
+
   // We never want a CDN to cache user-scoped data.
   headers.set("Cache-Control", "no-store");
 
@@ -177,7 +116,6 @@ async function proxy(req: NextRequest, ctx: RouteCtx): Promise<Response> {
   const auth = await requireAuth();
   if ("error" in auth) return auth.error;
 
-  const secrets = await readEveSecrets();
   const podUrl = await resolvePodUrl(undefined, req.url, req.headers)
   if (!podUrl) {
     return NextResponse.json(
@@ -186,33 +124,33 @@ async function proxy(req: NextRequest, ctx: RouteCtx): Promise<Response> {
     );
   }
 
+  const sessionCookie = extractKratosSessionCookie(req);
+  if (!sessionCookie) {
+    return NextResponse.json(
+      {
+        error: "no-pod-session",
+        action: "sign-in-required",
+        message:
+          "No Kratos session cookie. Sign in to your pod (pod-admin) first.",
+      },
+      { status: 401 },
+    );
+  }
+
   const params = await ctx.params;
   const path = params.path ?? [];
   const upstreamUrl = buildUpstreamUrl(podUrl, path, req);
 
-  // Read the request body once — Node streams aren't reusable, so on
-  // the rare retry path we replay the same buffer.
-  let bodyBuf: ArrayBuffer | null = null;
-  if (req.method !== "GET" && req.method !== "HEAD" && req.method !== "DELETE") {
-    bodyBuf = await req.arrayBuffer();
-  }
-
-  // First attempt.
-  let tokenResolution = await getUserToken(req.url, req.headers);
-  if (!tokenResolution.ok) {
-    return NextResponse.json(tokenResolution.body, {
-      status: tokenResolution.status,
-    });
-  }
+  const bodyBuf =
+    req.method !== "GET" && req.method !== "HEAD" && req.method !== "DELETE"
+      ? await req.arrayBuffer()
+      : null;
+  const replayBody = (): BodyInit | null =>
+    bodyBuf ? new Uint8Array(bodyBuf) : null;
 
   let upstream: Response;
   try {
-    upstream = await forwardOnce(
-      req,
-      upstreamUrl,
-      tokenResolution.token,
-      bodyBuf ? new Uint8Array(bodyBuf) : null,
-    );
+    upstream = await forwardOnce(req, upstreamUrl, sessionCookie, replayBody());
   } catch (err) {
     return NextResponse.json(
       {
@@ -221,37 +159,6 @@ async function proxy(req: NextRequest, ctx: RouteCtx): Promise<Response> {
       },
       { status: 502 },
     );
-  }
-
-  // 401 retry path: clear the cached token, mint fresh, retry ONCE.
-  // We skip the retry when we just minted — that means the new token
-  // doesn't work either, so something else is wrong upstream.
-  if (upstream.status === 401 && !tokenResolution.freshlyMinted) {
-    await clearPodUserToken().catch(() => {
-      /* best-effort — the next mint will overwrite anyway */
-    });
-    tokenResolution = await getUserToken(req.url, req.headers);
-    if (!tokenResolution.ok) {
-      return NextResponse.json(tokenResolution.body, {
-        status: tokenResolution.status,
-      });
-    }
-    try {
-      upstream = await forwardOnce(
-        req,
-        upstreamUrl,
-        tokenResolution.token,
-        bodyBuf ? new Uint8Array(bodyBuf) : null,
-      );
-    } catch (err) {
-      return NextResponse.json(
-        {
-          error: "pod_unreachable",
-          message: err instanceof Error ? err.message : "Network error",
-        },
-        { status: 502 },
-      );
-    }
   }
 
   // Forward the upstream response as-is. We preserve content-type,

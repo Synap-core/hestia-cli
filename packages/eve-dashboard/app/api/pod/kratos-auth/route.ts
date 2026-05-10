@@ -6,14 +6,13 @@
  * WHY THIS EXISTS
  * ───────────────
  * The pod's Kratos public API (`/.ory/kratos/public/self-service/*`) is
- * unauthenticated by design (it IS the auth flow), but calling it from
- * the browser would require CORS allowlisting every possible Eve origin.
- * Instead we proxy here, call Kratos server-side, and return a clean
- * `{ ok, sessionToken, user }` envelope to the browser.
+ * unauthenticated by design (it IS the auth flow). We proxy here so the
+ * browser never needs CORS allowances for every possible Eve origin.
  *
- * On success the session token is persisted to
- * `~/.eve/secrets/secrets.json` (same slot as the JWT-Bearer flow) so
- * subsequent `/api/pod/*` proxy calls pick it up automatically.
+ * Cookie-only auth: on success we set the parent-domain
+ * `ory_kratos_session` cookie so subsequent `/api/pod/*` proxy calls
+ * forward it directly. Eve persists nothing; Kratos is the single
+ * source of truth for the operator's identity.
  *
  * Body:
  *   { mode: "login" | "registration", email, password, name? }
@@ -28,7 +27,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { writePodUserToken } from "@eve/dna";
+import { readEveSecrets } from "@eve/dna";
 import { requireAuth } from "@/lib/auth-server";
 import { createEveKratosClient } from "@/lib/eve-kratos-client";
 import { getPodRuntimeContext } from "@/lib/pod-runtime-context";
@@ -111,13 +110,6 @@ export async function POST(req: Request) {
     submitBody.session?.expires_at ??
     new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
-  // Persist so the pod proxy picks it up automatically.
-  try {
-    await writePodUserToken(sessionToken, expiresAt, email);
-  } catch {
-    // Non-fatal — still return the token to the browser.
-  }
-
   // Resolve user identity: for registration Kratos returns `identity.traits`,
   // for login we only have what's in the session (Kratos v0.x doesn't return
   // the full identity on login). Best-effort.
@@ -125,7 +117,7 @@ export async function POST(req: Request) {
   const userEmail = identity?.traits?.email ?? email;
   const userName = identity?.traits?.name ?? identity?.id ?? "";
 
-  return NextResponse.json({
+  const response = NextResponse.json({
     ok: true,
     sessionToken,
     expiresAt,
@@ -136,4 +128,51 @@ export async function POST(req: Request) {
       name: userName,
     },
   });
+
+  // Set the Kratos session cookie at the parent domain so subsequent
+  // `/api/pod/*` proxy calls (and any sibling Synap surface — pod-admin,
+  // pod itself) see it. We mirror Kratos's own cookie shape: HttpOnly,
+  // SameSite=Lax, Secure when the eve URL is HTTPS, scoped to the root
+  // domain so it crosses the eve.<root>/pod-admin.<root>/pod.<root>
+  // boundary.
+  const cookieDomain = await resolveParentDomainForCookie();
+  const expiresMs = Date.parse(expiresAt);
+  const maxAgeSeconds = Number.isFinite(expiresMs)
+    ? Math.max(0, Math.floor((expiresMs - Date.now()) / 1000))
+    : 24 * 60 * 60;
+  const isSecure = (context.eveUrl ?? "").startsWith("https://") ||
+    (context.podUrl ?? "").startsWith("https://");
+  const parts = [
+    `ory_kratos_session=${sessionToken}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Max-Age=${maxAgeSeconds}`,
+  ];
+  if (isSecure) parts.push("Secure");
+  if (cookieDomain) parts.push(`Domain=${cookieDomain}`);
+  response.headers.set("Set-Cookie", parts.join("; "));
+
+  return response;
+}
+
+/**
+ * Best-effort root-domain resolution for the Set-Cookie `Domain=` attribute.
+ *
+ * The cookie must be visible to `eve.<root>`, `pod-admin.<root>`, and
+ * `pod.<root>` simultaneously, which means setting `Domain=.<root>`. We
+ * read the configured primary domain from secrets (the canonical source)
+ * and fall back to undefined for loopback installs (where the cookie
+ * remains scoped to the eve host — fine because eve and pod share that
+ * host).
+ */
+async function resolveParentDomainForCookie(): Promise<string | undefined> {
+  try {
+    const secrets = await readEveSecrets();
+    const primary = secrets?.domain?.primary?.trim();
+    if (primary && primary !== "localhost") return `.${primary}`;
+  } catch {
+    /* fallthrough */
+  }
+  return undefined;
 }

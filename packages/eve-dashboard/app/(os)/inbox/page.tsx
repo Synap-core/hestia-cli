@@ -71,10 +71,11 @@ function InboxInner() {
   // Probe pairing once on mount via the user-channel `/api/pod/*` proxy.
   // Two failure modes count as "unpaired":
   //   - 503 no-pod-url        — the pod URL hasn't been configured yet.
-  //   - 401 no-pod-session    — no `pod.userToken` cached AND no email
-  //                             remembered, so the proxy can't auto-mint.
-  // Any other status (including upstream 401 after a successful mint
-  // path) means we're paired and the per-tab loader can take over.
+  //   - 401 no-pod-session    — no `ory_kratos_session` cookie on the
+  //                             inbound request, so the proxy has nothing
+  //                             to forward upstream.
+  // Any other status means we're paired and the per-tab loader can take
+  // over.
   const checkPairing = useCallback(async () => {
     try {
       const input = encodeURIComponent(
