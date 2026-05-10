@@ -63,7 +63,19 @@ export async function runBrainInit(options: BrainInitOptions): Promise<void> {
       domain = discovered.domain;
     }
   }
-  const email = options.email?.trim() || process.env.LETSENCRYPT_EMAIL?.trim() || process.env.SYNAP_LETSENCRYPT_EMAIL?.trim();
+  // Read secrets AFTER discovery so we pick up any domain.email written
+  // by an earlier `eve legs domain set --email …` call. Mirrors the
+  // domain auto-discovery above — operators set this once and every
+  // subsequent install/update should honour it without --email.
+  const secretsForEmail = await readEveSecrets(process.cwd()).catch(() => null);
+  if (domain === 'localhost' && secretsForEmail?.domain?.primary) {
+    domain = secretsForEmail.domain.primary;
+  }
+  const email =
+    options.email?.trim() ||
+    process.env.LETSENCRYPT_EMAIL?.trim() ||
+    process.env.SYNAP_LETSENCRYPT_EMAIL?.trim() ||
+    secretsForEmail?.domain?.email?.trim();
   const adminEmail = options.adminEmail?.trim() || process.env.ADMIN_EMAIL?.trim();
   const adminPassword = options.adminPassword?.trim() || process.env.ADMIN_PASSWORD?.trim();
   const adminBootstrapMode = options.adminBootstrapMode ?? 'token';
