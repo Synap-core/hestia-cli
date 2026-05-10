@@ -158,15 +158,16 @@ export const defaultPrompts: PromptFns = {
   },
 
   async installMode(initial) {
+    // Two real choices only — "auto" was a UX trap that silently fell back
+    // to image and then to build on any registry hiccup. Always explicit now.
     return ok<InstallMode>(
       await select({
         message: "Install Synap from",
         options: [
-          { value: "auto",        label: "Auto",        hint: "Image when no checkout, source when --synap-repo is set" },
-          { value: "from_image",  label: "From image",  hint: "Pull prebuilt GHCR image" },
-          { value: "from_source", label: "From source", hint: "Build locally from a synap-backend checkout" },
+          { value: "from_image",  label: "From image (recommended)", hint: "Pull prebuilt GHCR images. Fastest." },
+          { value: "from_source", label: "From source",              hint: "Build locally from your synap-backend checkout. Needed when modifying backend code." },
         ],
-        initialValue: initial,
+        initialValue: initial === "auto" ? "from_image" : initial,
       }),
     );
   },

@@ -176,6 +176,13 @@ export function runSynapCli(
     // Tell the synap CLI to skip its built-in Caddy so it doesn't fight
     // Traefik for port 80 and abort updates with "port already allocated".
     SYNAP_SKIP_EDGE: '1',
+    // Belt-and-suspenders: pin the compose project name explicitly so eve
+    // never accidentally creates `deploy_*` volumes (the cwd-basename
+    // fallback). Pre-Phase-3 synap-backend installs don't have
+    // `_resolve_compose_project_name`, so without this override they'd
+    // silently use cwd basename → orphan volumes → postgres detonation.
+    // Exception: honour an existing pin (operator chose differently).
+    COMPOSE_PROJECT_NAME: process.env.COMPOSE_PROJECT_NAME ?? 'synap-backend',
   };
   if (options.domain) {
     env.DOMAIN = toPodFqdn(options.domain);

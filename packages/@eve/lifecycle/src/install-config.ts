@@ -504,17 +504,25 @@ export async function gatherInstallConfig(
   if (adminPassword) source.adminPassword = adminPasswordSource;
 
   // ---------- install mode ----------
-  let installMode: InstallMode = "auto";
+  // Always resolve to a concrete `from_image` or `from_source`. The legacy
+  // "auto" value let three layers downstream silently pick image and then
+  // pull → fall-back-to-build on the slightest registry hiccup. Eve always
+  // passes an explicit flag to synap CLI now.
+  let installMode: InstallMode = "from_image";
   let imSource: FieldSource = "default";
   if (flags.fromImage && flags.fromSource) {
     missing.push({ field: "installMode", reason: "--from-image and --from-source are mutually exclusive" });
   } else if (flags.fromImage) { installMode = "from_image"; imSource = "flag"; }
   else if (flags.fromSource) { installMode = "from_source"; imSource = "flag"; }
-  else if (flags.installMode) { installMode = flags.installMode; imSource = "flag"; }
-  else if (saved?.synapInstall?.mode) { installMode = saved.synapInstall.mode; imSource = "saved-profile"; }
+  else if (flags.installMode && flags.installMode !== "auto") {
+    installMode = flags.installMode; imSource = "flag";
+  }
+  else if (saved?.synapInstall?.mode && saved.synapInstall.mode !== "auto") {
+    installMode = saved.synapInstall.mode; imSource = "saved-profile";
+  }
   else if (interactive && prompts.installMode && components.includes("synap")) {
-    const picked = await prompts.installMode("auto");
-    if (picked) { installMode = picked; imSource = "prompt"; }
+    const picked = await prompts.installMode("from_image");
+    if (picked && picked !== "auto") { installMode = picked; imSource = "prompt"; }
   }
   source.installMode = imSource;
 

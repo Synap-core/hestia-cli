@@ -17,10 +17,17 @@
       "status": "completed",
       "completed_at": "2026-05-09T10:39:26.921Z",
       "duration_ms": 64666116
+    },
+    {
+      "agent_id": "aa6298fbd21a8f192",
+      "agent_type": "Explore",
+      "started_at": "2026-05-10T04:54:32.122Z",
+      "parent_mode": "none",
+      "status": "running"
     }
   ],
-  "total_spawned": 2,
+  "total_spawned": 3,
   "total_completed": 2,
   "total_failed": 0,
-  "last_updated": "2026-05-09T10:45:33.736Z"
+  "last_updated": "2026-05-10T04:54:32.225Z"
 }

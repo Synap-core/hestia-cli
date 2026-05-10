@@ -592,6 +592,47 @@ async function* runDelegatePlan(
     return;
   }
 
+  // Pre-flight: refuse `update` when the install never completed. Without
+  // a populated `.env`, `compose up` would launch postgres with a blank
+  // POSTGRES_PASSWORD (because compose substitutes ${VAR} from env, and
+  // every var defaults to ""). That detonates the postgres volume — the
+  // container starts, can't authenticate, restart-loops, and migrations
+  // fail. Detect this BEFORE invoking the delegate.
+  //
+  // Two failure modes covered:
+  //   (a) `.env` missing entirely (install crashed before generate_and_create_env)
+  //   (b) `.env` exists but POSTGRES_PASSWORD is blank/missing AND eve has
+  //       no podSecrets backup to restore from (the reconcile branch below
+  //       handles the case where backup IS available).
+  if (plan.subcommand === "update") {
+    const envPath = join(plan.cwd, ".env");
+    const envExists = existsSync(plan.cwd) && existsSync(envPath);
+    let envHasPostgresPassword = false;
+    if (envExists) {
+      try {
+        const env = readFileSync(envPath, "utf-8");
+        envHasPostgresPassword = /^POSTGRES_PASSWORD=.+$/m.test(env);
+      } catch {
+        // Read failure → treat as broken
+      }
+    }
+    if (!envExists || !envHasPostgresPassword) {
+      yield {
+        type: "error",
+        message: [
+          `${comp.label}: install was never completed (${envExists ? "POSTGRES_PASSWORD missing in .env" : ".env missing"} at ${plan.cwd}).`,
+          ``,
+          `Running update against an unconfigured stack would launch postgres with`,
+          `a blank password and destroy the volume. Refusing.`,
+          ``,
+          `Run \`eve install ${comp.id}\` to complete the initial setup, then`,
+          `\`eve update ${comp.id}\` for subsequent updates.`,
+        ].join("\n"),
+      };
+      return;
+    }
+  }
+
   // The synap CLI's compose file references `eve-network` as `external: true`.
   // If the network was ever pruned, `compose up` aborts. Create it before the
   // CLI runs so the delegate is self-recovering.
