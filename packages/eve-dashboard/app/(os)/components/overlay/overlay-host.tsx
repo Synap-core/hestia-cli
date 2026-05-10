@@ -39,10 +39,10 @@ export function OverlayHost() {
         return;
       }
 
-      // Cmd+Tab — app switcher (suppress browser default)
-      if (isMod && e.key === "Tab") {
+      // Cmd+` — app switcher (Cmd+Tab is OS-level on macOS, use backtick like VS Code / iTerm)
+      if (isMod && e.key === "`") {
         e.preventDefault();
-        if (!isOpen("switcher")) open("switcher");
+        isOpen("switcher") ? close() : open("switcher");
         return;
       }
 

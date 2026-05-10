@@ -37,3 +37,10 @@ pnpm-debug.log*
 # Test coverage
 coverage/
 .nyc_output/
+
+# oh-my-claudecode runtime state — local agent memory, sessions, checkpoints,
+# transient HUD/stdin caches. Per-machine, per-session: never source-controlled.
+.omc/
+
+# Claude Code agent worktrees + local settings
+.claude/

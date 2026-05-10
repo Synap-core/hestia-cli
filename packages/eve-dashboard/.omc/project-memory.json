@@ -171,6 +171,12 @@
       "type": "file"
     },
     {
+      "path": "app/(os)/components/overlay/overlay-host.tsx",
+      "accessCount": 5,
+      "lastAccessed": 1778428411976,
+      "type": "file"
+    },
+    {
       "path": "lib/use-eve-session.ts",
       "accessCount": 4,
       "lastAccessed": 1778374422381,
@@ -180,12 +186,6 @@
       "path": "app/(os)/components/overlay/command-overlay.tsx",
       "accessCount": 4,
       "lastAccessed": 1778427623042,
-      "type": "file"
-    },
-    {
-      "path": "app/(os)/components/overlay/overlay-host.tsx",
-      "accessCount": 4,
-      "lastAccessed": 1778428094536,
       "type": "file"
     },
     {
@@ -234,6 +234,12 @@
       "path": "app/(os)/settings/vault/vault-crypto.ts",
       "accessCount": 2,
       "lastAccessed": 1778427854883,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/components/overlay/vault-permission-overlay.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1778428453360,
       "type": "file"
     },
     {
@@ -384,12 +390,6 @@
       "path": "app/(os)/stores/overlay-store.ts",
       "accessCount": 1,
       "lastAccessed": 1778428030176,
-      "type": "file"
-    },
-    {
-      "path": "app/(os)/components/overlay/vault-permission-overlay.tsx",
-      "accessCount": 1,
-      "lastAccessed": 1778428083410,
       "type": "file"
     }
   ],
