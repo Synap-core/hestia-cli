@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-05-10T00:32:02.999Z",
+  "updatedAt": "2026-05-10T00:44:35.441Z",
   "missions": [
     {
       "id": "session:586a9152-46dc-449d-962c-b6ba680c68e4:none",
@@ -161,15 +161,15 @@
       "name": "none",
       "objective": "Session mission",
       "createdAt": "2026-05-10T00:30:21.631Z",
-      "updatedAt": "2026-05-10T00:32:02.999Z",
+      "updatedAt": "2026-05-10T00:44:35.441Z",
       "status": "done",
-      "workerCount": 1,
+      "workerCount": 2,
       "taskCounts": {
-        "total": 1,
+        "total": 2,
         "pending": 0,
         "blocked": 0,
         "inProgress": 0,
-        "completed": 1,
+        "completed": 2,
         "failed": 0
       },
       "agents": [
@@ -182,6 +182,16 @@
           "latestUpdate": "completed",
           "completedSummary": null,
           "updatedAt": "2026-05-10T00:32:02.999Z"
+        },
+        {
+          "name": "Explore:a97504a",
+          "role": "Explore",
+          "ownership": "a97504abc6c525af3",
+          "status": "done",
+          "currentStep": null,
+          "latestUpdate": "completed",
+          "completedSummary": null,
+          "updatedAt": "2026-05-10T00:44:35.441Z"
         }
       ],
       "timeline": [
@@ -200,6 +210,22 @@
           "agent": "Explore:a929e38",
           "detail": "completed",
           "sourceKey": "session-stop:a929e38286eafefb3"
+        },
+        {
+          "id": "session-start:a97504abc6c525af3:2026-05-10T00:42:31.504Z",
+          "at": "2026-05-10T00:42:31.504Z",
+          "kind": "update",
+          "agent": "Explore:a97504a",
+          "detail": "started Explore:a97504a",
+          "sourceKey": "session-start:a97504abc6c525af3"
+        },
+        {
+          "id": "session-stop:a97504abc6c525af3:2026-05-10T00:44:35.441Z",
+          "at": "2026-05-10T00:44:35.441Z",
+          "kind": "completion",
+          "agent": "Explore:a97504a",
+          "detail": "completed",
+          "sourceKey": "session-stop:a97504abc6c525af3"
         }
       ]
     }

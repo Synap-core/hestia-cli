@@ -126,15 +126,15 @@
   },
   "hotPaths": [
     {
-      "path": "packages/@eve/dna/src/openwebui-knowledge-sync.ts",
-      "accessCount": 8,
-      "lastAccessed": 1778369048725,
+      "path": "packages/@eve/dna/src/openwebui-admin.ts",
+      "accessCount": 10,
+      "lastAccessed": 1778373858459,
       "type": "file"
     },
     {
-      "path": "packages/@eve/dna/src/openwebui-admin.ts",
+      "path": "packages/@eve/dna/src/openwebui-knowledge-sync.ts",
       "accessCount": 8,
-      "lastAccessed": 1778370205387,
+      "lastAccessed": 1778369048725,
       "type": "file"
     },
     {
@@ -168,15 +168,15 @@
       "type": "file"
     },
     {
-      "path": "packages/@eve/dna/src/openwebui-tools-sync.ts",
-      "accessCount": 5,
-      "lastAccessed": 1778369729348,
+      "path": "packages/@eve/lifecycle/src/index.ts",
+      "accessCount": 6,
+      "lastAccessed": 1778373455065,
       "type": "file"
     },
     {
-      "path": "packages/@eve/lifecycle/src/index.ts",
+      "path": "packages/@eve/dna/src/openwebui-tools-sync.ts",
       "accessCount": 5,
-      "lastAccessed": 1778370200123,
+      "lastAccessed": 1778369729348,
       "type": "file"
     },
     {
@@ -211,8 +211,8 @@
     },
     {
       "path": "packages/@eve/dna/src/wire-ai.ts",
-      "accessCount": 2,
-      "lastAccessed": 1778370191220,
+      "accessCount": 3,
+      "lastAccessed": 1778373843576,
       "type": "file"
     },
     {
@@ -327,6 +327,12 @@
       "path": "packages/@eve/dna/src/secrets-contract.ts",
       "accessCount": 1,
       "lastAccessed": 1778373223188,
+      "type": "file"
+    },
+    {
+      "path": "packages/@eve/dna/src/openwebui-bootstrap.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778373462549,
       "type": "file"
     }
   ],

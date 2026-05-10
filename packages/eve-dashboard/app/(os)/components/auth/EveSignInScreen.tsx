@@ -47,7 +47,9 @@ import {
   Sparkles,
 } from "lucide-react";
 import { storePodSession } from "@/lib/synap-auth";
+import { useAuthMode, type AuthMode } from "@/lib/use-auth-mode";
 import { usePodAuthState } from "../../hooks/use-pod-auth-state";
+import { CpSignInPanel } from "./CpSignInPanel";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -61,6 +63,10 @@ export interface EveSignInScreenProps {
 // ─── Component ──────────────────────────────────────────────────────────────
 
 export function EveSignInScreen({ onSuccess }: EveSignInScreenProps) {
+  const authMode = useAuthMode();
+  const isCp = authMode.kind === "cp";
+  const podMode = authMode.kind === "pod" ? authMode : undefined;
+
   return (
     <div className="flex flex-1 items-center justify-center px-4 py-8 overflow-y-auto">
       <div className="w-full max-w-[28rem] flex flex-col items-center gap-6">
@@ -96,30 +102,54 @@ export function EveSignInScreen({ onSuccess }: EveSignInScreenProps) {
           "
         >
           <div className="flex flex-col gap-3 pt-1">
-            <div className="flex items-center gap-2 text-center mx-auto">
-              <Server className="h-3.5 w-3.5 text-foreground/40" strokeWidth={2} />
-              <p className="text-[13px] font-medium text-foreground">
-                Connect to your pod
-              </p>
-            </div>
-            <p className="text-[12.5px] text-foreground/55 text-center">
-              Self-hosted — your data stays on your machine.
-            </p>
-            <SelfHostedSignInForm
-              onSuccess={(claim) =>
-                onSuccess({
-                  kind: "self-hosted",
-                  podUrl: claim.podUrl,
-                  email: claim.email,
-                  signupUrl: claim.signupUrl,
-                })
-              }
-            />
+            {authMode.kind === "loading" ? (
+              <div className="flex items-center justify-center py-6">
+                <Spinner size="sm" />
+              </div>
+            ) : isCp ? (
+              <>
+                <div className="flex items-center gap-2 text-center mx-auto">
+                  <Sparkles className="h-3.5 w-3.5 text-foreground/40" strokeWidth={2} />
+                  <p className="text-[13px] font-medium text-foreground">
+                    Sign in with Synap
+                  </p>
+                </div>
+                <p className="text-[12.5px] text-foreground/55 text-center">
+                  Connect a data pod after sign-in to go fully sovereign.
+                </p>
+                <CpSignInPanel />
+              </>
+            ) : (
+              <>
+                <div className="flex items-center gap-2 text-center mx-auto">
+                  <Server className="h-3.5 w-3.5 text-foreground/40" strokeWidth={2} />
+                  <p className="text-[13px] font-medium text-foreground">
+                    Connect to your pod
+                  </p>
+                </div>
+                <p className="text-[12.5px] text-foreground/55 text-center">
+                  Self-hosted — your data stays on your machine.
+                </p>
+                <SelfHostedSignInForm
+                  authMode={podMode}
+                  onSuccess={(claim) =>
+                    onSuccess({
+                      kind: "self-hosted",
+                      podUrl: claim.podUrl,
+                      email: claim.email,
+                      signupUrl: claim.signupUrl,
+                    })
+                  }
+                />
+              </>
+            )}
           </div>
         </Card>
 
         <p className="text-center text-[11.5px] text-foreground/40">
-          Eve never sees your password — it goes straight to your pod.
+          {isCp
+            ? "Your Synap account connects to your sovereign data pod."
+            : "Eve never sees your password — it goes straight to your pod."}
         </p>
       </div>
     </div>
@@ -142,6 +172,12 @@ interface SelfHostedSignInFormProps {
    * CP-signed-in user's email — they only confirm.
    */
   fixedEmail?: string;
+  /**
+   * When provided by the parent via `useAuthMode`, skips the internal
+   * `usePodAuthState` loading step and renders the correct form immediately.
+   * Not passed by `PodConnectGate` — those callers let the hook probe.
+   */
+  authMode?: Extract<AuthMode, { kind: "pod" }>;
   onSuccess: (result: SelfHostedClaimResult) => void;
 }
 
@@ -163,6 +199,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function SelfHostedSignInForm({
   fixedEmail,
+  authMode,
   onSuccess,
 }: SelfHostedSignInFormProps) {
   // Bootstrap form fields
@@ -180,18 +217,20 @@ export function SelfHostedSignInForm({
   const claimIdRef = useRef(0);
 
   const podAuthState = usePodAuthState({ includePairing: false });
-  // Preserve the existing three-way rendering contract:
-  //   null  → still loading (show spinner)
-  //   true  → admin exists → show inline Kratos login form
-  //   false → no admin yet or probe unavailable → show bootstrap form
-  const podInitialized =
-    podAuthState.kind === "loading"
+  // When the parent already resolved auth mode via `useAuthMode`, use it
+  // directly to skip the internal loading step (eliminates double-spinner).
+  // Fall back to the hook's own state when `authMode` is not provided
+  // (e.g. PodConnectGate renders this form without a pre-resolved mode).
+  const podInitialized: boolean | null = authMode
+    ? authMode.submode === "login"
+    : podAuthState.kind === "loading"
       ? null
       : podAuthState.kind === "ready";
-  const podUrl =
-    podAuthState.kind === "ready" ||
-    podAuthState.kind === "needsBootstrap" ||
-    podAuthState.kind === "unreachable"
+  const podUrl: string | null = authMode
+    ? authMode.podUrl
+    : podAuthState.kind === "ready" ||
+        podAuthState.kind === "needsBootstrap" ||
+        podAuthState.kind === "unreachable"
       ? podAuthState.podUrl ?? null
       : null;
 

@@ -159,6 +159,12 @@
       "type": "file"
     },
     {
+      "path": "app/(os)/components/auth/EveSignInScreen.tsx",
+      "accessCount": 6,
+      "lastAccessed": 1778373676065,
+      "type": "file"
+    },
+    {
       "path": "app/api/pod/setup-status/route.ts",
       "accessCount": 3,
       "lastAccessed": 1778254776723,
@@ -186,6 +192,12 @@
       "path": "app/api/pod/auto-provision/route.ts",
       "accessCount": 2,
       "lastAccessed": 1778358816326,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/components/auth/CpSignInPanel.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1778373689516,
       "type": "file"
     },
     {
@@ -243,9 +255,27 @@
       "type": "file"
     },
     {
-      "path": "app/(os)/components/auth/EveSignInScreen.tsx",
+      "path": "app/(os)/hooks/use-pod-auth-state.ts",
       "accessCount": 1,
-      "lastAccessed": 1778373180551,
+      "lastAccessed": 1778373408579,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/lib/cp-auth.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778373413802,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/lib/cp-oauth.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778373413983,
+      "type": "file"
+    },
+    {
+      "path": "lib/use-auth-mode.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778373464327,
       "type": "file"
     }
   ],
