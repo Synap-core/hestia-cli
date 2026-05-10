@@ -1,7 +1,7 @@
 {
-  "tool_name": "Read",
-  "tool_input_preview": "{\"file_path\":\"/Users/antoine/Documents/Code/synap/hestia-cli/packages/eve-dashboard/app/\\\\(os\\\\)/components/auth/PodConnectGate.tsx\"}",
-  "error": "File does not exist. Note: your current working directory is /Users/antoine/Documents/Code/synap/hestia-cli/packages/eve-dashboard.",
-  "timestamp": "2026-05-10T00:30:33.836Z",
-  "retry_count": 2
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"pnpm type-check 2>&1\",\"timeout\":60000,\"description\":\"Type-check eve-dashboard after use-eve-session update\"}",
+  "error": "Exit code 2\n\n> @eve/dashboard@0.1.0 type-check /Users/antoine/Documents/Code/synap/hestia-cli/packages/eve-dashboard\n> tsc --noEmit && tsc --noEmit -p server/tsconfig.json\n\nlib/use-eve-session.ts(5,3): error TS2305: Module '\"@synap-core/auth\"' has no exported member 'installEmbeddedAuthReceiver'.\nlib/use-eve-session.ts(6,3): error TS2305: Module '\"@synap-core/auth\"' has no exported member 'requestEmbeddedAuth'.\nlib/use-eve-session.ts(25,30): error TS7006: Parameter 'origin' implicitly has an 'an...",
+  "timestamp": "2026-05-10T00:52:59.093Z",
+  "retry_count": 1
 }

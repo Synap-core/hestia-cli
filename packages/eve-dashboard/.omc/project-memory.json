@@ -165,6 +165,12 @@
       "type": "file"
     },
     {
+      "path": "lib/use-eve-session.ts",
+      "accessCount": 4,
+      "lastAccessed": 1778374422381,
+      "type": "file"
+    },
+    {
       "path": "app/api/pod/setup-status/route.ts",
       "accessCount": 3,
       "lastAccessed": 1778254776723,
@@ -201,6 +207,12 @@
       "type": "file"
     },
     {
+      "path": "lib/synap-auth.ts",
+      "accessCount": 2,
+      "lastAccessed": 1778374143419,
+      "type": "file"
+    },
+    {
       "path": "app/api/debug/pod-url/route.ts",
       "accessCount": 1,
       "lastAccessed": 1778255121079,
@@ -228,18 +240,6 @@
       "path": "app/api/ai/route.ts",
       "accessCount": 1,
       "lastAccessed": 1778351732317,
-      "type": "file"
-    },
-    {
-      "path": "lib/synap-auth.ts",
-      "accessCount": 1,
-      "lastAccessed": 1778373028123,
-      "type": "file"
-    },
-    {
-      "path": "lib/use-eve-session.ts",
-      "accessCount": 1,
-      "lastAccessed": 1778373028228,
       "type": "file"
     },
     {
@@ -276,6 +276,12 @@
       "path": "lib/use-auth-mode.ts",
       "accessCount": 1,
       "lastAccessed": 1778373464327,
+      "type": "file"
+    },
+    {
+      "path": "package.json",
+      "accessCount": 1,
+      "lastAccessed": 1778374143973,
       "type": "file"
     }
   ],
