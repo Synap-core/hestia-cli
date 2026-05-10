@@ -328,7 +328,7 @@ function MarketplacePageInner() {
             {synapApps.length > 0 && (
               <Section
                 title="Synap apps"
-                hint="Hosted on Synap — open in a new tab."
+                hint="Hosted on Synap — open inside Eve."
                 count={synapApps.length}
               >
                 <CardGrid>

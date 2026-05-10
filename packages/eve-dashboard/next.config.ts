@@ -36,10 +36,9 @@ const nextConfig: NextConfig = {
       { source: "/dashboard/networking",     destination: "/settings/networking",      permanent: true },
       { source: "/dashboard/doctor",         destination: "/settings/doctor",          permanent: true },
 
-      // /apps used to live as a Settings tab; now the dedicated Marketplace
-      // app owns every "browse / install / manage apps" surface.
+      // /apps/hub?url=...&auth=1 opens apps embedded in the OS shell.
+      // Only the bare /apps root (no path) redirects to Marketplace.
       { source: "/apps",                     destination: "/marketplace",              permanent: true },
-      { source: "/apps/:path*",              destination: "/marketplace",              permanent: true },
     ];
   },
 };

@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@heroui/react";
-import { ExternalLink, Maximize2, Minimize2 } from "lucide-react";
+import { Check, Copy, ExternalLink, Maximize2, Minimize2 } from "lucide-react";
 import { AppPane } from "../../components/app-pane";
 import { PaneHeader } from "../../components/pane-header";
 
@@ -12,6 +12,8 @@ interface EmbeddedExternalAppPageProps {
   name?: string;
   url?: string;
   sendAuth?: boolean;
+  /** When provided, a copy-link button is shown that copies this URL to the clipboard. */
+  shareUrl?: string;
 }
 
 export function EmbeddedExternalAppPage({
@@ -19,10 +21,21 @@ export function EmbeddedExternalAppPage({
   name,
   url,
   sendAuth,
+  shareUrl,
 }: EmbeddedExternalAppPageProps) {
   const router = useRouter();
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const title = name?.trim() || appId;
+
+  const handleCopyLink = useCallback(() => {
+    if (!shareUrl) return;
+    const full = `${window.location.origin}${shareUrl}`;
+    void navigator.clipboard.writeText(full).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [shareUrl]);
 
   if (!url) {
     return (
@@ -42,6 +55,23 @@ export function EmbeddedExternalAppPage({
         back={() => router.push("/")}
         actions={
           <>
+            {shareUrl && (
+              <Button
+                isIconOnly
+                variant="light"
+                size="sm"
+                radius="full"
+                aria-label={copied ? "Link copied" : "Copy share link"}
+                onPress={handleCopyLink}
+                className="text-foreground/55 hover:text-foreground"
+              >
+                {copied ? (
+                  <Check className="h-4 w-4" strokeWidth={2} />
+                ) : (
+                  <Copy className="h-4 w-4" strokeWidth={2} />
+                )}
+              </Button>
+            )}
             <Button
               isIconOnly
               variant="light"
