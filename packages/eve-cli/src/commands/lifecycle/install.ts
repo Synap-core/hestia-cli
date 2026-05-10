@@ -364,10 +364,14 @@ export async function runInstall(opts: InstallOptions): Promise<void> {
   }
 
   // -----------------------------------------------------------------
-  // 6. Execute installations
+  // 6. Execute installations — best-effort. A failed step doesn't stop
+  //    the run; we collect failures, mark affected components as
+  //    not-installed, and surface everything in the recap with hints.
   // -----------------------------------------------------------------
   const steps = buildInstallSteps(installList, opts);
   const skippedComponents = new Set<string>();
+  const failedComponents = new Set<string>();
+  const failures: InstallFailure[] = [];
 
   for (const step of steps) {
     if (jsonMode) {
@@ -385,15 +389,26 @@ export async function runInstall(opts: InstallOptions): Promise<void> {
       }
     } catch (err) {
       spinner.fail(step.label);
-      printError(`Failed to install ${step.label}: ${err instanceof Error ? err.message : String(err)}`);
-      process.exit(1);
+      const error = err instanceof Error ? err : new Error(String(err));
+      const componentIds = step.componentIds ?? [];
+      componentIds.forEach((c) => failedComponents.add(c));
+      failures.push({
+        label: step.label,
+        componentIds,
+        error,
+        hint: detectInstallHint(error),
+      });
+      // Continue to the next step — surfacing all failures at once is more
+      // useful than aborting on the first.
     }
   }
 
   // -----------------------------------------------------------------
   // 7. Update entity state & setup profile
   // -----------------------------------------------------------------
-  const installedComponents = installList.filter(c => !skippedComponents.has(c));
+  const installedComponents = installList.filter(
+    (c) => !skippedComponents.has(c) && !failedComponents.has(c),
+  );
   await updateEntityStateFromComponents(installedComponents, opts);
 
   // -----------------------------------------------------------------
@@ -416,12 +431,29 @@ export async function runInstall(opts: InstallOptions): Promise<void> {
   }
 
   // -----------------------------------------------------------------
-  // 8. Final recap — context-aware
+  // 8. Final recap — context-aware. Always shown so failures are
+  //    surfaced alongside what did succeed.
   // -----------------------------------------------------------------
   if (!jsonMode) {
-    await printInstallationRecap(installedComponents);
+    await printInstallationRecap(installedComponents, failures);
   } else {
-    outputJson({ ok: true, components: installList });
+    outputJson({
+      ok: failures.length === 0,
+      components: installList,
+      installed: installedComponents,
+      failed: failures.map((f) => ({
+        label: f.label,
+        components: f.componentIds,
+        error: f.error.message,
+        hint: f.hint,
+      })),
+    });
+  }
+
+  // Exit non-zero on any failure so CI / scripted callers see the signal.
+  // The recap above already explained what broke + what to try next.
+  if (failures.length > 0) {
+    process.exitCode = 1;
   }
 }
 
@@ -512,11 +544,15 @@ async function runPostInstallProvision(installedComponents: string[]): Promise<v
 /**
  * Final summary at the end of `eve install`. Tells the user clearly:
  *   - What was installed (with health if available)
+ *   - What FAILED, with operator-actionable hints
  *   - Where to access it (domain if set, IP:port otherwise — domain preferred)
  *   - The dashboard key (so they can log in)
  *   - What's left to do (only what's actually missing)
  */
-async function printInstallationRecap(installedComponents: string[]): Promise<void> {
+async function printInstallationRecap(
+  installedComponents: string[],
+  failures: InstallFailure[] = [],
+): Promise<void> {
   const secrets = await readEveSecrets(process.cwd());
   const serverIp = getServerIp();
   const domain = secrets?.domain?.primary;
@@ -532,14 +568,23 @@ async function printInstallationRecap(installedComponents: string[]): Promise<vo
       ? `http://${serverIp}:7979`
       : `http://localhost:7979`;
 
+  const headerColor = failures.length > 0 ? colors.warning : colors.success;
+  const headerIcon = failures.length > 0 ? '⚠' : '✓';
+  const headerText = failures.length > 0
+    ? `Eve installation finished with ${failures.length} issue${failures.length === 1 ? '' : 's'}`
+    : 'Eve installation complete';
+
   console.log();
-  console.log(colors.success.bold('━'.repeat(60)));
-  console.log(colors.success.bold('  ✓  Eve installation complete'));
-  console.log(colors.success.bold('━'.repeat(60)));
+  console.log(headerColor.bold('━'.repeat(60)));
+  console.log(headerColor.bold(`  ${headerIcon}  ${headerText}`));
+  console.log(headerColor.bold('━'.repeat(60)));
   console.log();
 
   // What was installed
   console.log(colors.primary.bold('  Installed components'));
+  if (installedComponents.length === 0) {
+    console.log(colors.muted('    (none — every step failed; see Issues below)'));
+  }
   for (const id of installedComponents) {
     const comp = COMPONENTS.find(c => c.id === id);
     if (!comp) continue;
@@ -547,6 +592,25 @@ async function printInstallationRecap(installedComponents: string[]): Promise<vo
       ? colors.muted(`  →  ${protocol}://${comp.service.subdomain}.${domain}`)
       : '';
     console.log(`    ${colors.success('●')} ${comp.emoji} ${comp.label.padEnd(22)} ${subdomainHint}`);
+  }
+
+  // What failed — print each step with its hint, before the dashboard
+  // section so the operator sees blockers first.
+  if (failures.length > 0) {
+    console.log();
+    console.log(colors.warning.bold('  Issues encountered'));
+    for (const f of failures) {
+      const compTag = f.componentIds.length > 0
+        ? colors.muted(` [${f.componentIds.join(', ')}]`)
+        : '';
+      console.log(`    ${colors.error('✗')} ${f.label}${compTag}`);
+      console.log(`        ${colors.muted('error:')} ${f.error.message.split('\n')[0]}`);
+      if (f.hint) {
+        for (const line of f.hint.split('\n')) {
+          console.log(`        ${colors.warning(line)}`);
+        }
+      }
+    }
   }
 
   // Open the dashboard
@@ -770,7 +834,57 @@ interface InstallStep {
   label: string;
   /** Components to mark as skipped (not installed) rather than ready */
   skips?: string[];
+  /** Components this step installs — used to mark them as failed if `fn` throws. */
+  componentIds?: string[];
   fn: () => Promise<void>;
+}
+
+interface InstallFailure {
+  label: string;
+  componentIds: string[];
+  error: Error;
+  /** Operator-actionable hint inferred from the error pattern. */
+  hint?: string;
+}
+
+/**
+ * Inspect an install error message and emit an operator-actionable hint.
+ * Best-effort string match — returns undefined when nothing recognized.
+ */
+function detectInstallHint(err: Error): string | undefined {
+  const msg = err.message ?? "";
+
+  // Port collision (Caddy/Traefik/anything trying to bind 80/443/4000).
+  // Most common when Eve's Traefik is already on 80/443 and Synap's Caddy
+  // tries to claim them too — the two reverse proxies can't share ports.
+  const portMatch = msg.match(/Bind for [0-9.:]*:(\d+) failed: port is already allocated/);
+  if (portMatch) {
+    const port = portMatch[1];
+    const isWebPort = port === "80" || port === "443";
+    if (isWebPort) {
+      return [
+        `Port ${port} is already bound on this host (likely by Eve's Traefik).`,
+        `  → If Eve and Synap share the host, route Synap behind Traefik instead of letting Caddy claim ${port}.`,
+        `  → Quick check: \`docker ps --format '{{.Names}}\\t{{.Ports}}' | grep ':${port}'\``,
+        `  → Workaround: stop the conflicting service, then re-run \`eve update synap\`.`,
+      ].join("\n");
+    }
+    return `Port ${port} is already bound — check \`sudo lsof -iTCP:${port} -sTCP:LISTEN\`.`;
+  }
+
+  if (/permission denied|EACCES/i.test(msg)) {
+    return "Permission denied — try `sudo` or check file ownership.";
+  }
+  if (/no space left|ENOSPC/i.test(msg)) {
+    return "Disk full — free space (try `docker system prune -a`) and re-run.";
+  }
+  if (/network .* not found|driver failed programming/i.test(msg)) {
+    return "Docker network issue — check `docker network ls` and `eve doctor`.";
+  }
+  if (/synap install exited \d+/.test(msg)) {
+    return "synap CLI failed — see logs above. Re-run with `eve update synap` after fixing the underlying issue.";
+  }
+  return undefined;
 }
 
 function buildInstallSteps(
@@ -795,6 +909,7 @@ function buildInstallSteps(
   if (hasTraefik) {
     steps.push({
       label: 'Setting up Traefik routing...',
+      componentIds: ['traefik'],
       async fn() {
         const domain = opts.domain || 'localhost';
         await runLegsProxySetup({
@@ -817,6 +932,7 @@ function buildInstallSteps(
     if (resolvedRepo) {
       steps.push({
         label: 'Installing Synap Data Pod...',
+        componentIds: ['synap'],
         async fn() {
           await runBrainInit({
             synapRepo: resolvedRepo,
@@ -837,6 +953,7 @@ function buildInstallSteps(
       // No synap repo — install from Docker image automatically
       steps.push({
         label: 'Installing Synap Data Pod (from Docker image)...',
+        componentIds: ['synap'],
         async fn() {
           await runBrainInit({
             domain: opts.domain,
@@ -854,6 +971,7 @@ function buildInstallSteps(
   if (hasOllama) {
     steps.push({
       label: 'Setting up Ollama + AI gateway...',
+      componentIds: ['ollama'],
       async fn() {
         await runInferenceInit({
           model: opts.model || 'llama3.1:8b',
@@ -868,6 +986,7 @@ function buildInstallSteps(
   if (hasOpenclaw) {
     steps.push({
       label: 'Setting up OpenClaw...',
+      componentIds: ['openclaw'],
       async fn() {
         const { OpenClawService } = await import('@eve/arms');
 
@@ -910,6 +1029,7 @@ function buildInstallSteps(
   if (hasRsshub) {
     steps.push({
       label: 'Setting up RSSHub...',
+      componentIds: ['rsshub'],
       async fn() {
         const rsshub = new RSSHubService();
         await rsshub.install();
@@ -922,6 +1042,7 @@ function buildInstallSteps(
   if (hasHermes) {
     steps.push({
       label: 'Setting up Hermes daemon...',
+      componentIds: ['hermes'],
       async fn() {
         await materializeTargets(null, ['hermes-env']);
         // Container is managed by the Eve compose stack — no extra start needed;
@@ -938,6 +1059,7 @@ function buildInstallSteps(
   if (components.includes('eve-dashboard')) {
     steps.push({
       label: 'Building & starting Eve Dashboard...',
+      componentIds: ['eve-dashboard'],
       async fn() {
         const { randomBytes } = await import('node:crypto');
         const { readEveSecrets, writeEveSecrets } = await import('@eve/dna');
@@ -967,6 +1089,7 @@ function buildInstallSteps(
   if (hasOpenWebUI) {
     steps.push({
       label: 'Setting up Open WebUI...',
+      componentIds: ['openwebui'],
       async fn() {
         const { mkdirSync, writeFileSync, existsSync } = await import('node:fs');
         const { join: pathJoin } = await import('node:path');
