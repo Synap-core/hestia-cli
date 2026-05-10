@@ -551,11 +551,20 @@ function wireHermes(secrets: EveSecrets | null): WireAiResult {
     } catch { /* already gone */ }
   }
 
-  // Re-run docker run with the fresh env file + updated config.
-  // Mirrors the install recipe in lifecycle/index.ts: default entrypoint
-  // (`hermes gateway`) starts the API server + messaging + MCP together,
-  // governed by hermes.env and config.yaml. No --entrypoint override.
-  // Fire-and-forget: if docker is down, the next add/update cycle will catch up.
+  // Re-run docker run with the fresh env file + updated config. MUST match
+  // the install recipe in @eve/lifecycle's `installHermes` exactly, or the
+  // post-install wiring step will silently replace a working container with
+  // a broken one. Two contracts that have to stay in sync:
+  //   1. Synap skills mount at `/opt/data/synap-skills:ro` — NOT
+  //      `/opt/data/skills`, which would shadow Hermes's writable bundled
+  //      skills dir and cause every "Read-only file system" error on first
+  //      boot, leaving 0 skills usable.
+  //   2. CMD must be `gateway run` — without it the image falls through to
+  //      its default REPL, prints "Goodbye! ⚕" because stdin isn't a TTY,
+  //      exits, and the restart-policy bounces it forever.
+  // Do NOT add HERMES_UID=0 / HERMES_GID=0: `hermes gateway` refuses to run
+  // as root. The entrypoint defaults to UID 10000 and chowns the bind-mount.
+  // Fire-and-forget: if docker is down, the next add/update cycle catches up.
   try {
     const home = homedir();
     const hermesHome = join(home, '.eve', 'hermes');
@@ -573,10 +582,11 @@ function wireHermes(secrets: EveSecrets | null): WireAiResult {
       '-p', '9119:9119',
       '-p', '9120:9120',
       '-v', `${hermesHome}:/opt/data`,
-      '-v', `${skillsDir}:/opt/data/skills:ro`,
+      '-v', `${skillsDir}:/opt/data/synap-skills:ro`,
       '--env-file', hermesEnv,
       '-e', 'HERMES_HOME=/opt/data',
       'nousresearch/hermes-agent:latest',
+      'gateway', 'run',
     ];
     execSync(`docker ${args.join(' ')}`, { stdio: 'pipe', timeout: 30_000 });
   } catch { /* non-fatal — next add/update will pick up */ }
