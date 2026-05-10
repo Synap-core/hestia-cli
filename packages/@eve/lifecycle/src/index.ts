@@ -743,7 +743,85 @@ async function* runDelegatePlan(
     }
   }
 
+  // Synap-only: probe pod-admin invariant after the delegate run. Catches
+  // the broken-but-running state where Kratos is fine, the backend serves
+  // tRPC, but the pod-admin workspace has no owners — every admin surface
+  // returns 403 silently otherwise. Surface a one-shot recovery command
+  // instead of letting operators re-discover the failure on next login.
+  if (comp.id === "synap") {
+    yield* probePodAdminInvariant();
+  }
+
   yield { type: "done", summary: `${comp.label} updated via synap CLI` };
+}
+
+/**
+ * Hit `${podUrl}/api/hub/setup/status` (loopback) and surface the pod-admin
+ * invariant. Non-fatal — never aborts the update; just adds operator-visible
+ * guidance when something is wrong. The endpoint is unauthenticated so we
+ * don't need to thread API keys here.
+ */
+async function* probePodAdminInvariant(): AsyncGenerator<LifecycleEvent> {
+  const url = "http://127.0.0.1:14000/api/hub/setup/status";
+  let body: {
+    needsSetup?: boolean;
+    podAdminInvariant?: { healthy?: boolean; kind?: string; reason?: string };
+  };
+  try {
+    const res = await fetch(url, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) {
+      yield {
+        type: "log",
+        line: `Pod-admin invariant probe: HTTP ${res.status} (skipping)`,
+      };
+      return;
+    }
+    body = (await res.json()) as typeof body;
+  } catch (err) {
+    yield {
+      type: "log",
+      line: `Pod-admin invariant probe failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
+    };
+    return;
+  }
+
+  const inv = body.podAdminInvariant;
+  if (!inv) {
+    // Old backend without invariant exposure — fine, that's why the field
+    // is optional. Skip silently.
+    return;
+  }
+
+  if (inv.healthy) {
+    yield {
+      type: "log",
+      line: `Pod-admin invariant healthy (${inv.reason ?? "ok"})`,
+    };
+    return;
+  }
+
+  // Fresh installs are expected to have no admin yet — that's bootstrap, not
+  // a regression. Don't shout at the operator.
+  if (inv.kind === "fresh" || body.needsSetup === true) {
+    yield {
+      type: "log",
+      line: "Pod-admin invariant: pre-bootstrap (no admin yet — run `synap setup admin` to seed one)",
+    };
+    return;
+  }
+
+  // Real broken state — actionable warning with a copy-paste recovery line.
+  yield {
+    type: "log",
+    line:
+      `⚠ Pod-admin invariant BROKEN (${inv.kind ?? "unknown"}): ${inv.reason ?? "unknown reason"}.\n` +
+      `  Recover with:\n` +
+      `    synap setup admin --email <your-email> --password <new-password>\n` +
+      `  (run inside /opt/synap-backend or wherever your synap CLI lives).`,
+  };
 }
 
 // ---------------------------------------------------------------------------

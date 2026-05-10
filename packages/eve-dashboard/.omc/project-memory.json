@@ -177,6 +177,12 @@
       "type": "file"
     },
     {
+      "path": "app/(os)/components/overlay/command-overlay.tsx",
+      "accessCount": 4,
+      "lastAccessed": 1778427623042,
+      "type": "file"
+    },
+    {
       "path": "app/api/pod/setup-status/route.ts",
       "accessCount": 3,
       "lastAccessed": 1778254776723,
@@ -210,6 +216,18 @@
       "path": "lib/synap-auth.ts",
       "accessCount": 2,
       "lastAccessed": 1778374143419,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/settings/vault/page.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1778427854344,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/settings/vault/vault-crypto.ts",
+      "accessCount": 2,
+      "lastAccessed": 1778427854883,
       "type": "file"
     },
     {
@@ -282,6 +300,78 @@
       "path": "package.json",
       "accessCount": 1,
       "lastAccessed": 1778374143973,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/lib/brand-colors.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778427348286,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/components/core-tile.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1778427348641,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/components/dock-icon.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1778427348930,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/components/overlay/shared.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1778427565528,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/components/overlay/switcher-overlay.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1778427579245,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/components/overlay/agent-overlay.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1778427604565,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/components/overlay/overlay-host.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1778427629308,
+      "type": "file"
+    },
+    {
+      "path": "app/api/secrets-summary/route.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778427793860,
+      "type": "file"
+    },
+    {
+      "path": "app/api/secrets/cp-token/route.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778427794083,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/settings/settings-tabs.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1778427794782,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/agents/components/connect-channels-modal.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1778427794973,
+      "type": "file"
+    },
+    {
+      "path": "app/api/channels/route.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778427802735,
       "type": "file"
     }
   ],

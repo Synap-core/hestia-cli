@@ -9,6 +9,14 @@ const CommandOverlay = dynamic(
   () => import("./command-overlay").then((m) => ({ default: m.CommandOverlay })),
   { ssr: false },
 );
+const SwitcherOverlay = dynamic(
+  () => import("./switcher-overlay").then((m) => ({ default: m.SwitcherOverlay })),
+  { ssr: false },
+);
+const AgentOverlay = dynamic(
+  () => import("./agent-overlay").then((m) => ({ default: m.AgentOverlay })),
+  { ssr: false },
+);
 
 export function OverlayHost() {
   const stack = useOverlayStore((s) => s.stack);
@@ -16,17 +24,29 @@ export function OverlayHost() {
   const close = useOverlayStore((s) => s.close);
   const isOpen = useOverlayStore((s) => s.isOpen);
 
-  // Global Cmd+K → command overlay toggle
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       const isMod = e.metaKey || e.ctrlKey;
-      if (isMod && e.key.toLowerCase() === "k") {
+
+      // Cmd+K — command palette
+      if (isMod && e.key.toLowerCase() === "k" && !e.shiftKey) {
         e.preventDefault();
-        if (isOpen("command")) {
-          close();
-        } else {
-          open("command");
-        }
+        isOpen("command") ? close() : open("command");
+        return;
+      }
+
+      // Cmd+Tab — app switcher (suppress browser default)
+      if (isMod && e.key === "Tab") {
+        e.preventDefault();
+        if (!isOpen("switcher")) open("switcher");
+        return;
+      }
+
+      // Cmd+\ — agent toggle
+      if (isMod && e.key === "\\") {
+        e.preventDefault();
+        isOpen("agent") ? close() : open("agent");
+        return;
       }
     }
     window.addEventListener("keydown", onKeyDown);
@@ -39,6 +59,16 @@ export function OverlayHost() {
     <AnimatePresence>
       {top?.kind === "command" && (
         <CommandOverlay key={top.id} onClose={() => close(top.id)} />
+      )}
+      {top?.kind === "switcher" && (
+        <SwitcherOverlay key={top.id} onClose={() => close(top.id)} />
+      )}
+      {top?.kind === "agent" && (
+        <AgentOverlay
+          key={top.id}
+          onClose={() => close(top.id)}
+          scope={top.payload?.scope as string | undefined}
+        />
       )}
     </AnimatePresence>
   );
