@@ -8,3 +8,4 @@
 {"t":0,"agent":"afaddba","agent_type":"executor","event":"agent_stop","success":true,"duration_ms":1953218}
 {"t":0,"agent":"a170cfb","agent_type":"executor","event":"agent_start","parent_mode":"none"}
 {"t":0,"agent":"a0ecf67","agent_type":"unknown","event":"agent_stop","success":true}
+{"t":0,"agent":"a170cfb","agent_type":"executor","event":"agent_stop","success":true,"duration_ms":1941406}

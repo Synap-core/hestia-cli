@@ -33,7 +33,7 @@
   },
   "build": {
     "buildCommand": "pnpm build 2>&1 | tail -10",
-    "testCommand": "cd /Users/antoine/Documents/Code/synap/hestia-cli/packages/@eve/dna && pnpm test -- --run 2>&1 | tail -20",
+    "testCommand": "cd /Users/antoine/Documents/Code/synap/hestia-cli && pnpm -r typecheck 2>&1 | grep -E \"Failed|error TS\" | head -10 && cd packages/@eve/dna && pnpm test -- --run 2>&1 | tail -8",
     "lintCommand": null,
     "devCommand": "npm run dev",
     "scripts": {

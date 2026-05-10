@@ -1278,7 +1278,14 @@ async function* installHermes(): AsyncGenerator<LifecycleEvent> {
     "-p", "9119:9119",   // Admin dashboard (enabled via config.yaml)
     "-p", "9120:9120",   // MCP server (enabled via config.yaml)
     "-v", `${hermesHome}:/opt/data`,
-    "-v", `${skillsDir}:/opt/data/skills:ro`,   // Synap skill packages
+    // Synap skill packages — mounted at a SIBLING path of Hermes's own
+    // /opt/data/skills/ so the bind-mount doesn't shadow it. Hermes copies
+    // ~91 bundled skills into /opt/data/skills/<category>/ on first boot;
+    // when we mounted Synap's read-only at /opt/data/skills, every one of
+    // those copies failed with "Read-only file system" and Hermes's tool
+    // surface stayed empty. Hermes config (writeHermesConfigYaml) has been
+    // updated to point at the new path.
+    "-v", `${skillsDir}:/opt/data/synap-skills:ro`,
     "--env-file", hermesEnv,
     "-e", "HERMES_HOME=/opt/data",
     "-e", "HERMES_UID=0",

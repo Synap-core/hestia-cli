@@ -382,9 +382,13 @@ mcp:
 dashboard:
   port: 9119
 
-# Skills — Synap Hub Protocol reference docs (mounted from ~/.eve/skills)
+# Skills — Synap Hub Protocol reference docs (mounted from ~/.eve/skills).
+# Lives at /opt/data/synap-skills/ inside the container so it doesn't
+# shadow Hermes's own /opt/data/skills/ bundled-skills directory (writable,
+# managed by Hermes; we'd block its 91-skill bootstrap copy if we mounted
+# the read-only Synap docs there).
 skills:
-  dir: /opt/data/skills
+  dir: /opt/data/synap-skills
 `;
 
 /**
