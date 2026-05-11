@@ -27,10 +27,10 @@ export function SwitcherOverlay({ onClose }: { onClose: () => void }) {
 
       const isMod = e.metaKey || e.ctrlKey;
 
-      // Cmd+` / Cmd+Shift+` to cycle (same physical key that opens the switcher)
-      if (isMod && e.code === "Backquote") {
+      // Cmd+Shift+\ / Cmd+Shift+Alt+\ to cycle forward/back
+      if (isMod && e.code === "Backslash" && e.shiftKey) {
         e.preventDefault();
-        if (e.shiftKey) {
+        if (e.altKey) {
           setActiveIndex((i) => (i - 1 + apps.length) % apps.length);
         } else {
           setActiveIndex((i) => (i + 1) % apps.length);

@@ -31,7 +31,6 @@ export function OverlayHost() {
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       const isMod = e.metaKey || e.ctrlKey;
-      if (isMod) console.log("[overlay] key:", e.key, "code:", e.code, "shift:", e.shiftKey);
 
       // Cmd+K — command palette
       if (isMod && e.key.toLowerCase() === "k" && !e.shiftKey) {
@@ -40,17 +39,17 @@ export function OverlayHost() {
         return;
       }
 
-      // Cmd+` — app switcher (physical Backquote key, layout-independent)
-      if (isMod && e.code === "Backquote") {
+      // Cmd+\ — agent toggle (physical Backslash key, layout-independent)
+      if (isMod && e.code === "Backslash" && !e.shiftKey) {
         e.preventDefault();
-        isOpen("switcher") ? close() : open("switcher");
+        isOpen("agent") ? close() : open("agent");
         return;
       }
 
-      // Cmd+\ — agent toggle (physical Backslash key, layout-independent)
-      if (isMod && e.code === "Backslash") {
+      // Cmd+Shift+\ — app switcher (Cmd+` is OS-captured on macOS)
+      if (isMod && e.code === "Backslash" && e.shiftKey) {
         e.preventDefault();
-        isOpen("agent") ? close() : open("agent");
+        isOpen("switcher") ? close() : open("switcher");
         return;
       }
 

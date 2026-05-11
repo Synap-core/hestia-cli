@@ -159,15 +159,15 @@
       "type": "file"
     },
     {
-      "path": "app/(os)/components/app-pane.tsx",
-      "accessCount": 9,
-      "lastAccessed": 1778428037537,
+      "path": "app/(os)/components/overlay/overlay-host.tsx",
+      "accessCount": 10,
+      "lastAccessed": 1778462889742,
       "type": "file"
     },
     {
-      "path": "app/(os)/components/overlay/overlay-host.tsx",
-      "accessCount": 8,
-      "lastAccessed": 1778431273335,
+      "path": "app/(os)/components/app-pane.tsx",
+      "accessCount": 9,
+      "lastAccessed": 1778428037537,
       "type": "file"
     },
     {
@@ -195,6 +195,12 @@
       "type": "file"
     },
     {
+      "path": "app/(os)/components/overlay/switcher-overlay.tsx",
+      "accessCount": 4,
+      "lastAccessed": 1778462854433,
+      "type": "file"
+    },
+    {
       "path": "app/api/pod/setup-status/route.ts",
       "accessCount": 3,
       "lastAccessed": 1778254776723,
@@ -216,12 +222,6 @@
       "path": "app/(os)/settings/vault/page.tsx",
       "accessCount": 3,
       "lastAccessed": 1778428022503,
-      "type": "file"
-    },
-    {
-      "path": "app/(os)/components/overlay/switcher-overlay.tsx",
-      "accessCount": 3,
-      "lastAccessed": 1778429096658,
       "type": "file"
     },
     {
