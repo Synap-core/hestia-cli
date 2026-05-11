@@ -39,6 +39,7 @@ import {
   ensurePodProvisioningToken,
   type EnsureProvisioningTokenResult,
 } from "./auth.js";
+import { migrateSetupProfileToSecrets } from "./setup-profile-migration.js";
 
 // Placeholder domains written by the synap-backend defaults that must never
 // land in secrets.json as the configured domain. If we detect one stored from
@@ -136,6 +137,27 @@ export async function runBackendPreflight(
   const synapBackendDir = opts.synapBackendDir ?? findPodDeployDir() ?? "/opt/synap-backend";
   const notes: string[] = [];
   let configured = false;
+
+  // ------------------------------------------------------------------
+  // Step 0: Catch up secrets from `.eve/setup-profile.json`.
+  //
+  // The setup wizard writes the user's domain answer to `setup-profile.json`
+  // (under `domainHint`) but the runtime canonical store is `secrets.json`
+  // (`domain.primary`). The two used to drift because the migration that
+  // copies wizard answers → secrets was exported but never invoked. As a
+  // result, `secrets.json` could hold `domain: null` even on a working pod
+  // — making `resolveHubBaseUrl` / `resolveSynapUrl` return empty and
+  // silently skipping every downstream push (skills / knowledge / tools).
+  //
+  // Run idempotently on every preflight so the canonical store always
+  // reflects the wizard answer; no-op when secrets already has the field.
+  // ------------------------------------------------------------------
+  try {
+    await migrateSetupProfileToSecrets(cwd);
+  } catch {
+    // Non-fatal — preflight will still proceed with whatever secrets has.
+    // A loud failure here would block install/update on cosmetic issues.
+  }
 
   // ------------------------------------------------------------------
   // Step 1: Fast path — check if the CLI is already configured and the
