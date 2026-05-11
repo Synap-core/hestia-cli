@@ -46,21 +46,40 @@ const TRUSTED_OVERLAY_KINDS: Record<AppTrustLevel, SystemOverlayKind[]> = {
 type PaneStatus = "loading" | "ready" | "unreachable";
 
 // Returns the best available session for posting to an embedded app.
-// Prefers the CP session; falls back to the first active pod session so
-// pod-direct (Mode B) users aren't locked out of auto-auth.
+// Prefers the CP session enriched with pod data; falls back to a bare
+// pod session for Mode B (pod-direct, no CP account) users.
+//
+// The CP sign-in flow stores synap:session with podUrl:"" because the
+// pod URL isn't known at sign-in time — it's resolved when the user
+// claims a pod (storePodSession writes to synap:pods, not synap:session).
+// Embedded apps need a valid podUrl to proxy tRPC calls, so we merge
+// the podUrl + sessionToken from synap:pods into the CP session before
+// sending it via postMessage.
 function resolveSessionForEmbed(): SharedSession | null {
   const cp = getSharedSession();
-  if (cp) return cp;
   const pods = getAllPodSessions();
   const first = Object.values(pods).find((s) => s?.sessionToken);
-  if (!first) return null;
-  return {
-    podUrl: first.podUrl,
-    sessionToken: first.sessionToken,
-    workspaceId: "",
-    userId: first.userId ?? "",
-    userName: first.userEmail ?? "",
-  };
+
+  if (cp?.podUrl) {
+    // CP session already has a podUrl (e.g. set by Hub's finalizeSession).
+    return cp;
+  }
+
+  if (first) {
+    // Merge pod credentials into the CP profile so embedded apps get
+    // both the user identity (CP) and the pod endpoint (synap:pods).
+    return {
+      podUrl: first.podUrl,
+      sessionToken: first.sessionToken,
+      workspaceId: cp?.workspaceId ?? null,
+      userId: cp?.userId ?? first.userId ?? "",
+      userName: cp?.userName ?? first.userEmail ?? "",
+    };
+  }
+
+  // CP-only (no pod claimed yet) — send what we have; embedded apps
+  // will show an error rather than hang indefinitely.
+  return cp ?? null;
 }
 
 export interface AppPaneProps {
