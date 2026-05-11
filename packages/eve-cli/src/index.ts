@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { setGlobalCliFlags } from '@eve/cli-kit';
+import { migrateSetupProfileToSecrets } from '@eve/lifecycle';
 import { registerBrainCommands } from '@eve/brain';
 import { registerArmsCommands } from '@eve/arms';
 import { registerLegsCommands } from '@eve/legs';
@@ -67,13 +68,26 @@ program
   .option('--json', 'Machine-readable output where supported')
   .option('-y, --yes', 'Non-interactive / assume confirm')
   .option('--verbose', 'Verbose logs')
-  .hook('preAction', () => {
+  .hook('preAction', async () => {
     const o = program.opts() as { json?: boolean; yes?: boolean; verbose?: boolean };
     setGlobalCliFlags({
       json: Boolean(o.json),
       nonInteractive: Boolean(o.yes),
       verbose: Boolean(o.verbose),
     });
+    // Idempotent: catch up `.eve/secrets.json` from `.eve/setup-profile.json`
+    // (the wizard's user-friendly answers) before any command reads secrets.
+    // Without this, `domainHint` from the wizard stays trapped in setup-profile
+    // and `secrets.domain.primary` stays null — making every downstream
+    // resolver (`resolveSynapUrl`, `resolveHubBaseUrl`) silently return empty
+    // and skipping skill/knowledge/tools pushes into OpenWebUI.
+    // No-op when secrets already has the fields. Failures are non-fatal:
+    // we never want a cosmetic migration to block install/update/sync.
+    try {
+      await migrateSetupProfileToSecrets(process.cwd());
+    } catch {
+      // intentional swallow
+    }
   });
 
 // Header/banner is rendered inside the custom helpInformation() override below.
