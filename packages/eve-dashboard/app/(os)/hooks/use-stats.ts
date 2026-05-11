@@ -9,8 +9,8 @@
  *   • agentsRunning — agents whose `status` is "running" or "ready"
  *                     (from `/api/agents`).
  *   • eventsToday   — events since startOfDay via the user channel
- *                     (`/api/pod/trpc/events.since`). Falls back to 0
- *                     when no pod session is available yet.
+ *                     (`/api/pod/trpc/events.read` with `lean: true`).
+ *                     Falls back to 0 when no pod session is available yet.
  *   • inboxPending  — pending proposals in the operator's Inbox via
  *                     the user channel (`/api/pod/trpc/proposals.list`).
  *                     Drives the "INBOX" pill and the Core-tile count chip.
@@ -68,10 +68,6 @@ interface AgentsResponse {
   agents: AgentRow[];
 }
 
-interface WireEvent {
-  id?: string;
-}
-
 interface WireProposal {
   id?: string;
   status?: string;
@@ -90,12 +86,12 @@ export function useStats(): UseStatsResult {
   const load = useCallback(async () => {
     setIsLoading(true);
 
-    const since = startOfTodayIso();
-    // Fetch events with a generous limit so the "today" count isn't
-    // silently truncated on busy pods. 500 events in a single day is
-    // an extreme edge case for a personal pod.
-    const eventsListInput = encodeURIComponent(
-      JSON.stringify({ json: { limit: 500 } }),
+    // `events.read` with `since` does the day-window filter on the pod
+    // and `lean: true` strips data/metadata — we only need to count.
+    const eventsReadInput = encodeURIComponent(
+      JSON.stringify({
+        json: { since: startOfTodayIso(), lean: true, limit: 500 },
+      }),
     );
     const proposalsListInput = encodeURIComponent(
       JSON.stringify({ json: { status: "pending" } }),
@@ -103,8 +99,8 @@ export function useStats(): UseStatsResult {
 
     const [agentsResp, eventsEnv, proposalsEnv] = await Promise.all([
       safeFetchJson<AgentsResponse>("/api/agents"),
-      safeFetchJson<TrpcEnvelope<WireEvent[] | { events?: WireEvent[] }>>(
-        `/api/pod/trpc/events.list?input=${eventsListInput}`,
+      safeFetchJson<TrpcEnvelope<Array<{ id: string }>>>(
+        `/api/pod/trpc/events.read?input=${eventsReadInput}`,
       ),
       safeFetchJson<
         TrpcEnvelope<
@@ -117,26 +113,8 @@ export function useStats(): UseStatsResult {
     const agentsRunning =
       agentsResp?.agents.filter((a) => runningStatuses.has(a.status)).length ?? 0;
 
-    // events.list returns a bare array (per the router); accept the
-    // wrapped shape too just in case.
     const eventsData = unwrapTrpc(eventsEnv);
-    const eventsArr: WireEvent[] = Array.isArray(eventsData)
-      ? eventsData
-      : Array.isArray(eventsData?.events)
-        ? eventsData.events
-        : [];
-    // Filter client-side to "today" since events.list doesn't take a
-    // since arg. The events array carries `timestamp`/`createdAt` — we
-    // accept either field name defensively.
-    const sinceMs = Date.parse(since);
-    const eventsToday = eventsArr.filter((e) => {
-      const ts =
-        (e as { timestamp?: string; createdAt?: string }).timestamp ??
-        (e as { timestamp?: string; createdAt?: string }).createdAt;
-      if (!ts) return false;
-      const t = Date.parse(ts);
-      return !Number.isNaN(t) && t >= sinceMs;
-    }).length;
+    const eventsToday = Array.isArray(eventsData) ? eventsData.length : 0;
 
     const proposalsData = unwrapTrpc(proposalsEnv);
     const proposalsList: WireProposal[] = Array.isArray(proposalsData)

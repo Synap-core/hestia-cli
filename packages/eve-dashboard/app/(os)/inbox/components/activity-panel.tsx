@@ -4,12 +4,12 @@
  * Inbox — Activity panel.
  *
  * USER channel — talks to the pod via tRPC over `/api/pod/*`. The
- * `events.list` query is user-scoped on the pod side (the operator's
+ * `events.read` query is user-scoped on the pod side (the operator's
  * own activity stream), so the user-channel credential is exactly what
  * we need. See eve-credentials.mdx for the two-channel rule.
  *
  * Reads the recent event log via
- *   GET /api/pod/trpc/events.list?input={"json":{"limit":50}}
+ *   GET /api/pod/trpc/events.read?input={"json":{"limit":50}}
  * and renders a vertical timeline grouped by day. Each row shows:
  *
  *   • Tone dot (left rail) — derives a colour from the event family
@@ -28,15 +28,30 @@ import { Card, Chip } from "@heroui/react";
 import { Activity } from "lucide-react";
 import { PanelEmpty, PanelError, PanelLoader } from "./panel-states";
 
+/**
+ * Pod wire shape for `events.read` (lean: false). The canonical wire
+ * field for the event-type string is `type` — see the events router for
+ * the projection. We treat `timestamp` as `string | Date` because the
+ * raw fetch path receives the superjson-encoded ISO string while typed
+ * tRPC clients would receive a Date.
+ */
 interface WireEvent {
   id: string;
   type: string;
   subjectType?: string | null;
   subjectId?: string | null;
   userId?: string | null;
-  workspaceId?: string | null;
-  data?: Record<string, unknown>;
-  timestamp?: string;
+  data?: Record<string, unknown> | null;
+  timestamp?: string | Date | null;
+}
+
+/** ISO string from either a string or Date timestamp. `null` on absent. */
+function getTimestamp(evt: WireEvent): string | null {
+  const ts = evt.timestamp;
+  if (!ts) return null;
+  if (typeof ts === "string") return ts;
+  if (ts instanceof Date) return ts.toISOString();
+  return null;
 }
 
 type LoadState =
@@ -67,7 +82,7 @@ export function ActivityPanel() {
       const input = encodeURIComponent(
         JSON.stringify({ json: { limit: 50 } }),
       );
-      const r = await fetch(`/api/pod/trpc/events.list?input=${input}`, {
+      const r = await fetch(`/api/pod/trpc/events.read?input=${input}`, {
         credentials: "include",
         cache: "no-store",
       });
@@ -78,15 +93,11 @@ export function ActivityPanel() {
         );
       }
       const json = (await r.json().catch(() => null)) as TrpcEnvelope<
-        WireEvent[] | { events?: WireEvent[] }
+        WireEvent[]
       > | null;
-      // tRPC + superjson — `events.list` returns a bare array of events.
-      const data = unwrapTrpc<WireEvent[] | { events?: WireEvent[] }>(json);
-      const events: WireEvent[] = Array.isArray(data)
-        ? data
-        : Array.isArray(data?.events)
-          ? data.events
-          : [];
+      // `events.read` returns a bare array of events.
+      const data = unwrapTrpc<WireEvent[]>(json);
+      const events: WireEvent[] = Array.isArray(data) ? data : [];
       setLoad({ kind: "ready", events });
     } catch (err) {
       setLoad({
@@ -160,7 +171,7 @@ export function ActivityPanel() {
 function EventRow({ evt, isLast }: { evt: WireEvent; isLast: boolean }) {
   const tone = toneFor(evt.type);
   const description = describe(evt);
-  const time = relativeTime(evt.timestamp);
+  const time = relativeTime(getTimestamp(evt));
 
   return (
     <div
@@ -184,7 +195,7 @@ function EventRow({ evt, isLast }: { evt: WireEvent; isLast: boolean }) {
               text-foreground/65
             "
           >
-            {evt.type}
+            {evt.type || "unknown"}
           </Chip>
           {evt.subjectType && (
             <span className="text-[11px] text-foreground/45">
@@ -218,7 +229,8 @@ interface DayGroup {
 function groupByDay(events: WireEvent[]): DayGroup[] {
   const map = new Map<string, WireEvent[]>();
   for (const evt of events) {
-    const ts = evt.timestamp ? new Date(evt.timestamp) : null;
+    const tsStr = getTimestamp(evt);
+    const ts = tsStr ? new Date(tsStr) : null;
     const day = ts && !Number.isNaN(ts.getTime())
       ? ts.toISOString().slice(0, 10)
       : "unknown";
@@ -253,9 +265,11 @@ function dayLabel(day: string): string {
 
 /**
  * Map an event type to a tone-colour dot. We bucket by family rather
- * than per-event so the rail reads as a single visual rhythm.
+ * than per-event so the rail reads as a single visual rhythm. Tolerant
+ * of empty / non-string types — falls through to the neutral default.
  */
 function toneFor(type: string): string {
+  if (!type) return "bg-foreground/35";
   if (type.startsWith("proposal.") || type.includes(".validated")) {
     return "bg-success/85";
   }
@@ -292,10 +306,11 @@ function describe(evt: WireEvent): string | null {
 
 function prettyVerb(type: string): string {
   // entity.created → "entity created"
+  if (!type) return "event";
   return type.replace(/_/g, " ").replace(/\./g, " ");
 }
 
-function relativeTime(ts: string | undefined): string | null {
+function relativeTime(ts: string | null): string | null {
   if (!ts) return null;
   const t = new Date(ts).getTime();
   if (Number.isNaN(t)) return null;

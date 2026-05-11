@@ -75,6 +75,43 @@ interface ResolvedAgentConfig {
 }
 
 /**
+ * Poll the pod's /api/hub/setup/status endpoint until it returns a
+ * parseable response — used as a Kratos-warmup signal in `runProvision`.
+ *
+ * The Hub Protocol's /setup/status handler internally calls
+ * `checkKratosIdentity()` (an authenticated Kratos admin API call), so a
+ * successful response confirms Kratos's admin listener is bound AND
+ * reachable from the synap-backend container. That's the real "ready"
+ * signal we need before probing admin status.
+ *
+ * Returns `true` on first valid response, `false` if the timeout fires
+ * without one. Caller should warn-but-continue on `false` — the
+ * downstream `probeAdminStatus()` will produce a clearer error.
+ */
+async function waitForKratosReady(podUrl: string, timeoutMs = 15_000): Promise<boolean> {
+  const url = `${podUrl.replace(/\/$/, '')}/api/hub/setup/status`;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 2000);
+      const res = await fetch(url, { headers: { Accept: 'application/json' }, signal: ctrl.signal });
+      clearTimeout(timer);
+      if (res.ok) {
+        const body = await res.json().catch(() => null) as { hasAdmin?: boolean; needsSetup?: boolean } | null;
+        if (body && (typeof body.hasAdmin === 'boolean' || typeof body.needsSetup === 'boolean')) {
+          return true;
+        }
+      }
+    } catch {
+      // transport error / abort — keep polling
+    }
+    await new Promise(r => setTimeout(r, 500));
+  }
+  return false;
+}
+
+/**
  * Resolve config for one agent. Returns `null` when the pod URL is
  * unconfigured or no key exists for this agent (and no legacy fallback
  * applies).
@@ -486,7 +523,23 @@ async function runProvision(opts: { agent?: string; email?: string }): Promise<v
   if (!kratosStart.ok) {
     printWarning(`Could not start Kratos via synap CLI (exit ${kratosStart.exitCode}). Run \`eve update synap\` to reconcile.`);
   } else {
-    printSuccess('Kratos ready');
+    printSuccess('Kratos container started');
+  }
+
+  // Warmup wait: `synap CLI start kratos` returns when the docker compose
+  // command finishes — i.e., "container created/restarted", NOT "admin API
+  // listening." If we call `probeAdminStatus()` immediately, Kratos's HTTP
+  // listener hasn't bound yet, `checkKratosIdentity()` throws inside the
+  // synap-backend, the try/catch returns false, and the probe wrongly says
+  // "no admin." Poll the pod's /api/hub/setup/status (which internally
+  // exercises Kratos) until it returns a parseable response — that's our
+  // end-to-end ready signal. Capped at 15s; on failure we continue anyway
+  // so the downstream probe gets to surface its own clearer error.
+  const kratosWaited = await waitForKratosReady(synapUrl, 15_000);
+  if (kratosWaited) {
+    printSuccess('Kratos admin API ready');
+  } else {
+    printWarning('Kratos admin API did not become ready within 15s — continuing; downstream checks may misreport admin status.');
   }
 
   // ------------------------------------------------------------------

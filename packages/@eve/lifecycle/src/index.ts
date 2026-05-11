@@ -900,7 +900,16 @@ async function* validateAndRenewKeyIfRevoked(agentType: string): AsyncGenerator<
   if (status.ok) return;
 
   const reason = status.failure.reason;
-  if (reason !== "key_revoked" && reason !== "expired") {
+  // Recoverable reasons re-mint via /setup/agent which always grants the
+  // full SETUP_AGENT_HUB_SCOPES set. A scope-insufficient key — e.g. one
+  // minted before `hub-protocol.read` was added to the standard scopes —
+  // is trivially fixed by re-minting, so include `missing_scope` /
+  // `insufficient_scope` alongside the original revoke/expired triggers.
+  const recoverable =
+    reason === "key_revoked" ||
+    reason === "expired" ||
+    reason === "missing_scope";
+  if (!recoverable) {
     yield {
       type: "log",
       line: `↳ ${agentType} agent key returned ${reason} (${status.failure.message}) — non-recoverable, run \`eve auth status\` for details`,
@@ -909,17 +918,42 @@ async function* validateAndRenewKeyIfRevoked(agentType: string): AsyncGenerator<
   }
 
   yield { type: "log", line: `↳ ${agentType} agent key invalid (${reason}) — auto-renewing` };
+  // Audit trail: every key renewal cascades a revoke of the prior `hub_inbound`
+  // key for this agent user (see synap-backend rest/setup.ts:480). Operators
+  // need a record of who triggered the revoke and why — without this event,
+  // a missing key looks like spontaneous corruption.
+  await appendOperationalEvent({
+    type: 'repair.started',
+    target: `agent-key:${agentType}`,
+    summary: `Auto-renewing ${agentType} agent key (probe reason: ${reason})`,
+    details: { agentType, probeReason: reason, trigger: 'validateAndRenewKeyIfRevoked' },
+  }).catch(() => { /* never block renewal on telemetry */ });
   const renewed = await renewAgentKey({ agentType, reason: `${reason} during update` });
   if (renewed.renewed) {
     yield {
       type: "log",
       line: `↳ refreshed ${agentType} agent key — new prefix ${renewed.keyIdPrefix}`,
     };
+    await appendOperationalEvent({
+      type: 'repair.succeeded',
+      target: `agent-key:${agentType}`,
+      ok: true,
+      summary: `${agentType} agent key renewed (new prefix ${renewed.keyIdPrefix})`,
+      details: { agentType, keyIdPrefix: renewed.keyIdPrefix },
+    }).catch(() => { /* swallow */ });
   } else {
     yield {
       type: "log",
       line: `↳ ${agentType} auto-renew failed: ${renewed.reason} — run \`eve auth renew --agent ${agentType}\` manually`,
     };
+    await appendOperationalEvent({
+      type: 'repair.failed',
+      target: `agent-key:${agentType}`,
+      ok: false,
+      summary: `${agentType} agent key auto-renew failed`,
+      error: renewed.reason,
+      details: { agentType, probeReason: reason },
+    }).catch(() => { /* swallow */ });
   }
 }
 
@@ -937,9 +971,48 @@ async function* postUpdateReconcileAiWiring(): AsyncGenerator<LifecycleEvent> {
       return;
     }
     const [materialized] = await materializeTargets(secrets, ["ai-wiring"], { components: installed });
-    const results = Array.isArray(materialized?.details?.results)
+    let results = Array.isArray(materialized?.details?.results)
       ? materialized.details.results as WireAiResult[]
       : [];
+
+    // Auto-recover from a stale eve hubApiKey detected during the extras
+    // push (Synap skills / knowledge / tools). `wireOpenwebui` now embeds
+    // the extras summary into its result; if Synap returned 401 we mint a
+    // fresh key and re-run wiring for the openwebui component only. Without
+    // this loop the operator sees "✓ wired" yet the Workspace surfaces stay
+    // empty — exactly the bug we hit after every `eve auth provision` cycle
+    // that revokes the old eve key before OpenWebUI's tool-server config
+    // had a chance to pick up the new one.
+    const owui = results.find(r => r.id === "openwebui");
+    if (owui && /\b401\b|Unauthorized/i.test(owui.summary)) {
+      yield { type: "log", line: "↳ OpenWebUI extras returned 401 — renewing eve agent key and retrying wiring" };
+      const { renewAgentKey } = await import("./auth.js");
+      const renewed = await renewAgentKey({ agentType: "eve", reason: "owui-extras-401" });
+      if (renewed.renewed) {
+        yield { type: "log", line: `↳ eve key renewed (prefix ${renewed.keyIdPrefix}…) — re-running OpenWebUI wiring` };
+        const refreshed = await readEveSecrets();
+        const [retry] = await materializeTargets(refreshed, ["ai-wiring"], { components: ["openwebui"] });
+        const retryResults = Array.isArray(retry?.details?.results)
+          ? retry.details.results as WireAiResult[]
+          : [];
+        // Replace the openwebui slot in the original results so the summary
+        // below reflects the retry outcome, not the failed first attempt.
+        const retried = retryResults.find(r => r.id === "openwebui");
+        if (retried) {
+          results = results.map(r => (r.id === "openwebui" ? retried : r));
+          const retried401 = /\b401\b|Unauthorized/i.test(retried.summary);
+          yield {
+            type: "log",
+            line: retried401
+              ? "↳ retry still 401 — manual `eve auth provision --agent eve` may be required"
+              : "↳ OpenWebUI wiring retry succeeded",
+          };
+        }
+      } else {
+        yield { type: "log", line: `↳ eve key renewal failed (${renewed.reason}) — run \`eve auth provision --agent eve\` manually` };
+      }
+    }
+
     const okCount = results.filter(r => r.outcome === "ok").length;
     const failCount = results.filter(r => r.outcome === "failed").length;
     if (failCount > 0) {

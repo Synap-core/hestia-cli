@@ -25,7 +25,8 @@ import type { EveSecrets } from './secrets-contract.js';
 import { readAgentKeyOrLegacySync } from './secrets-contract.js';
 import { COMPONENTS } from './components.js';
 import { writeHermesConfigYamlSync, generateSynapPlugin } from './builder-hub-wiring.js';
-import { syncOpenwebuiExtras } from './openwebui-extras.js';
+import { syncOpenwebuiExtras, formatExtrasSummary } from './openwebui-extras.js';
+import { appendOperationalEvent } from './operational.js';
 import {
   getAdminJwt,
   getAdminJwtPostHealth,
@@ -467,8 +468,23 @@ async function wireOpenwebui(secrets: EveSecrets | null): Promise<WireAiResult> 
       };
     }
     // Push Synap surfaces into OpenWebUI: SKILL.md → Prompts, knowledge →
-    // Knowledge collection, Hub OpenAPI → external tool server. Best-effort.
-    await syncOpenwebuiExtras(process.cwd(), secrets);
+    // Knowledge collection, Hub OpenAPI → external tool server. Capture the
+    // result so we can surface failures — used to be fire-and-forget here,
+    // which made it impossible to tell from `eve update` output that the
+    // Synap surfaces (Workspace → Prompts/Knowledge/Tools) hadn't actually
+    // populated. The lifecycle caller (`postUpdateReconcileAiWiring`) reads
+    // this summary and, when it sees a 401, triggers a key-renew + retry.
+    const extras = await syncOpenwebuiExtras(process.cwd(), secrets);
+    const extrasSummary = formatExtrasSummary(extras);
+    const extrasHas401 = /\b401\b|Unauthorized/i.test(extrasSummary);
+    return {
+      id: 'openwebui',
+      outcome: 'ok',
+      summary: extrasHas401
+        ? `Open WebUI wired to Synap IS${hermesNote} (extras 401 — eve key likely stale: ${extrasSummary})`
+        : `Open WebUI wired to Synap IS${hermesNote} (${extrasSummary})`,
+      detail: envPath,
+    };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return {
@@ -478,12 +494,6 @@ async function wireOpenwebui(secrets: EveSecrets | null): Promise<WireAiResult> 
       detail: envPath,
     };
   }
-  return {
-    id: 'openwebui',
-    outcome: 'ok',
-    summary: `Open WebUI wired to Synap IS${hermesNote}`,
-    detail: envPath,
-  };
 }
 
 /**
@@ -545,7 +555,22 @@ function wireHermes(secrets: EveSecrets | null): WireAiResult {
   // Recreate Hermes container so the updated env file (including API_SERVER_KEY)
   // is picked up. Docker bakes env-file values into the container spec at creation;
   // `docker restart` reuses those stale values.
-  if (isContainerRunning('eve-builder-hermes')) {
+  //
+  // Emit an operational event before/after so the audit trail captures every
+  // destructive container op — without it, an operator investigating "Hermes
+  // disappeared after eve update" has no record of who killed it or when.
+  const hermesWasRunning = isContainerRunning('eve-builder-hermes');
+  if (hermesWasRunning) {
+    // Fire-and-forget: wireHermes is sync, so we can't await. The audit
+    // event landing slightly after the actual docker op is fine — operators
+    // read the events log retrospectively, not in real-time.
+    void appendOperationalEvent({
+      type: 'repair.started',
+      target: 'eve-builder-hermes',
+      componentId: 'hermes',
+      summary: 'Recreating Hermes container to pick up env/config changes',
+      details: { trigger: 'wireHermes', op: 'docker rm -f + docker run' },
+    }).catch(() => { /* never let telemetry break wiring */ });
     try {
       execSync('docker rm -f eve-builder-hermes', { stdio: 'ignore' });
     } catch { /* already gone */ }
@@ -597,7 +622,28 @@ function wireHermes(secrets: EveSecrets | null): WireAiResult {
       'gateway', 'run',
     ];
     execSync(`docker ${args.join(' ')}`, { stdio: 'pipe', timeout: 30_000 });
-  } catch { /* non-fatal — next add/update will pick up */ }
+    if (hermesWasRunning) {
+      void appendOperationalEvent({
+        type: 'repair.succeeded',
+        target: 'eve-builder-hermes',
+        componentId: 'hermes',
+        ok: true,
+        summary: 'Hermes container recreated with fresh env/config',
+      }).catch(() => { /* swallow telemetry errors */ });
+    }
+  } catch (err) {
+    /* non-fatal — next add/update will pick up */
+    if (hermesWasRunning) {
+      void appendOperationalEvent({
+        type: 'repair.failed',
+        target: 'eve-builder-hermes',
+        componentId: 'hermes',
+        ok: false,
+        summary: 'Hermes container recreate failed',
+        error: err instanceof Error ? err.message : String(err),
+      }).catch(() => { /* swallow */ });
+    }
+  }
 
   return {
     id: 'hermes',
