@@ -80,7 +80,7 @@ export interface OrganConfig {
 
 /** Available services organized by organ */
 export type BrainService = 'synap' | 'ollama' | 'postgres' | 'redis' | 'kratos' | 'kratos-migrate';
-export type ArmsService = 'openclaw';
+export type ArmsService = 'openclaw' | 'nango';
 export type BuilderService = 'opencode' | 'openclaude' | 'claudecode' | 'dokploy' | 'hermes';
 export type EyesService = 'rsshub';
 export type LegsService = 'traefik' | 'cloudflared' | 'pangolin' | 'newt';
@@ -96,6 +96,7 @@ export const SERVICE_TO_ORGAN: Record<Service, Organ> = {
   kratos: 'brain',
   'kratos-migrate': 'brain',
   openclaw: 'arms',
+  nango: 'arms',
   opencode: 'builder',
   openclaude: 'builder',
   claudecode: 'builder',
@@ -236,6 +237,30 @@ export const SERVICE_REGISTRY: Record<Service, ServiceConfig> = {
       retries: 5,
     },
     dependsOn: ['eve-brain-kratos-migrate'],
+  },
+  // Nango — OAuth integration platform (self-hosted, brain tier)
+  // Stores OAuth tokens for Google, Slack, etc. on the user's pod.
+  // Pod backend connects via http://localhost:3003 (NANGO_HOST env var).
+  nango: {
+    image: 'nangohq/nango:latest',
+    containerName: 'eve-arms-nango',
+    ports: ['3003:3003'],
+    environment: {
+      NANGO_SECRET_KEY: '${NANGO_SECRET_KEY}',
+      SERVER_PORT: '3003',
+      DATABASE_URL: 'postgresql://eve:eve@eve-brain-postgres:5432/nango',
+      NODE_ENV: 'production',
+    },
+    volumes: ['eve-arms-nango-data:/var/lib/nango'],
+    network: 'eve-network',
+    restart: 'unless-stopped',
+    healthCheck: {
+      command: 'curl -sf http://localhost:3003/health || exit 1',
+      interval: '15s',
+      timeout: '5s',
+      retries: 5,
+    },
+    dependsOn: ['eve-brain-postgres'],
   },
   // Arms Services
   openclaw: {

@@ -28,7 +28,7 @@ eve --help
 |---|---|
 | `eve install` / `eve init` | Composable installer. Interactive wizard or `--components <list>` flag. Brings up Traefik, the dashboard, and whatever else you pick. |
 | `eve setup` | Platform prerequisites (Docker / Compose / Node sanity checks). |
-| `eve add <component>` | Install a single component. IDs: `traefik`, `eve-dashboard`, `synap`, `ollama`, `openclaw`, `rsshub`, `hermes`, `openwebui`, `openwebui-pipelines`, `dokploy`, `opencode`, `openclaude`. Delegates to `@eve/lifecycle` — same code path the dashboard uses, so install/remove/update behavior is identical from either surface. |
+| `eve add <component>` | Install a single component. IDs: `traefik`, `eve-dashboard`, `synap`, `ollama`, `openclaw`, `rsshub`, `hermes`, `openwebui`, `openwebui-pipelines`, `dokploy`, `opencode`, `openclaude`, `nango`. Delegates to `@eve/lifecycle` — same code path the dashboard uses, so install/remove/update behavior is identical from either surface. |
 | `eve remove <component>` | Stop + remove a component (data volumes are kept by default). |
 | `eve birth <name>` | Bootstrap a new "entity" (named workspace inside Synap). |
 | `eve grow` | Pull updates and reconcile the running stack against the registry. |
@@ -179,7 +179,7 @@ The CLI exposes each organ as a sub-program for fine-grained ops:
 | Group | Owns |
 |---|---|
 | `eve brain …` | Synap, data stores, optional Ollama |
-| `eve arms …` | OpenClaw (agent messaging layer) |
+| `eve arms …` | OpenClaw (agent messaging layer), Nango (OAuth connector platform) |
 | `eve eyes …` | RSSHub (perception) |
 | `eve legs …` | Traefik, domains, the dashboard container |
 | `eve builder …` | OpenCode, OpenClaude, Dokploy, Hermes |
@@ -217,7 +217,7 @@ Depends on:
 ├── @eve/dna        — registry, secrets contract, entity state
 ├── @eve/lifecycle  — install / remove / update / start / stop primitives (shared with the dashboard); returns AsyncIterable<LifecycleEvent> the CLI consumes via spinners, the dashboard via SSE
 ├── @eve/brain      — Synap / data stores / Ollama
-├── @eve/arms       — OpenClaw
+├── @eve/arms       — OpenClaw, Nango
 ├── @eve/eyes       — RSSHub
 ├── @eve/legs       — Traefik, domains, dashboard container
 └── @eve/builder    — OpenCode / OpenClaude / Dokploy / Hermes

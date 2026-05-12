@@ -146,6 +146,116 @@ async function addOpenclaw(): Promise<void> {
   }
 }
 
+async function addNango(): Promise<void> {
+  const state = await entityStateManager.getState();
+  if (state.organs.brain.state !== 'ready') {
+    printError('Brain is not ready. Install Synap first: `eve add synap`');
+    process.exit(1);
+  }
+
+  const { randomBytes } = await import('node:crypto');
+  const { readFile, writeFile } = await import('node:fs/promises');
+  const { existsSync } = await import('node:fs');
+  const { join: pathJoin } = await import('node:path');
+
+  // Generate a secret key if not already in secrets.json
+  const secrets = await readEveSecrets(process.cwd()).catch(() => null);
+  const existingKey = secrets?.connectors?.nango?.secretKey;
+  const secretKey = existingKey ?? randomBytes(32).toString('hex');
+
+  // Create the nango database in the shared postgres instance
+  printInfo('Creating Nango database in Postgres...');
+  try {
+    await execFileAsync('docker', [
+      'exec', 'eve-brain-postgres',
+      'psql', '-U', 'eve', '-c',
+      'CREATE DATABASE nango;',
+    ], { timeout: 10_000 });
+  } catch {
+    // Ignore "already exists" errors — idempotent
+  }
+
+  // Resolve deploy/.env early so we can read PUBLIC_URL before starting the container
+  const deployDir =
+    process.env.SYNAP_DEPLOY_DIR ||
+    (existsSync('/opt/synap-backend/deploy') ? '/opt/synap-backend/deploy' : null);
+
+  let podPublicUrl = '';
+  if (deployDir) {
+    const { readFile: rf } = await import('node:fs/promises');
+    const envPath = pathJoin(deployDir, '.env');
+    try {
+      const envContent = await rf(envPath, 'utf8');
+      const match = envContent.match(/^PUBLIC_URL=(.+)$/m);
+      if (match?.[1]) podPublicUrl = match[1].trim();
+    } catch { /* .env may not exist yet */ }
+  }
+
+  // Pull image
+  printInfo('Pulling nangohq/nango:latest...');
+  await execFileAsync('docker', ['pull', 'nangohq/nango:latest'], { timeout: 120_000 });
+
+  // Build docker run args — include webhook URL if pod public URL is known
+  const dockerRunArgs = [
+    'run', '-d',
+    '--name', 'eve-arms-nango',
+    '--network', 'eve-network',
+    '--restart', 'unless-stopped',
+    '-e', `NANGO_SECRET_KEY=${secretKey}`,
+    '-e', 'SERVER_PORT=3003',
+    '-e', 'DATABASE_URL=postgresql://eve:eve@eve-brain-postgres:5432/nango',
+    '-e', 'NODE_ENV=production',
+    ...(podPublicUrl ? ['-e', `NANGO_WEBHOOK_URL=${podPublicUrl}/api/connectors/nango-webhook`] : []),
+    '-v', 'eve-arms-nango-data:/var/lib/nango',
+    'nangohq/nango:latest',
+  ];
+
+  // Start container
+  printInfo('Starting Nango container...');
+  await execFileAsync('docker', dockerRunArgs, { timeout: 30_000 });
+
+  if (!podPublicUrl) {
+    printWarning('  PUBLIC_URL not found in deploy/.env — NANGO_WEBHOOK_URL not set.');
+    printWarning('  After setting PUBLIC_URL, re-run: eve add nango');
+  }
+
+  // Write to secrets.json
+  await writeEveSecrets(process.cwd(), {
+    ...(secrets ?? {}),
+    connectors: {
+      ...(secrets?.connectors ?? {}),
+      nango: {
+        secretKey,
+        installedAt: new Date().toISOString(),
+        oauthApps: secrets?.connectors?.nango?.oauthApps ?? {},
+      },
+    },
+  });
+
+  // Write NANGO_HOST + NANGO_SECRET_KEY to pod deploy/.env
+  if (deployDir) {
+    const envPath = pathJoin(deployDir, '.env');
+    let envContent = '';
+    try { envContent = await readFile(envPath, 'utf8'); } catch { /* new file */ }
+
+    const setEnvVar = (content: string, key: string, value: string): string => {
+      const re = new RegExp(`^${key}=.*$`, 'm');
+      const line = `${key}=${value}`;
+      return re.test(content) ? content.replace(re, line) : `${content}\n${line}`;
+    };
+
+    envContent = setEnvVar(envContent, 'NANGO_HOST', 'http://localhost:3003');
+    envContent = setEnvVar(envContent, 'NANGO_SECRET_KEY', secretKey);
+    await writeFile(envPath, envContent.trimStart(), 'utf8');
+    printInfo(`  Wrote NANGO_HOST + NANGO_SECRET_KEY to ${envPath}`);
+  } else {
+    printWarning('  Could not locate deploy/.env — set SYNAP_DEPLOY_DIR and rerun to write env vars.');
+    printInfo(`  Add manually: NANGO_HOST=http://localhost:3003  NANGO_SECRET_KEY=${secretKey}`);
+  }
+
+  printSuccess('Nango installed. Connect your first account: eve connectors setup google');
+}
+
 async function addRsshub(): Promise<void> {
   // Check brain is ready
   const state = await entityStateManager.getState();
@@ -321,6 +431,11 @@ function buildAddStep(
       return {
         label: 'Installing OpenClaw...',
         fn: addOpenclaw,
+      };
+    case 'nango':
+      return {
+        label: 'Installing Nango (self-hosted OAuth platform)...',
+        fn: addNango,
       };
     case 'rsshub':
       return {

@@ -45,6 +45,15 @@ const TRUSTED_OVERLAY_KINDS: Record<AppTrustLevel, SystemOverlayKind[]> = {
 
 type PaneStatus = "loading" | "ready" | "unreachable";
 
+// Upgrade http:// → https:// for non-localhost URLs.
+// Pods and apps on real domains always need HTTPS; localhost stays HTTP for dev.
+function toHttps(url: string): string {
+  if (url.startsWith("http://") && !/localhost|127\.0\.0\.1/.test(url)) {
+    return "https://" + url.slice(7);
+  }
+  return url;
+}
+
 // Returns the best available session for posting to an embedded app.
 // Prefers the CP session enriched with pod data; falls back to a bare
 // pod session for Mode B (pod-direct, no CP account) users.
@@ -62,14 +71,14 @@ function resolveSessionForEmbed(): SharedSession | null {
 
   if (cp?.podUrl) {
     // CP session already has a podUrl (e.g. set by Hub's finalizeSession).
-    return cp;
+    return { ...cp, podUrl: toHttps(cp.podUrl) };
   }
 
   if (first) {
     // Merge pod credentials into the CP profile so embedded apps get
     // both the user identity (CP) and the pod endpoint (synap:pods).
     return {
-      podUrl: first.podUrl,
+      podUrl: toHttps(first.podUrl),
       sessionToken: first.sessionToken,
       workspaceId: cp?.workspaceId ?? null,
       userId: cp?.userId ?? first.userId ?? "",

@@ -102,6 +102,33 @@ Traefik is always-on infrastructure. It can't be removed; the rest of the stack 
     doctor: { critical: true },
   },
   {
+    id: 'nango',
+    organ: 'arms',
+    label: 'Nango',
+    emoji: '🔗',
+    description: 'Self-hosted OAuth integration platform. Connects Google, Slack, GitHub and 300+ services to your pod — tokens stay on your server.',
+    longDescription: `Nango is the integration layer that lets your pod speak OAuth with the outside world. Connect Google Contacts, Gmail, Google Calendar, Slack, GitHub, and hundreds more — without routing credentials through any third-party cloud.
+
+Why a sovereign stack needs Nango: most SaaS APIs require OAuth. Without it, you either paste API keys manually or give a cloud service access to your tokens. Nango self-hosted handles the full OAuth dance on your machine — the access tokens and refresh tokens never leave your server.
+
+Once Nango is running, Synap's CRM can sync Google Contacts → contacts, Gmail threads → notes, and Google Calendar events → activity. Eve can trigger real-time enrichment from any connected service. You configure OAuth app credentials once (Google Cloud Console, Slack app settings) and Nango handles the rest.
+
+Requires Postgres (already part of the Brain). Listens on port 3003, accessible only within the Eve network — not exposed publicly.`,
+    homepage: 'https://nango.dev',
+    category: 'infrastructure',
+    requires: ['traefik', 'synap'],
+    service: {
+      containerName: 'eve-arms-nango',
+      internalPort: 3003,
+      hostPort: null,
+      subdomain: null,
+      healthPath: '/health',
+    },
+    health: { kind: 'http', path: '/health' },
+    lifecycle: { restartStrategy: 'restart' },
+    doctor: { critical: false },
+  },
+  {
     id: 'ollama',
     organ: 'brain',
     label: 'Ollama',

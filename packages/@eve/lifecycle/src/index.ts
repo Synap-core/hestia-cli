@@ -233,6 +233,7 @@ const UPDATE_PLAN: Record<string, UpdatePlan> = {
   // container starts with the current Synap memory provider and AI wiring.
   hermes: { imagePull: "nousresearch/hermes-agent:latest" },
   rsshub: { imagePull: "diygod/rsshub:latest" },
+  nango: { imagePull: "nangohq/nango:latest" },
   // openwebui + pipelines were installed via `docker compose up -d`. After
   // a remove/down the container is gone, so a plain `docker restart` after
   // pull would fail with "No such container". `compose pull && compose up

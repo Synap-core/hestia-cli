@@ -26,7 +26,9 @@ export interface ServiceAccess {
 export function getAccessUrls(secrets: EveSecrets | null, installedComponents?: string[]): ServiceAccess[] {
   const serverIp = getServerIp();
   const domain = secrets?.domain?.primary;
-  const ssl = secrets?.domain?.ssl ?? false;
+  // Default to HTTPS for real domains. Only localhost/127.x stays HTTP.
+  const isLocalDomain = !domain || /^(localhost|127\.)/.test(domain);
+  const ssl = secrets?.domain?.ssl ?? !isLocalDomain;
   const protocol = ssl ? 'https' : 'http';
 
   const out: ServiceAccess[] = [];

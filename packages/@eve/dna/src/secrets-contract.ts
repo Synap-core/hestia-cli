@@ -300,6 +300,38 @@ const SecretsSchema = z.object({
    * no schema migration.
    */
   channelRouting: z.record(z.string(), z.string()).optional(),
+  /**
+   * Nango self-hosted integration platform credentials.
+   * Written by `eve nango init` — not set manually.
+   *
+   * `secretKey` is the bearer token for Nango's REST API (NANGO_SECRET_KEY).
+   * Generated once with `randomBytes(32).toString('hex')` and never changes
+   * unless the user explicitly resets Nango. The pod backend reads this via
+   * the NANGO_SECRET_KEY env var (written to deploy/.env on init).
+   *
+   * `oauthApps` stores provider-specific OAuth app credentials so Eve can
+   * guide the user through connector setup (`eve connectors setup google`).
+   */
+  connectors: z
+    .object({
+      nango: z
+        .object({
+          secretKey: z.string().optional(),
+          installedAt: z.string().optional(),
+          oauthApps: z
+            .record(
+              z.string(),
+              z.object({
+                clientId: z.string().optional(),
+                clientSecret: z.string().optional(),
+                configuredAt: z.string().optional(),
+              }),
+            )
+            .optional(),
+        })
+        .optional(),
+    })
+    .optional(),
   arms: z
     .object({
       /** OpenClaw bridge config */
