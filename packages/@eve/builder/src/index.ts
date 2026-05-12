@@ -33,6 +33,7 @@ export {
   type HermesConfig,
 } from './lib/hermes-daemon.js';
 export { TaskPoller, type AgentConfigOverrides } from './lib/task-poll.js';
+export { FeaturePoller, type FeaturePollerConfig, type DevplaneFeature, type PipelinePhase } from './lib/feature-poll.js';
 export { TaskExecutor, type ResolvedPersonality } from './lib/task-executor.js';
 export { TaskQueue } from './lib/task-queue.js';
 export { registerHermesCommands } from './commands/hermes.js';

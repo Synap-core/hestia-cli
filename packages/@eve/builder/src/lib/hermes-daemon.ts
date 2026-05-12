@@ -14,6 +14,7 @@ import {
 } from './task-executor.js';
 import { TaskQueue } from './task-queue.js';
 import { IntentPoller } from './intent-poll.js';
+import { FeaturePoller } from './feature-poll.js';
 
 export type HermesStatus = 'idle' | 'polling' | 'running' | 'error' | 'stopping';
 
@@ -52,6 +53,11 @@ export interface HermesConfig {
    * workspaces — fine for single-workspace deployments.
    */
   defaultWorkspaceId?: string;
+  /**
+   * Workspace ID used by FeaturePoller to scope devplane_feature queries.
+   * When absent, feature polling is disabled.
+   */
+  featureWorkspaceId?: string;
 }
 
 export interface HermesStats {
@@ -74,6 +80,7 @@ export class HermesDaemon {
   private config: HermesConfig;
   private poller: TaskPoller;
   private intentPoller: IntentPoller;
+  private featurePoller: FeaturePoller | null = null;
   private executor: TaskExecutor;
   private queue = new TaskQueue();
   /**
@@ -97,6 +104,8 @@ export class HermesDaemon {
   private personalityCacheLoadedAt = 0;
   /** Map of personality userId → PersonalityRecord for O(1) dispatch lookup. */
   private personalityById = new Map<string, PersonalityRecord>();
+  /** Map of personality agentType slug → PersonalityRecord. Pipeline tasks use slugs, not UUIDs. */
+  private personalityByAgentType = new Map<string, PersonalityRecord>();
 
   constructor(config?: Partial<HermesConfig>) {
     const resolved = { ...DEFAULT_HERMES_CONFIG, ...config };
@@ -112,6 +121,17 @@ export class HermesDaemon {
       apiUrl: this.config.apiUrl,
       apiKey: this.config.apiKey,
     });
+    if (this.config.featureWorkspaceId) {
+      this.featurePoller = new FeaturePoller({
+        apiBase: this.config.apiUrl,
+        apiKey: this.config.apiKey,
+        workspaceId: this.config.featureWorkspaceId,
+        queue: this.queue,
+        pollIntervalMs: this.config.pollIntervalMs,
+      });
+    } else {
+      console.debug('[Hermes] featureWorkspaceId not set — feature polling disabled');
+    }
     this.executor = new TaskExecutor({
       maxConcurrent: this.config.maxConcurrentTasks,
       workspaceDir: this.config.workspaceDir,
@@ -220,15 +240,28 @@ export class HermesDaemon {
     if (fresh) {
       return this.personalityCache;
     }
-    if (!this.config.hermesUserId) {
-      // No orchestrator userId configured — multi-personality mode disabled.
+    if (!this.config.hermesUserId && !this.config.defaultWorkspaceId) {
+      // Neither orchestrator userId nor workspace configured — personality mode disabled.
       this.personalityCache = [];
       this.personalityCacheLoadedAt = Date.now();
       this.personalityById.clear();
+      this.personalityByAgentType.clear();
       return [];
     }
     try {
-      const rows = await this.poller.listChildAgents(this.config.hermesUserId);
+      let rows: Array<{ id: string; name: string | null; agentType: string | null }> = [];
+
+      if (this.config.hermesUserId) {
+        rows = await this.poller.listChildAgents(this.config.hermesUserId);
+      }
+
+      // When no child agents found (Phase 1: personalities provisioned as workspace
+      // members rather than parentAgentId children), fall back to workspace discovery.
+      if (rows.length === 0 && this.config.defaultWorkspaceId) {
+        const wsRows = await this.poller.listWorkspaceAgentUsers(this.config.defaultWorkspaceId);
+        rows = wsRows.filter((r) => r.agentType !== null);
+      }
+
       const records: PersonalityRecord[] = rows.map((row) => ({
         userId: row.id,
         agentType: typeof row.agentType === 'string' ? row.agentType : 'meta',
@@ -237,6 +270,7 @@ export class HermesDaemon {
       this.personalityCache = records;
       this.personalityCacheLoadedAt = Date.now();
       this.personalityById = new Map(records.map((r) => [r.userId, r]));
+      this.personalityByAgentType = new Map(records.map((r) => [r.agentType, r]));
       return records;
     } catch (err) {
       console.error(
@@ -303,7 +337,20 @@ export class HermesDaemon {
       );
     }
 
-    return entityCount + intentCount;
+    // Feature pipeline cycle — watches devplane_feature entities and enqueues
+    // pipeline tasks when agent_status transitions to "idle".
+    let featureCount = 0;
+    if (this.featurePoller) {
+      try {
+        featureCount = await this.featurePoller.pollOnce();
+      } catch (err) {
+        console.error(
+          `[Hermes] Feature poll error: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    return entityCount + intentCount + featureCount;
   }
 
   /**
@@ -360,6 +407,9 @@ export class HermesDaemon {
 
       const intentSource = this.intentSources.get(task.id);
       const isIntentTask = intentSource !== undefined;
+      const isPipelineTask = task.context?.isPipelineTask === true;
+      const pipelinePhase = task.context?.phase as import('./feature-poll.js').PipelinePhase | undefined;
+      const pipelineFeatureId = task.context?.featureId as string | undefined;
 
       // Transcription tasks are handled inline — no subprocess.
       if (this._isTranscribeTask(task)) {
@@ -367,10 +417,15 @@ export class HermesDaemon {
         continue;
       }
 
-      // For real entity tasks: tell Synap we're starting. Intent-derived
-      // tasks have no entity row to update — bookkeeping happens via
-      // the IntentPoller after completion.
-      if (!isIntentTask) {
+      // Pipeline tasks update the feature's agent_status field instead of a
+      // task entity row (which doesn't exist for in-memory pipeline tasks).
+      // Regular entity tasks tell Synap we're starting via PATCH.
+      if (isPipelineTask && pipelinePhase && pipelineFeatureId) {
+        await this.featurePoller?.updateFeatureAgentStatus(
+          pipelineFeatureId,
+          this.featurePoller.phaseRunningStatus(pipelinePhase),
+        );
+      } else if (!isIntentTask) {
         await this.poller.updateTaskStatus(task.id, 'in-progress');
       }
 
@@ -396,6 +451,13 @@ export class HermesDaemon {
             intent: intentSource,
           });
           this.intentSources.delete(task.id);
+        } else if (isPipelineTask && pipelinePhase && pipelineFeatureId) {
+          await this.featurePoller?.updateFeatureAgentStatus(
+            pipelineFeatureId,
+            succeeded
+              ? this.featurePoller.phaseSuccessStatus(pipelinePhase)
+              : 'blocked',
+          );
         } else if (succeeded) {
           await this.poller.submitResult(task.id, {
             output: result.stdout,
@@ -422,6 +484,8 @@ export class HermesDaemon {
             );
           }
           this.intentSources.delete(task.id);
+        } else if (isPipelineTask && pipelineFeatureId) {
+          await this.featurePoller?.updateFeatureAgentStatus(pipelineFeatureId, 'blocked');
         } else {
           await this.poller.updateTaskStatus(task.id, 'failed');
         }
@@ -443,13 +507,17 @@ export class HermesDaemon {
     const assigneeId = task.assignedAgentId;
     if (!assigneeId || assigneeId === 'hermes') return undefined;
 
-    const record = this.personalityById.get(assigneeId);
+    // Try userId lookup first; pipeline tasks use agentType slugs as assignedAgentId.
+    const record =
+      this.personalityById.get(assigneeId) ??
+      this.personalityByAgentType.get(assigneeId);
     if (!record) {
-      // Task is assigned to a userId we don't know — likely a stale cache.
-      // Force refresh once and retry the lookup.
+      // Unknown assignee — stale cache or first-seen slug. Refresh once and retry both maps.
       this.refreshPersonalities();
       await this.discoverPersonalities();
-      const retry = this.personalityById.get(assigneeId);
+      const retry =
+        this.personalityById.get(assigneeId) ??
+        this.personalityByAgentType.get(assigneeId);
       if (!retry) {
         console.warn(
           `[Hermes] Task ${task.id} assigned to unknown personality '${assigneeId}'; ` +

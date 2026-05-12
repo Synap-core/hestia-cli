@@ -414,5 +414,13 @@ export {
   detectCoolifyTargets,
 } from './coolify-client.js';
 
+// Pipeline personality definitions — agentType slugs, display names, default prompts
+export {
+  type PipelinePersonalityDef,
+  PIPELINE_PERSONALITIES,
+  PIPELINE_AGENT_TYPES,
+  resolvePipelinePersonality,
+} from './pipeline-personalities.js';
+
 // Version
 export const VERSION = '0.1.0';

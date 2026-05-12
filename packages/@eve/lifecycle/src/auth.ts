@@ -363,6 +363,8 @@ export type ProvisionResult =
       record: AgentKeyRecord;
       /** First 8 chars of the keyId (or apiKey if backend doesn't return one). */
       keyIdPrefix: string;
+      /** True when the key was already present and skipIfPresent skipped re-minting. */
+      wasAlreadyPresent?: boolean;
     }
   | {
       provisioned: false;
@@ -676,6 +678,7 @@ export async function provisionAllAgents(opts: {
           agentType: agent.agentType,
           record: existing,
           keyIdPrefix: (existing.keyId ?? existing.hubApiKey).slice(0, 8),
+          wasAlreadyPresent: true,
         });
         continue;
       }

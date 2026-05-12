@@ -165,6 +165,44 @@ export class TaskPoller {
     return data ?? [];
   }
 
+  /**
+   * Hub REST: list agent users that are members of a workspace.
+   *
+   * Used as a fallback discovery path when personalities are provisioned as
+   * workspace-scoped agent users (no parentAgentId set) rather than children
+   * of the Hermes orchestrator user.
+   */
+  async listWorkspaceAgentUsers(workspaceId: string): Promise<Array<{
+    id: string;
+    name: string | null;
+    agentType: string | null;
+  }>> {
+    const url = new URL(`${this.config.apiUrl}/api/hub/agent-users`);
+    url.searchParams.set('workspaceId', workspaceId);
+    const response = await fetch(url.toString(), {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${this.config.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+    });
+    if (!response.ok) {
+      throw new PollError(
+        `listWorkspaceAgentUsers failed: HTTP ${response.status} ${response.statusText}`,
+      );
+    }
+    const data = (await response.json()) as Array<{
+      id: string;
+      name: string | null;
+      agentMetadata?: { agentType?: string } | null;
+    }>;
+    return (data ?? []).map((row) => ({
+      id: row.id,
+      name: row.name,
+      agentType: row.agentMetadata?.agentType ?? null,
+    }));
+  }
+
   /** Hub REST: fetch agent_configs row for (userId, workspaceId, agentType). */
   async getAgentConfig(params: {
     userId: string;

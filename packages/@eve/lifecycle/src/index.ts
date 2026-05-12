@@ -1159,10 +1159,35 @@ async function* postUpdateReconcileAuth(): AsyncGenerator<LifecycleEvent> {
 
   const status = await getAuthStatus({ synapUrl, apiKey: eveKeyValue });
   if (status.ok) {
-    // Healthy auth on a non-legacy install — reconcile the Builder
-    // workspace too, so every `eve update synap` brings the seeded
-    // schema back in sync with the bundled template (idempotent via
-    // proposalId). Errors yield a log only — never break update.
+    // Repair missing workspace membership. The eve key can be valid (key
+    // passes /auth/status) yet have no workspace_members row when it was
+    // minted before any workspace existed — e.g. a fresh install where
+    // /setup/agent ran before seed-admin created the first workspace. All
+    // workspace-scoped Hub calls (extras push, skills/knowledge sync) then
+    // return 401 even though the key itself is fine. Renewing forces
+    // /setup/agent to run again; with a workspace now present it creates
+    // the missing membership row and returns the new key.
+    if (!eveAgentKey?.workspaceId) {
+      yield {
+        type: "log",
+        line: "↳ eve agent key has no workspace binding — renewing to repair membership",
+      };
+      const renewed = await renewAgentKey({ agentType: "eve", reason: "workspace-membership-repair" });
+      if (renewed.renewed) {
+        yield {
+          type: "log",
+          line: `↳ workspace membership repaired (new key prefix ${renewed.keyIdPrefix}…)`,
+        };
+      } else {
+        yield {
+          type: "log",
+          line: `↳ workspace membership repair failed (${renewed.reason}) — run \`eve auth provision --agent eve\` manually`,
+        };
+      }
+    }
+    // Reconcile the Builder workspace so every `eve update synap` brings
+    // the seeded schema back in sync with the bundled template (idempotent
+    // via proposalId). Errors yield a log only — never break update.
     yield* postInstallSeedBuilderWorkspace();
     return;
   }

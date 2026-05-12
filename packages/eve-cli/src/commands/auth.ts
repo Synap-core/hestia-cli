@@ -476,7 +476,7 @@ async function runRenewAll(): Promise<void> {
 // `eve auth provision` — mint missing agent keys
 // ---------------------------------------------------------------------------
 
-async function runProvision(opts: { agent?: string; email?: string }): Promise<void> {
+async function runProvision(opts: { agent?: string; email?: string; force?: boolean }): Promise<void> {
   console.log();
   printHeader('Synap auth provision');
   console.log();
@@ -568,12 +568,27 @@ async function runProvision(opts: { agent?: string; email?: string }): Promise<v
       process.exitCode = 1;
       return;
     }
+
+    // Guard: if a key already exists for this agent, require --force to
+    // re-mint (which revokes the old key). Without this, running
+    // `eve auth provision --agent eve` silently rotates a perfectly good key.
+    if (!opts.force) {
+      const { readAgentKey } = await import('@eve/dna');
+      const existing = await readAgentKey(opts.agent);
+      if (existing?.hubApiKey) {
+        printInfo(`${opts.agent} is already provisioned (key prefix ${(existing.keyId ?? existing.hubApiKey).slice(0, 8)}…).`);
+        printInfo(`To re-mint and revoke the existing key, add --force.`);
+        console.log();
+        return;
+      }
+    }
+
     const spinner = createSpinner(`Provisioning ${opts.agent}…`);
     spinner.start();
     const result = await provisionAgent({
       agentType: opts.agent,
       deployDir: process.cwd(),
-      reason: 'manual-provision',
+      reason: opts.force ? 'manual-provision-force' : 'manual-provision',
       runner: buildRunner(),
       synapUrl,
       provisioningToken,
@@ -638,9 +653,15 @@ async function runProvision(opts: { agent?: string; email?: string }): Promise<v
 function renderProvisionResults(results: ProvisionResult[]): void {
   for (const r of results) {
     if (r.provisioned) {
-      console.log(
-        `  ${colors.success(emojis.check)} ${r.agentType.padEnd(22)} ${r.keyIdPrefix}…  ${colors.muted(`(user ${r.record.agentUserId.slice(0, 8)}, ws ${r.record.workspaceId.slice(0, 8)})`)}`,
-      );
+      if (r.wasAlreadyPresent) {
+        console.log(
+          `  ${colors.muted('–')} ${r.agentType.padEnd(22)} ${colors.muted(`already provisioned (${r.keyIdPrefix}…)`)}`,
+        );
+      } else {
+        console.log(
+          `  ${colors.success(emojis.check)} ${r.agentType.padEnd(22)} ${r.keyIdPrefix}…  ${colors.muted(`(user ${r.record.agentUserId.slice(0, 8)}, ws ${r.record.workspaceId?.slice(0, 8) ?? 'none'})`)}`,
+        );
+      }
     } else {
       console.log(
         `  ${colors.error(emojis.cross)} ${r.agentType.padEnd(22)} ${colors.error('failed')}  ${colors.muted(r.reason)}`,
@@ -724,7 +745,11 @@ export function authCommand(program: Command): void {
       '--email <email>',
       'Admin email for first-admin setup (prompt mode). Omit to use magic-link mode.',
     )
-    .action(async (opts: { agent?: string; email?: string }) => {
+    .option(
+      '--force',
+      'Re-mint even if a key already exists (revokes the old key). Only applies with --agent.',
+    )
+    .action(async (opts: { agent?: string; email?: string; force?: boolean }) => {
       try {
         await runProvision(opts);
       } catch (err) {
