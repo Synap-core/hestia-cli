@@ -897,7 +897,30 @@ async function* validateAndRenewKeyIfRevoked(agentType: string): AsyncGenerator<
   if (!apiKey) return; // No key yet — different recovery path (provision, not renew).
 
   const status = await getAuthStatus({ synapUrl, apiKey });
-  if (status.ok) return;
+  if (status.ok) {
+    // Key is valid but may have been minted before a workspace existed.
+    // If workspaceId is empty the key has no workspace membership, so
+    // workspace-scoped Hub calls (e.g. syncOpenwebuiExtras) will 401.
+    if (!agentRecord?.workspaceId) {
+      yield {
+        type: "log",
+        line: `↳ ${agentType} agent key has no workspace binding — renewing to repair membership`,
+      };
+      const renewed = await renewAgentKey({ agentType, reason: "workspace-membership-repair" });
+      if (renewed.renewed) {
+        yield {
+          type: "log",
+          line: `↳ workspace membership repaired (new key prefix ${renewed.keyIdPrefix}…)`,
+        };
+      } else {
+        yield {
+          type: "log",
+          line: `↳ workspace membership repair failed (${renewed.reason}) — run \`eve auth provision --agent ${agentType}\` manually`,
+        };
+      }
+    }
+    return;
+  }
 
   const reason = status.failure.reason;
   // Recoverable reasons re-mint via /setup/agent which always grants the

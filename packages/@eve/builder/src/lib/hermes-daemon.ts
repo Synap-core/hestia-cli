@@ -55,7 +55,9 @@ export interface HermesConfig {
   defaultWorkspaceId?: string;
   /**
    * Workspace ID used by FeaturePoller to scope devplane_feature queries.
-   * When absent, feature polling is disabled.
+   * When omitted, the Hub returns features from ALL workspaces Hermes is a
+   * member of — workspaces without devplane_feature profiles return nothing.
+   * @deprecated — pass workspaceId directly to FeaturePoller if scoping is needed.
    */
   featureWorkspaceId?: string;
 }
@@ -121,17 +123,16 @@ export class HermesDaemon {
       apiUrl: this.config.apiUrl,
       apiKey: this.config.apiKey,
     });
-    if (this.config.featureWorkspaceId) {
-      this.featurePoller = new FeaturePoller({
-        apiBase: this.config.apiUrl,
-        apiKey: this.config.apiKey,
-        workspaceId: this.config.featureWorkspaceId,
-        queue: this.queue,
-        pollIntervalMs: this.config.pollIntervalMs,
-      });
-    } else {
-      console.debug('[Hermes] featureWorkspaceId not set — feature polling disabled');
-    }
+    // FeaturePoller is always enabled — it watches devplane_feature entities
+    // across all workspaces Hermes is a member of. Workspaces without that
+    // profile return nothing from the Hub, so there is zero cost for
+    // non-DevPlane workspaces (CRM, knowledge base, etc.).
+    this.featurePoller = new FeaturePoller({
+      apiBase: this.config.apiUrl,
+      apiKey: this.config.apiKey,
+      queue: this.queue,
+      pollIntervalMs: this.config.pollIntervalMs,
+    });
     this.executor = new TaskExecutor({
       maxConcurrent: this.config.maxConcurrentTasks,
       workspaceDir: this.config.workspaceDir,

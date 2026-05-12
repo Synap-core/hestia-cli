@@ -24,9 +24,13 @@ async function loadDefaultsFromSecrets(): Promise<Partial<HermesConfig>> {
   if (h.maxConcurrentTasks !== undefined) out.maxConcurrentTasks = h.maxConcurrentTasks;
   const apiUrl = resolveSynapUrl(s);
   if (apiUrl) out.apiUrl = apiUrl;
-  const hermesKey = readAgentKeyOrLegacySync('hermes', s);
-  if (hermesKey) out.apiKey = hermesKey;
+  const hermesApiKey = readAgentKeyOrLegacySync('hermes', s);
+  if (hermesApiKey) out.apiKey = hermesApiKey;
   if (s.builder?.workspaceDir) out.workspaceDir = s.builder.workspaceDir;
+  // hermesUserId — Hermes' own agent user ID, stored in agents.hermes at provision time.
+  // Enables personality child-agent discovery via GET /agent-users?parentUserId=hermesUserId.
+  const hermesRecord = s.agents?.['hermes'];
+  if (hermesRecord?.agentUserId) out.hermesUserId = hermesRecord.agentUserId;
   return out;
 }
 

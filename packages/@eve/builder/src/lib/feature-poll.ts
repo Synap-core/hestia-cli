@@ -42,7 +42,13 @@ interface FeatureSyncResponse {
 export interface FeaturePollerConfig {
   apiBase: string;
   apiKey: string;
-  workspaceId: string;
+  /**
+   * Workspace to scope feature polling to.
+   * When omitted, the Hub returns devplane_feature entities from all
+   * workspaces the Hermes agent is a member of — workspaces without
+   * that profile return nothing automatically.
+   */
+  workspaceId?: string;
   queue: TaskQueue;
   pollIntervalMs?: number;
   maxRetries?: number;
@@ -113,7 +119,7 @@ function resolveTriggerPhase(feature: DevplaneFeature): PipelinePhase | null {
 export class FeaturePoller {
   private apiBase: string;
   private apiKey: string;
-  private workspaceId: string;
+  private workspaceId: string | undefined;
   private queue: TaskQueue;
   private pollIntervalMs: number;
   private maxRetries: number;
@@ -177,7 +183,7 @@ export class FeaturePoller {
   async pollOnce(): Promise<number> {
     const url = new URL(`${this.apiBase}/api/hub/entities`);
     url.searchParams.set('profileSlug', 'devplane_feature');
-    url.searchParams.set('workspaceId', this.workspaceId);
+    if (this.workspaceId) url.searchParams.set('workspaceId', this.workspaceId);
     url.searchParams.set('since', this.lastSince);
     url.searchParams.set('limit', '100');
 
