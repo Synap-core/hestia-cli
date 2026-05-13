@@ -47,7 +47,7 @@
     "runtime": null
   },
   "build": {
-    "buildCommand": "pnpm build 2>&1 | tail -80",
+    "buildCommand": "cd /Users/antoine/Documents/Code/synap/hestia-cli/packages/eve-dashboard && pnpm tsc --noEmit 2>&1 | head -40",
     "testCommand": "cd /Users/antoine/Documents/Code/synap/hestia-cli/packages/@eve/dna && pnpm test 2>&1 | tail -40",
     "lintCommand": null,
     "devCommand": "npm run dev",

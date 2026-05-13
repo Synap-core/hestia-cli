@@ -300,6 +300,29 @@ export default function AiProvidersPage() {
     }
   }
 
+  async function detectModelsForCard(providerId: string) {
+    setCardDetectingOllama(providerId);
+    try {
+      const res = await fetch("/api/ai/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ providerId }),
+      });
+      const data = await res.json() as { ok?: boolean; models?: string[]; error?: string };
+      if (res.ok && data.ok) {
+        setCardOllamaModels(prev => ({ ...prev, [providerId]: data.models ?? [] }));
+        if ((data.models ?? []).length === 0) addToast({ title: "Provider reachable — no models returned", color: "warning" });
+      } else {
+        addToast({ title: data.error ?? "Could not reach provider", color: "danger" });
+      }
+    } catch {
+      addToast({ title: "Model fetch failed", color: "danger" });
+    } finally {
+      setCardDetectingOllama(null);
+    }
+  }
+
   async function setDefault(id: string) {
     setSavingId(`default-${id}`);
     try {
@@ -583,6 +606,36 @@ export default function AiProvidersPage() {
                         className="text-default-600"
                       >
                         Detect models
+                      </Button>
+                      {(cardOllamaModels[pid] ?? []).length > 0 && (
+                        <span className="text-[11px] text-default-400">{cardOllamaModels[pid].length} model(s) available</span>
+                      )}
+                    </div>
+                    {(cardOllamaModels[pid] ?? []).length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {cardOllamaModels[pid].map(m => (
+                          <Chip key={m} size="sm" variant="flat" radius="sm" className="h-5 px-1.5 font-mono text-[10px]">
+                            {m}
+                          </Chip>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Non-Ollama: live model list on card */}
+                {p.id !== "ollama" && !isEditing && ok && (
+                  <div className="mt-3">
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="flat"
+                        radius="md"
+                        isLoading={cardDetectingOllama === pid}
+                        onPress={() => void detectModelsForCard(pid)}
+                        className="text-default-600"
+                      >
+                        Fetch models
                       </Button>
                       {(cardOllamaModels[pid] ?? []).length > 0 && (
                         <span className="text-[11px] text-default-400">{cardOllamaModels[pid].length} model(s) available</span>
@@ -951,6 +1004,9 @@ export default function AiProvidersPage() {
               const override = config?.serviceProviders?.[c.id];
               const modelOverride = config?.serviceModels?.[c.id];
               const effective = override ?? config?.defaultProvider ?? null;
+              const effectiveProvider = (config?.providers ?? []).find((p: ProviderEntry) => p.id === effective);
+              const resolvedModel = modelOverride || effectiveProvider?.defaultModel || null;
+              const resolvedModelIsDefault = !modelOverride && !!effectiveProvider?.defaultModel;
               const usable = (config?.providers ?? []).filter(
                 (p: ProviderEntry) => p.id === "ollama" || p.hasApiKey || (p.baseUrl && p.baseUrl.trim()),
               );
@@ -976,7 +1032,12 @@ export default function AiProvidersPage() {
                         {effective
                           ? `Routes via ${getProviderLabel(effective)}`
                           : "No provider — pick one above first"}
-                        {modelOverride && ` · model: ${modelOverride}`}
+                        {resolvedModel && (
+                          <span className={resolvedModelIsDefault ? "text-default-400" : ""}>
+                            {` · ${resolvedModel}`}
+                            {resolvedModelIsDefault && <span className="text-default-300"> (provider default)</span>}
+                          </span>
+                        )}
                       </p>
                       {/* Last applied timestamp / not-yet-applied hint */}
                       {config?.wiringStatus?.[c.id] ? (
