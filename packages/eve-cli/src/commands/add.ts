@@ -35,19 +35,32 @@ async function containerExists(name: string): Promise<boolean> {
 }
 
 /** True if a container is running (Up status). */
-async function containerRunning(name: string): Promise<boolean> {
+/**
+ * Find a running synap-backend container by compose labels.
+ * `eve-brain-synap` is a Docker *network alias*, not a container name — the
+ * real container is named by Docker Compose (e.g. `synap-backend-backend-1`
+ * or `synap-backend-canary`). Querying by compose labels is the only reliable
+ * way to find it regardless of the explicit `container_name` setting.
+ */
+async function findSynapBackendContainer(): Promise<string | null> {
   try {
     const { stdout } = await execFileAsync(
-      'docker', ['ps', '--filter', `name=^${name}$`, '--format', '{{.Names}}'],
+      'docker',
+      [
+        'ps',
+        '--filter', 'label=com.docker.compose.project=synap-backend',
+        '--filter', 'label=com.docker.compose.service=backend',
+        '--format', '{{.Names}}',
+      ],
       { timeout: 4000 },
     );
-    return stdout.trim() === name;
-  } catch { return false; }
+    return stdout.trim().split('\n')[0]?.trim() || null;
+  } catch { return null; }
 }
 
 /**
  * Returns true if the brain (synap) is ready.
- * Checks state.json first; if state says error/missing but the synap API
+ * Checks state.json first; if state says error/missing but the synap backend
  * container is actually running, auto-reconciles state to 'ready' so
  * manually-deployed pods don't get blocked.
  */
@@ -55,12 +68,12 @@ async function isBrainReady(): Promise<boolean> {
   const state = await entityStateManager.getState();
   if (state.organs.brain.state === 'ready') return true;
 
-  // State is stale — check if synap containers are actually running
-  const apiRunning = await containerRunning('eve-brain-synap');
-  if (!apiRunning) return false;
+  // State is stale — check if the synap backend container is actually running
+  const container = await findSynapBackendContainer();
+  if (!container) return false;
 
-  // Containers are up but state is wrong — reconcile
-  printInfo('Synap containers are running — reconciling state to ready.');
+  // Container is up but state is wrong — reconcile
+  printInfo(`Synap container (${container}) is running — reconciling state to ready.`);
   await entityStateManager.updateOrgan('brain', 'ready');
   return true;
 }
