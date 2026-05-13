@@ -297,6 +297,7 @@ async function addNango(): Promise<void> {
       '-e', 'SERVER_PORT=3003',
       '-e', `NANGO_DATABASE_URL=postgresql://${pgUser}:${pgPassword}@eve-brain-postgres:5432/nango`,
       '-e', 'NODE_ENV=production',
+      ...(nangoHost ? ['-e', `NANGO_SERVER_URL=${nangoHost}`] : []),
       ...(podPublicUrl ? ['-e', `NANGO_WEBHOOK_URL=${podPublicUrl}/api/connectors/nango-webhook`] : []),
       '-v', 'eve-arms-nango-data:/var/lib/nango',
       'nangohq/nango-server:hosted',

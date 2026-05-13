@@ -269,13 +269,14 @@ async function buildUpdateTargets(deployDir: string | undefined): Promise<Update
       }
       await execFileAsync('docker', ['pull', 'nangohq/nango-server:hosted'], { timeout: 120_000 });
       await execFileAsync('docker', ['rm', '-f', 'eve-arms-nango'], { timeout: 10_000 }).catch(() => {});
-      // Find postgres by compose labels and connect it to eve-network so Nango can reach it
+      // Find postgres by compose labels, create nango DB, and connect to eve-network
       const pgOut = await execFileAsync('docker', [
         'ps', '--filter', 'label=com.docker.compose.project=synap-backend',
         '--filter', 'label=com.docker.compose.service=postgres', '--format', '{{.Names}}',
       ], { timeout: 4000 }).catch(() => ({ stdout: '' }));
       const pgContainer = pgOut.stdout.trim().split('\n')[0]?.trim();
       if (pgContainer) {
+        await execFileAsync('docker', ['exec', pgContainer, 'psql', '-U', pgUser, '-c', 'CREATE DATABASE nango;'], { timeout: 10_000 }).catch(() => {});
         await execFileAsync('docker', ['network', 'connect', '--alias', 'eve-brain-postgres', 'eve-network', pgContainer], { timeout: 10_000 }).catch(() => {});
       }
       const runArgs = [
@@ -283,6 +284,7 @@ async function buildUpdateTargets(deployDir: string | undefined): Promise<Update
         '-e', `NANGO_SECRET_KEY=${secretKey}`, '-e', 'SERVER_PORT=3003',
         '-e', `NANGO_DATABASE_URL=postgresql://${pgUser}:${pgPass}@eve-brain-postgres:5432/nango`,
         '-e', 'NODE_ENV=production',
+        ...(nangoHost ? ['-e', `NANGO_SERVER_URL=${nangoHost}`] : []),
         ...(podPublicUrl ? ['-e', `NANGO_WEBHOOK_URL=${podPublicUrl}/api/connectors/nango-webhook`] : []),
         '-v', 'eve-arms-nango-data:/var/lib/nango',
         'nangohq/nango-server:hosted',

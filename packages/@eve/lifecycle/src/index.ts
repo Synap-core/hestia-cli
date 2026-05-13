@@ -907,7 +907,7 @@ async function* validateAndRenewKeyIfRevoked(agentType: string): AsyncGenerator<
         type: "log",
         line: `↳ ${agentType} agent key has no workspace binding — renewing to repair membership`,
       };
-      const renewed = await renewAgentKey({ agentType, reason: "workspace-membership-repair" });
+      const renewed = await renewAgentKey({ agentType, reason: "workspace-membership-repair", idempotent: true });
       if (renewed.renewed) {
         yield {
           type: "log",
