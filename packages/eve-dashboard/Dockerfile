@@ -1,9 +1,12 @@
 # syntax=docker/dockerfile:1.6
 # Build the Eve Dashboard as a self-contained Next.js standalone image.
 #
+# Build from the monorepo root:
+#   DOCKER_BUILDKIT=1 docker build -f hestia-cli/packages/eve-dashboard/Dockerfile .
+#
 # Stages:
 #   deps    — install workspace dependencies (cached on lockfile changes)
-#   build   — compile @eve/dna and the dashboard
+#   build   — compile @synap-core/types, @eve/dna and the dashboard
 #   runner  — minimal runtime image with the standalone bundle only
 
 ARG NODE_VERSION=20-alpine
@@ -15,24 +18,28 @@ RUN corepack enable && corepack prepare pnpm@10.33.2 --activate
 
 WORKDIR /workspace
 
-# Lockfile + workspace metadata. Copying every package.json keeps the
-# workspace graph consistent so `pnpm install --frozen-lockfile` succeeds.
+# Root workspace metadata — needed so pnpm resolves workspace links
+# (e.g. @synap-core/types → link:synap-backend/packages/types)
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
-COPY packages/@eve/arms/package.json ./packages/@eve/arms/
-COPY packages/@eve/brain/package.json ./packages/@eve/brain/
-COPY packages/@eve/builder/package.json ./packages/@eve/builder/
-COPY packages/@eve/dna/package.json ./packages/@eve/dna/
-COPY packages/@eve/eyes/package.json ./packages/@eve/eyes/
-COPY packages/@eve/legs/package.json ./packages/@eve/legs/
-COPY packages/@eve/lifecycle/package.json ./packages/@eve/lifecycle/
-COPY packages/cli-kit/package.json ./packages/cli-kit/
-COPY packages/eve-cli/package.json ./packages/eve-cli/
-COPY packages/eve-dashboard/package.json ./packages/eve-dashboard/
-COPY packages/install/package.json ./packages/install/
-COPY packages/types ./packages/types
-COPY ../synap-backend/packages/types ./synap-backend/packages/types
-COPY packages/usb/package.json ./packages/usb/
-COPY packages/utils/package.json ./packages/utils/
+
+# --- hestia-cli workspace packages (package.json only for deps stage) ---
+COPY hestia-cli/packages/@eve/arms/package.json ./hestia-cli/packages/@eve/arms/
+COPY hestia-cli/packages/@eve/brain/package.json ./hestia-cli/packages/@eve/brain/
+COPY hestia-cli/packages/@eve/builder/package.json ./hestia-cli/packages/@eve/builder/
+COPY hestia-cli/packages/@eve/dna/package.json ./hestia-cli/packages/@eve/dna/
+COPY hestia-cli/packages/@eve/eyes/package.json ./hestia-cli/packages/@eve/eyes/
+COPY hestia-cli/packages/@eve/legs/package.json ./hestia-cli/packages/@eve/legs/
+COPY hestia-cli/packages/@eve/lifecycle/package.json ./hestia-cli/packages/@eve/lifecycle/
+COPY hestia-cli/packages/cli-kit/package.json ./hestia-cli/packages/cli-kit/
+COPY hestia-cli/packages/eve-cli/package.json ./hestia-cli/packages/eve-cli/
+COPY hestia-cli/packages/eve-dashboard/package.json ./hestia-cli/packages/eve-dashboard/
+COPY hestia-cli/packages/install/package.json ./hestia-cli/packages/install/
+COPY hestia-cli/packages/types/package.json ./hestia-cli/packages/types/
+COPY hestia-cli/packages/usb/package.json ./hestia-cli/packages/usb/
+COPY hestia-cli/packages/utils/package.json ./hestia-cli/packages/utils/
+
+# --- synap-backend types (needed for @synap-core/types workspace link) ---
+COPY synap-backend/packages/types/package.json ./synap-backend/packages/types/
 
 RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
@@ -42,37 +49,36 @@ FROM node:${NODE_VERSION} AS build
 RUN corepack enable && corepack prepare pnpm@10.33.2 --activate
 
 WORKDIR /workspace
+
+# Reuse installed node_modules from deps
 COPY --from=deps /workspace/node_modules ./node_modules
+# Reuse installed packages from deps
 COPY --from=deps /workspace/packages ./packages
+
+# Now copy full source for the packages we need to build/ship
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 
-# Source for the packages we need to ship. Dashboard imports:
-#   - @eve/dna       : registry, secrets contract, entity state
-#   - @eve/legs      : TraefikService, dashboard container helpers
-#   - @eve/lifecycle : install/remove/update/start/stop primitives
-#   - @eve/brain, @eve/eyes : dynamically imported by lifecycle install recipes
-COPY packages/@eve/dna ./packages/@eve/dna
-COPY packages/@eve/legs ./packages/@eve/legs
-COPY packages/@eve/lifecycle ./packages/@eve/lifecycle
-COPY packages/@eve/brain ./packages/@eve/brain
-COPY packages/@eve/eyes ./packages/@eve/eyes
-COPY packages/eve-dashboard ./packages/eve-dashboard
-COPY ../synap-backend/packages/types ./synap-backend/packages/types
+# hestia-cli packages (source)
+COPY hestia-cli/packages/@eve/dna ./hestia-cli/packages/@eve/dna
+COPY hestia-cli/packages/@eve/legs ./hestia-cli/packages/@eve/legs
+COPY hestia-cli/packages/@eve/lifecycle ./hestia-cli/packages/@eve/lifecycle
+COPY hestia-cli/packages/@eve/brain ./hestia-cli/packages/@eve/brain
+COPY hestia-cli/packages/@eve/eyes ./hestia-cli/packages/@eve/eyes
+COPY hestia-cli/packages/eve-dashboard ./hestia-cli/packages/eve-dashboard
+
+# @synap-core/types (source — must be built before dashboard)
+COPY synap-backend/packages/types ./synap-backend/packages/types
 
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Build workspace deps in topological order, by hand. The pnpm `...<pkg>`
-# filter syntax sometimes fails to expand inside Docker shells (depending
-# on quoting + pnpm version), and silently building only the leaf produces
-# very confusing "Module not found: '@eve/dna'" errors at link time.
-# Order matters:
-#   types     — no workspace deps (must be built first so dist/ exists)
-#   dna       — no workspace deps
-#   legs      — depends on dna
-#   brain     — depends on dna, legs
-#   eyes      — depends on dna, brain
-#   lifecycle — depends on dna, legs, brain, eyes
-#   dashboard — depends on dna, legs, lifecycle
+# Build workspace deps in topological order. Order matters:
+#   @synap-core/types — no workspace deps (must be built first so dist/ exists)
+#   @eve/dna          — no workspace deps
+#   @eve/legs         — depends on dna
+#   @eve/brain        — depends on dna, legs
+#   @eve/eyes         — depends on dna, brain
+#   @eve/lifecycle    — depends on dna, legs, brain, eyes
+#   @eve/dashboard    — depends on dna, legs, lifecycle
 RUN pnpm --filter @synap-core/types run build
 RUN pnpm --filter @eve/dna run build
 RUN pnpm --filter @eve/legs run build
@@ -83,13 +89,6 @@ RUN pnpm --filter @eve/dashboard run build
 
 # --- runner -----------------------------------------------------------------
 FROM node:${NODE_VERSION} AS runner
-# - tini                — proper PID 1 / signal forwarding
-# - docker-cli          — `docker exec`, `docker pull`, `docker restart` for
-#                          per-component lifecycle actions
-# - docker-cli-compose  — `docker compose up -d`, `docker compose pull` for
-#                          the install/update paths of synap, openwebui,
-#                          openwebui-pipelines (without this, `docker compose`
-#                          fails with "unknown shorthand flag: 'd'")
 RUN apk add --no-cache tini docker-cli docker-cli-compose
 
 WORKDIR /app

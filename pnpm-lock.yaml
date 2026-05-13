@@ -306,8 +306,8 @@ importers:
         specifier: ^1.1.0
         version: 1.1.0
       '@synap-core/types':
-        specifier: ^1.10.0
-        version: 1.10.0
+        specifier: ^1.11.1
+        version: 1.11.1
       '@types/qrcode':
         specifier: ^1.5.0
         version: 1.5.6
@@ -2651,8 +2651,8 @@ packages:
   '@synap-core/auth@1.1.0':
     resolution: {integrity: sha512-VC322z7bu8BlrFKQc/B+4xO/KFu5jCYexnYSa81RI/Sp5+vNRY7Vu+uKCBchEAu3Y2eEG4TPQ96EbJZ6Ijg7kg==}
 
-  '@synap-core/types@1.10.0':
-    resolution: {integrity: sha512-RufXZFN36VFnbfMZsh+s0Y6q9+zTTk1BpDAnQSkOSBgv/VlmGt+0BtR6mQ69pxb2xZIa9k4Uw1eSFCTQqstkpQ==}
+  '@synap-core/types@1.11.1':
+    resolution: {integrity: sha512-FpFoPjDPttMXJ+yaaT6ySZQMrEoPHT6ITeG7F8Xniv8cPsUFKXbW0mbRaaKJ8SW00tw7BcDyrSgNZ/AJupOA6w==, tarball: https://npm.pkg.github.com/download/@synap-core/types/1.11.1/093b1942ffbb5cdcedd1a0b116daba68100c4cd4}
 
   '@tanstack/react-virtual@3.11.3':
     resolution: {integrity: sha512-vCU+OTylXN3hdC8RKg68tPlBPjjxtzon7Ys46MgrSLE+JhSjSTPvoQifV6DQJeJmA8Q3KT6CphJbejupx85vFw==}
@@ -8007,7 +8007,7 @@ snapshots:
 
   '@synap-core/auth@1.1.0': {}
 
-  '@synap-core/types@1.10.0':
+  '@synap-core/types@1.11.1':
     dependencies:
       drizzle-orm: 0.45.2
       drizzle-zod: 0.8.3(drizzle-orm@0.45.2)(zod@4.4.3)
