@@ -39,7 +39,6 @@ import {
 } from "lucide-react";
 import {
   buildFallbackTitle,
-  isLikelyUUID,
   resolveAuthorName,
   resolveTargetName,
 } from "@synap-core/types";
@@ -331,6 +330,7 @@ function ProposalRow({
             </div>
           )}
         </div>
+      </div>
 
       <div className="flex items-center justify-between gap-3">
         <button
