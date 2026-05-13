@@ -91,6 +91,14 @@ export function registerHermesCommands(yargs: any) {
 
       daemon = new HermesDaemon(config);
 
+      // Plugin loading — DevPlane is always active via the built-in FeaturePoller.
+      // External plugins would be instantiated here and registered via:
+      //   daemon.registerPoller(createMyPlugin(config))
+      if (config.plugins?.includes('devplane') || config.featureWorkspaceId !== undefined) {
+        // DevPlane plugin is already built-in via FeaturePoller — no action needed.
+        // This branch is reserved for future external plugin wiring.
+      }
+
       // Handle Ctrl+C
       process.on('SIGINT', () => daemon?.stop());
       process.on('SIGTERM', () => daemon?.stop());

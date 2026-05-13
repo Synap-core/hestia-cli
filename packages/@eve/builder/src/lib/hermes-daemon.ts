@@ -15,6 +15,7 @@ import {
 import { TaskQueue } from './task-queue.js';
 import { IntentPoller } from './intent-poll.js';
 import { FeaturePoller } from './feature-poll.js';
+import type { EvePoller } from './poller-interface.js';
 
 export type HermesStatus = 'idle' | 'polling' | 'running' | 'error' | 'stopping';
 
@@ -60,6 +61,12 @@ export interface HermesConfig {
    * @deprecated — pass workspaceId directly to FeaturePoller if scoping is needed.
    */
   featureWorkspaceId?: string;
+  /**
+   * List of plugin identifiers to activate. Currently informational — the
+   * DevPlane plugin is always enabled via the built-in FeaturePoller.
+   * Reserved for future external plugin loading.
+   */
+  plugins?: string[];
 }
 
 export interface HermesStats {
@@ -91,6 +98,8 @@ export class HermesDaemon {
    * consumed when that Task completes so we know which row to PATCH.
    */
   private intentSources = new Map<string, BackgroundTask>();
+  /** Additional pollers registered by external plugins at startup. */
+  private extraPollers: EvePoller[] = [];
   private _status: HermesStatus = 'idle';
   private _stats: HermesStats = {
     tasksCompleted: 0,
@@ -156,6 +165,14 @@ export class HermesDaemon {
   }
 
   /**
+   * Register an additional poller to run on every poll cycle.
+   * Call this before `start()` to wire up external plugins.
+   */
+  registerPoller(poller: EvePoller): void {
+    this.extraPollers.push(poller);
+  }
+
+  /**
    * Start the daemon loop.
    * Begins polling and processing tasks in the background.
    * Registers SIGINT/SIGTERM handlers for graceful shutdown.
@@ -208,6 +225,17 @@ export class HermesDaemon {
     if (this.executor.activeCount > 0) {
       console.log('[Hermes] Waiting for active tasks to complete...');
       await new Promise((resolve) => setTimeout(resolve, 5000));
+    }
+
+    // Shut down extra pollers registered by external plugins.
+    for (const poller of this.extraPollers) {
+      try {
+        await poller.shutdown?.();
+      } catch (err) {
+        console.error(
+          `[Hermes] Extra poller shutdown error: ${(err as Error).message}`,
+        );
+      }
     }
 
     this._status = 'idle';
@@ -338,8 +366,8 @@ export class HermesDaemon {
       );
     }
 
-    // Feature pipeline cycle — watches devplane_feature entities and enqueues
-    // pipeline tasks when agent_status transitions to "idle".
+    // Feature pipeline cycle — built-in DevPlane plugin; watches devplane_feature
+    // entities and enqueues pipeline tasks when agent_status transitions to "idle".
     let featureCount = 0;
     if (this.featurePoller) {
       try {
@@ -351,7 +379,19 @@ export class HermesDaemon {
       }
     }
 
-    return entityCount + intentCount + featureCount;
+    // Extra pollers registered by external plugins.
+    let extraCount = 0;
+    for (const poller of this.extraPollers) {
+      try {
+        extraCount += await poller.pollOnce();
+      } catch (err) {
+        console.error(
+          `[Hermes] Extra poller error: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    return entityCount + intentCount + featureCount + extraCount;
   }
 
   /**
