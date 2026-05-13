@@ -30,6 +30,7 @@ COPY packages/eve-cli/package.json ./packages/eve-cli/
 COPY packages/eve-dashboard/package.json ./packages/eve-dashboard/
 COPY packages/install/package.json ./packages/install/
 COPY packages/types ./packages/types
+COPY ../synap-backend/packages/types ./synap-backend/packages/types
 COPY packages/usb/package.json ./packages/usb/
 COPY packages/utils/package.json ./packages/utils/
 
@@ -56,6 +57,7 @@ COPY packages/@eve/lifecycle ./packages/@eve/lifecycle
 COPY packages/@eve/brain ./packages/@eve/brain
 COPY packages/@eve/eyes ./packages/@eve/eyes
 COPY packages/eve-dashboard ./packages/eve-dashboard
+COPY ../synap-backend/packages/types ./synap-backend/packages/types
 
 ENV NEXT_TELEMETRY_DISABLED=1
 
