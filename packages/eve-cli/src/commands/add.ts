@@ -209,15 +209,16 @@ async function addNango(): Promise<void> {
     process.exit(1);
   }
 
-  const { randomBytes } = await import('node:crypto');
+  const { randomUUID } = await import('node:crypto');
   const { readFile, writeFile } = await import('node:fs/promises');
   const { existsSync } = await import('node:fs');
   const { join: pathJoin } = await import('node:path');
 
-  // Generate a secret key if not already in secrets.json
+  // Generate a UUID v4 secret key — Nango validates the key must be UUID v4 format
   const secrets = await readEveSecrets(process.cwd()).catch(() => null);
   const existingKey = secrets?.connectors?.nango?.secretKey;
-  const secretKey = existingKey ?? randomBytes(32).toString('hex');
+  const uuidV4Re = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const secretKey = (existingKey && uuidV4Re.test(existingKey)) ? existingKey : randomUUID();
 
   // Find the actual postgres container (name varies by compose project, e.g. synap-backend-postgres-1)
   const postgresContainer = await findSynapPostgresContainer();

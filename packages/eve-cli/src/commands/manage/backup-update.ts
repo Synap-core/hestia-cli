@@ -249,9 +249,17 @@ async function buildUpdateTargets(deployDir: string | undefined): Promise<Update
       const { promisify } = await import('node:util');
       const execFileAsync = promisify(execFile);
       const { readEveSecrets } = await import('@eve/dna');
+      const { randomUUID } = await import('node:crypto');
+      const { writeEveSecrets } = await import('@eve/dna');
       const secrets = await readEveSecrets(process.cwd()).catch(() => null);
-      const secretKey = secrets?.connectors?.nango?.secretKey as string | undefined;
+      let secretKey = secrets?.connectors?.nango?.secretKey as string | undefined;
       if (!secretKey) throw new Error('No Nango secret key found in secrets.json — run: eve add nango');
+      // Nango requires UUID v4 — regenerate if the stored key is a legacy hex string
+      const uuidV4Re = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      if (!uuidV4Re.test(secretKey)) {
+        secretKey = randomUUID();
+        await writeEveSecrets({ connectors: { nango: { secretKey } } });
+      }
       const domain = secrets?.domain?.primary as string | undefined;
       const ssl = !!(secrets?.domain?.ssl);
       const nangoHost = domain ? `${ssl ? 'https' : 'http'}://nango.${domain}` : 'http://eve-arms-nango:3003';
