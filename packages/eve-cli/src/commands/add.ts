@@ -33,6 +33,37 @@ async function containerExists(name: string): Promise<boolean> {
     return stdout.trim() === name;
   } catch { return false; }
 }
+
+/** True if a container is running (Up status). */
+async function containerRunning(name: string): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync(
+      'docker', ['ps', '--filter', `name=^${name}$`, '--format', '{{.Names}}'],
+      { timeout: 4000 },
+    );
+    return stdout.trim() === name;
+  } catch { return false; }
+}
+
+/**
+ * Returns true if the brain (synap) is ready.
+ * Checks state.json first; if state says error/missing but the synap API
+ * container is actually running, auto-reconciles state to 'ready' so
+ * manually-deployed pods don't get blocked.
+ */
+async function isBrainReady(): Promise<boolean> {
+  const state = await entityStateManager.getState();
+  if (state.organs.brain.state === 'ready') return true;
+
+  // State is stale — check if synap containers are actually running
+  const apiRunning = await containerRunning('eve-brain-synap');
+  if (!apiRunning) return false;
+
+  // Containers are up but state is wrong — reconcile
+  printInfo('Synap containers are running — reconciling state to ready.');
+  await entityStateManager.updateOrgan('brain', 'ready');
+  return true;
+}
 import { runBrainInit, runInferenceInit, resolveSynapDelegate } from '@eve/brain';
 import { runLegsProxySetup, verifyComponent, installDashboardContainer } from '@eve/legs';
 import { materializeTargets, normalizeBareDomain } from '@eve/lifecycle';
@@ -120,10 +151,7 @@ async function addOllama(model?: string): Promise<void> {
 }
 
 async function addOpenclaw(): Promise<void> {
-  // Check brain is ready
-  const state = await entityStateManager.getState();
-  const brainStatus = state.organs.brain;
-  if (brainStatus.state !== 'ready') {
+  if (!await isBrainReady()) {
     printError('Brain is not ready. Please install Synap first: `eve add synap`');
     process.exit(1);
   }
@@ -147,8 +175,7 @@ async function addOpenclaw(): Promise<void> {
 }
 
 async function addNango(): Promise<void> {
-  const state = await entityStateManager.getState();
-  if (state.organs.brain.state !== 'ready') {
+  if (!await isBrainReady()) {
     printError('Brain is not ready. Install Synap first: `eve add synap`');
     process.exit(1);
   }
@@ -257,10 +284,7 @@ async function addNango(): Promise<void> {
 }
 
 async function addRsshub(): Promise<void> {
-  // Check brain is ready
-  const state = await entityStateManager.getState();
-  const brainStatus = state.organs.brain;
-  if (brainStatus.state !== 'ready') {
+  if (!await isBrainReady()) {
     printError('Brain is not ready. Please install Synap first: `eve add synap`');
     process.exit(1);
   }
