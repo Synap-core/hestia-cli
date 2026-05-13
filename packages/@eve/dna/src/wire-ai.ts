@@ -50,6 +50,10 @@ export interface WireAiResult {
   summary: string;
   /** Optional detail (file path written, error message, etc). */
   detail?: string;
+  /** The model string actually written to this component's config file. */
+  wiredModel?: string;
+  /** Provider id resolved for this component. 'synap' for IS-client components. */
+  wiredProvider?: string;
 }
 
 /** True if a container with the given name is running. */
@@ -231,6 +235,8 @@ function wireSynapIs(secrets: EveSecrets | null): WireAiResult {
     outcome: 'ok',
     summary: `Synap IS env updated (${providers.length} provider(s))`,
     detail: envPath,
+    wiredModel: synapProvider?.defaultModel,
+    wiredProvider: synapProvider?.id,
   };
 }
 
@@ -305,6 +311,8 @@ function wireOpenclaw(secrets: EveSecrets | null): WireAiResult {
     outcome: 'ok',
     summary: 'OpenClaw wired to Synap IS as OpenAI provider',
     detail: containerPath,
+    wiredModel: preferredModel,
+    wiredProvider: 'synap',
   };
 }
 
@@ -465,6 +473,8 @@ async function wireOpenwebui(secrets: EveSecrets | null): Promise<WireAiResult> 
         outcome: 'ok',
         summary: `Open WebUI wired to Synap IS${hermesNote} (registration warning: ${outcome.stage} — ${outcome.reason} — run \`eve openwebui sync\` to retry)`,
         detail: envPath,
+        wiredModel: preferredModel,
+        wiredProvider: 'synap',
       };
     }
     // Push Synap surfaces into OpenWebUI: SKILL.md → Prompts, knowledge →
@@ -484,6 +494,8 @@ async function wireOpenwebui(secrets: EveSecrets | null): Promise<WireAiResult> 
         ? `Open WebUI wired to Synap IS${hermesNote} (extras 401 — eve key likely stale: ${extrasSummary})`
         : `Open WebUI wired to Synap IS${hermesNote} (${extrasSummary})`,
       detail: envPath,
+      wiredModel: preferredModel,
+      wiredProvider: 'synap',
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -492,6 +504,8 @@ async function wireOpenwebui(secrets: EveSecrets | null): Promise<WireAiResult> 
       outcome: 'ok',
       summary: `Open WebUI wired to Synap IS${hermesNote} (registration warning: ${msg} — run \`eve openwebui sync\` to retry)`,
       detail: envPath,
+      wiredModel: preferredModel,
+      wiredProvider: 'synap',
     };
   }
 }
@@ -650,6 +664,8 @@ function wireHermes(secrets: EveSecrets | null): WireAiResult {
     outcome: 'ok',
     summary: `Hermes wired → ${preferredModel} (config + plugin regenerated)`,
     detail: hermesEnvPath,
+    wiredModel: preferredModel,
+    wiredProvider: 'synap',
   };
 }
 

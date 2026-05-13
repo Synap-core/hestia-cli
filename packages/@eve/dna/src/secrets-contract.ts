@@ -63,6 +63,8 @@ const SecretsSchema = z.object({
         .record(z.string(), z.object({
           lastApplied: z.string(),
           outcome: z.string(),
+          wiredModel: z.string().optional(),
+          wiredProvider: z.string().optional(),
         }))
         .optional(),
       /**

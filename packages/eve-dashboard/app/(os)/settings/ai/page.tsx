@@ -25,6 +25,19 @@ interface ProviderEntry {
   name?: string;
 }
 
+interface WiringStatusEntry {
+  lastApplied: string;
+  outcome: string;
+  wiredModel?: string;
+  wiredProvider?: string;
+}
+
+interface ResolvedEntry {
+  provider: string | null;
+  model: string | null;
+  isISClient: boolean;
+}
+
 interface AiConfig {
   mode: string | null;
   defaultProvider: string | null;
@@ -33,8 +46,10 @@ interface AiConfig {
   serviceProviders: Record<string, string | null>;
   /** Per-service model override: componentId → model string. */
   serviceModels: Record<string, string | null>;
-  /** Per-component wiring status: { [id]: { lastApplied, outcome } }. */
-  wiringStatus: Record<string, { lastApplied: string; outcome: string }>;
+  /** Per-component wiring status with recorded wiredModel/wiredProvider. */
+  wiringStatus: Record<string, WiringStatusEntry>;
+  /** Resolved (provider, model) per consumer — same logic as materializeTargets. */
+  resolvedPerConsumer: Record<string, ResolvedEntry>;
   /** Unified list: all providers (built-in + custom). */
   providers: ProviderEntry[];
   /** Component ids that consume the central AI config. Server-driven. */
@@ -181,6 +196,21 @@ export default function AiProvidersPage() {
   const [cardOllamaModels, setCardOllamaModels] = useState<Record<string, string[]>>({});
   const [cardDetectingOllama, setCardDetectingOllama] = useState<string | null>(null);
   const [pendingDefault, setPendingDefault] = useState<string | null>(null);
+  const [isModels, setIsModels] = useState<string[]>([]);
+  const [fetchingIsModels, setFetchingIsModels] = useState(false);
+
+  const fetchIsModels = useCallback(async () => {
+    setFetchingIsModels(true);
+    try {
+      const res = await fetch("/api/ai/is-models", { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json() as { ok?: boolean; models?: string[] };
+        if (data.ok) setIsModels(data.models ?? []);
+      }
+    } finally {
+      setFetchingIsModels(false);
+    }
+  }, []);
 
   const fetchConfig = useCallback(async () => {
     try {
@@ -211,7 +241,7 @@ export default function AiProvidersPage() {
     } finally { setLoading(false); }
   }, [router]);
 
-  useEffect(() => { void fetchConfig(); }, [fetchConfig]);
+  useEffect(() => { void fetchConfig(); void fetchIsModels(); }, [fetchConfig, fetchIsModels]);
 
   async function saveProvider(id: string, body: Record<string, unknown>) {
     setSavingId(id);
@@ -992,12 +1022,26 @@ export default function AiProvidersPage() {
        * -------------------------------------------------------------- */}
       {consumers && consumers.length > 0 && (
         <Surface className="p-5">
-          <div className="flex items-center gap-2">
-            <Plug className="h-4 w-4 text-default-500" />
-            <h3 className="font-medium text-foreground">Per-service routing</h3>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Plug className="h-4 w-4 text-default-500" />
+              <h3 className="font-medium text-foreground">Per-service routing</h3>
+            </div>
+            <Button
+              size="sm"
+              variant="flat"
+              radius="md"
+              isLoading={fetchingIsModels}
+              onPress={() => void fetchIsModels()}
+              className="text-default-500"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              {isModels.length > 0 ? `${isModels.length} IS models` : "Fetch IS models"}
+            </Button>
           </div>
           <p className="mt-1 text-xs text-default-500">
-            By default each service uses your global provider and model. Override either per service — saves and re-wires automatically.
+            All services route through <span className="font-medium text-foreground/70">Synap IS</span> — IS holds the real provider keys.
+            Select the model each service should request from IS.
           </p>
           <ul className="mt-4 space-y-2">
             {consumers.map(c => {
@@ -1007,15 +1051,18 @@ export default function AiProvidersPage() {
               const effectiveProvider = (config?.providers ?? []).find((p: ProviderEntry) => p.id === effective);
               const resolvedModel = modelOverride || effectiveProvider?.defaultModel || null;
               const resolvedModelIsDefault = !modelOverride && !!effectiveProvider?.defaultModel;
+              const isISClient = c.id !== 'synap';
               const usable = (config?.providers ?? []).filter(
                 (p: ProviderEntry) => p.id === "ollama" || p.hasApiKey || (p.baseUrl && p.baseUrl.trim()),
               );
               const editingModel = editingServiceModels[c.id] ?? modelOverride ?? "";
               const isModelDirty = editingServiceModels[c.id] !== undefined && editingServiceModels[c.id] !== (modelOverride ?? "");
+              const status = config?.wiringStatus?.[c.id];
+              const drift = !!(status?.wiredModel && resolvedModel && status.wiredModel !== resolvedModel);
               return (
                 <li
                   key={c.id}
-                  className="flex flex-col gap-2 rounded-lg border border-divider bg-content1 px-3 py-2.5"
+                  className={`flex flex-col gap-2 rounded-lg border px-3 py-2.5 ${drift ? "border-warning/40 bg-warning/5" : "border-divider bg-content1"}`}
                 >
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="min-w-0 flex-1">
@@ -1027,26 +1074,35 @@ export default function AiProvidersPage() {
                         {c.installed && (override || modelOverride) && (
                           <Chip size="sm" color="primary" variant="flat" radius="sm">override</Chip>
                         )}
+                        {drift && (
+                          <Chip size="sm" color="warning" variant="flat" radius="sm">config changed</Chip>
+                        )}
                       </div>
                       <p className="mt-0.5 text-[11px] text-default-500">
-                        {effective
-                          ? `Routes via ${getProviderLabel(effective)}`
-                          : "No provider — pick one above first"}
-                        {resolvedModel && (
-                          <span className={resolvedModelIsDefault ? "text-default-400" : ""}>
-                            {` · ${resolvedModel}`}
-                            {resolvedModelIsDefault && <span className="text-default-300"> (provider default)</span>}
-                          </span>
-                        )}
+                        {isISClient
+                          ? <>model hint <span className="font-mono">{resolvedModel ?? "—"}</span> → <span className="font-medium">Synap IS</span></>
+                          : effective
+                            ? <>direct → <span className="font-medium">{getProviderLabel(effective)}</span>
+                                {resolvedModel && (
+                                  <span className={resolvedModelIsDefault ? " text-default-400" : ""}>
+                                    {` · ${resolvedModel}`}
+                                    {resolvedModelIsDefault && <span className="text-default-300"> (provider default)</span>}
+                                  </span>
+                                )}
+                              </>
+                            : "No provider — pick one above first"
+                        }
                       </p>
-                      {/* Last applied timestamp / not-yet-applied hint */}
-                      {config?.wiringStatus?.[c.id] ? (
+                      {/* Wiring status */}
+                      {status ? (
                         <p className="mt-0.5 text-[10px] text-default-400">
-                          Last applied: {formatTimestamp(config.wiringStatus[c.id].lastApplied)}
+                          Applied {formatTimestamp(status.lastApplied)}
+                          {status.wiredModel && <span className="font-mono"> · {status.wiredModel}</span>}
                           {" · "}
-                          <span className={config.wiringStatus[c.id].outcome === "ok" ? "text-success" : "text-danger"}>
-                            {config.wiringStatus[c.id].outcome}
+                          <span className={status.outcome === "ok" ? "text-success" : "text-danger"}>
+                            {status.outcome}
                           </span>
+                          {drift && <span className="text-warning"> · re-apply to push new config</span>}
                         </p>
                       ) : c.installed && effective ? (
                         <p className="mt-0.5 text-[10px] text-warning">
@@ -1054,25 +1110,24 @@ export default function AiProvidersPage() {
                         </p>
                       ) : null}
                     </div>
+                    {/* Provider selector — upstream provider for IS; model family hint for IS clients */}
                     <div className="flex items-center gap-2 shrink-0">
                       <Select
                         size="sm"
                         variant="bordered"
                         className="min-w-[180px]"
-                        aria-label={`Provider for ${c.label}`}
+                        aria-label={isISClient ? `Model family for ${c.label}` : `Provider for ${c.label}`}
                         isDisabled={!c.installed || !!savingId || usable.length === 0}
                         selectedKeys={override ? new Set([override]) : new Set(["__default__"])}
                         onSelectionChange={(keys) => {
                           const sel = Array.from(keys)[0] as string | undefined;
-                          const next = sel === "__default__" || !sel
-                            ? null
-                            : sel;
+                          const next = sel === "__default__" || !sel ? null : sel;
                           if (next === (override ?? null)) return;
                           void setServiceProvider(c.id, next);
                         }}
                       >
                         {[
-                          <SelectItem key="__default__">Use global default</SelectItem>,
+                          <SelectItem key="__default__">{isISClient ? "Global model family" : "Use global default"}</SelectItem>,
                           ...usable.map(p => (
                             <SelectItem key={p.id}>{getProviderLabel(p.id)}</SelectItem>
                           )),
@@ -1080,18 +1135,44 @@ export default function AiProvidersPage() {
                       </Select>
                     </div>
                   </div>
-                  {/* Per-service model override */}
+                  {/* Per-service model — Select from IS when models known, Input fallback */}
                   <div className="flex items-center gap-2">
-                    <Input
-                      size="sm"
-                      variant="bordered"
-                      placeholder="Model override (e.g. llama3.1:8b, claude-sonnet-4-7) — leave blank for provider default"
-                      className="flex-1 text-xs"
-                      value={editingModel}
-                      isDisabled={!c.installed || !!savingId}
-                      onValueChange={v => setEditingServiceModels(prev => ({ ...prev, [c.id]: v }))}
-                    />
-                    {isModelDirty && (
+                    {isModels.length > 0 ? (
+                      <Select
+                        size="sm"
+                        variant="bordered"
+                        className="flex-1"
+                        aria-label={`Model for ${c.label}`}
+                        isDisabled={!c.installed || !!savingId}
+                        selectedKeys={modelOverride ? new Set([modelOverride]) : new Set(["__none__"])}
+                        onSelectionChange={(keys) => {
+                          const sel = Array.from(keys)[0] as string | undefined;
+                          const val = sel === "__none__" || !sel ? null : sel;
+                          if (val === (modelOverride ?? null)) return;
+                          void setServiceModel(c.id, val);
+                        }}
+                      >
+                        {[
+                          <SelectItem key="__none__" classNames={{ title: "text-default-400" }}>
+                            Provider default{resolvedModel && !modelOverride ? ` (${resolvedModel})` : ""}
+                          </SelectItem>,
+                          ...isModels.map(m => (
+                            <SelectItem key={m} classNames={{ title: "font-mono text-xs" }}>{m}</SelectItem>
+                          )),
+                        ]}
+                      </Select>
+                    ) : (
+                      <Input
+                        size="sm"
+                        variant="bordered"
+                        placeholder="Model (e.g. claude-sonnet-4-7) — fetch IS models above for a picker"
+                        className="flex-1 text-xs"
+                        value={editingModel}
+                        isDisabled={!c.installed || !!savingId}
+                        onValueChange={v => setEditingServiceModels(prev => ({ ...prev, [c.id]: v }))}
+                      />
+                    )}
+                    {isModels.length === 0 && isModelDirty && (
                       <Button
                         size="sm"
                         color="primary"
@@ -1105,7 +1186,7 @@ export default function AiProvidersPage() {
                         Save
                       </Button>
                     )}
-                    {modelOverride && !isModelDirty && (
+                    {isModels.length === 0 && modelOverride && !isModelDirty && (
                       <Button
                         size="sm"
                         variant="flat"

@@ -232,8 +232,8 @@ async function addNango(): Promise<void> {
   }
 
   // Pull image
-  printInfo('Pulling nangohq/nango:latest...');
-  await execFileAsync('docker', ['pull', 'nangohq/nango:latest'], { timeout: 120_000 });
+  printInfo('Pulling nangohq/nango-server:hosted...');
+  await execFileAsync('docker', ['pull', 'nangohq/nango-server:hosted'], { timeout: 120_000 });
 
   // Build docker run args — include webhook URL if pod public URL is known
   const dockerRunArgs = [
@@ -247,7 +247,7 @@ async function addNango(): Promise<void> {
     '-e', 'NODE_ENV=production',
     ...(podPublicUrl ? ['-e', `NANGO_WEBHOOK_URL=${podPublicUrl}/api/connectors/nango-webhook`] : []),
     '-v', 'eve-arms-nango-data:/var/lib/nango',
-    'nangohq/nango:latest',
+    'nangohq/nango-server:hosted',
   ];
 
   // Start container

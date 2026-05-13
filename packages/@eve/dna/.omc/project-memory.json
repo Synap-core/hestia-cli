@@ -32,7 +32,7 @@
     "runtime": null
   },
   "build": {
-    "buildCommand": "npm run build",
+    "buildCommand": "pnpm build 2>&1 | tail -10",
     "testCommand": "npm test",
     "lintCommand": null,
     "devCommand": "npm run dev",
@@ -153,8 +153,8 @@
     },
     {
       "path": "src/secrets-contract.ts",
-      "accessCount": 3,
-      "lastAccessed": 1778257526736,
+      "accessCount": 4,
+      "lastAccessed": 1778689049743,
       "type": "file"
     },
     {
@@ -188,6 +188,12 @@
       "type": "file"
     },
     {
+      "path": "src/pod-url.ts",
+      "accessCount": 2,
+      "lastAccessed": 1778689049295,
+      "type": "file"
+    },
+    {
       "path": "src/types.ts",
       "accessCount": 1,
       "lastAccessed": 1778257526632,
@@ -209,12 +215,6 @@
       "path": "src/discover.ts",
       "accessCount": 1,
       "lastAccessed": 1778324668359,
-      "type": "file"
-    },
-    {
-      "path": "src/pod-url.ts",
-      "accessCount": 1,
-      "lastAccessed": 1778324668382,
       "type": "file"
     },
     {

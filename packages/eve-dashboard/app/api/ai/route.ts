@@ -9,6 +9,7 @@ import { NextResponse } from "next/server";
 import {
   readEveSecrets, writeEveSecrets, entityStateManager,
   AI_CONSUMERS, AI_CONSUMERS_NEEDING_RECREATE,
+  pickPrimaryProvider,
   type WireAiResult,
 } from "@eve/dna";
 import { materializeTargets, runActionToCompletion } from "@eve/lifecycle";
@@ -48,6 +49,19 @@ export async function GET() {
     serviceProviders: ai.serviceProviders ?? {},
     serviceModels: ai.serviceModels ?? {},
     wiringStatus: ai.wiringStatus ?? {},
+    // Resolved (provider, model) per consumer — same logic as materializeTargets.
+    // Authoritative "what would be / was wired" without a separate endpoint.
+    resolvedPerConsumer: Object.fromEntries(
+      Array.from(AI_CONSUMERS).map(id => {
+        const p = pickPrimaryProvider(secrets, id);
+        const isISClient = id !== 'synap';
+        return [id, {
+          provider: isISClient ? 'synap' : (p?.id ?? null),
+          model: p?.defaultModel ?? null,
+          isISClient,
+        }];
+      }),
+    ),
     providers,
     validProviders: VALID_PROVIDERS,
     // Single source of truth: the client uses this list to filter
@@ -201,9 +215,14 @@ export async function PATCH(req: Request) {
   // results for — leave the rest untouched.
   if (applyResults.length > 0) {
     const patch: Parameters<typeof writeEveSecrets>[0]["ai"] = {
-      wiringStatus: applyResults.reduce<Record<string, { lastApplied: string; outcome: string }>>(
+      wiringStatus: applyResults.reduce<Record<string, { lastApplied: string; outcome: string; wiredModel?: string; wiredProvider?: string }>>(
         (acc, r) => {
-          acc[r.id] = { lastApplied: new Date().toISOString(), outcome: r.outcome };
+          acc[r.id] = {
+            lastApplied: new Date().toISOString(),
+            outcome: r.outcome,
+            ...(r.wiredModel ? { wiredModel: r.wiredModel } : {}),
+            ...(r.wiredProvider ? { wiredProvider: r.wiredProvider } : {}),
+          };
           return acc;
         },
         {},

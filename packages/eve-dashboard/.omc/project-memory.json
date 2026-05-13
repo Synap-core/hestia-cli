@@ -154,8 +154,8 @@
   "hotPaths": [
     {
       "path": "app/(os)/settings/ai/page.tsx",
-      "accessCount": 18,
-      "lastAccessed": 1778352294852,
+      "accessCount": 29,
+      "lastAccessed": 1778689007093,
       "type": "file"
     },
     {
@@ -180,6 +180,12 @@
       "path": "lib/synap-auth.ts",
       "accessCount": 6,
       "lastAccessed": 1778433203710,
+      "type": "file"
+    },
+    {
+      "path": "app/api/ai/route.ts",
+      "accessCount": 6,
+      "lastAccessed": 1778688737433,
       "type": "file"
     },
     {
@@ -312,12 +318,6 @@
       "path": "app/api/ai/test/route.ts",
       "accessCount": 1,
       "lastAccessed": 1778351668840,
-      "type": "file"
-    },
-    {
-      "path": "app/api/ai/route.ts",
-      "accessCount": 1,
-      "lastAccessed": 1778351732317,
       "type": "file"
     },
     {
