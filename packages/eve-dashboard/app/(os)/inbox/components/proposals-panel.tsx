@@ -38,6 +38,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  buildFallbackTitle,
   isLikelyUUID,
   resolveAuthorName,
   resolveTargetName,
@@ -416,14 +417,6 @@ interface ProposalSummary {
   body: string;
 }
 
-const PRETTY_TARGET_KIND: Record<string, string> = {
-  entity: "Entity",
-  document: "Document",
-  view: "View",
-  whiteboard: "Whiteboard",
-  profile: "Profile",
-};
-
 /**
  * Best-effort one-line summary derived from the proposal payload.
  * Uses shared {@link resolveTargetName} and the enriched `request` field
@@ -492,34 +485,6 @@ function proposalSummary(p: WireProposal): ProposalSummary {
     }),
     body: targetName,
   };
-}
-
-function buildFallbackTitle(params: {
-  changeType?: string;
-  profileSlug?: string;
-  targetType?: string;
-  targetName?: string;
-}): string {
-  const { changeType, profileSlug, targetType, targetName } = params;
-  const action = !changeType
-    ? "Proposal"
-    : changeType.includes("create")
-      ? "Create"
-      : changeType.includes("update")
-        ? "Update"
-        : changeType.includes("delete")
-          ? "Delete"
-          : changeType.charAt(0).toUpperCase() +
-            changeType.slice(1).replace(/[._]/g, " ");
-  const typeLabel = profileSlug
-    ? profileSlug.charAt(0).toUpperCase() + profileSlug.slice(1)
-    : targetType && targetType !== "entity"
-      ? targetType.charAt(0).toUpperCase() + targetType.slice(1)
-      : "";
-  if (targetName) {
-    return `${action} ${typeLabel} "${targetName}"`.replace(/  +/, " ").trim();
-  }
-  return `${action} ${typeLabel}`.trim() || "Proposal";
 }
 
 function prettyAction(proposalType: string): string {

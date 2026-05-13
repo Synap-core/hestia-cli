@@ -26,6 +26,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Card, Chip } from "@heroui/react";
 import { Activity } from "lucide-react";
+import { resolveTargetName } from "@synap-core/types";
 import { PanelEmpty, PanelError, PanelLoader } from "./panel-states";
 
 /**
@@ -288,6 +289,7 @@ function toneFor(type: string): string {
 /**
  * Best-effort one-line description. Pulls `data.summary` when set;
  * otherwise composes a generic phrase from subject metadata.
+ * Uses shared {@link resolveTargetName} to avoid showing raw IDs.
  */
 function describe(evt: WireEvent): string | null {
   const data = evt.data ?? {};
@@ -296,11 +298,15 @@ function describe(evt: WireEvent): string | null {
   if (typeof data.name === "string" && data.name) return data.name;
   if (typeof data.message === "string" && data.message) return data.message;
 
-  // Fallback: "<type> on <subject>".
-  const subj = evt.subjectType
-    ? `${evt.subjectType}${evt.subjectId ? " " + evt.subjectId.slice(0, 8) : ""}`
-    : null;
-  if (subj) return `${prettyVerb(evt.type)} on ${subj}`;
+  // Use shared resolver: event data IS the payload, so pass it as entityPayload
+  const targetName = resolveTargetName({
+    targetName: typeof data.targetName === "string" ? data.targetName : undefined,
+    targetType: evt.subjectType ?? undefined,
+    targetId: evt.subjectId ?? undefined,
+    entityPayload: data,
+  });
+
+  if (targetName) return `${prettyVerb(evt.type)} "${targetName}"`;
   return null;
 }
 
