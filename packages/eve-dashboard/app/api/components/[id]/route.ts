@@ -117,7 +117,7 @@ export async function GET(_req: Request, ctx: RouteContext) {
 
   const secrets = await readEveSecrets();
   const domain = secrets?.domain?.primary;
-  const ssl = !!secrets?.domain?.ssl;
+  const ssl = secrets?.domain?.ssl !== false;
   const protocol = ssl ? "https" : "http";
 
   // State

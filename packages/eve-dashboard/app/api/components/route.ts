@@ -50,7 +50,7 @@ export async function GET() {
 
   const secrets = await readEveSecrets();
   const domain = secrets?.domain?.primary;
-  const ssl = !!secrets?.domain?.ssl;
+  const ssl = secrets?.domain?.ssl !== false;
   const protocol = ssl ? "https" : "http";
 
   // What does state.json know? Each entry has its recorded state + version.

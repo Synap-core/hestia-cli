@@ -501,7 +501,7 @@ async function runPostInstallProvision(installedComponents: string[]): Promise<v
     spinner.warn('Backend is up — first admin account required');
     const secrets = await readEveSecrets(process.cwd());
     const domain = secrets?.domain?.primary;
-    const ssl = !!secrets?.domain?.ssl;
+    const ssl = secrets?.domain?.ssl !== false;
     const protocol = ssl ? 'https' : 'http';
     const setupUrl = domain ? `${protocol}://pod.${domain}/setup` : `${synapUrl}/setup`;
     console.log();
@@ -565,7 +565,7 @@ async function printInstallationRecap(
   const secrets = await readEveSecrets(process.cwd());
   const serverIp = getServerIp();
   const domain = secrets?.domain?.primary;
-  const ssl = !!secrets?.domain?.ssl;
+  const ssl = secrets?.domain?.ssl !== false;
   const protocol = ssl ? 'https' : 'http';
   const hasAi = hasAnyProvider(secrets);
   const dashboardSecret = secrets?.dashboard?.secret;

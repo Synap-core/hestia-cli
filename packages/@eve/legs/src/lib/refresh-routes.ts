@@ -35,7 +35,7 @@ export async function refreshTraefikRoutes(cwd?: string): Promise<RefreshResult>
     const traefik = new TraefikService();
     await traefik.configureSubdomains(
       domain,
-      !!secrets?.domain?.ssl,
+      secrets?.domain?.ssl !== false,
       secrets?.domain?.email,
       installedComponents,
       !!secrets?.domain?.behindProxy,

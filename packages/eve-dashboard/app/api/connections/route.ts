@@ -39,7 +39,7 @@ export async function GET() {
   );
 
   const domain = secrets?.domain?.primary as string | undefined;
-  const ssl = !!(secrets?.domain?.ssl);
+  const ssl = secrets?.domain?.ssl !== false;
   const nangoCallbackUrl = domain
     ? `${ssl ? "https" : "http"}://nango.${domain}/oauth/callback`
     : null;

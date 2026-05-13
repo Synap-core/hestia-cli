@@ -2197,7 +2197,7 @@ async function reconcileOpenwebuiEnv(deployDir: string): Promise<void> {
     "";
   const isUrl = process.env.SYNAP_IS_URL ?? "http://eve-brain-synap:4000";
   const domain = secrets?.domain?.primary;
-  const ssl = !!secrets?.domain?.ssl;
+  const ssl = secrets?.domain?.ssl !== false;
   const protocol = ssl ? "https" : "http";
   const webuiUrl = domain ? `${protocol}://chat.${domain}` : "";
 
@@ -2246,7 +2246,7 @@ async function* installOpenWebUi(): AsyncGenerator<LifecycleEvent> {
   // Surface the public URL when a domain is set so OpenWebUI generates
   // correct absolute links (OAuth callbacks, sharing links, etc.).
   const domain = secrets?.domain?.primary;
-  const ssl = !!secrets?.domain?.ssl;
+  const ssl = secrets?.domain?.ssl !== false;
   const protocol = ssl ? "https" : "http";
   const webuiUrl = domain ? `${protocol}://chat.${domain}` : "";
 
