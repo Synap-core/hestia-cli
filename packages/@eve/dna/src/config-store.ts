@@ -8,6 +8,8 @@
 import type { EveSecrets } from './secrets-contract.js';
 import { readEveSecretsFromDisk, secretsPath } from './secrets-contract.js';
 
+const CACHE_TTL_MS = 30_000;
+
 interface CacheEntry {
   secrets: EveSecrets | null;
   loadedAt: number;
@@ -55,7 +57,7 @@ export interface ConfigStore {
 export const configStore: ConfigStore = {
   async get(cwd?: string): Promise<EveSecrets | null> {
     const entry = cache.get(cacheKey(cwd));
-    if (entry && entry.loadedAt > 0) return entry.secrets;
+    if (entry && Date.now() - entry.loadedAt < CACHE_TTL_MS) return entry.secrets;
     return _load(cwd);
   },
 
