@@ -235,24 +235,37 @@ async function addNango(): Promise<void> {
   printInfo('Pulling nangohq/nango-server:hosted...');
   await execFileAsync('docker', ['pull', 'nangohq/nango-server:hosted'], { timeout: 120_000 });
 
-  // Build docker run args — include webhook URL if pod public URL is known
-  const dockerRunArgs = [
-    'run', '-d',
-    '--name', 'eve-arms-nango',
-    '--network', 'eve-network',
-    '--restart', 'unless-stopped',
-    '-e', `NANGO_SECRET_KEY=${secretKey}`,
-    '-e', 'SERVER_PORT=3003',
-    '-e', 'DATABASE_URL=postgresql://eve:eve@eve-brain-postgres:5432/nango',
-    '-e', 'NODE_ENV=production',
-    ...(podPublicUrl ? ['-e', `NANGO_WEBHOOK_URL=${podPublicUrl}/api/connectors/nango-webhook`] : []),
-    '-v', 'eve-arms-nango-data:/var/lib/nango',
-    'nangohq/nango-server:hosted',
-  ];
+  // Idempotent container start: remove stopped/crashed container, skip if already running
+  const { stdout: runningOut } = await execFileAsync(
+    'docker', ['ps', '--filter', 'name=eve-arms-nango', '--format', '{{.Names}}'],
+    { timeout: 4000 },
+  ).catch(() => ({ stdout: '' }));
+  const alreadyRunning = runningOut.trim().split('\n').includes('eve-arms-nango');
 
-  // Start container
-  printInfo('Starting Nango container...');
-  await execFileAsync('docker', dockerRunArgs, { timeout: 30_000 });
+  if (!alreadyRunning) {
+    // Remove stopped/exited container if it exists so docker run can reuse the name
+    await execFileAsync('docker', ['rm', '-f', 'eve-arms-nango'], { timeout: 10_000 }).catch(() => {/* not found — fine */});
+
+    // Build docker run args — include webhook URL if pod public URL is known
+    const dockerRunArgs = [
+      'run', '-d',
+      '--name', 'eve-arms-nango',
+      '--network', 'eve-network',
+      '--restart', 'unless-stopped',
+      '-e', `NANGO_SECRET_KEY=${secretKey}`,
+      '-e', 'SERVER_PORT=3003',
+      '-e', 'DATABASE_URL=postgresql://eve:eve@eve-brain-postgres:5432/nango',
+      '-e', 'NODE_ENV=production',
+      ...(podPublicUrl ? ['-e', `NANGO_WEBHOOK_URL=${podPublicUrl}/api/connectors/nango-webhook`] : []),
+      '-v', 'eve-arms-nango-data:/var/lib/nango',
+      'nangohq/nango-server:hosted',
+    ];
+
+    printInfo('Starting Nango container...');
+    await execFileAsync('docker', dockerRunArgs, { timeout: 30_000 });
+  } else {
+    printInfo('Nango container already running — skipping start.');
+  }
 
   if (!podPublicUrl) {
     printWarning('  PUBLIC_URL not found in deploy/.env — NANGO_WEBHOOK_URL not set.');
@@ -260,7 +273,7 @@ async function addNango(): Promise<void> {
   }
 
   // Write to secrets.json
-  await writeEveSecrets(process.cwd(), {
+  await writeEveSecrets({
     ...(secrets ?? {}),
     connectors: {
       ...(secrets?.connectors ?? {}),
@@ -270,7 +283,7 @@ async function addNango(): Promise<void> {
         oauthApps: secrets?.connectors?.nango?.oauthApps ?? {},
       },
     },
-  });
+  }, process.cwd());
 
   // Write NANGO_HOST + NANGO_SECRET_KEY to pod deploy/.env
   if (deployDir) {
