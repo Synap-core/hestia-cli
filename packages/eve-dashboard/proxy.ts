@@ -3,7 +3,7 @@ import { jwtVerify } from "jose";
 
 const PUBLIC_PATHS = new Set([
   "/login",
-  "/api/auth/verify",
+  "/api/pod/kratos-auth",
   "/api/pod/setup-status",
 ]);
 

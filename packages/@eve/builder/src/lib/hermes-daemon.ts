@@ -90,6 +90,7 @@ export class HermesDaemon {
   private poller: TaskPoller;
   private intentPoller: IntentPoller;
   private featurePoller: FeaturePoller | null = null;
+  private storyPoller: FeaturePoller | null = null;
   private executor: TaskExecutor;
   private queue = new TaskQueue();
   /**
@@ -141,6 +142,16 @@ export class HermesDaemon {
       apiKey: this.config.apiKey,
       queue: this.queue,
       pollIntervalMs: this.config.pollIntervalMs,
+      profileSlug: 'devplane_feature',
+      entityStatusKey: 'featureStatus',
+    });
+    this.storyPoller = new FeaturePoller({
+      apiBase: this.config.apiUrl,
+      apiKey: this.config.apiKey,
+      queue: this.queue,
+      pollIntervalMs: this.config.pollIntervalMs,
+      profileSlug: 'devplane_story',
+      entityStatusKey: 'storyStatus',
     });
     this.executor = new TaskExecutor({
       maxConcurrent: this.config.maxConcurrentTasks,
@@ -378,6 +389,15 @@ export class HermesDaemon {
         );
       }
     }
+    if (this.storyPoller) {
+      try {
+        featureCount += await this.storyPoller.pollOnce();
+      } catch (err) {
+        console.error(
+          `[Hermes] Story poll error: ${(err as Error).message}`,
+        );
+      }
+    }
 
     // Extra pollers registered by external plugins.
     let extraCount = 0;
@@ -462,17 +482,27 @@ export class HermesDaemon {
       // task entity row (which doesn't exist for in-memory pipeline tasks).
       // Regular entity tasks tell Synap we're starting via PATCH.
       if (isPipelineTask && pipelinePhase && pipelineFeatureId) {
-        await this.featurePoller?.updateFeatureAgentStatus(
-          pipelineFeatureId,
-          this.featurePoller.phaseRunningStatus(pipelinePhase),
-        );
+        await this._updateEntityProperties(pipelineFeatureId, {
+          agent_status: this.featurePoller?.phaseRunningStatus(pipelinePhase) ?? pipelinePhase,
+        });
       } else if (!isIntentTask) {
         await this.poller.updateTaskStatus(task.id, 'in-progress');
       }
 
       try {
         const personality = await this._resolvePersonalityForTask(task);
-        const handle = await this.executor.execute(task, personality);
+        const dispatchTask = isPipelineTask ? {
+          ...task,
+          context: {
+            ...task.context,
+            env: {
+              ...(task.context?.env as Record<string, string> | undefined ?? {}),
+              HERMES_API_URL: this.config.apiUrl,
+              HERMES_API_KEY: this.config.apiKey,
+            },
+          },
+        } : task;
+        const handle = await this.executor.execute(dispatchTask, personality);
         const result = await handle.waitForCompletion();
         const succeeded = result.exitCode === 0;
 
@@ -493,12 +523,17 @@ export class HermesDaemon {
           });
           this.intentSources.delete(task.id);
         } else if (isPipelineTask && pipelinePhase && pipelineFeatureId) {
-          await this.featurePoller?.updateFeatureAgentStatus(
-            pipelineFeatureId,
-            succeeded
-              ? this.featurePoller.phaseSuccessStatus(pipelinePhase)
-              : 'blocked',
-          );
+          if (succeeded) {
+            const successProps: Record<string, unknown> = {
+              agent_status: this.featurePoller?.phaseSuccessStatus(pipelinePhase) ?? 'idle',
+            };
+            if (pipelinePhase === 'execute' || pipelinePhase === 'verify') {
+              successProps.last_completed_phase = pipelinePhase;
+            }
+            await this._updateEntityProperties(pipelineFeatureId, successProps);
+          } else {
+            await this._updateEntityProperties(pipelineFeatureId, { agent_status: 'blocked' });
+          }
         } else if (succeeded) {
           await this.poller.submitResult(task.id, {
             output: result.stdout,
@@ -526,11 +561,26 @@ export class HermesDaemon {
           }
           this.intentSources.delete(task.id);
         } else if (isPipelineTask && pipelineFeatureId) {
-          await this.featurePoller?.updateFeatureAgentStatus(pipelineFeatureId, 'blocked');
+          await this._updateEntityProperties(pipelineFeatureId, { agent_status: 'blocked' });
         } else {
           await this.poller.updateTaskStatus(task.id, 'failed');
         }
       }
+    }
+  }
+
+  private async _updateEntityProperties(entityId: string, props: Record<string, unknown>): Promise<void> {
+    try {
+      await fetch(`${this.config.apiUrl}/api/hub/entities/${entityId}`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${this.config.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ properties: props }),
+      });
+    } catch (error) {
+      console.warn(`[Hermes] Failed to update entity ${entityId}: ${(error as Error).message}`);
     }
   }
 

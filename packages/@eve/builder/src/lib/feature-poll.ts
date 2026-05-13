@@ -22,20 +22,25 @@ const PHASE_SUCCESS_STATUS: Record<PipelinePhase, string> = {
   deploy:  'done',
 };
 
-export interface DevplaneFeature {
+export interface PipelineEntity {
   id: string;
   title: string;
   workspaceId: string;
   properties: {
     featureStatus?: string;
+    storyStatus?: string;
     agent_status?: string;
     context_doc_id?: string | null;
     plan_proposal_id?: string | null;
+    last_completed_phase?: string | null;
   };
 }
 
+/** @deprecated Use PipelineEntity */
+export type DevplaneFeature = PipelineEntity;
+
 interface FeatureSyncResponse {
-  entities: DevplaneFeature[];
+  entities: PipelineEntity[];
   since: string;
 }
 
@@ -53,6 +58,8 @@ export interface FeaturePollerConfig {
   pollIntervalMs?: number;
   maxRetries?: number;
   backoffMultiplier?: number;
+  profileSlug?: 'devplane_feature' | 'devplane_story';
+  entityStatusKey?: 'featureStatus' | 'storyStatus';
 }
 
 const PHASE_PERSONALITY: Record<PipelinePhase, string> = {
@@ -63,22 +70,11 @@ const PHASE_PERSONALITY: Record<PipelinePhase, string> = {
   deploy:  'deployer',
 };
 
-const PHASE_COMMAND: Partial<Record<PipelinePhase, string>> = {
-  gather:
-    'Read the feature description, linked app tech stack, decision records, best practices, and codebase map from Synap. Write a structured context document back to the feature AI channel.',
-  plan:
-    'Read the context document from the feature AI channel. Generate a detailed implementation plan as a numbered task list with file paths, approach, and test strategy. Write it back as a Synap Proposal.',
-  verify:
-    'Run the test suite, type checker, and linter. Write a structured report (pass/fail per check, issues found) back to the feature AI channel.',
-  deploy:
-    'Trigger the Coolify staging deployment recipe for the linked app. Monitor until completion and write the deployment result back.',
-};
-
-function buildPipelineTask(feature: DevplaneFeature, phase: PipelinePhase): Task {
+function buildPipelineTask(entity: PipelineEntity, phase: PipelinePhase, profileSlug: 'devplane_feature' | 'devplane_story'): Task {
   const now = new Date().toISOString();
   return {
-    id: `pipeline:${feature.id}:${phase}:${Date.now()}`,
-    title: `[${phase}] ${feature.title}`,
+    id: `pipeline:${entity.id}:${phase}:${Date.now()}`,
+    title: `[${phase}] ${entity.title}`,
     type: phase === 'execute' ? 'code-gen' : 'custom',
     assignedAgentId: PHASE_PERSONALITY[phase],
     status: 'pending',
@@ -86,13 +82,20 @@ function buildPipelineTask(feature: DevplaneFeature, phase: PipelinePhase): Task
     context: {
       isPipelineTask: true,
       phase,
-      featureId: feature.id,
-      featureTitle: feature.title,
-      workspaceId: feature.workspaceId,
-      contextDocId: feature.properties.context_doc_id ?? undefined,
-      planProposalId: feature.properties.plan_proposal_id ?? undefined,
+      featureId: entity.id,
+      entityId: entity.id,
+      entityType: profileSlug,
+      workspaceId: entity.workspaceId,
+      contextDocId: entity.properties.context_doc_id ?? undefined,
+      planProposalId: entity.properties.plan_proposal_id ?? undefined,
       engine: phase === 'execute' ? 'claudecode' : undefined,
-      customCommand: PHASE_COMMAND[phase],
+      env: {
+        HERMES_ENTITY_ID: entity.id,
+        HERMES_ENTITY_TYPE: profileSlug,
+        HERMES_WORKSPACE_ID: entity.workspaceId,
+        HERMES_CONTEXT_DOC_ID: entity.properties.context_doc_id ?? '',
+        HERMES_PLAN_PROPOSAL_ID: entity.properties.plan_proposal_id ?? '',
+      },
     },
     metadata: {
       createdAt: now,
@@ -102,18 +105,23 @@ function buildPipelineTask(feature: DevplaneFeature, phase: PipelinePhase): Task
 }
 
 /**
- * Returns the pipeline phase to trigger given a feature in "idle" agent state.
- * DevPlane's kanban uses featureStatus values: "planned" | "in-progress" | "done" | "error".
- * Only "in-progress" features are eligible — the phase depends on what context already exists.
+ * Returns the pipeline phase to trigger given an entity in "idle" agent state.
+ * Only entities with entityStatusKey === "in-progress" are eligible.
  */
-function resolveTriggerPhase(feature: DevplaneFeature): PipelinePhase | null {
-  const { featureStatus, context_doc_id, plan_proposal_id } = feature.properties;
+function resolveTriggerPhase(entity: PipelineEntity, entityStatusKey: string): PipelinePhase | null {
+  const entityStatus = (entity.properties as Record<string, unknown>)[entityStatusKey];
+  if (entityStatus !== 'in-progress') return null;
 
-  if (featureStatus !== 'in-progress') return null;
+  const { context_doc_id, plan_proposal_id, last_completed_phase } = entity.properties;
 
   if (!context_doc_id) return 'gather';
   if (!plan_proposal_id) return 'plan';
-  return 'execute';
+
+  const last = last_completed_phase ?? null;
+  if (last !== 'execute' && last !== 'verify') return 'execute';
+  if (last === 'execute') return 'verify';
+  if (last === 'verify') return 'deploy';
+  return null;
 }
 
 export class FeaturePoller {
@@ -124,14 +132,16 @@ export class FeaturePoller {
   private pollIntervalMs: number;
   private maxRetries: number;
   private backoffMultiplier: number;
+  private profileSlug: 'devplane_feature' | 'devplane_story';
+  private entityStatusKey: 'featureStatus' | 'storyStatus';
 
   private lastSince = '0';
   private retryCount = 0;
   private currentBackoff = 0;
 
-  /** featureId → last known agent_status, to detect transitions into "idle" */
+  /** entityId → last known agent_status, to detect transitions into "idle" */
   private lastKnownAgentStatus = new Map<string, string>();
-  /** featureId:phase combinations already enqueued this daemon lifetime */
+  /** entityId:phase combinations already enqueued this daemon lifetime */
   private enqueuedCombinations = new Set<string>();
 
   constructor(config: FeaturePollerConfig) {
@@ -142,6 +152,8 @@ export class FeaturePoller {
     this.pollIntervalMs = config.pollIntervalMs ?? 30_000;
     this.maxRetries = config.maxRetries ?? 5;
     this.backoffMultiplier = config.backoffMultiplier ?? 2;
+    this.profileSlug = config.profileSlug ?? 'devplane_feature';
+    this.entityStatusKey = config.entityStatusKey ?? 'featureStatus';
   }
 
   getBackoffMs(): number {
@@ -182,7 +194,7 @@ export class FeaturePoller {
 
   async pollOnce(): Promise<number> {
     const url = new URL(`${this.apiBase}/api/hub/entities`);
-    url.searchParams.set('profileSlug', 'devplane_feature');
+    url.searchParams.set('profileSlug', this.profileSlug);
     if (this.workspaceId) url.searchParams.set('workspaceId', this.workspaceId);
     url.searchParams.set('since', this.lastSince);
     url.searchParams.set('limit', '100');
@@ -225,41 +237,47 @@ export class FeaturePoller {
       throw new PollError(`[FeaturePoller] Network error: ${(error as Error).message}`);
     }
 
-    const features = data.entities ?? [];
+    const entities = data.entities ?? [];
     let enqueued = 0;
 
-    for (const feature of features) {
-      const agentStatus = feature.properties.agent_status ?? 'idle';
+    for (const entity of entities) {
+      const agentStatus = entity.properties.agent_status ?? 'idle';
 
       if (agentStatus !== 'idle') {
-        this.lastKnownAgentStatus.set(feature.id, agentStatus);
+        this.lastKnownAgentStatus.set(entity.id, agentStatus);
         continue;
       }
 
-      const prevStatus = this.lastKnownAgentStatus.get(feature.id);
-      this.lastKnownAgentStatus.set(feature.id, agentStatus);
+      const prevStatus = this.lastKnownAgentStatus.get(entity.id);
+      this.lastKnownAgentStatus.set(entity.id, agentStatus);
+
+      if (prevStatus === 'blocked' && agentStatus === 'idle') {
+        (['gather', 'plan', 'execute', 'verify', 'deploy'] as PipelinePhase[]).forEach(p =>
+          this.enqueuedCombinations.delete(`${entity.id}:${p}`)
+        );
+      }
 
       // Only act on a transition into "idle" (or first sight of an eligible
-      // feature — covers daemon restart with in-flight features).
+      // entity — covers daemon restart with in-flight entities).
       if (prevStatus === 'idle') continue;
 
-      const phase = resolveTriggerPhase(feature);
+      const phase = resolveTriggerPhase(entity, this.entityStatusKey);
       if (!phase) continue;
 
-      const dedupKey = `${feature.id}:${phase}`;
+      const dedupKey = `${entity.id}:${phase}`;
       if (this.enqueuedCombinations.has(dedupKey)) continue;
 
-      const task = buildPipelineTask(feature, phase);
+      const task = buildPipelineTask(entity, phase, this.profileSlug);
       const accepted = this.queue.enqueue(task);
       if (accepted) {
         this.enqueuedCombinations.add(dedupKey);
         enqueued++;
         console.log(
-          `[FeaturePoller] Enqueued ${phase} task for feature ${feature.id} ("${feature.title}")`,
+          `[FeaturePoller] Enqueued ${phase} task for entity ${entity.id} ("${entity.title}")`,
         );
       } else {
         console.warn(
-          `[FeaturePoller] Queue full — skipped ${phase} task for feature ${feature.id}`,
+          `[FeaturePoller] Queue full — skipped ${phase} task for entity ${entity.id}`,
         );
       }
     }

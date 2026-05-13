@@ -28,13 +28,18 @@ async function _load(cwd?: string): Promise<EveSecrets | null> {
   const key = cacheKey(cwd);
   try {
     const secrets = await readEveSecretsFromDisk(cwd);
-    cache.set(key, { secrets, loadedAt: Date.now() });
+    // Only cache successful reads. Null results (file missing, parse error)
+    // are NOT cached — the next get() will retry from disk. This prevents a
+    // transient read failure (e.g. partial write race) from poisoning all
+    // subsequent reads until process restart.
+    if (secrets !== null) {
+      cache.set(key, { secrets, loadedAt: Date.now() });
+    }
     for (const sub of subscribers) {
       try { sub(secrets); } catch { /* subscriber errors don't break reload */ }
     }
     return secrets;
   } catch {
-    cache.set(key, { secrets: null, loadedAt: Date.now() });
     return null;
   }
 }

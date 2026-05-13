@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -685,7 +685,9 @@ export async function writeEveSecrets(
   const parsed = SecretsSchema.parse(migrated);
   const path = secretsPath(cwd);
   await mkdir(join(cwd, '.eve', 'secrets'), { recursive: true });
-  await writeFile(path, JSON.stringify(parsed, null, 2), { mode: 0o600 });
+  const tmp = `${path}.${randomBytes(4).toString('hex')}.tmp`;
+  await writeFile(tmp, JSON.stringify(parsed, null, 2), { mode: 0o600 });
+  await rename(tmp, path);
   const changedSections = Object.keys(partial as Record<string, unknown>)
     .filter((k) => (partial as Record<string, unknown>)[k] !== undefined)
     .map((k) => `${k}`);
@@ -1075,7 +1077,9 @@ export async function clearCpUserSession(
     updatedAt: new Date().toISOString(),
   };
   await mkdir(join(cwd, ".eve", "secrets"), { recursive: true });
-  await writeFile(path, JSON.stringify(next, null, 2), { mode: 0o600 });
+  const tmp = `${path}.${randomBytes(4).toString('hex')}.tmp`;
+  await writeFile(tmp, JSON.stringify(next, null, 2), { mode: 0o600 });
+  await rename(tmp, path);
   return next;
 }
 

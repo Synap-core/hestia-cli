@@ -21,22 +21,19 @@
  *   200 { ok: true, sessionToken, user: { id, email, name } }
  *   400 { error: "validation", messages: string[] }
  *   400 { error: "pod-url-not-configured" }
- *   401 { error: "Unauthorized" }          — eve-session missing
  *   502 { error: "pod-unreachable", detail }
  *   502 { error: "kratos-error", messages, status }
  */
 
+import { randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
-import { readEveSecrets } from "@eve/dna";
-import { requireAuth } from "@/lib/auth-server";
+import { SignJWT } from "jose";
+import { readEveSecrets, writeEveSecrets } from "@eve/dna";
 import { createEveKratosClient } from "@/lib/eve-kratos-client";
 import { getPodRuntimeContext } from "@/lib/pod-runtime-context";
 import { DashboardApiException, toDashboardApiError } from "@/lib/pod-response-parsers";
 
 export async function POST(req: Request) {
-  const auth = await requireAuth();
-  if ("error" in auth) return auth.error;
-
   let mode: string;
   let email: string;
   let password: string;
@@ -153,7 +150,53 @@ export async function POST(req: Request) {
   if (cookieDomain) parts.push(`Domain=${cookieDomain}`);
   response.headers.set("Set-Cookie", parts.join("; "));
 
+  // Auto-issue an eve-session JWT so the dashboard is immediately unlocked
+  // after login — no separate "paste your key" step required. We generate
+  // dashboard.secret on first login if it doesn't exist yet.
+  const eveSession = await issueEveSessionCookie({
+    uid: identity?.id ?? "",
+    email: userEmail,
+    isSecure,
+  });
+  if (eveSession) response.headers.append("Set-Cookie", eveSession);
+
   return response;
+}
+
+async function issueEveSessionCookie(opts: {
+  uid: string;
+  email: string;
+  isSecure: boolean;
+}): Promise<string | null> {
+  try {
+    const secrets = await readEveSecrets();
+    let dashboardSecret = secrets?.dashboard?.secret;
+
+    if (!dashboardSecret) {
+      dashboardSecret = randomBytes(32).toString("hex");
+      await writeEveSecrets({ dashboard: { secret: dashboardSecret } });
+    }
+
+    const key = new TextEncoder().encode(dashboardSecret);
+    const token = await new SignJWT({ sub: "eve-dashboard", uid: opts.uid, email: opts.email })
+      .setProtectedHeader({ alg: "HS256" })
+      .setIssuedAt()
+      .setExpirationTime("48h")
+      .sign(key);
+
+    const parts = [
+      `eve-session=${token}`,
+      "Path=/",
+      "HttpOnly",
+      "SameSite=Lax",
+      `Max-Age=${48 * 60 * 60}`,
+    ];
+    if (opts.isSecure) parts.push("Secure");
+    return parts.join("; ");
+  } catch {
+    // Non-fatal — Kratos auth succeeded; eve-session is a convenience cache
+    return null;
+  }
 }
 
 /**
