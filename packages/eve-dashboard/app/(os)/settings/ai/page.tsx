@@ -1229,6 +1229,18 @@ export default function AiProvidersPage() {
           Most changes auto-apply on save. Use{" "}
           <span className="font-medium text-foreground">Apply to components</span> when you want to manually re-push the current config (e.g. after restarting a container).
         </p>
+        <div className="mt-4 rounded-lg border border-default-200 bg-default-50">
+          <p className="border-b border-default-200 px-3 py-2 text-xs font-medium text-default-600">Eve CLI — run on your server</p>
+          <div className="space-y-1 p-3 font-mono text-xs text-default-700">
+            <p><span className="text-default-400 select-none">$ </span>eve ai apply<span className="ml-3 font-sans text-default-400"># wire all components</span></p>
+            <p><span className="text-default-400 select-none">$ </span>eve ai apply --component openclaw<span className="ml-3 font-sans text-default-400"># wire one service</span></p>
+            <p><span className="text-default-400 select-none">$ </span>eve ai service list<span className="ml-3 font-sans text-default-400"># show per-service overrides</span></p>
+            <p><span className="text-default-400 select-none">$ </span>eve ai service set openclaw anthropic --model claude-opus-4-7</p>
+            <p><span className="text-default-400 select-none">$ </span>eve ai service model synap claude-sonnet-4-6<span className="ml-3 font-sans text-default-400"># model only</span></p>
+            <p><span className="text-default-400 select-none">$ </span>eve ai service unset openclaw<span className="ml-3 font-sans text-default-400"># back to global default</span></p>
+            <p><span className="text-default-400 select-none">$ </span>eve ai status<span className="ml-3 font-sans text-default-400"># current config + Ollama</span></p>
+          </div>
+        </div>
         <a
           href="/settings/channels"
           className="mt-3 inline-flex items-center gap-1.5 text-xs text-primary hover:underline"

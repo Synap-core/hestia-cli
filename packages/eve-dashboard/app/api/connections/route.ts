@@ -6,6 +6,8 @@ export interface ConnectionsState {
   nangoInstalled: boolean;
   nangoRunning: boolean;
   connectedApps: string[];
+  /** Full OAuth redirect URI to paste into provider app settings. Null if no domain configured. */
+  nangoCallbackUrl: string | null;
 }
 
 export async function GET() {
@@ -35,9 +37,16 @@ export async function GET() {
     (nango?.oauthApps as Record<string, unknown> | undefined) ?? {}
   );
 
+  const domain = secrets?.domain?.primary as string | undefined;
+  const ssl = !!(secrets?.domain?.ssl);
+  const nangoCallbackUrl = domain
+    ? `${ssl ? "https" : "http"}://nango.${domain}/oauth/callback`
+    : null;
+
   return NextResponse.json<ConnectionsState>({
     nangoInstalled,
     nangoRunning,
     connectedApps,
+    nangoCallbackUrl,
   });
 }

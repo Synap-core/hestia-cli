@@ -270,6 +270,7 @@ export default function ConnectionsPage() {
               service={service}
               connected={connected}
               nangoInstalled={state?.nangoInstalled ?? false}
+              nangoCallbackUrl={state?.nangoCallbackUrl ?? null}
             />
           );
         })}
@@ -282,10 +283,11 @@ export default function ConnectionsPage() {
 // Service card
 // ---------------------------------------------------------------------------
 
-function ServiceCard({ service, connected, nangoInstalled }: {
+function ServiceCard({ service, connected, nangoInstalled, nangoCallbackUrl }: {
   service: Service;
   connected: boolean;
   nangoInstalled: boolean;
+  nangoCallbackUrl: string | null;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -361,12 +363,18 @@ function ServiceCard({ service, connected, nangoInstalled }: {
               <ExternalLink className="h-3 w-3" />
             </a>
             <span className="text-foreground/20">·</span>
-            <p className="text-[11px] text-foreground/40">
-              Nango redirect URI:{" "}
-              <code className="font-mono bg-content1 border border-divider rounded px-1">
-                http://&lt;your-domain&gt;:3003/oauth/callback
-              </code>
-            </p>
+            {nangoCallbackUrl ? (
+              <p className="text-[11px] text-foreground/40">
+                Redirect URI:{" "}
+                <code className="font-mono bg-content1 border border-divider rounded px-1 select-all">
+                  {nangoCallbackUrl}
+                </code>
+              </p>
+            ) : (
+              <p className="text-[11px] text-foreground/40">
+                Redirect URI: set a domain first (<code className="font-mono">eve domain set</code>)
+              </p>
+            )}
           </div>
           <p className="text-[11px] text-foreground/40">
             Once you have the OAuth credentials, register the integration in Nango:{" "}

@@ -297,14 +297,36 @@ async function addNango(): Promise<void> {
       return re.test(content) ? content.replace(re, line) : `${content}\n${line}`;
     };
 
-    envContent = setEnvVar(envContent, 'NANGO_HOST', 'http://localhost:3003');
+    // Prefer the public subdomain URL so the pod backend can reach Nango via
+    // the same hostname that OAuth providers redirect to.
+    const refreshedSecrets = await readEveSecrets(process.cwd()).catch(() => null);
+    const domain = refreshedSecrets?.domain?.primary;
+    const ssl = !!refreshedSecrets?.domain?.ssl;
+    const nangoHost = domain
+      ? `${ssl ? 'https' : 'http'}://nango.${domain}`
+      : 'http://eve-arms-nango:3003';
+
+    envContent = setEnvVar(envContent, 'NANGO_HOST', nangoHost);
     envContent = setEnvVar(envContent, 'NANGO_SECRET_KEY', secretKey);
     await writeFile(envPath, envContent.trimStart(), 'utf8');
-    printInfo(`  Wrote NANGO_HOST + NANGO_SECRET_KEY to ${envPath}`);
+    printInfo(`  Wrote NANGO_HOST=${nangoHost} + NANGO_SECRET_KEY to ${envPath}`);
+
+    // Restart synap-backend so it picks up the new env vars immediately.
+    const backendContainer = await findSynapBackendContainer();
+    if (backendContainer) {
+      printInfo(`  Restarting ${backendContainer} to apply NANGO_SECRET_KEY...`);
+      await execFileAsync('docker', ['restart', backendContainer], { timeout: 60_000 });
+      printInfo('  Backend restarted.');
+    } else {
+      printWarning('  Could not find synap-backend container — restart it manually to apply NANGO_SECRET_KEY.');
+    }
   } else {
     printWarning('  Could not locate deploy/.env — set SYNAP_DEPLOY_DIR and rerun to write env vars.');
-    printInfo(`  Add manually: NANGO_HOST=http://localhost:3003  NANGO_SECRET_KEY=${secretKey}`);
+    printInfo(`  Add manually: NANGO_HOST=http://eve-arms-nango:3003  NANGO_SECRET_KEY=${secretKey}`);
   }
+
+  // Wire nango.{domain} subdomain via Traefik (no-op if no domain configured yet)
+  await materializeTargets(null, ['traefik-routes']);
 
   printSuccess('Nango installed. Connect your first account: eve connectors setup google');
 }

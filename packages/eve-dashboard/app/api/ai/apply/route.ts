@@ -10,7 +10,7 @@
 import { NextResponse } from "next/server";
 import {
   readEveSecrets, writeEveSecrets, entityStateManager,
-  AI_CONSUMERS_NEEDING_RECREATE,
+  AI_CONSUMERS, AI_CONSUMERS_NEEDING_RECREATE,
   type WireAiResult,
 } from "@eve/dna";
 import { materializeTargets, runActionToCompletion } from "@eve/lifecycle";
@@ -26,11 +26,13 @@ export async function POST() {
     installed = await entityStateManager.getInstalledComponents();
   } catch { /* state not initialized */ }
 
-  if (installed.length === 0) {
-    return NextResponse.json({ ok: true, results: [], message: "No installed components" });
-  }
+  // Fall back to all known AI consumers when state.json has no setupProfile
+  // (e.g. dev environments where eve was not fully provisioned).
+  const components = installed.length > 0
+    ? installed.filter(id => AI_CONSUMERS.has(id))
+    : Array.from(AI_CONSUMERS);
 
-  const [materialized] = await materializeTargets(secrets, ["ai-wiring"], { components: installed });
+  const [materialized] = await materializeTargets(secrets, ["ai-wiring"], { components });
   const results = Array.isArray(materialized?.details?.results)
     ? materialized.details.results as WireAiResult[]
     : [];
@@ -40,7 +42,7 @@ export async function POST() {
   // recreate via lifecycle so the manual "Apply" button is actually
   // sufficient — same guarantee as auto-apply.
   for (const id of AI_CONSUMERS_NEEDING_RECREATE) {
-    if (!installed.includes(id)) continue;
+    if (!components.includes(id)) continue;
     const r = await runActionToCompletion(id, "recreate");
     const recreated: WireAiResult = {
       id,

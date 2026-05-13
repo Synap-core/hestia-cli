@@ -121,7 +121,7 @@ Requires Postgres (already part of the Brain). Listens on port 3003, accessible 
       containerName: 'eve-arms-nango',
       internalPort: 3003,
       hostPort: null,
-      subdomain: null,
+      subdomain: 'nango',
       healthPath: '/health',
     },
     health: { kind: 'http', path: '/health' },

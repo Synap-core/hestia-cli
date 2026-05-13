@@ -172,8 +172,11 @@ export async function PATCH(req: Request) {
   if (shouldApply) {
     try {
       const installed = await entityStateManager.getInstalledComponents();
-      const consumers = installed.filter(id => AI_CONSUMERS.has(id));
-      if (consumers.length > 0) {
+      // Fall back to all known AI consumers when state.json has no setupProfile.
+      const consumers = installed.length > 0
+        ? installed.filter(id => AI_CONSUMERS.has(id))
+        : Array.from(AI_CONSUMERS);
+      {
         const fresh = await readEveSecrets(); // re-read after write
         const [materialized] = await materializeTargets(fresh, ["ai-wiring"], { components: consumers });
         applyResults = Array.isArray(materialized?.details?.results)
