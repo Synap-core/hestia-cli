@@ -83,6 +83,13 @@ export const AGENTS: AgentInfo[] = [
     alwaysProvision: false,
   },
   {
+    agentType: "openwebui",
+    label: "Open WebUI",
+    description: "Open WebUI chat frontend — used for Synap knowledge/skills/functions sync and model source auth.",
+    componentId: "openwebui",
+    alwaysProvision: false,
+  },
+  {
     agentType: "coder",
     label: "Coder",
     description:

@@ -238,13 +238,15 @@ export async function pushSynapFunctionsToOpenwebui(
   _secrets: EveSecrets,
 ): Promise<FunctionsSyncResult> {
   // Hub bearer for the running Filter Functions to authenticate Synap calls.
-  // We use the eve agent identity for both — same pattern as the prompts /
-  // tool-server flows. The `hubBaseUrl` arg is intentionally unused: the
-  // valves embed the container-network URL (`SYNAP_BACKEND_INTERNAL_URL`)
-  // so OWUI's container resolves Synap via Docker DNS, not the public host.
-  const apiKey = await readAgentKeyOrLegacy('eve', cwd);
+  // Prefer the `openwebui` agent identity so OWUI's Hub traffic has its
+  // own audit trail. Pre-migration installs fall back to the always-on
+  // eve key. The `hubBaseUrl` arg is intentionally unused: the valves
+  // embed the container-network URL (`SYNAP_BACKEND_INTERNAL_URL`) so
+  // OWUI's container resolves Synap via Docker DNS, not the public host.
+  let apiKey = await readAgentKeyOrLegacy('openwebui', cwd);
+  if (!apiKey) apiKey = await readAgentKeyOrLegacy('eve', cwd);
   if (!apiKey) {
-    throw new Error('No Hub API key — secrets.agents.eve.hubApiKey is unset');
+    throw new Error('No Hub API key — run: eve auth provision --agent openwebui (or eve auth provision --agent eve)');
   }
 
   const jwt = await getAdminJwt();

@@ -58,6 +58,22 @@ async function findSynapBackendContainer(): Promise<string | null> {
   } catch { return null; }
 }
 
+async function findSynapPostgresContainer(): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync(
+      'docker',
+      [
+        'ps',
+        '--filter', 'label=com.docker.compose.project=synap-backend',
+        '--filter', 'label=com.docker.compose.service=postgres',
+        '--format', '{{.Names}}',
+      ],
+      { timeout: 4000 },
+    );
+    return stdout.trim().split('\n')[0]?.trim() || null;
+  } catch { return null; }
+}
+
 /**
  * Returns true if the brain (synap) is ready.
  * Checks state.json first; if state says error/missing but the synap backend
@@ -203,43 +219,56 @@ async function addNango(): Promise<void> {
   const existingKey = secrets?.connectors?.nango?.secretKey;
   const secretKey = existingKey ?? randomBytes(32).toString('hex');
 
-  // Create the nango database in the shared postgres instance
-  printInfo('Creating Nango database in Postgres...');
-  try {
-    await execFileAsync('docker', [
-      'exec', 'eve-brain-postgres',
-      'psql', '-U', 'eve', '-c',
-      'CREATE DATABASE nango;',
-    ], { timeout: 10_000 });
-  } catch {
-    // Ignore "already exists" errors — idempotent
+  // Find the actual postgres container (name varies by compose project, e.g. synap-backend-postgres-1)
+  const postgresContainer = await findSynapPostgresContainer();
+  if (!postgresContainer) {
+    printWarning('  Could not find synap-backend postgres container — skipping database creation.');
+  } else {
+    // Create the nango database in the shared postgres instance
+    printInfo(`Creating Nango database in ${postgresContainer}...`);
+    try {
+      await execFileAsync('docker', [
+        'exec', postgresContainer,
+        'psql', '-U', pgUser, '-c',
+        'CREATE DATABASE nango;',
+      ], { timeout: 10_000 });
+    } catch {
+      // Ignore "already exists" errors — idempotent
+    }
+
+    // Nango runs on eve-network but postgres is on synap-backend's compose network.
+    // Connect postgres to eve-network with the alias `eve-brain-postgres` so Nango
+    // can resolve it by that hostname.
+    try {
+      await execFileAsync('docker', [
+        'network', 'connect', '--alias', 'eve-brain-postgres',
+        'eve-network', postgresContainer,
+      ], { timeout: 10_000 });
+      printInfo(`  Connected ${postgresContainer} to eve-network as eve-brain-postgres.`);
+    } catch {
+      // Already connected — fine
+    }
   }
 
-  // Nango runs on eve-network but eve-brain-postgres is on synap-backend's compose
-  // network. Connect postgres to eve-network so Nango can reach it by hostname.
-  try {
-    await execFileAsync('docker', [
-      'network', 'connect', '--alias', 'eve-brain-postgres',
-      'eve-network', 'eve-brain-postgres',
-    ], { timeout: 10_000 });
-    printInfo('  Connected eve-brain-postgres to eve-network.');
-  } catch {
-    // Already connected — fine
-  }
-
-  // Resolve deploy/.env early so we can read PUBLIC_URL before starting the container
+  // Resolve deploy/.env early so we can read PUBLIC_URL and postgres credentials
   const deployDir =
     process.env.SYNAP_DEPLOY_DIR ||
     (existsSync('/opt/synap-backend/deploy') ? '/opt/synap-backend/deploy' : null);
 
   let podPublicUrl = '';
+  let pgUser = 'synap';
+  let pgPassword = 'synap';
   if (deployDir) {
     const { readFile: rf } = await import('node:fs/promises');
     const envPath = pathJoin(deployDir, '.env');
     try {
       const envContent = await rf(envPath, 'utf8');
-      const match = envContent.match(/^PUBLIC_URL=(.+)$/m);
-      if (match?.[1]) podPublicUrl = match[1].trim();
+      const matchUrl = envContent.match(/^PUBLIC_URL=(.+)$/m);
+      if (matchUrl?.[1]) podPublicUrl = matchUrl[1].trim();
+      const matchUser = envContent.match(/^POSTGRES_USER=(.+)$/m);
+      if (matchUser?.[1]) pgUser = matchUser[1].trim();
+      const matchPass = envContent.match(/^POSTGRES_PASSWORD=(.+)$/m);
+      if (matchPass?.[1]) pgPassword = matchPass[1].trim();
     } catch { /* .env may not exist yet */ }
   }
 
@@ -266,7 +295,7 @@ async function addNango(): Promise<void> {
       '--restart', 'unless-stopped',
       '-e', `NANGO_SECRET_KEY=${secretKey}`,
       '-e', 'SERVER_PORT=3003',
-      '-e', 'NANGO_DATABASE_URL=postgresql://eve:eve@eve-brain-postgres:5432/nango',
+      '-e', `NANGO_DATABASE_URL=postgresql://${pgUser}:${pgPassword}@eve-brain-postgres:5432/nango`,
       '-e', 'NODE_ENV=production',
       ...(podPublicUrl ? ['-e', `NANGO_WEBHOOK_URL=${podPublicUrl}/api/connectors/nango-webhook`] : []),
       '-v', 'eve-arms-nango-data:/var/lib/nango',

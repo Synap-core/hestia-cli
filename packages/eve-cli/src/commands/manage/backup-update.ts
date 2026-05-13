@@ -256,14 +256,32 @@ async function buildUpdateTargets(deployDir: string | undefined): Promise<Update
       const ssl = !!(secrets?.domain?.ssl);
       const nangoHost = domain ? `${ssl ? 'https' : 'http'}://nango.${domain}` : 'http://eve-arms-nango:3003';
       const podPublicUrl = domain ? `${ssl ? 'https' : 'http'}://${domain}` : '';
+      // Read postgres credentials from deploy/.env
+      let pgUser = 'synap';
+      let pgPass = 'synap';
+      const dDir0 = findPodDeployDir() ?? undefined;
+      if (dDir0) {
+        const { readFile: rf0 } = await import('node:fs/promises');
+        const { join: pj0 } = await import('node:path');
+        const e0 = await rf0(pj0(dDir0, '.env'), 'utf8').catch(() => '');
+        const mu = e0.match(/^POSTGRES_USER=(.+)$/m); if (mu?.[1]) pgUser = mu[1].trim();
+        const mp = e0.match(/^POSTGRES_PASSWORD=(.+)$/m); if (mp?.[1]) pgPass = mp[1].trim();
+      }
       await execFileAsync('docker', ['pull', 'nangohq/nango-server:hosted'], { timeout: 120_000 });
       await execFileAsync('docker', ['rm', '-f', 'eve-arms-nango'], { timeout: 10_000 }).catch(() => {});
-      // Ensure postgres is on eve-network
-      await execFileAsync('docker', ['network', 'connect', '--alias', 'eve-brain-postgres', 'eve-network', 'eve-brain-postgres'], { timeout: 10_000 }).catch(() => {});
+      // Find postgres by compose labels and connect it to eve-network so Nango can reach it
+      const pgOut = await execFileAsync('docker', [
+        'ps', '--filter', 'label=com.docker.compose.project=synap-backend',
+        '--filter', 'label=com.docker.compose.service=postgres', '--format', '{{.Names}}',
+      ], { timeout: 4000 }).catch(() => ({ stdout: '' }));
+      const pgContainer = pgOut.stdout.trim().split('\n')[0]?.trim();
+      if (pgContainer) {
+        await execFileAsync('docker', ['network', 'connect', '--alias', 'eve-brain-postgres', 'eve-network', pgContainer], { timeout: 10_000 }).catch(() => {});
+      }
       const runArgs = [
         'run', '-d', '--name', 'eve-arms-nango', '--network', 'eve-network', '--restart', 'unless-stopped',
         '-e', `NANGO_SECRET_KEY=${secretKey}`, '-e', 'SERVER_PORT=3003',
-        '-e', `NANGO_DATABASE_URL=postgresql://eve:eve@eve-brain-postgres:5432/nango`,
+        '-e', `NANGO_DATABASE_URL=postgresql://${pgUser}:${pgPass}@eve-brain-postgres:5432/nango`,
         '-e', 'NODE_ENV=production',
         ...(podPublicUrl ? ['-e', `NANGO_WEBHOOK_URL=${podPublicUrl}/api/connectors/nango-webhook`] : []),
         '-v', 'eve-arms-nango-data:/var/lib/nango',

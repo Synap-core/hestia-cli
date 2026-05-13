@@ -916,7 +916,7 @@ async function* validateAndRenewKeyIfRevoked(agentType: string): AsyncGenerator<
       } else {
         yield {
           type: "log",
-          line: `↳ workspace membership repair failed (${renewed.reason}) — run \`eve auth provision --agent ${agentType}\` manually`,
+          line: `↳ workspace repair failed (${renewed.reason}) — run: eve auth provision --agent ${agentType} to re-provision`,
         };
       }
     }
@@ -1175,7 +1175,7 @@ async function* postUpdateReconcileAuth(): AsyncGenerator<LifecycleEvent> {
     //      don't fail an update that has nothing to do with auth.
     yield {
       type: "log",
-      line: "↳ no eve agent key found — attempting auto-provisioning",
+      line: "↳ no eve agent key — run: eve auth provision --agent eve (attempting auto-provisioning now)",
     };
     yield* postInstallProvisionAgents("synap");
     yield* postInstallSeedBuilderWorkspace();
@@ -1206,7 +1206,7 @@ async function* postUpdateReconcileAuth(): AsyncGenerator<LifecycleEvent> {
       } else {
         yield {
           type: "log",
-          line: `↳ workspace membership repair failed (${renewed.reason}) — run \`eve auth provision --agent eve\` manually`,
+          line: `↳ workspace repair failed (${renewed.reason}) — run: eve auth provision --agent eve to re-provision`,
         };
       }
     }
@@ -1214,6 +1214,25 @@ async function* postUpdateReconcileAuth(): AsyncGenerator<LifecycleEvent> {
     // the seeded schema back in sync with the bundled template (idempotent
     // via proposalId). Errors yield a log only — never break update.
     yield* postInstallSeedBuilderWorkspace();
+
+    // Validate other installed agents' keys (best-effort — never block the
+    // update). Each agent has its own Hub identity; a missing slot here
+    // means downstream wiring will fail loudly, so surface it now with an
+    // actionable hint instead of waiting for the operator to notice the
+    // 401 in OWUI / OpenClaw later.
+    try {
+      const { AGENTS } = await import("@eve/dna");
+      const installed = await entityStateManager.getInstalledComponents();
+      const otherAgents = ["hermes", "openclaw", "openwebui"].filter((a) =>
+        installed.includes(a) || AGENTS.find((ag) => ag.agentType === a)?.alwaysProvision,
+      );
+      for (const agentType of otherAgents) {
+        const key = await readAgentKey(agentType);
+        if (!key?.hubApiKey) {
+          yield { type: "log", line: `↳ ${agentType} agent key missing — run: eve auth provision --agent ${agentType}` };
+        }
+      }
+    } catch { /* ignore — don't break update on validation error */ }
     return;
   }
 
@@ -1242,14 +1261,14 @@ async function* postUpdateReconcileAuth(): AsyncGenerator<LifecycleEvent> {
     };
     yield {
       type: "log",
-      line: "↳ downstream clients (openwebui-pipelines, openclaw) may need restart to pick up the new key",
+      line: "↳ containers using the old key need restart — run: docker restart eve-brain-openwebui eve-proxy-openclaw",
     };
     // Fresh key in place — make sure the Builder workspace exists.
     yield* postInstallSeedBuilderWorkspace();
   } else {
     yield {
       type: "log",
-      line: `↳ auto-renew failed: ${renewed.reason} — run \`eve auth renew\` manually`,
+      line: `↳ key renewal failed (${renewed.reason}) — run: eve auth renew --agent eve`,
     };
   }
 }

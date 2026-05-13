@@ -786,17 +786,18 @@ export async function readAgentKeyOrLegacy(
 }
 
 /**
- * Synchronous variant of `readAgentKeyOrLegacy` that takes an already-loaded
- * secrets blob. Useful for callers that have already paid the file read
- * cost and don't want to re-read inside a tight loop.
+ * SYNC: Resolve a Hub API key from a pre-loaded secrets object.
  *
  * Resolution order:
- *   1. `secrets.agents[agentType].hubApiKey`    — per-agent key
- *   2. `secrets.synap.apiKey`                    — legacy single-key
- *   3. `secrets.agents.eve.hubApiKey`            — eve agent (always
- *      provisioned). Any valid Hub Protocol key authenticates to Synap
- *      IS, so this is a safe last resort for consumers that don't
- *      strictly need their named identity.
+ *   1. secrets.agents[agentType].hubApiKey   — per-agent key (canonical)
+ *   2. secrets.synap.apiKey                  — legacy single-key, read-only
+ *      for agentType "eve" only (back-compat for installs before per-agent
+ *      keys were introduced). All other agents return '' when key missing.
+ *
+ * Returns '' when the key is absent — callers must handle this case
+ * explicitly rather than relying on a catch-all fallback.
+ *
+ * Use readAgentKey() (async) when you can afford a file read.
  */
 export function readAgentKeyOrLegacySync(
   agentType: string,
@@ -804,12 +805,10 @@ export function readAgentKeyOrLegacySync(
 ): string {
   const perAgent = secrets?.agents?.[agentType]?.hubApiKey?.trim();
   if (perAgent) return perAgent;
-  const legacy = secrets?.synap?.apiKey?.trim();
-  if (legacy) return legacy;
-  // Eve agent is always-on and always provisioned. Its key is a valid
-  // Hub Protocol bearer — safe fallback for any consumer.
-  const eveKey = secrets?.agents?.eve?.hubApiKey?.trim();
-  if (eveKey) return eveKey;
+  if (agentType === 'eve') {
+    const legacy = secrets?.synap?.apiKey?.trim();
+    if (legacy) return legacy;
+  }
   return '';
 }
 
@@ -818,10 +817,11 @@ export function readAgentKeyOrLegacySync(
  *
  * - Reads the current file (creates a baseline if missing).
  * - Replaces only `agents[agentType]` — every other field passes through.
- * - When `agentType === "eve"`, ALSO mirrors `hubApiKey` into the legacy
- *   `synap.apiKey` field so back-compat consumers (older OpenWebUI
- *   pipelines wiring, dashboard preview cards) keep working through the
- *   one-release transition.
+ *
+ * The legacy `synap.apiKey` slot is no longer written. Existing installs
+ * that still carry that field continue to read it through
+ * `readAgentKeyOrLegacySync('eve', secrets)` for migration purposes, but
+ * new writes only land in `agents[agentType]`.
  *
  * Caller-side concurrency: this function does a read-modify-write but
  * does NOT take a file lock. Eve's lifecycle path is single-threaded
@@ -851,17 +851,6 @@ export async function writeAgentKey(
   const partial: Omit<EveSecrets, 'version' | 'updatedAt'> = {
     agents: nextAgents,
   };
-
-  // Mirror the eve agent's key into the legacy field so older code that
-  // reads `secrets.synap.apiKey` keeps working. We do this here (not in
-  // the auth layer) so any path that mints an eve key — install,
-  // renew, migrate — gets the back-compat alias for free.
-  if (agentType === 'eve') {
-    partial.synap = {
-      ...(current.synap as Record<string, unknown> | undefined),
-      apiKey: record.hubApiKey,
-    };
-  }
 
   return writeEveSecrets(partial, cwd);
 }

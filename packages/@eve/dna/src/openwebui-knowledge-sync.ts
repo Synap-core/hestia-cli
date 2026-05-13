@@ -421,9 +421,12 @@ export async function syncSynapKnowledgeToOpenwebui(
     `Mirrored from Synap pod (namespace: ${namespace}). Managed by Eve.`;
   const maxEntries = opts.maxEntries ?? DEFAULT_MAX_ENTRIES;
 
-  const hubApiKey = readAgentKeyOrLegacySync('eve', secrets);
+  // Prefer the `openwebui` agent identity; fall back to the always-on eve
+  // agent so pre-migration installs still resolve a working bearer.
+  let hubApiKey = readAgentKeyOrLegacySync('openwebui', secrets);
+  if (!hubApiKey) hubApiKey = readAgentKeyOrLegacySync('eve', secrets);
   if (!hubApiKey) {
-    throw new Error('No Synap Hub API key available (looked for agents.eve.hubApiKey / synap.apiKey)');
+    throw new Error('No Synap Hub API key available — run: eve auth provision --agent openwebui (or eve auth provision --agent eve)');
   }
 
   const jwt = await getAdminJwt();

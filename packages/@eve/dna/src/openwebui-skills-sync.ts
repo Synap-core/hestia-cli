@@ -187,11 +187,14 @@ export async function pushSynapSkillsToOpenwebuiPrompts(
   hubBaseUrl: string,
   secrets: EveSecrets,
 ): Promise<SkillsSyncResult> {
-  // Hub auth — eve agent identity, with legacy single-key fallback (matches
-  // the contract used by ensureEveSkillsLayout / writeBuilderProjectEnv).
-  const apiKey = await readAgentKeyOrLegacy('eve', cwd);
+  // Hub auth — prefer the `openwebui` agent identity so this sync has its
+  // own audit trail / rotation. Pre-migration installs fall back to the
+  // eve agent (always-on) so older deploys keep working without re-running
+  // provisioning. Empty string means neither slot is provisioned.
+  let apiKey = await readAgentKeyOrLegacy('openwebui', cwd);
+  if (!apiKey) apiKey = await readAgentKeyOrLegacy('eve', cwd);
   if (!apiKey) {
-    throw new Error('No Hub API key available — secrets.agents.eve.hubApiKey is unset');
+    throw new Error('No Hub API key available — run: eve auth provision --agent openwebui (or eve auth provision --agent eve)');
   }
 
   // Pull the canonical SKILL.md docs from the pod. A failure here aborts the

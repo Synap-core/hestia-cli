@@ -328,11 +328,16 @@ async function wireOpenwebui(secrets: EveSecrets | null): Promise<WireAiResult> 
   // OpenWebUI's OPENAI_API_KEY is what the chat UI uses to call Synap IS,
   // and what the inline Filter Functions (memory injection + channel sync)
   // forward as their Hub Protocol bearer. Both surfaces share the same
-  // identity — the `eve` agent — so revoking it cleans up everything OWUI
-  // does against Synap in one shot.
-  const synapApiKey = readAgentKeyOrLegacySync('eve', secrets);
+  // `openwebui` agent identity so OWUI's Hub calls get their own audit
+  // trail and can be rotated independently. On pre-migration installs
+  // where `openwebui` hasn't been provisioned yet, fall back to the eve
+  // key so the wire path still produces a working chat UI.
+  let synapApiKey = readAgentKeyOrLegacySync('openwebui', secrets);
   if (!synapApiKey) {
-    return { id: 'openwebui', outcome: 'skipped', summary: 'no Synap pod API key — install Synap first' };
+    synapApiKey = readAgentKeyOrLegacySync('eve', secrets);
+  }
+  if (!synapApiKey) {
+    return { id: 'openwebui', outcome: 'skipped', summary: 'no Synap API key — run: eve auth provision --agent openwebui (or eve auth provision --agent eve)' };
   }
 
   const providers = secrets?.ai?.providers ?? [];
