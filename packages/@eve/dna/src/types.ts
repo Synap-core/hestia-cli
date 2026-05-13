@@ -242,7 +242,7 @@ export const SERVICE_REGISTRY: Record<Service, ServiceConfig> = {
   // Stores OAuth tokens for Google, Slack, etc. on the user's pod.
   // Pod backend connects via http://localhost:3003 (NANGO_HOST env var).
   nango: {
-    image: 'nangohq/nango:latest',
+    image: 'nangohq/nango-server:hosted',
     containerName: 'eve-arms-nango',
     ports: ['3003:3003'],
     environment: {

@@ -31,6 +31,7 @@ import { OpenclawConfigPanel } from "./config-panels/openclaw-config";
 import { HermesConfigPanel } from "./config-panels/hermes-config";
 import { SynapConfigPanel } from "./config-panels/synap-config";
 import { OpenwebuiConfigPanel } from "./config-panels/openwebui-config";
+import { NangoConfigPanel } from "./config-panels/nango-config";
 
 // ---------------------------------------------------------------------------
 // Shared types — kept here so the drawer + page consume the same shape
@@ -734,6 +735,13 @@ function ComponentConfigPanel({ id, installed }: { id: string; installed: boolea
     return (
       <Section title="Chat" icon={<Settings className="h-4 w-4" />}>
         <OpenwebuiConfigPanel />
+      </Section>
+    );
+  }
+  if (id === "nango") {
+    return (
+      <Section title="Configuration" icon={<Settings className="h-4 w-4" />}>
+        <NangoConfigPanel />
       </Section>
     );
   }

@@ -1,7 +1,7 @@
 {
   "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"cp src/lib/synap-image-install.ts /tmp/synap-image-install.bak2.ts && \\\\\\n  awk 'NR<67 || NR>211 { print }' /tmp/synap-image-install.bak2.ts > src/lib/synap-image-install.ts && \\\\\\n  wc -l...",
-  "error": "Exit code 1\ncp: src/lib/synap-image-install.ts: No such file or directory",
-  "timestamp": "2026-05-09T18:43:47.232Z",
+  "tool_input_preview": "{\"command\":\"cat /Users/antoine/Documents/Code/synap/hestia-cli/packages/eve-dashboard/app/(os)/settings/components/component-surface.tsx\",\"description\":\"Read component-surface to see how config panels...",
+  "error": "Exit code 1\n(eval):1: no matches found: /Users/antoine/Documents/Code/synap/hestia-cli/packages/eve-dashboard/app/(os)/settings/components/component-surface.tsx",
+  "timestamp": "2026-05-13T16:44:27.099Z",
   "retry_count": 1
 }
