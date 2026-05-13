@@ -192,8 +192,10 @@ async function fetchSynapKnowledge(
       },
     });
     if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      const keyPrefix = hubApiKey.slice(0, 12);
       throw new Error(
-        `Synap knowledge fetch failed: HTTP ${res.status} ${res.statusText}`,
+        `Synap knowledge fetch failed: HTTP ${res.status} ${res.statusText} (url=${url}, key=${keyPrefix}…, body=${body.slice(0, 200)})`,
       );
     }
     const data = (await res.json()) as unknown;

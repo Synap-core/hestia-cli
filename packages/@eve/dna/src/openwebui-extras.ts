@@ -9,6 +9,7 @@
  */
 
 import { resolveHubBaseUrl } from './builder-hub-wiring.js';
+import { readAgentKeyOrLegacySync } from './secrets-contract.js';
 import {
   pushSynapSkillsToOpenwebuiPrompts,
   type SkillsSyncResult,
@@ -54,6 +55,14 @@ export async function syncOpenwebuiExtras(
   if (!hubBaseUrl || !secrets) {
     return { skipped: true };
   }
+  // Diagnostic: always surface the Hub URL and key prefixes used for this
+  // sync pass so routing/key mismatches are visible in `eve update` output.
+  {
+    const owuiKey = readAgentKeyOrLegacySync('openwebui', secrets).slice(0, 12) || 'absent';
+    const eveKey  = readAgentKeyOrLegacySync('eve', secrets).slice(0, 12) || 'absent';
+    console.error(`[extras-sync] hub=${hubBaseUrl} owui-key=${owuiKey}… eve-key=${eveKey}…`);
+  }
+
 
   const [skills, knowledge, tools, functions] = await Promise.allSettled([
     pushSynapSkillsToOpenwebuiPrompts(cwd, hubBaseUrl, secrets),

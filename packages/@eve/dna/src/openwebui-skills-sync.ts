@@ -99,12 +99,18 @@ async function fetchSynapSkills(
   hubBaseUrl: string,
   apiKey: string,
 ): Promise<HubSkillPackage[]> {
-  const res = await fetch(`${hubBaseUrl}/skills/system`, {
+  const url = `${hubBaseUrl}/skills/system`;
+  const res = await fetch(url, {
     headers: { Authorization: `Bearer ${apiKey}` },
     signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
   });
   if (!res.ok) {
-    throw new Error(`Hub /skills/system failed with HTTP ${res.status}`);
+    const body = await res.text().catch(() => '');
+    // Surface the Hub URL and key prefix so operators can diagnose routing/key mismatches.
+    const keyPrefix = apiKey.slice(0, 12);
+    throw new Error(
+      `Hub /skills/system failed with HTTP ${res.status} (url=${url}, key=${keyPrefix}…, body=${body.slice(0, 200)})`
+    );
   }
   const packages = (await res.json()) as HubSkillPackage[];
   if (!Array.isArray(packages)) {
