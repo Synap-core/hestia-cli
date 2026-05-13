@@ -288,8 +288,7 @@ async function buildUpdateTargets(deployDir: string | undefined): Promise<Update
         'nangohq/nango-server:hosted',
       ];
       await execFileAsync('docker', runArgs, { timeout: 30_000 });
-      // Write updated NANGO_HOST to deploy/.env
-      const { findPodDeployDir } = await import('@eve/dna');
+      // Write updated NANGO_HOST to deploy/.env (use top-level import, not re-import)
       const dDir = findPodDeployDir() ?? undefined;
       if (dDir) {
         const { readFile, writeFile } = await import('node:fs/promises');
