@@ -1009,33 +1009,42 @@ async function* postUpdateReconcileAiWiring(): AsyncGenerator<LifecycleEvent> {
     // had a chance to pick up the new one.
     const owui = results.find(r => r.id === "openwebui");
     if (owui && /\b401\b|Unauthorized/i.test(owui.summary)) {
-      yield { type: "log", line: "↳ OpenWebUI extras returned 401 — renewing eve agent key and retrying wiring" };
+      yield { type: "log", line: "↳ OpenWebUI extras returned 401 — reconciling Hub keys and retrying wiring" };
       const { renewAgentKey, resolveProvisioningToken } = await import("./auth.js");
       const provisioningToken = await resolveProvisioningToken() ?? undefined;
-      const renewed = await renewAgentKey({ agentType: "eve", reason: "owui-extras-401", provisioningToken });
-      if (renewed.renewed) {
-        yield { type: "log", line: `↳ eve key renewed (prefix ${renewed.keyIdPrefix}…) — re-running OpenWebUI wiring` };
-        const refreshed = await readEveSecrets();
-        const [retry] = await materializeTargets(refreshed, ["ai-wiring"], { components: ["openwebui"] });
-        const retryResults = Array.isArray(retry?.details?.results)
-          ? retry.details.results as WireAiResult[]
-          : [];
-        // Replace the openwebui slot in the original results so the summary
-        // below reflects the retry outcome, not the failed first attempt.
-        const retried = retryResults.find(r => r.id === "openwebui");
-        if (retried) {
-          results = results.map(r => (r.id === "openwebui" ? retried : r));
-          const retried401 = /\b401\b|Unauthorized/i.test(retried.summary);
-          yield {
-            type: "log",
-            line: retried401
-              ? "↳ retry still 401 — manual `eve auth provision --agent eve` may be required"
-              : "↳ OpenWebUI wiring retry succeeded",
-          };
-        }
+      // Renew both openwebui and eve with idempotent:true — only actually-revoked
+      // keys get rotated; valid keys are left untouched. This avoids churning
+      // active keys when the 401 had a different cause (e.g. cwd mismatch on
+      // an older deploy that is now fixed by using the passed-in secrets object).
+      const renewedOwui = await renewAgentKey({ agentType: "openwebui", reason: "owui-extras-401", idempotent: true, provisioningToken }).catch(() => null);
+      const renewedEve  = await renewAgentKey({ agentType: "eve",       reason: "owui-extras-401", idempotent: true, provisioningToken }).catch(() => null);
+      const anyRotated = renewedOwui?.renewed || renewedEve?.renewed;
+      const rotatedLabels = [
+        renewedOwui?.renewed ? `openwebui (prefix ${renewedOwui.keyIdPrefix}…)` : null,
+        renewedEve?.renewed  ? `eve (prefix ${renewedEve.keyIdPrefix}…)` : null,
+      ].filter(Boolean).join(', ');
+      if (rotatedLabels) {
+        yield { type: "log", line: `↳ rotated stale key(s): ${rotatedLabels} — re-running OpenWebUI wiring` };
       } else {
-        yield { type: "log", line: `↳ eve key renewal failed (${renewed.reason}) — run \`eve auth provision --agent eve\` manually` };
+        yield { type: "log", line: "↳ keys already valid — re-running OpenWebUI wiring to confirm" };
       }
+      const refreshed = await readEveSecrets();
+      const [retry] = await materializeTargets(refreshed, ["ai-wiring"], { components: ["openwebui"] });
+      const retryResults = Array.isArray(retry?.details?.results)
+        ? retry.details.results as WireAiResult[]
+        : [];
+      const retried = retryResults.find(r => r.id === "openwebui");
+      if (retried) {
+        results = results.map(r => (r.id === "openwebui" ? retried : r));
+        const retried401 = /\b401\b|Unauthorized/i.test(retried.summary);
+        yield {
+          type: "log",
+          line: retried401
+            ? "↳ retry still 401 — run `eve auth provision --agent openwebui` then `eve auth provision --agent eve`"
+            : "↳ OpenWebUI wiring retry succeeded",
+        };
+      }
+      void anyRotated;
     }
 
     const okCount = results.filter(r => r.outcome === "ok").length;

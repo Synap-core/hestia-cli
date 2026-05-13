@@ -37,6 +37,11 @@ import {
   Loader2,
   X,
 } from "lucide-react";
+import {
+  isLikelyUUID,
+  resolveAuthorName,
+  resolveTargetName,
+} from "@synap-core/types";
 import { PanelEmpty, PanelError, PanelLoader } from "./panel-states";
 
 interface WireProposal {
@@ -53,6 +58,19 @@ interface WireProposal {
   createdBy?: string | null;
   createdAt?: string;
   updatedAt?: string;
+  expiresAt?: string | null;
+  reviewedAt?: string | null;
+  request?: {
+    source: "user" | "ai" | "system";
+    sourceId: string;
+    targetType: string;
+    targetId: string;
+    targetName?: string;
+    changeType: string;
+    data?: Record<string, unknown>;
+    reasoning?: string;
+    summary?: string;
+  };
 }
 
 type RowState = "idle" | "working";
@@ -233,12 +251,23 @@ function ProposalRow({
 
   const summary = useMemo(() => proposalSummary(proposal), [proposal]);
   const agentLabel = useMemo(() => agentLabelFor(proposal), [proposal]);
+  const initial = useMemo(() => authorInitial(proposal), [proposal]);
   const time = useMemo(
     () => relativeTime(proposal.createdAt ?? proposal.updatedAt),
     [proposal],
   );
 
   const isWorking = state === "working";
+  const isPending = proposal.status === "pending";
+
+  // Color for the status/author chip based on proposal state
+  const chipColor = isPending
+    ? "warning"
+    : proposal.status === "approved"
+      ? "success"
+      : proposal.status === "rejected"
+        ? "danger"
+        : "default";
 
   return (
     <Card
@@ -258,9 +287,16 @@ function ProposalRow({
               size="sm"
               variant="flat"
               radius="sm"
-              className="h-5 px-1.5 text-[10.5px] font-medium uppercase tracking-[0.04em] text-foreground/65"
+              color={chipColor}
+              className="h-5 px-1.5 text-[10.5px] font-medium uppercase tracking-[0.04em]"
             >
-              {proposal.proposalType}
+              {isPending
+                ? "Pending"
+                : proposal.status === "approved"
+                  ? "Approved"
+                  : proposal.status === "rejected"
+                    ? "Rejected"
+                    : proposal.status}
             </Chip>
             <span className="text-[11px] text-foreground/45">
               {proposal.targetType}
@@ -279,12 +315,21 @@ function ProposalRow({
             {summary.body}
           </p>
           {agentLabel && (
-            <p className="mt-1 text-[11px] text-foreground/45">
-              Proposed by <span className="text-foreground/65">{agentLabel}</span>
-            </p>
+            <div className="mt-1 flex items-center gap-1.5">
+              <div className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/10 text-[10px] font-medium text-primary shrink-0">
+                {initial}
+              </div>
+              <span className="text-[11px] text-foreground/65">
+                {agentLabel}
+                {proposal.request?.reasoning && (
+                  <span className="ml-1 text-[10px] text-foreground/40">
+                    · AI reasoning available
+                  </span>
+                )}
+              </span>
+            </div>
           )}
         </div>
-      </div>
 
       <div className="flex items-center justify-between gap-3">
         <button
@@ -371,13 +416,21 @@ interface ProposalSummary {
   body: string;
 }
 
+const PRETTY_TARGET_KIND: Record<string, string> = {
+  entity: "Entity",
+  document: "Document",
+  view: "View",
+  whiteboard: "Whiteboard",
+  profile: "Profile",
+};
+
 /**
  * Best-effort one-line summary derived from the proposal payload.
- * The pod stores `_summary` when the agent supplied one (added by
- * the create/update endpoints) — prefer that. Otherwise fall back to
- * a description built from `targetType + proposalType`.
+ * Uses shared {@link resolveTargetName} and the enriched `request` field
+ * from the backend rather than raw IDs.
  */
 function proposalSummary(p: WireProposal): ProposalSummary {
+  // Prefer explicit summary from agent or backend
   const data = p.data ?? {};
   const explicit =
     typeof data._summary === "string"
@@ -386,10 +439,31 @@ function proposalSummary(p: WireProposal): ProposalSummary {
         ? data.summary
         : null;
 
+  const request = p.request;
+  const entityPayload =
+    request?.data && typeof request.data === "object"
+      ? (request.data.data as Record<string, unknown> | undefined) ??
+        (request.data as Record<string, unknown>)
+      : undefined;
+
+  const targetName = resolveTargetName({
+    targetName: request?.targetName,
+    targetType: request?.targetType || p.targetType,
+    targetId: request?.targetId || p.targetId,
+    entityPayload,
+  });
+
+  const profileSlug =
+    entityPayload &&
+    ((typeof entityPayload.profileSlug === "string" && entityPayload.profileSlug) ||
+      (typeof entityPayload.type === "string" && entityPayload.type));
+
   if (explicit) {
     return {
       title: explicit,
-      body: `${p.proposalType} on ${p.targetType}`,
+      body: request
+        ? `${prettyAction(request.changeType)} on ${targetName}`
+        : `${p.proposalType} on ${targetName}`,
     };
   }
 
@@ -400,18 +474,52 @@ function proposalSummary(p: WireProposal): ProposalSummary {
     null;
   const description =
     (typeof data.description === "string" && data.description) || null;
+  const changeType = request?.changeType ?? p.proposalType;
 
   if (name) {
     return {
-      title: `${prettyAction(p.proposalType)}: ${name}`,
-      body: description ?? `${p.targetType} mutation`,
+      title: `${prettyAction(changeType)}: ${name}`,
+      body: description ?? targetName,
     };
   }
 
   return {
-    title: prettyAction(p.proposalType),
-    body: `${p.targetType} · ${p.targetId.slice(0, 8)}`,
+    title: buildFallbackTitle({
+      changeType,
+      profileSlug: profileSlug ?? undefined,
+      targetType: request?.targetType ?? p.targetType,
+      targetName,
+    }),
+    body: targetName,
   };
+}
+
+function buildFallbackTitle(params: {
+  changeType?: string;
+  profileSlug?: string;
+  targetType?: string;
+  targetName?: string;
+}): string {
+  const { changeType, profileSlug, targetType, targetName } = params;
+  const action = !changeType
+    ? "Proposal"
+    : changeType.includes("create")
+      ? "Create"
+      : changeType.includes("update")
+        ? "Update"
+        : changeType.includes("delete")
+          ? "Delete"
+          : changeType.charAt(0).toUpperCase() +
+            changeType.slice(1).replace(/[._]/g, " ");
+  const typeLabel = profileSlug
+    ? profileSlug.charAt(0).toUpperCase() + profileSlug.slice(1)
+    : targetType && targetType !== "entity"
+      ? targetType.charAt(0).toUpperCase() + targetType.slice(1)
+      : "";
+  if (targetName) {
+    return `${action} ${typeLabel} "${targetName}"`.replace(/  +/, " ").trim();
+  }
+  return `${action} ${typeLabel}`.trim() || "Proposal";
 }
 
 function prettyAction(proposalType: string): string {
@@ -429,12 +537,20 @@ function capitalize(s: string): string {
 }
 
 function agentLabelFor(p: WireProposal): string | null {
-  if (!p.agentUserId && !p.createdBy) return null;
-  // Show the short agent id; the inbox doesn't have a name resolver yet
-  // and we want to avoid an extra round-trip per row. Truncate so it
-  // doesn't dominate the metadata strip.
-  const id = p.agentUserId ?? p.createdBy ?? "";
-  return id.length > 16 ? `${id.slice(0, 8)}…${id.slice(-4)}` : id;
+  return resolveAuthorName({
+    authorName: p.createdBy ?? undefined,
+    source: p.request?.source,
+    sourceId: p.request?.sourceId ?? p.agentUserId ?? undefined,
+  });
+}
+
+/**
+ * Extract the author's display name from the enriched request.
+ * This is the single place author resolution happens — no per-row fetches needed.
+ */
+function authorInitial(p: WireProposal): string {
+  const name = agentLabelFor(p);
+  return name ? name.trim().charAt(0).toUpperCase() : "?";
 }
 
 function relativeTime(ts: string | undefined): string | null {
