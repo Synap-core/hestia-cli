@@ -320,6 +320,21 @@ Use this when you want the best-in-class coding model on tap from inside your st
     doctor: { critical: false },
   },
   {
+    id: 'claude-code',
+    label: 'Claude Code CLI',
+    emoji: '⚡',
+    description: 'Anthropic\'s Claude Code CLI installed on your server. Run AI-powered coding sessions directly from the terminal.',
+    longDescription: `Claude Code is Anthropic's official AI coding assistant that runs in your terminal. It can read, write and edit files, run tests, execute commands, and navigate large codebases — all from a single CLI.
+
+Installing it on your server means your Eve agents (especially Hermes) can spawn a Claude Code session on the server itself to tackle complex coding tasks. It's also just useful to have available when you SSH in.
+
+Requires an Anthropic API key. After install, run \`claude\` to start a session or \`claude --help\` for all options.`,
+    homepage: 'https://claude.ai/code',
+    category: 'add-on',
+    lifecycle: { restartStrategy: 'none' },
+    doctor: { critical: false },
+  },
+  {
     id: 'openwebui',
     label: 'Open WebUI',
     emoji: '💬',

@@ -1101,7 +1101,33 @@ function buildInstallSteps(
     });
   }
 
-  // 8. Open WebUI
+  // 8. Nango
+  const hasNango = components.includes('nango');
+  if (hasNango) {
+    steps.push({
+      label: 'Setting up Nango OAuth platform...',
+      componentIds: ['nango'],
+      async fn() {
+        const { runAdd } = await import('../add.js');
+        await runAdd('nango', {});
+      },
+    });
+  }
+
+  // 9. Claude Code CLI
+  const hasClaudeCode = components.includes('claude-code');
+  if (hasClaudeCode) {
+    steps.push({
+      label: 'Installing Claude Code CLI...',
+      componentIds: ['claude-code'],
+      async fn() {
+        const { execSync } = await import('node:child_process');
+        execSync('npm install -g @anthropic-ai/claude-code', { stdio: 'inherit' });
+      },
+    });
+  }
+
+  // 10. Open WebUI
   const hasOpenWebUI = components.includes('openwebui');
   if (hasOpenWebUI) {
     steps.push({
@@ -1152,12 +1178,14 @@ async function updateEntityStateFromComponents(
     synap: 'brain',
     ollama: 'brain',
     openclaw: 'arms',
+    nango: 'arms',
     hermes: 'arms',
     rsshub: 'eyes',
     traefik: 'legs',
     dokploy: 'builder',
     opencode: 'builder',
     openclaude: 'builder',
+    'claude-code': 'builder',
   };
 
   for (const compId of components) {
