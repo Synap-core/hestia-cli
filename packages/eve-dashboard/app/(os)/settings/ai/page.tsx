@@ -471,6 +471,7 @@ export default function AiProvidersPage() {
 
   async function applyWiring() {
     setApplying(true);
+    addToast({ title: "Applying AI config — restarting containers, may take 30s…", color: "default" });
     try {
       const res = await fetch("/api/ai/apply", { method: "POST", credentials: "include" });
       const data = await res.json() as ApplyResult;
@@ -478,17 +479,15 @@ export default function AiProvidersPage() {
         `  ${getComponentLabel(r.id)}: ${formatOutcome(r.outcome)}`,
       ).join("\n");
       const color = data.ok ? "success" : "warning";
-      if (lines) {
-        addToast({
-          title: data.ok ? "Apply complete" : "Apply completed with errors",
-          description: lines,
-          color,
-        });
-      } else {
-        addToast({ title: "No components to apply", color: "success" });
-      }
+      addToast({
+        title: data.ok ? "Apply complete" : "Apply completed with errors",
+        description: lines || "No installed components matched",
+        color,
+      });
+      // Refresh config so wiringStatus timestamps update without a page reload.
+      await fetchConfig();
     } catch {
-      addToast({ title: "Apply failed", color: "danger" });
+      addToast({ title: "Apply failed — check that docker is running", color: "danger" });
     } finally { setApplying(false); }
   }
 

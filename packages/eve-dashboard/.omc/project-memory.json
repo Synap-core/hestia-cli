@@ -154,8 +154,8 @@
   "hotPaths": [
     {
       "path": "app/(os)/settings/ai/page.tsx",
-      "accessCount": 35,
-      "lastAccessed": 1778689808396,
+      "accessCount": 37,
+      "lastAccessed": 1778690416901,
       "type": "file"
     },
     {
@@ -178,8 +178,8 @@
     },
     {
       "path": "app/api/ai/route.ts",
-      "accessCount": 7,
-      "lastAccessed": 1778689703617,
+      "accessCount": 8,
+      "lastAccessed": 1778690390382,
       "type": "file"
     },
     {

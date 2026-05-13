@@ -9,13 +9,12 @@
 
 import { NextResponse } from "next/server";
 import {
-  readEveSecrets, entityStateManager,
+  readEveSecrets, writeEveSecrets, entityStateManager,
   AI_CONSUMERS_NEEDING_RECREATE,
+  type WireAiResult,
 } from "@eve/dna";
 import { materializeTargets, runActionToCompletion } from "@eve/lifecycle";
 import { requireAuth } from "@/lib/auth-server";
-
-type WireResult = { id: string; outcome: "ok" | "failed" | "skipped"; summary: string };
 
 export async function POST() {
   const auth = await requireAuth();
@@ -33,7 +32,7 @@ export async function POST() {
 
   const [materialized] = await materializeTargets(secrets, ["ai-wiring"], { components: installed });
   const results = Array.isArray(materialized?.details?.results)
-    ? materialized.details.results as WireResult[]
+    ? materialized.details.results as WireAiResult[]
     : [];
 
   // Wire-only restart isn't enough for components whose env is set at
@@ -43,9 +42,9 @@ export async function POST() {
   for (const id of AI_CONSUMERS_NEEDING_RECREATE) {
     if (!installed.includes(id)) continue;
     const r = await runActionToCompletion(id, "recreate");
-    const recreated = {
+    const recreated: WireAiResult = {
       id,
-      outcome: r.ok ? "ok" as const : "failed" as const,
+      outcome: r.ok ? "ok" : "failed",
       summary: r.ok
         ? `${id} recreated · new env applied`
         : `${id} recreate failed: ${r.error ?? "unknown"}`,
@@ -55,13 +54,31 @@ export async function POST() {
     else results.push(recreated);
   }
 
+  // Persist wiringStatus — merge with existing entries so components not
+  // included in this apply run keep their previous timestamps.
+  try {
+    const fresh = await readEveSecrets();
+    const existing = fresh?.ai?.wiringStatus ?? {};
+    const now = new Date().toISOString();
+    const updated = { ...existing };
+    for (const r of results) {
+      if (r.outcome === "skipped") continue;
+      updated[r.id] = {
+        lastApplied: now,
+        outcome: r.outcome,
+        ...(r.wiredModel ? { wiredModel: r.wiredModel } : {}),
+        ...(r.wiredProvider ? { wiredProvider: r.wiredProvider } : {}),
+      };
+    }
+    await writeEveSecrets({ ai: { wiringStatus: updated } });
+  } catch { /* non-fatal — UI will still show results from response */ }
+
   const ok = results.filter(r => r.outcome === "ok").length;
   const failed = results.filter(r => r.outcome === "failed").length;
 
   return NextResponse.json({
     ok: Boolean(materialized?.ok) && failed === 0,
     summary: `${ok} ok, ${failed} failed, ${results.length - ok - failed} skipped`,
-    materialized,
     results,
   });
 }

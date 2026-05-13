@@ -210,25 +210,25 @@ export async function PATCH(req: Request) {
     }
   }
 
-  // Persist wiringStatus so the UI can show "Last applied" in the
-  // per-service routing panel. Only overwrite the keys we have
-  // results for — leave the rest untouched.
+  // Persist wiringStatus — merge with existing entries so components not
+  // in this auto-apply batch keep their previous timestamps.
   if (applyResults.length > 0) {
-    const patch: Parameters<typeof writeEveSecrets>[0]["ai"] = {
-      wiringStatus: applyResults.reduce<Record<string, { lastApplied: string; outcome: string; wiredModel?: string; wiredProvider?: string }>>(
-        (acc, r) => {
-          acc[r.id] = {
-            lastApplied: new Date().toISOString(),
-            outcome: r.outcome,
-            ...(r.wiredModel ? { wiredModel: r.wiredModel } : {}),
-            ...(r.wiredProvider ? { wiredProvider: r.wiredProvider } : {}),
-          };
-          return acc;
-        },
-        {},
-      ),
-    };
-    try { await writeEveSecrets({ ai: patch }); } catch { /* non-fatal */ }
+    try {
+      const fresh = await readEveSecrets();
+      const existing = fresh?.ai?.wiringStatus ?? {};
+      const now = new Date().toISOString();
+      const updated = { ...existing };
+      for (const r of applyResults) {
+        if (r.outcome === "skipped") continue;
+        updated[r.id] = {
+          lastApplied: now,
+          outcome: r.outcome,
+          ...(r.wiredModel ? { wiredModel: r.wiredModel } : {}),
+          ...(r.wiredProvider ? { wiredProvider: r.wiredProvider } : {}),
+        };
+      }
+      await writeEveSecrets({ ai: { wiringStatus: updated } });
+    } catch { /* non-fatal */ }
   }
 
   return NextResponse.json({ ok: true, applied: applyResults });
