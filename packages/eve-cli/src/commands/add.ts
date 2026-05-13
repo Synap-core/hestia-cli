@@ -215,6 +215,18 @@ async function addNango(): Promise<void> {
     // Ignore "already exists" errors — idempotent
   }
 
+  // Nango runs on eve-network but eve-brain-postgres is on synap-backend's compose
+  // network. Connect postgres to eve-network so Nango can reach it by hostname.
+  try {
+    await execFileAsync('docker', [
+      'network', 'connect', '--alias', 'eve-brain-postgres',
+      'eve-network', 'eve-brain-postgres',
+    ], { timeout: 10_000 });
+    printInfo('  Connected eve-brain-postgres to eve-network.');
+  } catch {
+    // Already connected — fine
+  }
+
   // Resolve deploy/.env early so we can read PUBLIC_URL before starting the container
   const deployDir =
     process.env.SYNAP_DEPLOY_DIR ||
