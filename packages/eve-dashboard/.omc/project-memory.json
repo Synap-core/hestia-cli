@@ -47,7 +47,7 @@
     "runtime": null
   },
   "build": {
-    "buildCommand": "cd /Users/antoine/Documents/Code/synap/hestia-cli/.release/eve && pnpm build 2>&1 | tail -20",
+    "buildCommand": "pnpm tsc --noEmit 2>&1 | head -30",
     "testCommand": "npm test",
     "lintCommand": null,
     "devCommand": "npm run dev",
@@ -153,15 +153,15 @@
   },
   "hotPaths": [
     {
-      "path": "app/api/ai/apply/route.ts",
-      "accessCount": 5,
-      "lastAccessed": 1778691525856,
+      "path": "app/(os)/settings/ai/page.tsx",
+      "accessCount": 11,
+      "lastAccessed": 1778694864553,
       "type": "file"
     },
     {
-      "path": "app/(os)/settings/ai/page.tsx",
-      "accessCount": 4,
-      "lastAccessed": 1778692702565,
+      "path": "app/api/ai/apply/route.ts",
+      "accessCount": 5,
+      "lastAccessed": 1778691525856,
       "type": "file"
     },
     {
@@ -180,6 +180,12 @@
       "path": "app/(os)/settings/connections/page.tsx",
       "accessCount": 3,
       "lastAccessed": 1778692151307,
+      "type": "file"
+    },
+    {
+      "path": "app/api/ai/is-models/route.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778694777930,
       "type": "file"
     }
   ],

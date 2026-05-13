@@ -198,14 +198,25 @@ export default function AiProvidersPage() {
   const [pendingDefault, setPendingDefault] = useState<string | null>(null);
   const [isModels, setIsModels] = useState<string[]>([]);
   const [fetchingIsModels, setFetchingIsModels] = useState(false);
+  const [isLiveConfig, setIsLiveConfig] = useState<{
+    provider: string | null;
+    model: string | null;
+    hasOpenai: boolean;
+    hasAnthropic: boolean;
+    hasOpenrouter: boolean;
+    ollamaEnabled: boolean;
+  } | null>(null);
 
   const fetchIsModels = useCallback(async () => {
     setFetchingIsModels(true);
     try {
       const res = await fetch("/api/ai/is-models", { credentials: "include" });
       if (res.ok) {
-        const data = await res.json() as { ok?: boolean; models?: string[] };
-        if (data.ok) setIsModels(data.models ?? []);
+        const data = await res.json() as { ok?: boolean; models?: string[]; config?: typeof isLiveConfig };
+        if (data.ok) {
+          setIsModels(data.models ?? []);
+          if (data.config) setIsLiveConfig(data.config);
+        }
       }
     } finally {
       setFetchingIsModels(false);
@@ -1040,7 +1051,10 @@ export default function AiProvidersPage() {
               className="text-default-500"
             >
               <RefreshCw className="h-3.5 w-3.5" />
-              {isModels.length > 0 ? `${isModels.length} IS models` : "Fetch IS models"}
+              {isLiveConfig
+                ? `IS: ${isLiveConfig.provider ?? "?"} · ${isModels.length} models`
+                : isModels.length > 0 ? `${isModels.length} IS models` : "Fetch IS models"
+              }
             </Button>
           </div>
           <p className="mt-1 text-xs text-default-500">
@@ -1115,6 +1129,26 @@ export default function AiProvidersPage() {
                           Not yet applied — click &ldquo;Apply to components&rdquo; to push this config
                         </p>
                       ) : null}
+                      {/* Live IS config — shown when IS responded to /v1/config */}
+                      {isLiveConfig && c.id === 'synap' && (
+                        <p className="mt-0.5 text-[10px] text-success">
+                          Live: {isLiveConfig.provider ?? "no provider"}{isLiveConfig.model ? <span className="font-mono"> · {isLiveConfig.model}</span> : null}
+                          {" "}
+                          <span className="text-default-400">
+                            ({[
+                              isLiveConfig.hasAnthropic && "anthropic ✓",
+                              isLiveConfig.hasOpenai && "openai ✓",
+                              isLiveConfig.hasOpenrouter && "openrouter ✓",
+                              isLiveConfig.ollamaEnabled && "ollama ✓",
+                            ].filter(Boolean).join(", ") || "no keys"})
+                          </span>
+                        </p>
+                      )}
+                      {isLiveConfig && isISClient && (
+                        <p className="mt-0.5 text-[10px] text-default-400">
+                          IS live: <span className="font-mono">{isLiveConfig.model ?? "no model"}</span> via {isLiveConfig.provider ?? "no provider"}
+                        </p>
+                      )}
                     </div>
                     {/* Provider selector — upstream provider for IS; model family hint for IS clients */}
                     <div className="flex items-center gap-2 shrink-0">
