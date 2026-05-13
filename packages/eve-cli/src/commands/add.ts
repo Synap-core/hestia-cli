@@ -344,7 +344,9 @@ async function addNango(): Promise<void> {
     // the same hostname that OAuth providers redirect to.
     const refreshedSecrets = await readEveSecrets(process.cwd()).catch(() => null);
     const domain = refreshedSecrets?.domain?.primary;
-    const ssl = !!refreshedSecrets?.domain?.ssl;
+    // Default to https for any public domain — Traefik always terminates SSL.
+    // Only fall back to http when ssl is explicitly false.
+    const ssl = refreshedSecrets?.domain?.ssl !== false;
     const nangoHost = domain
       ? `${ssl ? 'https' : 'http'}://nango.${domain}`
       : 'http://eve-arms-nango:3003';

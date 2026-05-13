@@ -261,7 +261,8 @@ async function buildUpdateTargets(deployDir: string | undefined): Promise<Update
         await writeEveSecrets({ connectors: { nango: { secretKey } } });
       }
       const domain = secrets?.domain?.primary as string | undefined;
-      const ssl = !!(secrets?.domain?.ssl);
+      // Default to https for any public domain — Traefik always terminates SSL.
+      const ssl = secrets?.domain?.ssl !== false;
       const nangoHost = domain ? `${ssl ? 'https' : 'http'}://nango.${domain}` : 'http://eve-arms-nango:3003';
       const podPublicUrl = domain ? `${ssl ? 'https' : 'http'}://${domain}` : '';
       // Read postgres credentials from deploy/.env
