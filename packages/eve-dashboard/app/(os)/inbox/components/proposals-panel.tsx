@@ -9,8 +9,8 @@
  * is required (see eve-credentials.mdx for the two-channel rule).
  *
  *   List:    GET  /api/pod/trpc/proposals.list?input={"json":{...}}
- *   Approve: POST /api/pod/trpc/proposals.approve  body {"json":{id}}
- *   Reject:  POST /api/pod/trpc/proposals.reject   body {"json":{id}}
+ *   Approve: POST /api/pod/trpc/proposals.approve  body {"json":{proposalId}}
+ *   Reject:  POST /api/pod/trpc/proposals.reject   body {"json":{proposalId}}
  *
  * tRPC envelope: superjson-wrapped — request `{ json: <data> }`,
  * response `{ result: { data: { json: <data>, meta?: ... } } }`. We
@@ -60,8 +60,21 @@ interface WireProposal {
   updatedAt?: string;
   expiresAt?: string | null;
   reviewedAt?: string | null;
+  authorName?: string;
+  targetName?: string;
   request?: {
-    source: "user" | "ai" | "system";
+    source:
+      | "user"
+      | "ai"
+      | "system"
+      | "intelligence"
+      | "agent"
+      | "openwebui-pipeline"
+      | "openclaw"
+      | "extension"
+      | "cli"
+      | "n8n"
+      | "raycast";
     sourceId: string;
     targetType: string;
     targetId: string;
@@ -157,14 +170,14 @@ export function ProposalsPanel() {
       setRowState((prev) => ({ ...prev, [id]: "working" }));
       try {
         // tRPC mutation: POST /trpc/proposals.{approve|reject}
-        // body { json: { id } } (superjson)
+        // body { json: { proposalId } } (superjson)
         const procedure =
           action === "approve" ? "proposals.approve" : "proposals.reject";
         const r = await fetch(`/api/pod/trpc/${procedure}`, {
           method: "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ json: { id } }),
+          body: JSON.stringify({ json: { proposalId: id } }),
           cache: "no-store",
         });
         if (!r.ok) {
@@ -426,7 +439,9 @@ function proposalSummary(p: WireProposal): ProposalSummary {
   // Prefer explicit summary from agent or backend
   const data = p.data ?? {};
   const explicit =
-    typeof data._summary === "string"
+    typeof p.request?.summary === "string"
+      ? p.request.summary
+      : typeof data._summary === "string"
       ? data._summary
       : typeof data.summary === "string"
         ? data.summary
@@ -435,28 +450,39 @@ function proposalSummary(p: WireProposal): ProposalSummary {
   const request = p.request;
   const entityPayload =
     request?.data && typeof request.data === "object"
-      ? (request.data.data as Record<string, unknown> | undefined) ??
-        (request.data as Record<string, unknown>)
-      : undefined;
+      ? request.data
+      : data.data && typeof data.data === "object"
+        ? (data.data as Record<string, unknown>)
+        : undefined;
 
-  const targetName = resolveTargetName({
-    targetName: request?.targetName,
+  const resolvedTargetName = resolveTargetName({
+    targetName: request?.targetName ?? p.targetName,
     targetType: request?.targetType || p.targetType,
     targetId: request?.targetId || p.targetId,
     entityPayload,
   });
+  const targetName = looksLikeIdFallback(
+    resolvedTargetName,
+    request?.targetId || p.targetId,
+  )
+    ? request?.targetName ?? p.targetName
+    : resolvedTargetName;
 
   const profileSlug =
     entityPayload &&
     ((typeof entityPayload.profileSlug === "string" && entityPayload.profileSlug) ||
       (typeof entityPayload.type === "string" && entityPayload.type));
+  const targetKind = profileSlug || request?.targetType || p.targetType;
+  const changeDescription = describePayloadChange(entityPayload);
 
   if (explicit) {
     return {
       title: explicit,
-      body: request
-        ? `${prettyAction(request.changeType)} on ${targetName}`
-        : `${p.proposalType} on ${targetName}`,
+      body: compactSentence([
+        request ? prettyAction(request.changeType) : prettyAction(p.proposalType),
+        targetName ? `on ${targetName}` : undefined,
+        changeDescription,
+      ]),
     };
   }
 
@@ -472,7 +498,7 @@ function proposalSummary(p: WireProposal): ProposalSummary {
   if (name) {
     return {
       title: `${prettyAction(changeType)}: ${name}`,
-      body: description ?? targetName,
+      body: compactSentence([description, changeDescription, targetKind]),
     };
   }
 
@@ -481,9 +507,9 @@ function proposalSummary(p: WireProposal): ProposalSummary {
       changeType,
       profileSlug: profileSlug || undefined,
       targetType: request?.targetType ?? p.targetType,
-      targetName,
+      targetName: targetName || undefined,
     }),
-    body: targetName,
+    body: compactSentence([changeDescription, targetName, targetKind]),
   };
 }
 
@@ -491,7 +517,7 @@ function prettyAction(proposalType: string): string {
   // entity.create → "Create entity"; view.update → "Update view".
   // Falls back to the raw string when we don't recognise the shape.
   const m = /^([a-z_]+)\.([a-z_]+)$/.exec(proposalType);
-  if (!m) return proposalType;
+  if (!m) return capitalize(proposalType.replace(/[._]/g, " "));
   const target = m[1].replace(/_/g, " ");
   const verb = m[2].replace(/_/g, " ");
   return `${capitalize(verb)} ${target}`;
@@ -503,7 +529,7 @@ function capitalize(s: string): string {
 
 function agentLabelFor(p: WireProposal): string | null {
   return resolveAuthorName({
-    authorName: p.createdBy ?? undefined,
+    authorName: p.authorName ?? undefined,
     source: p.request?.source,
     sourceId: p.request?.sourceId ?? p.agentUserId ?? undefined,
   });
@@ -541,4 +567,40 @@ function safeStringify(v: unknown): string {
   } catch {
     return String(v);
   }
+}
+
+function describePayloadChange(
+  payload: Record<string, unknown> | undefined,
+): string | undefined {
+  if (!payload) return undefined;
+  const fields: string[] = [];
+  if (typeof payload.title === "string") fields.push("title");
+  if (typeof payload.description === "string") fields.push("description");
+  if (typeof payload.profileSlug === "string") fields.push("type");
+
+  const properties =
+    payload.properties && typeof payload.properties === "object"
+      ? Object.keys(payload.properties as Record<string, unknown>)
+      : [];
+  if (properties.length > 0) {
+    fields.push(
+      properties.length === 1
+        ? `property ${properties[0]}`
+        : `${properties.length} properties: ${properties.slice(0, 3).join(", ")}${
+            properties.length > 3 ? "…" : ""
+          }`,
+    );
+  }
+
+  if (fields.length === 0) return undefined;
+  return `Changes ${fields.join(", ")}`;
+}
+
+function compactSentence(parts: Array<string | undefined | null>): string {
+  return parts.filter((part): part is string => Boolean(part)).join(" · ");
+}
+
+function looksLikeIdFallback(label: string, id: string | undefined): boolean {
+  if (!id) return false;
+  return label.includes(id.slice(0, 8));
 }

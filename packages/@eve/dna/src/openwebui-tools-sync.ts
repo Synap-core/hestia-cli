@@ -108,16 +108,12 @@ const HUB_OPENAPI_PATH = '/api/hub/openapi.json';
  * Pinned to `SYNAP_BACKEND_INTERNAL_URL` from the component registry so a
  * future container rename is a one-line change there.
  */
-function synapOpenapiContainerUrl(hubBaseUrl: string): string {
-  // The hubBaseUrl arg lets a future caller (test, custom deploy) override
-  // the host. Default: the in-network Synap backend address. We strip any
-  // trailing /api/hub since the OpenAPI doc lives at /api/hub/openapi.json.
-  const trimmed = (hubBaseUrl || SYNAP_BACKEND_INTERNAL_URL).replace(/\/+$/, '');
-  // Caller may pass either the bare backend URL ("http://eve-brain-synap:4000")
-  // or the full Hub base URL ("http://eve-brain-synap:4000/api/hub"). Both
-  // collapse to the same OpenAPI path here.
-  if (trimmed.endsWith('/api/hub')) return `${trimmed}/openapi.json`;
-  return `${trimmed}${HUB_OPENAPI_PATH}`;
+function synapOpenapiContainerUrl(): string {
+  // Always use the container-internal Docker DNS address — this is the URL
+  // pushed into OWUI and must be reachable from OWUI's container, not the host.
+  // Using a host loopback (127.0.0.1) here would resolve to OWUI's own
+  // container loopback, not to the synap-backend.
+  return `${SYNAP_BACKEND_INTERNAL_URL.replace(/\/+$/, '')}${HUB_OPENAPI_PATH}`;
 }
 
 /**
@@ -263,7 +259,7 @@ export async function registerSynapAsOpenwebuiToolServer(
   // differ (the host can't resolve container DNS) but for this Wave we
   // probe the same thing the OWUI container will eventually fetch and
   // accept that an unreachable host still indicates a missing endpoint.
-  const endpointUrl = synapOpenapiContainerUrl(hubBaseUrl);
+  const endpointUrl = synapOpenapiContainerUrl();
 
   // Reachability check first — if the upstream OpenAPI endpoint doesn't
   // exist, registering would push a broken pointer into OWUI. Skip

@@ -412,19 +412,55 @@ export async function writeHermesConfigYaml(cwd: string = process.cwd()): Promis
  * config, so config.yaml must be fully written before `docker run` starts.
  */
 export function writeHermesConfigYamlSync(secrets: EveSecrets | null): string {
-  const synapUrl = resolveSynapUrl(secrets);
-  const synapApiKey = readAgentKeyOrLegacySync('hermes', secrets);
+  // Resolve effective AI provider for Hermes: per-service override → global default.
+  const providerId = secrets?.ai?.serviceProviders?.['hermes'] ?? secrets?.ai?.defaultProvider ?? '';
+  type ProviderEntry = { id: string; apiKey?: string; baseUrl?: string; defaultModel?: string };
+  const providers = (secrets?.ai?.providers ?? []) as ProviderEntry[];
+  const provider = providers.find(p => p.id === providerId);
 
-  // Resolve model — honour per-service override in secrets.ai.serviceModels.
-  // Default to synap/balanced (tier alias → IS routes to best available model).
+  // Well-known base URLs for built-in providers. Ollama uses the Docker-network
+  // container name so the Hermes container can resolve it — `localhost` inside
+  // the container resolves to itself, not the Ollama process on the host.
+  const BUILTIN_URLS: Record<string, string> = {
+    openrouter: 'https://openrouter.ai/api/v1',
+    openai: 'https://api.openai.com/v1',
+    anthropic: 'https://api.anthropic.com/v1',
+    ollama: 'http://eve-brain-ollama:11434/v1',
+  };
+
+  let baseUrl = provider?.baseUrl?.replace(/\/$/, '') ?? BUILTIN_URLS[providerId] ?? '';
+
+  // Rewrite host-loopback Ollama URLs for the container context.
+  if (providerId === 'ollama' && /localhost|127\.0\.0\.1/.test(baseUrl)) {
+    baseUrl = baseUrl.replace(/localhost|127\.0\.0\.1/, 'eve-brain-ollama');
+  }
+
   const serviceModels = secrets?.ai?.serviceModels ?? {};
-  const model = serviceModels['hermes'] ?? 'synap/balanced';
-  const baseUrl = synapUrl ? `${synapUrl.replace(/\/$/, '')}/v1` : 'http://eve-brain-synap:4000/v1';
+
+  let model: string;
+  let resolvedBaseUrl: string;
+  let modelApiKey: string;
+
+  if (baseUrl) {
+    // External LLM provider is configured — use its URL, key, and model.
+    // The Synap Hub key lives in hermes.env (SYNAP_API_KEY) and is used by
+    // the memory plugin; the model block needs the LLM provider's own key.
+    model = serviceModels['hermes'] ?? provider?.defaultModel ?? 'hermes-3-llama-3.1-8b';
+    resolvedBaseUrl = baseUrl;
+    modelApiKey = provider?.apiKey ?? '';
+  } else {
+    // No external provider configured — fall back to the Synap IS proxy path.
+    // This preserves behaviour for installs that haven't set up an AI provider yet.
+    const synapUrl = resolveSynapUrl(secrets);
+    resolvedBaseUrl = synapUrl ? `${synapUrl.replace(/\/$/, '')}/v1` : 'http://eve-brain-synap:4000/v1';
+    model = serviceModels['hermes'] ?? 'synap/balanced';
+    modelApiKey = readAgentKeyOrLegacySync('hermes', secrets);
+  }
 
   const hermesDir = join(homedir(), '.eve', 'hermes');
   mkdirSync(hermesDir, { recursive: true });
   const configPath = join(hermesDir, 'config.yaml');
-  writeFileSync(configPath, HERMES_CONFIG_YAML(model, baseUrl, synapApiKey), { mode: 0o600 });
+  writeFileSync(configPath, HERMES_CONFIG_YAML(model, resolvedBaseUrl, modelApiKey), { mode: 0o600 });
   return configPath;
 }
 
