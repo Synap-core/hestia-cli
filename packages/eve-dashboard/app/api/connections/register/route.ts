@@ -35,18 +35,21 @@ export async function POST(req: Request) {
 
   // Check if integration already exists to decide between POST and PUT
   const existing = await fetch(`${nangoUrl}/config/${serviceId}`, { headers }).catch(() => null);
-  const method = existing?.ok ? "PUT" : "POST";
+  const isUpdate = existing?.ok;
 
-  const res = await fetch(`${nangoUrl}/config`, {
-    method,
+  const payload = {
+    provider_config_key: serviceId,
+    provider: nangoProvider,
+    oauth_client_id: clientId.trim(),
+    oauth_client_secret: clientSecret.trim(),
+    oauth_scopes: scopes,
+  };
+
+  // Nango: POST /config to create, PUT /config/:key to update
+  const res = await fetch(isUpdate ? `${nangoUrl}/config/${serviceId}` : `${nangoUrl}/config`, {
+    method: isUpdate ? "PUT" : "POST",
     headers,
-    body: JSON.stringify({
-      provider_config_key: serviceId,
-      provider: nangoProvider,
-      oauth_client_id: clientId.trim(),
-      oauth_client_secret: clientSecret.trim(),
-      oauth_scopes: scopes,
-    }),
+    body: JSON.stringify(payload),
     signal: AbortSignal.timeout(10_000),
   });
 
