@@ -61,9 +61,15 @@ export interface SyncOpenwebuiExtrasOptions {
  * Falls back to the public URL when loopback is unavailable (off-host CLI).
  */
 async function resolveHubBaseUrlOnHost(secrets: EveSecrets): Promise<string | undefined> {
-  const loopbackBase = await resolveSynapUrlOnHost(secrets);
-  if (loopbackBase) return `${loopbackBase.replace(/\/$/, '')}${DEFAULT_HUB_PATH}`;
-  return resolveHubBaseUrl(secrets);
+  const synapBase = await resolveSynapUrlOnHost(secrets);
+  if (!synapBase) return resolveHubBaseUrl(secrets);
+
+  // Force HTTPS for non-loopback URLs — Caddy redirects HTTP→HTTPS via permanent
+  // 301, and the Fetch spec strips Authorization on cross-origin redirects
+  // (different scheme = different origin). Loopback bypasses Caddy entirely.
+  const isLoopback = synapBase.startsWith('http://127.') || synapBase.startsWith('http://localhost');
+  const base = isLoopback ? synapBase : synapBase.replace(/^http:\/\//, 'https://');
+  return `${base.replace(/\/$/, '')}${DEFAULT_HUB_PATH}`;
 }
 
 export async function syncOpenwebuiExtras(

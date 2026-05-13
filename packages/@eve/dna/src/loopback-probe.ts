@@ -47,9 +47,10 @@ let cachedReachable: boolean | undefined;
  * fail the actual HTTP call anyway with a clearer error.
  */
 export async function isSynapLoopbackReachable(timeoutMs = 200): Promise<boolean> {
-  if (cachedReachable !== undefined) return cachedReachable;
-  cachedReachable = await probeTcpPort("127.0.0.1", SYNAP_HOST_LOOPBACK_PORT, timeoutMs);
-  return cachedReachable;
+  if (cachedReachable === true) return true;
+  const result = await probeTcpPort("127.0.0.1", SYNAP_HOST_LOOPBACK_PORT, timeoutMs);
+  if (result) cachedReachable = true;
+  return result;
 }
 
 /** Test hook — clear the cached probe result. */
