@@ -8,6 +8,7 @@ export interface ConnectionsState {
   connectedApps: string[];
   /** Full OAuth redirect URI to paste into provider app settings. Null if no domain configured. */
   nangoCallbackUrl: string | null;
+  registeredIntegrations: Array<{ key: string; provider: string; clientIdPreview: string }>;
 }
 
 export async function GET() {
@@ -43,10 +44,32 @@ export async function GET() {
     ? `${ssl ? "https" : "http"}://nango.${domain}/oauth/callback`
     : null;
 
+  let registeredIntegrations: Array<{ key: string; provider: string; clientIdPreview: string }> = [];
+  if (nangoRunning) {
+    const nangoSecretKey = secrets?.connectors?.nango?.secretKey as string | undefined;
+    if (nangoSecretKey) {
+      try {
+        const r = await fetch("http://eve-arms-nango:3003/config", {
+          headers: { Authorization: `Bearer ${nangoSecretKey}` },
+          signal: AbortSignal.timeout(3000),
+        });
+        if (r.ok) {
+          const data = await r.json() as { configs?: Array<{ unique_key: string; provider: string; oauth_client_id?: string }> };
+          registeredIntegrations = (data.configs ?? []).map(c => ({
+            key: c.unique_key,
+            provider: c.provider,
+            clientIdPreview: c.oauth_client_id ? c.oauth_client_id.slice(0, 8) + "…" : "",
+          }));
+        }
+      } catch { /* Nango may be starting */ }
+    }
+  }
+
   return NextResponse.json<ConnectionsState>({
     nangoInstalled,
     nangoRunning,
     connectedApps,
     nangoCallbackUrl,
+    registeredIntegrations,
   });
 }

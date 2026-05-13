@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Chip, Button, addToast } from "@heroui/react";
-import { RefreshCw, Plug2, ExternalLink, Terminal, CheckCircle2, Circle } from "lucide-react";
-import Link from "next/link";
+import { Chip, Button, Input, addToast } from "@heroui/react";
+import { RefreshCw, Plug2, Terminal, CheckCircle2, Circle, Copy, Eye, EyeOff, ExternalLink } from "lucide-react";
 import type { ConnectionsState } from "@/app/api/connections/route";
+import type { RegisterIntegrationRequest } from "@/app/api/connections/register/route";
 
 // ---------------------------------------------------------------------------
 // Service catalog
@@ -24,7 +24,8 @@ interface Service {
   icon: React.ReactNode;
   setupLink: string;
   setupLabel: string;
-  tip: string;
+  nangoProvider: string;
+  defaultScopes: string;
 }
 
 function GoogleIcon({ size = 16 }: { size?: number }) {
@@ -72,7 +73,8 @@ const SERVICES: Service[] = [
     icon: <GoogleIcon size={18} />,
     setupLink: "https://console.cloud.google.com/apis/credentials",
     setupLabel: "Google Cloud Console",
-    tip: "Create an OAuth 2.0 Client ID in Google Cloud. Add your Nango callback URL as an authorized redirect URI.",
+    nangoProvider: "google",
+    defaultScopes: "openid profile email https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/calendar.readonly",
   },
   {
     id: "github",
@@ -83,7 +85,8 @@ const SERVICES: Service[] = [
     icon: <GitHubIcon size={18} />,
     setupLink: "https://github.com/settings/developers",
     setupLabel: "GitHub Developer Settings",
-    tip: "Create an OAuth App. Set the callback URL to your Nango redirect endpoint.",
+    nangoProvider: "github",
+    defaultScopes: "repo user notifications read:org",
   },
   {
     id: "slack",
@@ -94,7 +97,8 @@ const SERVICES: Service[] = [
     icon: <SlackIcon size={18} />,
     setupLink: "https://api.slack.com/apps",
     setupLabel: "Slack API Console",
-    tip: "Create a Slack App with OAuth scopes. Add your Nango redirect URI in the OAuth & Permissions settings.",
+    nangoProvider: "slack",
+    defaultScopes: "channels:read chat:write users:read files:read",
   },
   {
     id: "notion",
@@ -105,7 +109,8 @@ const SERVICES: Service[] = [
     icon: <NotionIcon size={18} />,
     setupLink: "https://www.notion.so/my-integrations",
     setupLabel: "Notion Integrations",
-    tip: "Create a public Notion integration with OAuth capabilities enabled.",
+    nangoProvider: "notion",
+    defaultScopes: "read_content",
   },
   {
     id: "hubspot",
@@ -116,7 +121,8 @@ const SERVICES: Service[] = [
     icon: <span className="text-white font-bold text-sm">H</span>,
     setupLink: "https://developers.hubspot.com/get-started",
     setupLabel: "HubSpot Developer Portal",
-    tip: "Create a public app in your HubSpot developer account to get OAuth credentials.",
+    nangoProvider: "hubspot",
+    defaultScopes: "crm.objects.contacts.read crm.objects.deals.read crm.objects.companies.read",
   },
   {
     id: "linear",
@@ -127,7 +133,8 @@ const SERVICES: Service[] = [
     icon: <span className="text-white font-bold text-sm">L</span>,
     setupLink: "https://linear.app/settings/api",
     setupLabel: "Linear API Settings",
-    tip: "Create an OAuth application in Linear workspace settings.",
+    nangoProvider: "linear",
+    defaultScopes: "read",
   },
   {
     id: "attio",
@@ -138,7 +145,8 @@ const SERVICES: Service[] = [
     icon: <span className="text-white font-bold text-sm">A</span>,
     setupLink: "https://app.attio.com/settings/integrations/oauth-apps",
     setupLabel: "Attio OAuth Apps",
-    tip: "Create an OAuth app in Attio settings to allow your pod to read and write CRM data.",
+    nangoProvider: "attio",
+    defaultScopes: "record_permission:read list_entry:read",
   },
   {
     id: "airtable",
@@ -149,7 +157,8 @@ const SERVICES: Service[] = [
     icon: <span className="text-white font-bold text-sm">At</span>,
     setupLink: "https://airtable.com/create/oauth",
     setupLabel: "Airtable OAuth",
-    tip: "Register an OAuth integration at airtable.com/create/oauth.",
+    nangoProvider: "airtable",
+    defaultScopes: "data.records:read schema.bases:read",
   },
   {
     id: "jira",
@@ -160,7 +169,8 @@ const SERVICES: Service[] = [
     icon: <span className="text-white font-bold text-sm">J</span>,
     setupLink: "https://developer.atlassian.com/console/myapps/",
     setupLabel: "Atlassian Developer Console",
-    tip: "Create an Atlassian OAuth 2.0 app with Jira scopes. Use '3LO' (three-legged OAuth).",
+    nangoProvider: "jira",
+    defaultScopes: "read:jira-work read:jira-user offline_access",
   },
   {
     id: "salesforce",
@@ -171,7 +181,8 @@ const SERVICES: Service[] = [
     icon: <span className="text-white font-bold text-sm">SF</span>,
     setupLink: "https://help.salesforce.com/s/articleView?id=sf.connected_app_create.htm",
     setupLabel: "Salesforce Connected Apps",
-    tip: "Create a Connected App in Salesforce Setup with OAuth enabled.",
+    nangoProvider: "salesforce",
+    defaultScopes: "api refresh_token offline_access",
   },
 ];
 
@@ -264,13 +275,16 @@ export default function ConnectionsPage() {
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         {filtered.map(service => {
           const connected = state?.connectedApps.includes(service.id) ?? false;
+          const registered = state?.registeredIntegrations.find(r => r.key === service.id);
           return (
             <ServiceCard
               key={service.id}
               service={service}
               connected={connected}
+              registered={registered}
               nangoInstalled={state?.nangoInstalled ?? false}
               nangoCallbackUrl={state?.nangoCallbackUrl ?? null}
+              onSaved={fetchState}
             />
           );
         })}
@@ -283,13 +297,67 @@ export default function ConnectionsPage() {
 // Service card
 // ---------------------------------------------------------------------------
 
-function ServiceCard({ service, connected, nangoInstalled, nangoCallbackUrl }: {
+function ServiceCard({ service, connected, registered, nangoInstalled, nangoCallbackUrl, onSaved }: {
   service: Service;
   connected: boolean;
+  registered: { key: string; provider: string; clientIdPreview: string } | undefined;
   nangoInstalled: boolean;
   nangoCallbackUrl: string | null;
+  onSaved: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [scopes, setScopes] = useState(service.defaultScopes);
+  const [showSecret, setShowSecret] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const isConfigured = !!registered;
+
+  const handleCopyUri = async () => {
+    if (!nangoCallbackUrl) return;
+    await navigator.clipboard.writeText(nangoCallbackUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  const handleSave = async () => {
+    if (!clientId.trim() || !clientSecret.trim()) {
+      addToast({ title: "Client ID and Client Secret are required", color: "danger" });
+      return;
+    }
+    setSaving(true);
+    try {
+      const body: RegisterIntegrationRequest = {
+        serviceId: service.id,
+        nangoProvider: service.nangoProvider,
+        clientId,
+        clientSecret,
+        scopes,
+      };
+      const res = await fetch("/api/connections/register", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const data = await res.json() as { error?: string };
+        addToast({ title: data.error ?? "Failed to save", color: "danger" });
+        return;
+      }
+      addToast({ title: `${service.label} integration saved`, color: "success" });
+      setClientId("");
+      setClientSecret("");
+      setExpanded(false);
+      onSaved();
+    } catch {
+      addToast({ title: "Network error", color: "danger" });
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <section className="rounded-xl border border-foreground/[0.07] bg-content1 overflow-hidden flex flex-col">
@@ -307,10 +375,10 @@ function ServiceCard({ service, connected, nangoInstalled, nangoCallbackUrl }: {
             <Chip
               size="sm"
               variant="flat"
-              color={connected ? "success" : "default"}
+              color={isConfigured ? "success" : "default"}
               classNames={{ base: "h-4", content: "text-[10px] px-1.5" }}
             >
-              {connected ? "connected" : "not connected"}
+              {isConfigured ? "configured" : "not configured"}
             </Chip>
           </div>
           <p className="text-[11px] text-foreground/40 mt-0.5 truncate">{service.description}</p>
@@ -322,10 +390,10 @@ function ServiceCard({ service, connected, nangoInstalled, nangoCallbackUrl }: {
 
       {/* Status row */}
       <div className="px-4 pb-3 flex items-center gap-2">
-        {connected ? (
+        {isConfigured ? (
           <div className="flex items-center gap-1.5 text-xs text-success">
             <CheckCircle2 className="h-3.5 w-3.5" />
-            OAuth app configured
+            Configured: <span className="font-mono">{registered.clientIdPreview}</span>
           </div>
         ) : (
           <div className="flex items-center gap-1.5 text-xs text-foreground/40">
@@ -343,48 +411,118 @@ function ServiceCard({ service, connected, nangoInstalled, nangoCallbackUrl }: {
             className="h-7 min-w-0 px-3 text-[11px]"
             onPress={() => setExpanded(e => !e)}
           >
-            {expanded ? "Hide setup" : connected ? "Reconfigure" : "Set up"}
+            {expanded ? "Hide" : isConfigured ? "Reconfigure" : "Set up"}
           </Button>
         )}
       </div>
 
-      {/* Expanded setup instructions */}
+      {/* Expanded credential form */}
       {expanded && (
-        <div className="border-t border-foreground/[0.06] px-4 py-3 space-y-2 bg-content2/30">
-          <p className="text-[11px] text-foreground/60 leading-relaxed">{service.tip}</p>
-          <div className="flex items-center gap-2 flex-wrap">
+        <div className="border-t border-foreground/[0.06] px-4 py-4 space-y-3 bg-content2/30">
+          {/* Redirect URI */}
+          <div className="space-y-1">
+            <p className="text-[10px] font-medium uppercase tracking-wider text-foreground/40">Redirect URI</p>
+            {nangoCallbackUrl ? (
+              <div className="flex items-center gap-2">
+                <code className="flex-1 font-mono text-[11px] bg-content1 border border-divider rounded-md px-2 py-1.5 text-foreground/70 select-all truncate">
+                  {nangoCallbackUrl}
+                </code>
+                <button
+                  onClick={handleCopyUri}
+                  className="shrink-0 p-1.5 rounded-md hover:bg-content3 text-foreground/40 hover:text-foreground transition-colors"
+                  title="Copy redirect URI"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </button>
+                {copied && <span className="text-[10px] text-success">Copied</span>}
+              </div>
+            ) : (
+              <p className="text-[11px] text-foreground/40">
+                Set a domain first — <code className="font-mono">eve domain set</code>
+              </p>
+            )}
+          </div>
+
+          {/* Provider setup link */}
+          <div>
             <a
               href={service.setupLink}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline"
             >
-              {service.setupLabel}
+              Create OAuth app on {service.setupLabel}
               <ExternalLink className="h-3 w-3" />
             </a>
-            <span className="text-foreground/20">·</span>
-            {nangoCallbackUrl ? (
-              <p className="text-[11px] text-foreground/40">
-                Redirect URI:{" "}
-                <code className="font-mono bg-content1 border border-divider rounded px-1 select-all">
-                  {nangoCallbackUrl}
-                </code>
-              </p>
-            ) : (
-              <p className="text-[11px] text-foreground/40">
-                Redirect URI: set a domain first (<code className="font-mono">eve domain set</code>)
-              </p>
-            )}
           </div>
-          <p className="text-[11px] text-foreground/40">
-            Once you have the OAuth credentials, register the integration in Nango:{" "}
-            <Link
-              href="/settings/components"
-              className="text-primary hover:underline"
+
+          {/* Client ID */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-medium uppercase tracking-wider text-foreground/40">Client ID</label>
+            <Input
+              size="sm"
+              placeholder="Paste your Client ID"
+              value={clientId}
+              onValueChange={setClientId}
+              classNames={{
+                inputWrapper: "bg-content1 border-divider h-8",
+                input: "text-xs font-mono",
+              }}
+            />
+          </div>
+
+          {/* Client Secret */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-medium uppercase tracking-wider text-foreground/40">Client Secret</label>
+            <Input
+              size="sm"
+              placeholder="Paste your Client Secret"
+              value={clientSecret}
+              onValueChange={setClientSecret}
+              type={showSecret ? "text" : "password"}
+              classNames={{
+                inputWrapper: "bg-content1 border-divider h-8",
+                input: "text-xs font-mono",
+              }}
+              endContent={
+                <button
+                  onClick={() => setShowSecret(s => !s)}
+                  className="text-foreground/40 hover:text-foreground transition-colors"
+                  tabIndex={-1}
+                >
+                  {showSecret ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                </button>
+              }
+            />
+          </div>
+
+          {/* Scopes */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-medium uppercase tracking-wider text-foreground/40">Scopes</label>
+            <Input
+              size="sm"
+              value={scopes}
+              onValueChange={setScopes}
+              classNames={{
+                inputWrapper: "bg-content1 border-divider h-8",
+                input: "text-xs font-mono",
+              }}
+            />
+          </div>
+
+          {/* Save button */}
+          <div className="flex justify-end pt-1">
+            <Button
+              size="sm"
+              color="primary"
+              radius="md"
+              className="h-7 px-4 text-[11px]"
+              isLoading={saving}
+              onPress={handleSave}
             >
-              Settings → Components → Nango
-            </Link>
-          </p>
+              Save integration
+            </Button>
+          </div>
         </div>
       )}
     </section>

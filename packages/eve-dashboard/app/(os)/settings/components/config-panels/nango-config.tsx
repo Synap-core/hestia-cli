@@ -69,7 +69,8 @@ export function NangoConfigPanel() {
           <p className="text-sm text-default-500">No OAuth apps configured yet.</p>
         )}
         <p className="text-xs text-default-500">
-          OAuth apps (Google, Slack, GitHub, …) are configured via the Synap pod settings or directly in Nango — accessible at <code className="font-mono">http://localhost:3003</code> from the host, or via <code className="font-mono">eve doctor</code> if the port isn't forwarded.
+          Register OAuth credentials for each service in{" "}
+          <a href="/settings/connections" className="text-primary hover:underline">Settings → Connections</a>.
         </p>
       </div>
     </div>
