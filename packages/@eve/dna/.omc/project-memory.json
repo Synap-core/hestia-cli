@@ -32,7 +32,7 @@
     "runtime": null
   },
   "build": {
-    "buildCommand": "pnpm build 2>&1 | tail -10",
+    "buildCommand": "cd packages/@eve/dna && npm run build 2>&1 | tail -5",
     "testCommand": "npm test",
     "lintCommand": null,
     "devCommand": "npm run dev",

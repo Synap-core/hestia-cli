@@ -1,7 +1,7 @@
 {
   "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"grep -n \\\"syncOpenwebuiExtras\\\\(\\\\|formatExtrasSummary\\\\(\\\" /Users/antoine/Documents/Code/synap/hestia-cli/packages/@eve/lifecycle/src/index.ts\",\"description\":\"Find call sites in lifecycle...",
-  "error": "Exit code 2\nugrep: error: error at position 26\n(?m)syncOpenwebuiExtras\\(\\|formatExtrasSummary\\(\n empty (sub)expression___/",
-  "timestamp": "2026-05-10T16:16:52.817Z",
+  "tool_input_preview": "{\"command\":\"cd packages/eve-cli && npm run build 2>&1 | tail -10\"}",
+  "error": "Exit code 1\n(eval):cd:1: no such file or directory: packages/eve-cli",
+  "timestamp": "2026-05-13T23:34:07.393Z",
   "retry_count": 1
 }
