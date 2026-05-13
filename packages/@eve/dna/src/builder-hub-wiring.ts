@@ -412,10 +412,18 @@ export async function writeHermesConfigYaml(cwd: string = process.cwd()): Promis
  * config, so config.yaml must be fully written before `docker run` starts.
  */
 export function writeHermesConfigYamlSync(secrets: EveSecrets | null): string {
-  // Resolve effective AI provider for Hermes: per-service override → global default.
-  const providerId = secrets?.ai?.serviceProviders?.['hermes'] ?? secrets?.ai?.defaultProvider ?? '';
-  type ProviderEntry = { id: string; apiKey?: string; baseUrl?: string; defaultModel?: string };
+  // Resolve effective AI provider for Hermes:
+  //   1. Per-service override (serviceProviders.hermes)
+  //   2. Global default (defaultProvider)
+  //   3. First enabled provider in the list (handles the common case where the
+  //      user added a provider via the UI but defaultProvider was not set)
+  type ProviderEntry = { id: string; enabled?: boolean; apiKey?: string; baseUrl?: string; defaultModel?: string };
   const providers = (secrets?.ai?.providers ?? []) as ProviderEntry[];
+  const implicitDefault = providers.find(p => p.enabled !== false)?.id ?? '';
+  const providerId =
+    secrets?.ai?.serviceProviders?.['hermes'] ??
+    secrets?.ai?.defaultProvider ??
+    implicitDefault;
   const provider = providers.find(p => p.id === providerId);
 
   // Well-known base URLs for built-in providers. Ollama uses the Docker-network
