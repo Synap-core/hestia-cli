@@ -6,10 +6,17 @@
  * Best-effort, mirrors the existing fire-and-forget pattern in
  * `wireOpenwebui`. Per-surface failures are captured in the result, never
  * thrown, so a flaky knowledge sync does not derail the skills push.
+ *
+ * Hub URL selection: the loopback (`http://127.0.0.1:14000`) is preferred
+ * when on-host because Node.js fetch strips the Authorization header on
+ * HTTP→HTTPS redirects (cross-origin per the Fetch spec). The public URL
+ * goes through Caddy which redirects :80→HTTPS — the Authorization header
+ * is silently dropped and the Hub returns 401 for every key, no matter how
+ * fresh. The loopback bypasses Caddy/Traefik entirely, so no redirect occurs.
  */
 
-import { resolveHubBaseUrl } from './builder-hub-wiring.js';
-import { readAgentKeyOrLegacySync } from './secrets-contract.js';
+import { resolveHubBaseUrl, DEFAULT_HUB_PATH } from './builder-hub-wiring.js';
+import { resolveSynapUrlOnHost } from './loopback-probe.js';
 import {
   pushSynapSkillsToOpenwebuiPrompts,
   type SkillsSyncResult,
@@ -46,23 +53,28 @@ export interface SyncOpenwebuiExtrasOptions {
   knowledge?: KnowledgeSyncOptions;
 }
 
+/**
+ * Resolve the Hub base URL for on-host extras sync.
+ *
+ * Prefers the loopback URL (http://127.0.0.1:14000) to avoid the
+ * Caddy HTTP→HTTPS redirect that silently strips Authorization headers.
+ * Falls back to the public URL when loopback is unavailable (off-host CLI).
+ */
+async function resolveHubBaseUrlOnHost(secrets: EveSecrets): Promise<string | undefined> {
+  const loopbackBase = await resolveSynapUrlOnHost(secrets);
+  if (loopbackBase) return `${loopbackBase.replace(/\/$/, '')}${DEFAULT_HUB_PATH}`;
+  return resolveHubBaseUrl(secrets);
+}
+
 export async function syncOpenwebuiExtras(
   cwd: string,
   secrets: EveSecrets | null,
   opts?: SyncOpenwebuiExtrasOptions,
 ): Promise<OpenwebuiExtrasResult> {
-  const hubBaseUrl = secrets ? resolveHubBaseUrl(secrets) : undefined;
-  if (!hubBaseUrl || !secrets) {
-    return { skipped: true };
-  }
-  // Diagnostic: always surface the Hub URL and key prefixes used for this
-  // sync pass so routing/key mismatches are visible in `eve update` output.
-  {
-    const owuiKey = readAgentKeyOrLegacySync('openwebui', secrets).slice(0, 12) || 'absent';
-    const eveKey  = readAgentKeyOrLegacySync('eve', secrets).slice(0, 12) || 'absent';
-    console.error(`[extras-sync] hub=${hubBaseUrl} owui-key=${owuiKey}… eve-key=${eveKey}…`);
-  }
+  if (!secrets) return { skipped: true };
 
+  const hubBaseUrl = await resolveHubBaseUrlOnHost(secrets);
+  if (!hubBaseUrl) return { skipped: true };
 
   const [skills, knowledge, tools, functions] = await Promise.allSettled([
     pushSynapSkillsToOpenwebuiPrompts(cwd, hubBaseUrl, secrets),
