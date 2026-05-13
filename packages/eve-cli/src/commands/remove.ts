@@ -121,6 +121,20 @@ async function removeOpenclaw(): Promise<void> {
   spinner.succeed('OpenClaw removed');
 }
 
+async function removeNango(): Promise<void> {
+  const spinner = createSpinner('Stopping Nango...');
+  spinner.start();
+  try {
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const execFileAsync = promisify(execFile);
+    await execFileAsync('docker', ['rm', '-f', 'eve-arms-nango'], { timeout: 10_000 });
+  } catch {
+    // Container already gone — fine
+  }
+  spinner.succeed('Nango stopped and removed');
+}
+
 async function removeRsshub(): Promise<void> {
   const spinner = createSpinner('Removing RSSHub...');
   spinner.start();
@@ -332,6 +346,8 @@ function buildRemoveStep(componentId: string): () => Promise<void> {
       return removeOllama;
     case 'openclaw':
       return removeOpenclaw;
+    case 'nango':
+      return removeNango;
     case 'rsshub':
       return removeRsshub;
     case 'openwebui':
@@ -366,6 +382,7 @@ async function updateStateAfterRemove(componentId: string): Promise<void> {
     ollama: 'brain',
     openclaw: 'arms',
     hermes: 'arms',
+    nango: 'arms',
     rsshub: 'eyes',
     traefik: 'legs',
     openwebui: 'eyes',

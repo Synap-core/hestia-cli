@@ -1197,7 +1197,7 @@ async function* postUpdateReconcileAuth(): AsyncGenerator<LifecycleEvent> {
         type: "log",
         line: "↳ eve agent key has no workspace binding — renewing to repair membership",
       };
-      const renewed = await renewAgentKey({ agentType: "eve", reason: "workspace-membership-repair" });
+      const renewed = await renewAgentKey({ agentType: "eve", reason: "workspace-membership-repair", idempotent: true });
       if (renewed.renewed) {
         yield {
           type: "log",

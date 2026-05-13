@@ -284,6 +284,18 @@ export interface RenewAgentKeyOptions {
   runner?: IDoctorRunner;
   /** Hard wall-clock cap on the mint call. Default 10s. */
   timeoutMs?: number;
+  /**
+   * Override PROVISIONING_TOKEN. Useful when running inside a container
+   * where the token is not in the ambient environment. Pass the value
+   * resolved by `runBackendPreflight` or `resolveProvisioningToken`.
+   */
+  provisioningToken?: string;
+  /**
+   * When true, asks the backend to skip revoke+mint if a valid key already
+   * exists. Safe to use for workspace-membership repair — the key is never
+   * rotated unnecessarily.
+   */
+  idempotent?: boolean;
 }
 
 export type RenewResult =
@@ -310,6 +322,8 @@ export async function renewAgentKey(opts: RenewAgentKeyOptions = {}): Promise<Re
     reason: opts.reason ?? "renew",
     runner: opts.runner,
     timeoutMs: opts.timeoutMs,
+    provisioningToken: opts.provisioningToken,
+    idempotent: opts.idempotent,
   });
   if (result.provisioned) {
     return {
@@ -354,6 +368,13 @@ export interface ProvisionAgentOptions {
    * the synap deploy `.env` file. Tests pass it directly.
    */
   provisioningToken?: string;
+  /**
+   * When true, asks the backend to skip revoke+mint if a valid key already
+   * exists. The backend runs workspace-membership repair and returns
+   * `{ alreadyValid: true }` — no key rotation occurs. Used for workspace
+   * membership repair so Eve doesn't rotate a healthy key on every update.
+   */
+  idempotent?: boolean;
 }
 
 export type ProvisionResult =
@@ -475,6 +496,7 @@ export async function provisionAgent(opts: ProvisionAgentOptions): Promise<Provi
     name: `eve-${agentType}`,
     parentKeyIdPrefix: previousPrefix || undefined,
     reason: opts.reason ?? "provision",
+    idempotent: opts.idempotent ?? false,
   });
   const headers: Record<string, string> = {
     Authorization: `Bearer ${provisioningToken}`,
@@ -572,6 +594,33 @@ export async function provisionAgent(opts: ProvisionAgentOptions): Promise<Provi
     };
   }
   const obj = parsed as Record<string, unknown>;
+
+  // Idempotent response: backend skipped revoke+mint because a valid key
+  // already exists. Update workspaceId in secrets (workspace membership may
+  // have been repaired) and return the existing record as-is.
+  if (obj.alreadyValid === true) {
+    const serverWorkspaceId = stringOr(obj.workspaceId, "");
+    try {
+      const existing = await readAgentKey(agentType, cwd);
+      if (existing?.hubApiKey) {
+        const updated: AgentKeyRecord = {
+          ...existing,
+          ...(serverWorkspaceId ? { workspaceId: serverWorkspaceId } : {}),
+        };
+        await writeAgentKey(agentType, updated, cwd);
+        return {
+          provisioned: true,
+          agentType,
+          record: updated,
+          keyIdPrefix: (updated.keyId ?? updated.hubApiKey).slice(0, 8),
+          wasAlreadyPresent: true,
+        };
+      }
+    } catch {
+      // ignore — fall through to normal mint path if secrets unreadable
+    }
+  }
+
   const hubApiKey = stringOr(obj.hubApiKey, stringOr(obj.apiKey, ""));
   if (!hubApiKey) {
     return {
