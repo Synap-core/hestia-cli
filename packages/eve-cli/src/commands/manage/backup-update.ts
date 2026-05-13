@@ -241,6 +241,60 @@ async function buildUpdateTargets(deployDir: string | undefined): Promise<Update
   // never attempt to update a service that was never installed.
   if (has('ollama'))              targets.push(lifecycleUpdate('ollama', '🤖 Ollama'));
   if (has('openclaw'))            targets.push(lifecycleUpdate('openclaw', '🦾 OpenClaw'));
+  if (has('nango'))               targets.push({
+    id: 'nango',
+    label: '🔗 Nango',
+    update: async () => {
+      const { execFile } = await import('node:child_process');
+      const { promisify } = await import('node:util');
+      const execFileAsync = promisify(execFile);
+      const { readEveSecrets } = await import('@eve/dna');
+      const secrets = await readEveSecrets(process.cwd()).catch(() => null);
+      const secretKey = secrets?.connectors?.nango?.secretKey as string | undefined;
+      if (!secretKey) throw new Error('No Nango secret key found in secrets.json — run: eve add nango');
+      const domain = secrets?.domain?.primary as string | undefined;
+      const ssl = !!(secrets?.domain?.ssl);
+      const nangoHost = domain ? `${ssl ? 'https' : 'http'}://nango.${domain}` : 'http://eve-arms-nango:3003';
+      const podPublicUrl = domain ? `${ssl ? 'https' : 'http'}://${domain}` : '';
+      await execFileAsync('docker', ['pull', 'nangohq/nango-server:hosted'], { timeout: 120_000 });
+      await execFileAsync('docker', ['rm', '-f', 'eve-arms-nango'], { timeout: 10_000 }).catch(() => {});
+      // Ensure postgres is on eve-network
+      await execFileAsync('docker', ['network', 'connect', '--alias', 'eve-brain-postgres', 'eve-network', 'eve-brain-postgres'], { timeout: 10_000 }).catch(() => {});
+      const runArgs = [
+        'run', '-d', '--name', 'eve-arms-nango', '--network', 'eve-network', '--restart', 'unless-stopped',
+        '-e', `NANGO_SECRET_KEY=${secretKey}`, '-e', 'SERVER_PORT=3003',
+        '-e', `NANGO_DATABASE_URL=postgresql://eve:eve@eve-brain-postgres:5432/nango`,
+        '-e', 'NODE_ENV=production',
+        ...(podPublicUrl ? ['-e', `NANGO_WEBHOOK_URL=${podPublicUrl}/api/connectors/nango-webhook`] : []),
+        '-v', 'eve-arms-nango-data:/var/lib/nango',
+        'nangohq/nango-server:hosted',
+      ];
+      await execFileAsync('docker', runArgs, { timeout: 30_000 });
+      // Write updated NANGO_HOST to deploy/.env
+      const { findPodDeployDir } = await import('@eve/dna');
+      const dDir = findPodDeployDir() ?? undefined;
+      if (dDir) {
+        const { readFile, writeFile } = await import('node:fs/promises');
+        const { join: pj } = await import('node:path');
+        const envPath = pj(dDir, '.env');
+        let envContent = await readFile(envPath, 'utf8').catch(() => '');
+        const setVar = (c: string, k: string, v: string) => {
+          const re = new RegExp(`^${k}=.*$`, 'm');
+          return re.test(c) ? c.replace(re, `${k}=${v}`) : `${c}\n${k}=${v}`;
+        };
+        envContent = setVar(envContent, 'NANGO_HOST', nangoHost);
+        envContent = setVar(envContent, 'NANGO_SECRET_KEY', secretKey);
+        await writeFile(envPath, envContent.trimStart(), 'utf8');
+        // Restart synap-backend to pick up any env changes
+        const container = getSynapBackendContainer();
+        if (container) {
+          await execFileAsync('docker', ['restart', container], { timeout: 60_000 });
+          connectToEveNetwork(container);
+        }
+      }
+      return { subLines: [`image updated, container recreated with NANGO_DATABASE_URL`] };
+    },
+  });
   if (has('rsshub'))              targets.push(lifecycleUpdate('rsshub', '👁️  RSSHub'));
   if (has('traefik'))             targets.push(lifecycleUpdate('traefik', '🦿 Traefik'));
   if (has('openwebui'))           targets.push(lifecycleUpdate('openwebui', '💬 Open WebUI'));
@@ -467,7 +521,7 @@ export function backupUpdateCommands(program: Command): void {
     .argument('[components...]', 'Component ids to restart (omit to restart all). E.g. `eve restart synap openwebui`')
     .description('Restart one or more Eve components without pulling new images.')
     .action(async (components: string[]) => {
-      const knownIds = ['synap', 'ollama', 'openclaw', 'rsshub', 'traefik', 'openwebui', 'openwebui-pipelines', 'hermes'];
+      const knownIds = ['synap', 'ollama', 'openclaw', 'nango', 'rsshub', 'traefik', 'openwebui', 'openwebui-pipelines', 'hermes'];
 
       const toRestart = components.length > 0 ? components : knownIds;
 

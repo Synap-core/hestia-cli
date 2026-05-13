@@ -1,7 +1,7 @@
 {
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"cat /Users/antoine/Documents/Code/synap/hestia-cli/packages/eve-dashboard/app/(os)/settings/components/component-surface.tsx\",\"description\":\"Read component-surface to see how config panels...",
-  "error": "Exit code 1\n(eval):1: no matches found: /Users/antoine/Documents/Code/synap/hestia-cli/packages/eve-dashboard/app/(os)/settings/components/component-surface.tsx",
-  "timestamp": "2026-05-13T16:44:27.099Z",
+  "tool_name": "Read",
+  "tool_input_preview": "{\"file_path\":\"/Users/antoine/Documents/Code/synap/hestia-cli/packages/eve-cli/src/commands/update.ts\"}",
+  "error": "File does not exist. Note: your current working directory is /Users/antoine/Documents/Code/synap/hestia-cli/packages/eve-cli.",
+  "timestamp": "2026-05-13T18:40:13.848Z",
   "retry_count": 1
 }
