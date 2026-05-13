@@ -254,7 +254,7 @@ async function addNango(): Promise<void> {
       '--restart', 'unless-stopped',
       '-e', `NANGO_SECRET_KEY=${secretKey}`,
       '-e', 'SERVER_PORT=3003',
-      '-e', 'DATABASE_URL=postgresql://eve:eve@eve-brain-postgres:5432/nango',
+      '-e', 'NANGO_DATABASE_URL=postgresql://eve:eve@eve-brain-postgres:5432/nango',
       '-e', 'NODE_ENV=production',
       ...(podPublicUrl ? ['-e', `NANGO_WEBHOOK_URL=${podPublicUrl}/api/connectors/nango-webhook`] : []),
       '-v', 'eve-arms-nango-data:/var/lib/nango',
@@ -380,17 +380,17 @@ export async function runAdd(
 
     // Drift detection: state.json says installed but the container is
     // gone (manually removed, host wiped, container never created
-    // because a previous install failed mid-way). Tell the user the
-    // right recovery instead of just "already installed". Skip for
-    // services that aren't containers (hermes, opencode, openclaude).
+    // because a previous install failed mid-way). Auto-reinstall
+    // instead of asking the user to manually recover.
     const containerName = comp.service?.containerName;
     if (containerName && !(await containerExists(containerName))) {
-      printWarning(`  …but the ${containerName} container is missing.`);
-      printInfo(`  Recover with "eve update ${componentId}" (recreates from compose) or "eve remove ${componentId} && eve add ${componentId}".`);
+      printWarning(`  …but the ${containerName} container is missing. Reinstalling...`);
+      await entityStateManager.updateComponentEntry(componentId, { state: 'error' });
+      // Fall through to reinstall below
     } else {
       printInfo(`  Or "eve update ${componentId}" to pull the latest image.`);
+      return;
     }
-    return;
   }
 
   // Check prerequisites

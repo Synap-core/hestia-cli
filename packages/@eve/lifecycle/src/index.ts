@@ -1010,8 +1010,9 @@ async function* postUpdateReconcileAiWiring(): AsyncGenerator<LifecycleEvent> {
     const owui = results.find(r => r.id === "openwebui");
     if (owui && /\b401\b|Unauthorized/i.test(owui.summary)) {
       yield { type: "log", line: "↳ OpenWebUI extras returned 401 — renewing eve agent key and retrying wiring" };
-      const { renewAgentKey } = await import("./auth.js");
-      const renewed = await renewAgentKey({ agentType: "eve", reason: "owui-extras-401" });
+      const { renewAgentKey, resolveProvisioningToken } = await import("./auth.js");
+      const provisioningToken = await resolveProvisioningToken() ?? undefined;
+      const renewed = await renewAgentKey({ agentType: "eve", reason: "owui-extras-401", provisioningToken });
       if (renewed.renewed) {
         yield { type: "log", line: `↳ eve key renewed (prefix ${renewed.keyIdPrefix}…) — re-running OpenWebUI wiring` };
         const refreshed = await readEveSecrets();
