@@ -853,11 +853,18 @@ async function* runPostUpdateHooks(comp: ComponentInfo): AsyncGenerator<Lifecycl
     // Kratos lifecycle (config regen, migrate, force-recreate) is now owned
     // by the synap CLI delegate. Eve only handles the cross-project plumbing
     // (Traefik attach, agent key verify, AI wiring cascade) below.
+    // Wait for the freshly-started synap-backend to be healthy before any
+    // wiring — migrations and container cold-start take a few seconds.
+    yield* waitUntilSynapReady({ timeoutMs: 30_000 });
     yield* postUpdateConnectTraefik();
     yield* postUpdateReconcileAuth();
     yield* postUpdateReconcileAiWiring();
   }
   if (comp.id === "hermes") {
+    // Synap-backend must be reachable before Hermes wiring runs — the
+    // network reconnect that attaches hermes to eve-network can briefly
+    // disrupt Traefik routing to synap. Wait for it to settle.
+    yield* waitUntilSynapReady({ timeoutMs: 15_000 });
     yield* postUpdateReconcileHermes();
     yield* postUpdateReconcileAiWiring();
   }
@@ -866,6 +873,12 @@ async function* runPostUpdateHooks(comp: ComponentInfo): AsyncGenerator<Lifecycl
     // older installs still have running. No-op when the container, deploy
     // dir, and entity-state row are all already absent.
     yield* decommissionLegacyPipelines();
+    // Wait for synap-backend to be healthy before validating agent keys or
+    // running extras. The brief Traefik network reconnect that happens during
+    // concurrent Hermes updates causes transient transport errors if we skip
+    // this wait. The health probe also warms the loopback cache so all
+    // subsequent URL resolutions in this invocation use the fast loopback path.
+    yield* waitUntilSynapReady({ timeoutMs: 15_000 });
     // Validate the agent keys OpenWebUI relies on (eve = the bearer baked
     // into Synap connection + tool server + functions; hermes = same for
     // the Hermes Gateway connection). Auto-renew on `key_revoked` /
@@ -885,6 +898,58 @@ async function* runPostUpdateHooks(comp: ComponentInfo): AsyncGenerator<Lifecycl
  * to be called from any post-update hook that depends on a working agent
  * key — currently `synap` (via `postUpdateReconcileAuth`) and `openwebui`.
  */
+/**
+ * Poll the synap-backend's Hub health endpoint until it responds or the
+ * timeout expires. Calling this before any wiring hooks:
+ *
+ *   1. Ensures the backend is actually accepting requests before we hammer
+ *      it with auth checks, extras pushes, and key validates.
+ *   2. Warms the loopback-probe cache to `true` on first success — all
+ *      subsequent `resolveSynapUrlOnHost` calls within the same process
+ *      return the loopback URL without re-probing, making the wiring phase
+ *      immune to mid-run probe races.
+ *
+ * Silent on success. Emits one warning line if the deadline is hit without
+ * a healthy response — wiring still proceeds (best-effort).
+ */
+async function* waitUntilSynapReady(
+  opts: { timeoutMs?: number; intervalMs?: number } = {},
+): AsyncGenerator<LifecycleEvent> {
+  const secrets = await readEveSecrets();
+  const timeoutMs = opts.timeoutMs ?? 30_000;
+  const intervalMs = opts.intervalMs ?? 1_500;
+  const deadline = Date.now() + timeoutMs;
+  let ready = false;
+
+  while (Date.now() < deadline) {
+    // resolveSynapUrlOnHost probes the loopback (14000) and caches `true`
+    // on success. Once warm, every subsequent call in this process skips
+    // the probe and returns the loopback URL directly.
+    const url = await resolveSynapUrlOnHost(secrets);
+    if (url) {
+      try {
+        const res = await fetch(`${url.replace(/\/+$/, "")}/api/hub/health`, {
+          signal: AbortSignal.timeout(2_000),
+        });
+        if (res.ok || res.status < 500) {
+          ready = true;
+          break;
+        }
+      } catch {
+        // backend still starting — keep polling
+      }
+    }
+    await new Promise<void>((r) => setTimeout(r, intervalMs));
+  }
+
+  if (!ready) {
+    yield {
+      type: "log",
+      line: "↳ synap-backend health check timed out — wiring may be incomplete",
+    };
+  }
+}
+
 async function* validateAndRenewKeyIfRevoked(agentType: string): AsyncGenerator<LifecycleEvent> {
   const { getAuthStatus, renewAgentKey } = await import("./auth.js");
   const { readAgentKey } = await import("@eve/dna");
@@ -1025,14 +1090,20 @@ async function* postUpdateReconcileAiWiring(): AsyncGenerator<LifecycleEvent> {
       const renewedOwui = await renewAgentKey({ agentType: "openwebui", reason: "owui-extras-401", idempotent: true, provisioningToken }).catch(() => null);
       const renewedEve  = await renewAgentKey({ agentType: "eve",       reason: "owui-extras-401", idempotent: true, provisioningToken }).catch(() => null);
       const anyRotated = renewedOwui?.renewed || renewedEve?.renewed;
+      // A key is "actually rotated" when renewed=true AND wasAlreadyPresent is
+      // NOT set — wasAlreadyPresent means the backend returned alreadyValid (no
+      // revoke happened, idempotent path reused the existing key).
+      const actuallyRotated = (r: typeof renewedOwui | typeof renewedEve) =>
+        r?.renewed && !r.wasAlreadyPresent;
+      type RenewedTrue = { renewed: true; apiKey: string; keyIdPrefix: string; agentType: string; wasAlreadyPresent?: boolean };
       const rotatedLabels = [
-        renewedOwui?.renewed ? `openwebui (prefix ${renewedOwui.keyIdPrefix}…)` : null,
-        renewedEve?.renewed  ? `eve (prefix ${renewedEve.keyIdPrefix}…)` : null,
+        actuallyRotated(renewedOwui) ? `openwebui (prefix ${(renewedOwui as RenewedTrue).keyIdPrefix}…)` : null,
+        actuallyRotated(renewedEve)  ? `eve (prefix ${(renewedEve as RenewedTrue).keyIdPrefix}…)` : null,
       ].filter(Boolean).join(', ');
       if (rotatedLabels) {
         yield { type: "log", line: `↳ rotated stale key(s): ${rotatedLabels} — re-running OpenWebUI wiring` };
       } else {
-        yield { type: "log", line: "↳ keys already valid — re-running OpenWebUI wiring to confirm" };
+        yield { type: "log", line: "↳ keys confirmed valid — re-running OpenWebUI wiring" };
       }
       const refreshed = await readEveSecrets();
       const [retry] = await materializeTargets(refreshed, ["ai-wiring"], { components: ["openwebui"] });

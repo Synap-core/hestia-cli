@@ -299,7 +299,7 @@ export interface RenewAgentKeyOptions {
 }
 
 export type RenewResult =
-  | { renewed: true; apiKey: string; keyIdPrefix: string; agentType: string }
+  | { renewed: true; apiKey: string; keyIdPrefix: string; agentType: string; wasAlreadyPresent?: boolean }
   | { renewed: false; reason: string; agentType: string };
 
 const RENEW_TIMEOUT_MS = 10_000;
@@ -331,6 +331,7 @@ export async function renewAgentKey(opts: RenewAgentKeyOptions = {}): Promise<Re
       apiKey: result.record.hubApiKey,
       keyIdPrefix: result.keyIdPrefix,
       agentType,
+      wasAlreadyPresent: result.wasAlreadyPresent,
     };
   }
   return { renewed: false, reason: result.reason, agentType };
@@ -930,7 +931,7 @@ export async function resolveProvisioningToken(): Promise<string | null> {
  * Quiet on every failure — the worst case is we proceed eagerly and the
  * caller surfaces a transport error, which they would have anyway.
  */
-async function waitForBackend(
+export async function waitForBackend(
   synapUrl: string,
   runner: IDoctorRunner,
   opts: { timeoutMs?: number; intervalMs?: number } = {},
