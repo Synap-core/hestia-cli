@@ -30,7 +30,7 @@
  * response and use it for both update and delete.
  */
 import { getAdminJwt, resolveOpenwebuiAdminUrl } from './openwebui-admin.js';
-import { readAgentKeyOrLegacy } from './secrets-contract.js';
+import { readAgentKeyOrLegacySync } from './secrets-contract.js';
 import type { EveSecrets } from './secrets-contract.js';
 
 /**
@@ -191,8 +191,10 @@ export async function pushSynapSkillsToOpenwebuiPrompts(
   // own audit trail / rotation. Pre-migration installs fall back to the
   // eve agent (always-on) so older deploys keep working without re-running
   // provisioning. Empty string means neither slot is provisioned.
-  let apiKey = await readAgentKeyOrLegacy('openwebui', cwd);
-  if (!apiKey) apiKey = await readAgentKeyOrLegacy('eve', cwd);
+  // Use the passed-in secrets object (not a disk re-read) so the caller's
+  // freshly-renewed key is used even when process.cwd() ≠ EVE_HOME.
+  let apiKey = readAgentKeyOrLegacySync('openwebui', secrets);
+  if (!apiKey) apiKey = readAgentKeyOrLegacySync('eve', secrets);
   if (!apiKey) {
     throw new Error('No Hub API key available — run: eve auth provision --agent openwebui (or eve auth provision --agent eve)');
   }

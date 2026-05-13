@@ -37,7 +37,7 @@ import { dirname, join } from 'node:path';
 
 import { SYNAP_BACKEND_INTERNAL_URL } from './components.js';
 import { getAdminJwt, resolveOpenwebuiAdminUrl } from './openwebui-admin.js';
-import { readAgentKeyOrLegacy, type EveSecrets } from './secrets-contract.js';
+import { readAgentKeyOrLegacySync, type EveSecrets } from './secrets-contract.js';
 
 // ── Public types ────────────────────────────────────────────────────────
 
@@ -243,8 +243,8 @@ export async function pushSynapFunctionsToOpenwebui(
   // eve key. The `hubBaseUrl` arg is intentionally unused: the valves
   // embed the container-network URL (`SYNAP_BACKEND_INTERNAL_URL`) so
   // OWUI's container resolves Synap via Docker DNS, not the public host.
-  let apiKey = await readAgentKeyOrLegacy('openwebui', cwd);
-  if (!apiKey) apiKey = await readAgentKeyOrLegacy('eve', cwd);
+  let apiKey = readAgentKeyOrLegacySync('openwebui', _secrets);
+  if (!apiKey) apiKey = readAgentKeyOrLegacySync('eve', _secrets);
   if (!apiKey) {
     throw new Error('No Hub API key — run: eve auth provision --agent openwebui (or eve auth provision --agent eve)');
   }
