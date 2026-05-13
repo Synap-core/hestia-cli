@@ -38,9 +38,6 @@ COPY hestia-cli/packages/types/package.json ./hestia-cli/packages/types/
 COPY hestia-cli/packages/usb/package.json ./hestia-cli/packages/usb/
 COPY hestia-cli/packages/utils/package.json ./hestia-cli/packages/utils/
 
-# --- synap-backend types (needed for @synap-core/types workspace link) ---
-COPY synap-backend/packages/types/package.json ./synap-backend/packages/types/
-
 RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 
@@ -66,20 +63,16 @@ COPY hestia-cli/packages/@eve/brain ./hestia-cli/packages/@eve/brain
 COPY hestia-cli/packages/@eve/eyes ./hestia-cli/packages/@eve/eyes
 COPY hestia-cli/packages/eve-dashboard ./hestia-cli/packages/eve-dashboard
 
-# @synap-core/types (source — must be built before dashboard)
-COPY synap-backend/packages/types ./synap-backend/packages/types
-
 ENV NEXT_TELEMETRY_DISABLED=1
 
 # Build workspace deps in topological order. Order matters:
-#   @synap-core/types — no workspace deps (must be built first so dist/ exists)
 #   @eve/dna          — no workspace deps
 #   @eve/legs         — depends on dna
 #   @eve/brain        — depends on dna, legs
 #   @eve/eyes         — depends on dna, brain
 #   @eve/lifecycle    — depends on dna, legs, brain, eyes
 #   @eve/dashboard    — depends on dna, legs, lifecycle
-RUN pnpm --filter @synap-core/types run build
+# Note: @synap-core/types is resolved from public npm, no local build needed.
 RUN pnpm --filter @eve/dna run build
 RUN pnpm --filter @eve/legs run build
 RUN pnpm --filter @eve/brain run build

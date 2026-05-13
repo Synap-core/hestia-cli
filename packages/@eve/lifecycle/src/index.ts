@@ -897,7 +897,13 @@ async function* validateAndRenewKeyIfRevoked(agentType: string): AsyncGenerator<
   const apiKey = agentRecord?.hubApiKey?.trim();
   if (!apiKey) return; // No key yet — different recovery path (provision, not renew).
 
-  const status = await getAuthStatus({ synapUrl, apiKey });
+  // Retry once on transport errors — concurrent container restarts / Traefik
+  // network reconnects cause a brief window where the loopback is unreachable.
+  let status = await getAuthStatus({ synapUrl, apiKey });
+  if (!status.ok && status.failure.reason === "transport") {
+    await new Promise<void>((r) => setTimeout(r, 3_000));
+    status = await getAuthStatus({ synapUrl, apiKey, timeoutMs: 12_000 });
+  }
   if (status.ok) {
     // Key is valid but may have been minted before a workspace existed.
     // If workspaceId is empty the key has no workspace membership, so

@@ -80,8 +80,8 @@ type SynapSkillSlug = (typeof SYNAP_SKILL_SLUGS)[number];
 /** Tag baked into prompt titles so operators can spot Eve-managed entries. */
 const EVE_MANAGED_TAG = 'synap:system';
 
-/** Per-HTTP-call timeout matching `ensureEveSkillsLayout`. */
-const HTTP_TIMEOUT_MS = 8000;
+/** Per-HTTP-call timeout. Skills/system assembles multiple SKILL.md files — allow up to 30 s. */
+const HTTP_TIMEOUT_MS = 30_000;
 
 function nameFor(slug: SynapSkillSlug): string {
   switch (slug) {
