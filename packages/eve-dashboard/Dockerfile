@@ -29,7 +29,7 @@ COPY packages/cli-kit/package.json ./packages/cli-kit/
 COPY packages/eve-cli/package.json ./packages/eve-cli/
 COPY packages/eve-dashboard/package.json ./packages/eve-dashboard/
 COPY packages/install/package.json ./packages/install/
-COPY packages/types/package.json ./packages/types/
+COPY packages/types ./packages/types
 COPY packages/usb/package.json ./packages/usb/
 COPY packages/utils/package.json ./packages/utils/
 
@@ -64,12 +64,14 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # on quoting + pnpm version), and silently building only the leaf produces
 # very confusing "Module not found: '@eve/dna'" errors at link time.
 # Order matters:
+#   types     — no workspace deps (must be built first so dist/ exists)
 #   dna       — no workspace deps
 #   legs      — depends on dna
 #   brain     — depends on dna, legs
 #   eyes      — depends on dna, brain
 #   lifecycle — depends on dna, legs, brain, eyes
 #   dashboard — depends on dna, legs, lifecycle
+RUN pnpm --filter @synap-core/types run build
 RUN pnpm --filter @eve/dna run build
 RUN pnpm --filter @eve/legs run build
 RUN pnpm --filter @eve/brain run build
