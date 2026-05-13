@@ -33,25 +33,34 @@ export async function POST(req: Request) {
     "Content-Type": "application/json",
   };
 
-  // Check if integration already exists to decide between POST and PUT
-  const existing = await fetch(`${nangoUrl}/config/${serviceId}`, { headers }).catch(() => null);
-  const isUpdate = existing?.ok;
-
-  const payload = {
-    provider_config_key: serviceId,
-    provider: nangoProvider,
-    oauth_client_id: clientId.trim(),
-    oauth_client_secret: clientSecret.trim(),
-    oauth_scopes: scopes,
+  const credentials = {
+    type: "OAUTH2" as const,
+    client_id: clientId.trim(),
+    client_secret: clientSecret.trim(),
+    scopes: scopes.trim() || undefined,
   };
 
-  // Nango: POST /config to create, PUT /config/:key to update
-  const res = await fetch(isUpdate ? `${nangoUrl}/config/${serviceId}` : `${nangoUrl}/config`, {
-    method: isUpdate ? "PUT" : "POST",
+  // Check if integration already exists to decide between POST and PATCH
+  const existing = await fetch(`${nangoUrl}/integrations/${serviceId}`, {
     headers,
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(10_000),
-  });
+    signal: AbortSignal.timeout(5_000),
+  }).catch(() => null);
+
+  const isUpdate = existing?.ok;
+
+  const res = await fetch(
+    isUpdate ? `${nangoUrl}/integrations/${serviceId}` : `${nangoUrl}/integrations`,
+    {
+      method: isUpdate ? "PATCH" : "POST",
+      headers,
+      body: JSON.stringify(
+        isUpdate
+          ? { credentials }
+          : { unique_key: serviceId, provider: nangoProvider, credentials }
+      ),
+      signal: AbortSignal.timeout(10_000),
+    }
+  );
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");

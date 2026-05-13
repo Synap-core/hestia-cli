@@ -49,16 +49,16 @@ export async function GET() {
     const nangoSecretKey = secrets?.connectors?.nango?.secretKey as string | undefined;
     if (nangoSecretKey) {
       try {
-        const r = await fetch("http://eve-arms-nango:3003/config", {
+        const r = await fetch("http://eve-arms-nango:3003/integrations", {
           headers: { Authorization: `Bearer ${nangoSecretKey}` },
           signal: AbortSignal.timeout(3000),
         });
         if (r.ok) {
-          const data = await r.json() as { configs?: Array<{ unique_key: string; provider: string; oauth_client_id?: string }> };
-          registeredIntegrations = (data.configs ?? []).map(c => ({
+          const data = await r.json() as { data?: Array<{ unique_key: string; provider: string }> };
+          registeredIntegrations = (data.data ?? []).map(c => ({
             key: c.unique_key,
             provider: c.provider,
-            clientIdPreview: c.oauth_client_id ? c.oauth_client_id.slice(0, 8) + "…" : "",
+            clientIdPreview: "",
           }));
         }
       } catch { /* Nango may be starting */ }
