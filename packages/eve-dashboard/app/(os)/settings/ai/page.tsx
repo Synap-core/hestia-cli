@@ -225,6 +225,11 @@ export default function AiProvidersPage() {
         const cfg = await aiRes.json() as AiConfig;
         setConfig(cfg);
         aiConsumers = cfg.aiConsumers ?? [];
+        // Auto-fetch IS models once we know at least one usable provider is configured.
+        const hasUsable = (cfg.providers ?? []).some(
+          p => p.enabled && (p.id === "ollama" || p.hasApiKey || p.baseUrl),
+        );
+        if (hasUsable) void fetchIsModels();
       }
       if (compRes.ok) {
         const data = await compRes.json() as { components: Array<{ id: string; label: string; installed: boolean }> };
@@ -239,9 +244,9 @@ export default function AiProvidersPage() {
         setMessaging(await msgRes.json() as MessagingConfig);
       }
     } finally { setLoading(false); }
-  }, [router]);
+  }, [router, fetchIsModels]);
 
-  useEffect(() => { void fetchConfig(); void fetchIsModels(); }, [fetchConfig, fetchIsModels]);
+  useEffect(() => { void fetchConfig(); }, [fetchConfig]);
 
   async function saveProvider(id: string, body: Record<string, unknown>) {
     setSavingId(id);
@@ -1047,10 +1052,12 @@ export default function AiProvidersPage() {
             {consumers.map(c => {
               const override = config?.serviceProviders?.[c.id];
               const modelOverride = config?.serviceModels?.[c.id];
-              const effective = override ?? config?.defaultProvider ?? null;
-              const effectiveProvider = (config?.providers ?? []).find((p: ProviderEntry) => p.id === effective);
-              const resolvedModel = modelOverride || effectiveProvider?.defaultModel || null;
-              const resolvedModelIsDefault = !modelOverride && !!effectiveProvider?.defaultModel;
+              // Use server-computed resolution — matches pickPrimaryProvider() fallthrough
+              // (first enabled provider when no defaultProvider is set explicitly).
+              const serverResolved = config?.resolvedPerConsumer?.[c.id];
+              const effective = serverResolved?.provider ?? null;
+              const resolvedModel = serverResolved?.model ?? null;
+              const resolvedModelIsDefault = !modelOverride && !!resolvedModel;
               const isISClient = c.id !== 'synap';
               const usable = (config?.providers ?? []).filter(
                 (p: ProviderEntry) => p.id === "ollama" || p.hasApiKey || (p.baseUrl && p.baseUrl.trim()),

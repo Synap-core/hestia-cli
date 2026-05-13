@@ -47,7 +47,7 @@
     "runtime": null
   },
   "build": {
-    "buildCommand": "cd /Users/antoine/Documents/Code/synap/hestia-cli/packages/eve-dashboard && pnpm tsc --noEmit 2>&1 | head -40",
+    "buildCommand": "pnpm tsc --noEmit 2>&1 | head -20",
     "testCommand": "cd /Users/antoine/Documents/Code/synap/hestia-cli/packages/@eve/dna && pnpm test 2>&1 | tail -40",
     "lintCommand": null,
     "devCommand": "npm run dev",
@@ -154,8 +154,8 @@
   "hotPaths": [
     {
       "path": "app/(os)/settings/ai/page.tsx",
-      "accessCount": 29,
-      "lastAccessed": 1778689007093,
+      "accessCount": 35,
+      "lastAccessed": 1778689808396,
       "type": "file"
     },
     {
@@ -177,15 +177,15 @@
       "type": "file"
     },
     {
-      "path": "lib/synap-auth.ts",
-      "accessCount": 6,
-      "lastAccessed": 1778433203710,
+      "path": "app/api/ai/route.ts",
+      "accessCount": 7,
+      "lastAccessed": 1778689703617,
       "type": "file"
     },
     {
-      "path": "app/api/ai/route.ts",
+      "path": "lib/synap-auth.ts",
       "accessCount": 6,
-      "lastAccessed": 1778688737433,
+      "lastAccessed": 1778433203710,
       "type": "file"
     },
     {
