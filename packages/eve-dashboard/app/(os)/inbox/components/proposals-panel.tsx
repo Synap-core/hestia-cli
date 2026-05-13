@@ -479,7 +479,7 @@ function proposalSummary(p: WireProposal): ProposalSummary {
   return {
     title: buildFallbackTitle({
       changeType,
-      profileSlug: profileSlug ?? undefined,
+      profileSlug: profileSlug || undefined,
       targetType: request?.targetType ?? p.targetType,
       targetName,
     }),
