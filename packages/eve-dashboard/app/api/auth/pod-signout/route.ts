@@ -72,24 +72,29 @@ export async function POST(req: Request) {
     }
   }
 
-  // Build a defensive Set-Cookie that expires the parent-domain cookie
-  // immediately. Kratos's logout_url will also clear it on completion;
-  // doing it here makes the local UI flip even if the browser doesn't
-  // follow the logout_url right away.
-  const response = NextResponse.json({ ok: true, logoutUrl });
+  // Clear both Kratos session and Eve dashboard session cookies.
+  // Doing it here ensures the local UI flips immediately even if the
+  // browser doesn't follow the Kratos logout_url.
+  const response = NextResponse.json({ ok: true, logoutUrl, redirectTo: "/login" });
   const cookieDomain = await resolveParentDomainForCookie();
   const isSecure = base.startsWith("https://");
-  const parts = [
-    "ory_kratos_session=",
-    "Path=/",
-    "HttpOnly",
-    "SameSite=Lax",
-    "Max-Age=0",
-    "Expires=Thu, 01 Jan 1970 00:00:00 GMT",
-  ];
-  if (isSecure) parts.push("Secure");
-  if (cookieDomain) parts.push(`Domain=${cookieDomain}`);
-  response.headers.set("Set-Cookie", parts.join("; "));
+
+  const makeExpiredCookie = (name: string) => {
+    const parts = [
+      `${name}=`,
+      "Path=/",
+      "HttpOnly",
+      "SameSite=Lax",
+      "Max-Age=0",
+      "Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+    ];
+    if (isSecure) parts.push("Secure");
+    if (cookieDomain) parts.push(`Domain=${cookieDomain}`);
+    return parts.join("; ");
+  };
+
+  response.headers.set("Set-Cookie", makeExpiredCookie("ory_kratos_session"));
+  response.headers.append("Set-Cookie", makeExpiredCookie("eve-session"));
 
   return response;
 }

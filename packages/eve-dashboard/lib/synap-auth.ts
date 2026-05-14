@@ -295,26 +295,31 @@ export function getCurrentPodSession(podUrl: string): StoredPodSession | null {
  * Idempotent — safe to call when no session exists.
  */
 export async function signOutOfPod(podUrl: string): Promise<void> {
-  // Browser-side: drop the entry from `synap:pods` immediately so the
-  // gate state updates in this tab.
+  // Browser-side: drop the entry from `synap:pods` immediately.
   signOutOfPodCore(podUrl);
 
-  // Server-side: ask Eve to start a Kratos logout flow and clear the
-  // Kratos cookie defensively. If Kratos returned a logout_url, the
-  // browser navigates there to finalize.
+  // Server-side: clear both Kratos and eve-session cookies.
+  // Always navigate to /login afterwards — the server response may
+  // include a Kratos logout_url for server-side session termination,
+  // but that's a best-effort cleanup; cookie expiry handles security.
   try {
     const res = await fetch("/api/auth/pod-signout", {
       method: "POST",
       credentials: "include",
     });
-    const data = (await res
-      .json()
-      .catch(() => null)) as { logoutUrl?: string } | null;
-    if (data?.logoutUrl && typeof window !== "undefined") {
-      window.location.href = data.logoutUrl;
+    const data = (await res.json().catch(() => null)) as
+      | { logoutUrl?: string; redirectTo?: string }
+      | null;
+
+    if (typeof window !== "undefined") {
+      // Prefer Kratos logout_url (finalises server-side session), then
+      // fall back to the explicit redirectTo, then plain /login.
+      window.location.href = data?.logoutUrl ?? data?.redirectTo ?? "/login";
     }
   } catch {
-    /* non-fatal — browser state is already updated */
+    if (typeof window !== "undefined") {
+      window.location.href = "/login";
+    }
   }
 }
 
@@ -330,12 +335,8 @@ export async function signOutOfAllPodsAndClearDisk(): Promise<void> {
       method: "POST",
       credentials: "include",
     });
-    const data = (await res
-      .json()
-      .catch(() => null)) as { logoutUrl?: string } | null;
-    if (data?.logoutUrl && typeof window !== "undefined") {
-      window.location.href = data.logoutUrl;
-    }
+    // Caller (handleSignOutEverywhere) drives navigation via window.location.reload().
+    await res.json().catch(() => null);
   } catch {
     /* non-fatal */
   }
