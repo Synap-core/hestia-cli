@@ -368,11 +368,17 @@ memory:
   # The synap plugin lives at $HERMES_HOME/plugins/memory/synap/
   provider: synap
 
+# Named provider entry — Hermes resolves credentials from here, not from model.base_url/api_key.
+# Both the main model and auxiliary clients (vision, web-extract) look up "custom/main".
+providers:
+  main:
+    base_url: ${baseUrl}
+    api_key: ${apiKey}
+    model: ${model}
+
 model:
-  provider: custom
+  provider: custom/main
   default: ${model}
-  base_url: ${baseUrl}
-  api_key: ${apiKey}
 
 # MCP server — exposes Hermes tools to Claude Code, Cursor, and any MCP client.
 # Connect at http://localhost:9120 (host) or http://eve-builder-hermes:9120 (docker network).
