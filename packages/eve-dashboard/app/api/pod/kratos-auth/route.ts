@@ -9,6 +9,10 @@
  * unauthenticated by design (it IS the auth flow). We proxy here so the
  * browser never needs CORS allowances for every possible Eve origin.
  *
+ * ⚠️  DEPRECATED — prefer the browser flow (/api/pod/kratos-login)
+ * which sets a proper encrypted cookie and participates in cross-surface
+ * SSO. This route is kept for backward compat only.
+ *
  * Cookie-only auth: on success we set the parent-domain
  * `ory_kratos_session` cookie so subsequent `/api/pod/*` proxy calls
  * forward it directly. Eve persists nothing; Kratos is the single
