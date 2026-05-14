@@ -79,7 +79,11 @@ export async function POST(req: Request) {
   const cookieDomain = await resolveParentDomainForCookie();
   const isSecure = base.startsWith("https://");
 
-  const makeExpiredCookie = (name: string) => {
+  // `ory_kratos_session` was set with Domain=.<root> (parent domain) so it
+  // must be cleared with the same Domain attribute.
+  // `eve-session` was set WITHOUT a Domain attribute (host-scoped to eve.<root>)
+  // so it must be cleared without one — a Domain mismatch silently fails.
+  const makeExpiredCookie = (name: string, withDomain: boolean) => {
     const parts = [
       `${name}=`,
       "Path=/",
@@ -89,12 +93,12 @@ export async function POST(req: Request) {
       "Expires=Thu, 01 Jan 1970 00:00:00 GMT",
     ];
     if (isSecure) parts.push("Secure");
-    if (cookieDomain) parts.push(`Domain=${cookieDomain}`);
+    if (withDomain && cookieDomain) parts.push(`Domain=${cookieDomain}`);
     return parts.join("; ");
   };
 
-  response.headers.set("Set-Cookie", makeExpiredCookie("ory_kratos_session"));
-  response.headers.append("Set-Cookie", makeExpiredCookie("eve-session"));
+  response.headers.set("Set-Cookie", makeExpiredCookie("ory_kratos_session", true));
+  response.headers.append("Set-Cookie", makeExpiredCookie("eve-session", false));
 
   return response;
 }

@@ -22,93 +22,53 @@
 
 import { NextResponse } from "next/server";
 import { resolvePodUrl } from "@eve/dna";
-import { requireAuth } from "@/lib/auth-server";
+import { getAuthUser } from "@/lib/auth-server";
 
 export type PairingStateApi = "unconfigured" | "unpaired" | "paired";
 
 export interface PairingStatusResponse {
   state: PairingStateApi;
-  /** Email pulled from the Kratos identity when paired. */
+  /** Email from the eve-session JWT when paired. */
   userEmail?: string;
   /** Pod base URL (helpful diagnostic). */
   podUrl?: string;
-  /** ISO-8601 expiry from the Kratos session, when available. */
-  expiresAt?: string;
 }
 
-interface KratosWhoamiResponse {
-  expires_at?: string;
-  identity?: {
-    traits?: {
-      email?: string;
-    };
-  };
-}
-
-function extractKratosSessionCookie(req: Request): string | null {
+function hasKratosSessionCookie(req: Request): boolean {
   const raw = req.headers.get("cookie");
-  if (!raw) return null;
-  const match = raw.match(/(?:^|;\s*)ory_kratos_session=([^;]+)/);
-  return match ? match[1] : null;
+  if (!raw) return false;
+  return /(?:^|;\s*)ory_kratos_session=/.test(raw);
 }
 
 export async function GET(req: Request) {
-  const auth = await requireAuth();
+  // Use getAuthUser so we have the email from the JWT without a
+  // server-side Kratos call (which would fail from inside Docker due to
+  // DNS — the public pod URL isn't reachable from within the container).
+  const auth = await getAuthUser();
   if ("error" in auth) return auth.error;
 
   let podUrl: string | undefined;
   try {
     podUrl = await resolvePodUrl(undefined, req.url, req.headers);
   } catch {
-    // Fall through — `unconfigured` is the safest answer when we can't
-    // resolve a pod URL.
+    /* fall through — unconfigured */
   }
 
   if (!podUrl) {
-    return NextResponse.json<PairingStatusResponse>({
-      state: "unconfigured",
-    });
+    return NextResponse.json<PairingStatusResponse>({ state: "unconfigured" });
   }
 
-  const sessionCookie = extractKratosSessionCookie(req);
-  if (!sessionCookie) {
-    return NextResponse.json<PairingStatusResponse>({
-      state: "unpaired",
-      podUrl,
-    });
+  // ory_kratos_session cookie present = the browser has a live Kratos
+  // session. Combined with a valid eve-session JWT (checked above), this
+  // is sufficient to declare the pod paired — no server-side whoami
+  // needed, and we avoid the Docker-internal DNS issue.
+  if (!hasKratosSessionCookie(req)) {
+    return NextResponse.json<PairingStatusResponse>({ state: "unpaired", podUrl });
   }
 
-  // Probe Kratos `whoami` with the forwarded cookie. A 200 means the
-  // session is live; anything else is treated as unpaired.
-  const base = podUrl.replace(/\/+$/, "");
-  try {
-    const res = await fetch(`${base}/.ory/kratos/public/sessions/whoami`, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        Cookie: `ory_kratos_session=${sessionCookie}`,
-      },
-      cache: "no-store",
-    });
-    if (!res.ok) {
-      return NextResponse.json<PairingStatusResponse>({
-        state: "unpaired",
-        podUrl,
-      });
-    }
-    const body = (await res.json().catch(() => null)) as KratosWhoamiResponse | null;
-    return NextResponse.json<PairingStatusResponse>({
-      state: "paired",
-      userEmail: body?.identity?.traits?.email,
-      podUrl,
-      expiresAt: body?.expires_at,
-    });
-  } catch {
-    // Pod unreachable — surface as unpaired so the UI nudges, rather
-    // than blocking on an upstream blip.
-    return NextResponse.json<PairingStatusResponse>({
-      state: "unpaired",
-      podUrl,
-    });
-  }
+  return NextResponse.json<PairingStatusResponse>({
+    state: "paired",
+    userEmail: auth.user.email,
+    podUrl,
+  });
 }
