@@ -297,11 +297,15 @@ export class TraefikService {
       const host = `${s.subdomain}.${domain}`;
       if (behindProxy) {
         // Single HTTP router — external proxy already terminated TLS.
+        // forward-https middleware rewrites X-Forwarded-Proto so backend
+        // apps (e.g. Nango) that read req.protocol see "https" not "http".
         return (
           `    ${s.id}:\n` +
           `      rule: "Host(\`${host}\`)"\n` +
           `      entryPoints:\n` +
           `        - web\n` +
+          `      middlewares:\n` +
+          `        - forward-https\n` +
           `      service: ${s.id}-svc`
         );
       }
@@ -354,9 +358,10 @@ export class TraefikService {
       `          - url: "${s.upstream}"`
     ).join('\n');
 
-    const middlewaresYaml = (!behindProxy && ssl)
-      ? `  middlewares:\n    redirect-to-https:\n      redirectScheme:\n        scheme: https\n        permanent: true\n`
-      : '';
+    const middlewaresYaml = behindProxy
+      // In proxy mode: inject X-Forwarded-Proto so backend apps see "https"
+      ? `  middlewares:\n    forward-https:\n      headers:\n        customRequestHeaders:\n          X-Forwarded-Proto: "https"\n`
+      : (!ssl ? '' : `  middlewares:\n    redirect-to-https:\n      redirectScheme:\n        scheme: https\n        permanent: true\n`);
 
     const modeComment = behindProxy ? 'behind-proxy' : ssl ? 'ssl' : 'plain';
     const dynamicConfig =
