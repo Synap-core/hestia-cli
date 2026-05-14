@@ -311,6 +311,7 @@ async function buildUpdateTargets(deployDir: string | undefined): Promise<Update
         '-e', `NANGO_SECRET_KEY=${secretKey}`, '-e', 'SERVER_PORT=3003',
         '-e', `NANGO_DATABASE_URL=postgresql://${pgUser}:${pgPass}@eve-brain-postgres:5432/nango`,
         '-e', 'NODE_ENV=production',
+        '-e', 'NANGO_EMAIL_ACCOUNT_VERIFICATION_REQUIRED=false',
         ...(nangoHost ? ['-e', `NANGO_SERVER_URL=${nangoHost}`] : []),
         ...(podPublicUrl ? ['-e', `NANGO_WEBHOOK_URL=${podPublicUrl}/api/connectors/nango-webhook`] : []),
         '-v', 'eve-arms-nango-data:/var/lib/nango',
