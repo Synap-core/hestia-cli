@@ -57,9 +57,9 @@ export default function OnboardingPage() {
 
       const data = await res.json().catch(() => null) as { error?: string } | null;
       if (data?.error === "invalid-token") {
-        setError("Invalid key. Check the output of `eve auth token` on your server.");
+        setError('Invalid key. Use the "Your dashboard key" value printed by `eve ui`.');
       } else if (data?.error === "not-configured") {
-        setError("No admin key is configured yet. Run `eve auth token` on your server first.");
+        setError("Dashboard not configured yet. Run `eve ui` on your server first.");
       } else {
         setError("Could not verify the key. Try again.");
       }
@@ -123,11 +123,11 @@ export default function OnboardingPage() {
             <div className="flex items-start gap-2.5 rounded-lg bg-default-50 border border-divider px-3.5 py-3">
               <Terminal className="h-3.5 w-3.5 shrink-0 mt-0.5 text-default-400" strokeWidth={2} />
               <p className="text-xs text-default-500 leading-relaxed">
-                Run{" "}
+                The key is printed when you run{" "}
                 <code className="rounded bg-default-100 px-1 py-0.5 text-default-700 font-mono text-[11px]">
-                  eve auth token
+                  eve ui
                 </code>{" "}
-                on your server to retrieve the key.
+                on your server (labelled "Your dashboard key").
               </p>
             </div>
 

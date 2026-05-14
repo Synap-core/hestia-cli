@@ -29,7 +29,7 @@ export async function GET() {
   const token = cookieStore.get("eve-session")?.value;
   const secrets = await readEveSecrets();
   const dashboardSecret = secrets?.dashboard?.secret;
-  const hasAdminToken = !!secrets?.dashboard?.adminToken;
+  const hasAdminToken = !!dashboardSecret;
 
   let isAdmin = false;
   if (token && dashboardSecret) {
@@ -55,14 +55,14 @@ export async function POST(req: Request) {
   }
 
   const secrets = await readEveSecrets();
-  const adminToken = secrets?.dashboard?.adminToken;
   const dashboardSecret = secrets?.dashboard?.secret;
 
-  if (!adminToken || !dashboardSecret) {
+  if (!dashboardSecret) {
     return NextResponse.json({ error: "not-configured" }, { status: 503 });
   }
 
-  if (body.token.trim() !== adminToken) {
+  // The admin key IS the dashboard secret — shown by `eve ui` at startup.
+  if (body.token.trim() !== dashboardSecret) {
     return NextResponse.json({ error: "invalid-token" }, { status: 401 });
   }
 
