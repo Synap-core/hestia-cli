@@ -537,12 +537,32 @@ function wireHermes(secrets: EveSecrets | null): WireAiResult {
   const provider = pickPrimaryProvider(secrets, 'hermes');
   const preferredModel = provider?.defaultModel ?? 'synap/balanced';
 
-  // synap-backend (eve-brain-synap:4000) exposes /v1/chat/completions — same
-  // endpoint OpenClaw and OpenWebUI use. Hermes gets its own Hub key for auth.
+  // Resolve the LLM endpoint from the configured provider, not from Synap IS.
+  // Synap IS (eve-brain-synap:4000) is a data/memory hub, not an LLM proxy.
+  // External providers (OpenRouter, OpenAI, Ollama, custom) are called directly.
+  const BUILTIN_URLS: Record<string, string> = {
+    openrouter: 'https://openrouter.ai/api/v1',
+    openai:     'https://api.openai.com/v1',
+    anthropic:  'https://api.anthropic.com/v1',
+    ollama:     'http://eve-brain-ollama:11434/v1',
+  };
+  let aiBaseUrl = provider?.baseUrl?.replace(/\/$/, '') ?? BUILTIN_URLS[provider?.id ?? ''] ?? '';
+  // Remap Ollama localhost → container alias so Hermes (inside Docker) can reach it.
+  if (provider?.id === 'ollama' && /localhost|127\.0\.0\.1/.test(aiBaseUrl)) {
+    aiBaseUrl = aiBaseUrl.replace(/localhost|127\.0\.0\.1/, 'eve-brain-ollama');
+  }
+  // Fall back to Synap IS only when no external provider is configured at all.
+  if (!aiBaseUrl) {
+    aiBaseUrl = 'http://eve-brain-synap:4000/v1';
+  }
+  const aiApiKey = (provider && provider.id !== 'ollama' && provider.apiKey)
+    ? provider.apiKey
+    : synapApiKey;
+
   const aiBlock = [
     '# AI wiring — managed by eve ai apply',
-    `AI_BASE_URL=http://eve-brain-synap:4000/v1`,
-    `AI_API_KEY=${synapApiKey}`,
+    `AI_BASE_URL=${aiBaseUrl}`,
+    `AI_API_KEY=${aiApiKey}`,
     `AI_DEFAULT_MODEL=${preferredModel}`,
   ].join('\n');
 

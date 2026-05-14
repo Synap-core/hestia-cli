@@ -83,10 +83,55 @@ interface WireProposal {
     data?: Record<string, unknown>;
     reasoning?: string;
     summary?: string;
+    correlationId?: string;
+    requestedEventId?: string;
+    validatedEventId?: string;
+    completedEventId?: string;
   };
+  review?: ProposalReviewModel;
 }
 
 type RowState = "idle" | "working";
+
+interface ProposalReviewChange {
+  path: string;
+  label: string;
+  operation: "create" | "update" | "delete" | "set";
+  before?: unknown;
+  after?: unknown;
+  valueType?: string;
+}
+
+interface ProposalReviewEvent {
+  eventId: string;
+  eventType: string;
+  phase?: string;
+  action?: string;
+  subjectType: string;
+  subjectId: string;
+  timestamp: string;
+  userId: string;
+  source?: string;
+  correlationId?: string;
+}
+
+interface ProposalReviewModel {
+  summary: string;
+  actorName?: string;
+  targetName?: string;
+  reasoning?: string;
+  source?: string;
+  sourceId?: string;
+  sourceMessageId?: string | null;
+  threadId?: string | null;
+  commandRunId?: string | null;
+  correlationId?: string;
+  requestedEventId?: string;
+  validatedEventId?: string;
+  completedEventId?: string;
+  changes: ProposalReviewChange[];
+  events: ProposalReviewEvent[];
+}
 
 // ─── tRPC envelope helpers ───────────────────────────────────────────────────
 
@@ -265,6 +310,8 @@ function ProposalRow({
   const summary = useMemo(() => proposalSummary(proposal), [proposal]);
   const agentLabel = useMemo(() => agentLabelFor(proposal), [proposal]);
   const initial = useMemo(() => authorInitial(proposal), [proposal]);
+  const changes = useMemo(() => proposalChanges(proposal), [proposal]);
+  const events = proposal.review?.events ?? [];
   const time = useMemo(
     () => relativeTime(proposal.createdAt ?? proposal.updatedAt),
     [proposal],
@@ -342,8 +389,23 @@ function ProposalRow({
               </span>
             </div>
           )}
+
+          {changes.length > 0 && (
+            <div className="mt-3 grid gap-1.5 sm:grid-cols-2">
+              {changes.slice(0, 4).map((change) => (
+                <ChangePill key={`${proposal.id}:${change.path}`} change={change} />
+              ))}
+            </div>
+          )}
         </div>
       </div>
+
+      <TemporalChain
+        events={events}
+        status={proposal.status}
+        createdAt={proposal.createdAt ?? proposal.updatedAt}
+        correlationId={proposal.review?.correlationId ?? proposal.request?.correlationId}
+      />
 
       <div className="flex items-center justify-between gap-3">
         <button
@@ -406,20 +468,118 @@ function ProposalRow({
       </div>
 
       {expanded && (
-        <pre
-          className="
-            max-h-64 overflow-auto rounded-lg
-            bg-foreground/[0.05]
-            ring-1 ring-inset ring-foreground/10
-            px-3 py-2
-            text-[11px] leading-snug text-foreground/75
-            font-mono
-          "
-        >
-          {safeStringify(proposal.data)}
-        </pre>
+        <div className="grid gap-2">
+          {proposal.review?.reasoning && (
+            <div className="rounded-lg bg-foreground/[0.04] px-3 py-2 ring-1 ring-inset ring-foreground/10">
+              <div className="text-[10.5px] font-medium uppercase tracking-[0.04em] text-foreground/45">
+                Reasoning
+              </div>
+              <p className="mt-1 text-[12px] leading-snug text-foreground/70">
+                {proposal.review.reasoning}
+              </p>
+            </div>
+          )}
+          {events.length > 0 && (
+            <div className="rounded-lg bg-foreground/[0.04] px-3 py-2 ring-1 ring-inset ring-foreground/10">
+              <div className="text-[10.5px] font-medium uppercase tracking-[0.04em] text-foreground/45">
+                Event chain
+              </div>
+              <div className="mt-2 grid gap-1.5">
+                {events.map((event) => (
+                  <div
+                    key={event.eventId}
+                    className="flex items-center justify-between gap-3 text-[11.5px]"
+                  >
+                    <span className="min-w-0 truncate text-foreground/75">
+                      {eventLabel(event)}
+                    </span>
+                    <span className="shrink-0 text-foreground/40">
+                      {relativeTime(event.timestamp)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <pre
+            className="
+              max-h-64 overflow-auto rounded-lg
+              bg-foreground/[0.05]
+              ring-1 ring-inset ring-foreground/10
+              px-3 py-2
+              text-[11px] leading-snug text-foreground/75
+              font-mono
+            "
+          >
+            {safeStringify(proposal.data)}
+          </pre>
+        </div>
       )}
     </Card>
+  );
+}
+
+function ChangePill({ change }: { change: ProposalReviewChange }) {
+  return (
+    <div className="min-w-0 rounded-lg bg-foreground/[0.04] px-2.5 py-2 ring-1 ring-inset ring-foreground/10">
+      <div className="truncate text-[10.5px] font-medium uppercase tracking-[0.04em] text-foreground/45">
+        {change.label}
+      </div>
+      <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[12px] text-foreground/75">
+        {change.before !== undefined && (
+          <>
+            <span className="min-w-0 truncate text-foreground/45">
+              {formatValue(change.before)}
+            </span>
+            <span className="text-foreground/35">→</span>
+          </>
+        )}
+        <span className="min-w-0 truncate font-medium text-foreground">
+          {formatValue(change.after)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function TemporalChain({
+  events,
+  status,
+  createdAt,
+  correlationId,
+}: {
+  events: ProposalReviewEvent[];
+  status: WireProposal["status"];
+  createdAt?: string;
+  correlationId?: string;
+}) {
+  const phases = buildTemporalPhases(events, status, createdAt);
+  return (
+    <div className="rounded-lg bg-foreground/[0.035] px-3 py-2 ring-1 ring-inset ring-foreground/10">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          {phases.map((phase, index) => (
+            <div key={phase.key} className="flex min-w-0 items-center gap-1.5">
+              {index > 0 && <div className="h-px w-4 bg-foreground/15" />}
+              <div
+                className={[
+                  "h-2 w-2 rounded-full",
+                  phase.done ? "bg-success" : "bg-warning",
+                ].join(" ")}
+              />
+              <span className="hidden truncate text-[11px] text-foreground/60 sm:inline">
+                {phase.label}
+              </span>
+            </div>
+          ))}
+        </div>
+        {correlationId && (
+          <span className="shrink-0 text-[10.5px] text-foreground/35">
+            chain {correlationId.slice(0, 8)}
+          </span>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -511,6 +671,109 @@ function proposalSummary(p: WireProposal): ProposalSummary {
     }),
     body: compactSentence([changeDescription, targetName, targetKind]),
   };
+}
+
+function proposalChanges(p: WireProposal): ProposalReviewChange[] {
+  if (p.review?.changes?.length) return p.review.changes;
+
+  const request = p.request;
+  const payload =
+    request?.data && typeof request.data === "object"
+      ? request.data
+      : p.data.data && typeof p.data.data === "object"
+        ? (p.data.data as Record<string, unknown>)
+        : p.data;
+
+  const changes: ProposalReviewChange[] = [];
+  for (const key of ["title", "description", "profileSlug", "documentId"]) {
+    if (payload[key] !== undefined) {
+      changes.push({
+        path: key,
+        label: labelFromPath(key),
+        operation: "update",
+        after: payload[key],
+        valueType: typeof payload[key],
+      });
+    }
+  }
+
+  const properties =
+    payload.properties && typeof payload.properties === "object"
+      ? (payload.properties as Record<string, unknown>)
+      : {};
+  for (const [key, value] of Object.entries(properties)) {
+    changes.push({
+      path: `properties.${key}`,
+      label: labelFromPath(key),
+      operation: "update",
+      after: value,
+      valueType: typeof value,
+    });
+  }
+  return changes;
+}
+
+function buildTemporalPhases(
+  events: ProposalReviewEvent[],
+  status: WireProposal["status"],
+  createdAt?: string,
+) {
+  const requested = events.find((event) => event.phase === "requested");
+  const validated = events.find((event) => event.phase === "validated");
+  const completed = events.find((event) => event.phase === "completed");
+
+  return [
+    {
+      key: "requested",
+      label: requested ? "Requested" : "Proposed",
+      done: Boolean(requested || createdAt),
+    },
+    {
+      key: "review",
+      label:
+        status === "approved"
+          ? "Approved"
+          : status === "rejected"
+            ? "Rejected"
+            : "Review",
+      done: status !== "pending",
+    },
+    {
+      key: "validated",
+      label: "Validated",
+      done: Boolean(validated),
+    },
+    {
+      key: "completed",
+      label: "Applied",
+      done: Boolean(completed),
+    },
+  ];
+}
+
+function eventLabel(event: ProposalReviewEvent): string {
+  const action = event.action ? prettyAction(event.action) : event.eventType;
+  const phase = event.phase ? capitalize(event.phase) : "Event";
+  return `${phase} · ${action} · ${event.subjectType}`;
+}
+
+function formatValue(value: unknown): string {
+  if (value === undefined) return "Unset";
+  if (value === null) return "Empty";
+  if (typeof value === "string") return value || "Empty";
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) return `${value.length} items`;
+  if (typeof value === "object") return "Structured value";
+  return String(value);
+}
+
+function labelFromPath(path: string): string {
+  return path
+    .replace(/^properties\./, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 function prettyAction(proposalType: string): string {
