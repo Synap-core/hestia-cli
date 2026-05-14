@@ -281,6 +281,10 @@ export async function writeHermesEnvFile(cwd: string = process.cwd()): Promise<s
     `API_SERVER_HOST=0.0.0.0`,
     `API_SERVER_PORT=8642`,
     `API_SERVER_KEY=${apiServerKey}`,
+    // Hermes gateway is already behind OpenWebUI's auth layer — OWUI enforces
+    // login before any request reaches the gateway. Allow all at the gateway
+    // level so OWUI-proxied requests aren't double-rejected.
+    `GATEWAY_ALLOW_ALL_USERS=true`,
   ];
 
   // Embedding model for semantic memory search. Only set for providers whose
