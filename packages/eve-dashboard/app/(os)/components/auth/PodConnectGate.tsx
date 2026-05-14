@@ -77,7 +77,7 @@ function inferPodUrlFromHostname(): string | null {
 }
 
 export function PodConnectGate({ children }: PodConnectGateProps) {
-  const podAuthState = usePodAuthState({ includePairing: false });
+  const podAuthState = usePodAuthState({ includePairing: true });
   const { refetch } = podAuthState;
   const [claim, setClaim] = useState<SelfHostedClaimResult | null>(null);
   const [localPodUrl, setLocalPodUrl] = useState<string | null>(null);
@@ -87,37 +87,43 @@ export function PodConnectGate({ children }: PodConnectGateProps) {
   const [claimInFlight, setClaimInFlight] = useState(false);
   const [claimError, setClaimError] = useState<string | null>(null);
   const [claimSuccess, setClaimSuccess] = useState<{ podUrl: string } | null>(null);
+  // Email from the eve-session JWT — used to pre-fill the bootstrap form
+  // for self-hosted operators who have no CP session.
+  const [eveUserEmail, setEveUserEmail] = useState<string | undefined>(undefined);
 
   // Resolve the local pod URL once on mount; we need it to know which
   // entry of `synap:pods` "this" Eve cares about.
+  // Also fetch the eve-session email for bootstrap form pre-fill.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch("/api/secrets-summary", {
-          credentials: "include",
-          cache: "no-store",
-        });
-        if (!res.ok) {
-          // Secrets not readable — still try hostname inference.
-          const inferred = inferPodUrlFromHostname();
-          if (!cancelled) setCandidatePodUrl(inferred);
-          return;
-        }
-        const data = (await res.json().catch(() => null)) as
-          | { synap?: { apiUrl?: string | null } }
-          | null;
-        const url = data?.synap?.apiUrl ?? null;
-        if (!cancelled) {
+        const [secretsRes, meRes] = await Promise.all([
+          fetch("/api/secrets-summary", { credentials: "include", cache: "no-store" }),
+          fetch("/api/auth/me", { credentials: "include", cache: "no-store" }),
+        ]);
+        if (cancelled) return;
+
+        if (secretsRes.ok) {
+          const data = (await secretsRes.json().catch(() => null)) as
+            | { synap?: { apiUrl?: string | null } }
+            | null;
+          const url = data?.synap?.apiUrl ?? null;
           setLocalPodUrl(url);
           setPaired(hasLocalPodSession(url));
-          // When secrets don't have a configured pod URL, try to infer
-          // one from the Eve hostname (eve.X → pod.X).
           if (!url) setCandidatePodUrl(inferPodUrlFromHostname());
+        } else {
+          setCandidatePodUrl(inferPodUrlFromHostname());
+        }
+
+        if (meRes.ok) {
+          const meData = (await meRes.json().catch(() => null)) as
+            | { ok?: boolean; user?: { email?: string } }
+            | null;
+          if (meData?.user?.email) setEveUserEmail(meData.user.email);
         }
       } catch {
-        const inferred = inferPodUrlFromHostname();
-        if (!cancelled) setCandidatePodUrl(inferred);
+        if (!cancelled) setCandidatePodUrl(inferPodUrlFromHostname());
       }
     })();
     return () => {
@@ -226,10 +232,20 @@ export function PodConnectGate({ children }: PodConnectGateProps) {
   }
 
   // Loading the setup probe — render children optimistically so the
-  // OS doesn't flicker during the initial fetch. Only "loading" gets
-  // the optimistic pass; "ready" falls through so the claim CTA is
-  // shown when the operator hasn't completed the CP→pod handshake yet.
+  // OS doesn't flicker during the initial fetch.
   if (podAuthState.kind === "loading") {
+    return <>{children}</>;
+  }
+
+  // ── Kratos session IS the pod auth ─────────────────────────────────────
+  // `ory_kratos_session` is set at the parent domain after Eve login,
+  // covering both eve.DOMAIN and pod.DOMAIN. If pairing-status confirms
+  // it's valid at the pod's Kratos whoami endpoint, the operator is
+  // authenticated — no CP handshake or synap:pods entry needed.
+  if (
+    (podAuthState.kind === "ready" || podAuthState.kind === "needsBootstrap") &&
+    podAuthState.pairing?.state === "paired"
+  ) {
     return <>{children}</>;
   }
 
@@ -242,6 +258,12 @@ export function PodConnectGate({ children }: PodConnectGateProps) {
   }
 
   if (podAuthState.kind === "needsBootstrap") {
+    // Resolve the best default email: CP session email (if signed in) or
+    // Eve operator email from the eve-session JWT (self-hosted Kratos path).
+    const bootstrapDefaultEmail =
+      (session?.userName?.includes("@") ? session.userName : undefined) ??
+      eveUserEmail;
+
     if (claim) {
       return (
         <div className="flex min-h-[calc(100vh-3rem)] items-center justify-center px-4 py-8">
@@ -278,9 +300,7 @@ export function PodConnectGate({ children }: PodConnectGateProps) {
     }
     return (
       <ClaimPodCard
-        defaultEmail={
-          session?.userName?.includes("@") ? session.userName : undefined
-        }
+        defaultEmail={bootstrapDefaultEmail}
         onSuccess={(result) => {
           setClaim(result);
           // Refetch so the next mount of `useSetupStatus()` sees `ready`.
