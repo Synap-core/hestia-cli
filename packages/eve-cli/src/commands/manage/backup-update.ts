@@ -33,13 +33,14 @@ import {
 const execFileAsync = promisify(execFile);
 
 /** Create initial Nango admin account — idempotent, retries until container is ready. */
-async function nangoAutoSignup(secretKey: string): Promise<void> {
+async function nangoAutoSignup(secretKey: string, ownerEmail?: string): Promise<void> {
+  const email = ownerEmail ?? 'admin@eve.local';
   const pw = `Nango_${secretKey.slice(0, 12)}`;
   const node = `
     const attempt = (n) => fetch('http://localhost:3003/api/v1/account/signup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'Admin', email: 'admin@eve.local', password: ${JSON.stringify(pw)} }),
+      body: JSON.stringify({ name: 'Admin', email: ${JSON.stringify(email)}, password: ${JSON.stringify(pw)} }),
     }).then(r => r.json()).then(d => {
       if (d?.data?.uuid || d?.error === 'account_already_exists') process.exit(0);
       if (n > 0) setTimeout(() => attempt(n - 1), 2000); else process.exit(1);
@@ -318,7 +319,8 @@ async function buildUpdateTargets(deployDir: string | undefined): Promise<Update
         'nangohq/nango-server:hosted',
       ];
       await execFileAsync('docker', runArgs, { timeout: 30_000 });
-      await nangoAutoSignup(secretKey);
+      const ownerEmail = secrets?.synap?.userSession?.email ?? (secrets?.builder?.openwebui as Record<string, unknown> | undefined)?.adminEmail as string | undefined;
+      await nangoAutoSignup(secretKey, ownerEmail);
       // Write updated NANGO_HOST to deploy/.env (use top-level import, not re-import)
       const dDir = findPodDeployDir() ?? undefined;
       if (dDir) {

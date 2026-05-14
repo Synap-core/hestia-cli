@@ -204,14 +204,15 @@ async function addOpenclaw(): Promise<void> {
 }
 
 /** Wait for Nango to accept requests then create the initial admin account (idempotent). */
-async function nangoAutoSignup(secretKey: string): Promise<void> {
+async function nangoAutoSignup(secretKey: string, ownerEmail?: string): Promise<void> {
+  const email = ownerEmail ?? 'admin@eve.local';
   // Derived password satisfies Nango's complexity rules: uppercase + lowercase + number + special
   const pw = `Nango_${secretKey.slice(0, 12)}`;
   const node = `
     const attempt = (n) => fetch('http://localhost:3003/api/v1/account/signup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'Admin', email: 'admin@eve.local', password: ${JSON.stringify(pw)} }),
+      body: JSON.stringify({ name: 'Admin', email: ${JSON.stringify(email)}, password: ${JSON.stringify(pw)} }),
     }).then(r => r.json()).then(d => {
       if (d?.data?.uuid || d?.error === 'account_already_exists') process.exit(0);
       if (n > 0) setTimeout(() => attempt(n - 1), 2000); else process.exit(1);
@@ -325,7 +326,8 @@ async function addNango(): Promise<void> {
 
     printInfo('Starting Nango container...');
     await execFileAsync('docker', dockerRunArgs, { timeout: 30_000 });
-    await nangoAutoSignup(secretKey);
+    const ownerEmail = secrets?.synap?.userSession?.email ?? secrets?.builder?.openwebui?.adminEmail;
+    await nangoAutoSignup(secretKey, ownerEmail);
   } else {
     printInfo('Nango container already running — skipping start.');
   }
