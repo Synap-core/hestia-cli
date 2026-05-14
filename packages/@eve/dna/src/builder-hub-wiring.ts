@@ -377,7 +377,7 @@ providers:
     model: ${model}
 
 model:
-  provider: custom/main
+  provider: custom:main
   default: ${model}
 
 # MCP server — exposes Hermes tools to Claude Code, Cursor, and any MCP client.
