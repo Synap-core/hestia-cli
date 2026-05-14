@@ -29,8 +29,7 @@ export async function GET() {
   const token = cookieStore.get("eve-session")?.value;
   const secrets = await readEveSecrets();
   const dashboardSecret = secrets?.dashboard?.secret;
-  const hasAdminToken = !!(secrets as { dashboard?: { adminToken?: string } } | null)
-    ?.dashboard?.adminToken;
+  const hasAdminToken = !!secrets?.dashboard?.adminToken;
 
   let isAdmin = false;
   if (token && dashboardSecret) {
@@ -56,8 +55,7 @@ export async function POST(req: Request) {
   }
 
   const secrets = await readEveSecrets();
-  const adminToken = (secrets as { dashboard?: { adminToken?: string } } | null)
-    ?.dashboard?.adminToken;
+  const adminToken = secrets?.dashboard?.adminToken;
   const dashboardSecret = secrets?.dashboard?.secret;
 
   if (!adminToken || !dashboardSecret) {

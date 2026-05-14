@@ -24,14 +24,12 @@ export async function GET() {
   const podUrl = secrets?.synap?.apiUrl ?? null;
 
   // Generate adminToken lazily so existing sessions don't need to re-login.
-  const dashboardSecrets = (secrets as { dashboard?: { adminToken?: string } } | null)?.dashboard;
-  if (!dashboardSecrets?.adminToken) {
+  if (!secrets?.dashboard?.adminToken) {
     await writeEveSecrets({ dashboard: { adminToken: randomBytes(32).toString("hex") } });
     secrets = await readEveSecrets();
   }
 
-  const hasAdminToken = !!(secrets as { dashboard?: { adminToken?: string } } | null)
-    ?.dashboard?.adminToken;
+  const hasAdminToken = !!secrets?.dashboard?.adminToken;
 
   return NextResponse.json({
     ok: true,

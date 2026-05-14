@@ -179,8 +179,7 @@ async function issueEveSessionCookie(opts: {
     }
 
     // Generate a one-time admin key the pod owner retrieves via `eve auth token`.
-    const existing = secrets as { dashboard?: { adminToken?: string } } | null | undefined;
-    if (!existing?.dashboard?.adminToken) {
+    if (!secrets?.dashboard?.adminToken) {
       updates["adminToken"] = randomBytes(32).toString("hex");
     }
 

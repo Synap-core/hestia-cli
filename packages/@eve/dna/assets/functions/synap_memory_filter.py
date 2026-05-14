@@ -91,8 +91,9 @@ class Filter:
         argument the wrapped model itself might accept.
         """
         if not self.valves.SYNAP_API_KEY:
-            # Sidecar not wired — pass through silently. Better than failing
-            # closed and breaking every chat.
+            # Mark as disabled so outlet can show a one-time diagnostic footer.
+            cache_key = ((__user__ or {}).get("id", "anon"), body.get("chat_id") or body.get("id") or "unknown")
+            self._last_injection[cache_key] = (-1, -1)  # sentinel: disabled
             return body
 
         last_user = _last_user_message(body)

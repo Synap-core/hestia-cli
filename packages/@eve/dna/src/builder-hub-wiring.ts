@@ -250,6 +250,12 @@ export async function writeHermesEnvFile(cwd: string = process.cwd()): Promise<s
   const hermesConfig = secrets?.builder?.hermes;
   const synapApiKey = await readAgentKeyOrLegacy('hermes', cwd);
 
+  // Populate ~/.eve/skills/ so the Docker mount has SKILL.md content.
+  // Without this Hermes sees an empty /opt/data/synap-skills/ and has
+  // no knowledge of the Synap Hub Protocol, entity types, or views API.
+  const skillsDir = secrets?.builder?.skillsDir ?? defaultSkillsDir();
+  await ensureEveSkillsLayout(skillsDir, hub ?? undefined, synapApiKey ?? undefined);
+
   // Ensure a stable API_SERVER_KEY exists — generated once at first write,
   // then reused so OpenWebUI (and other consumers) don't need reconfiguring.
   let apiServerKey = hermesConfig?.apiServerKey;
