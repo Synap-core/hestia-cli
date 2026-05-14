@@ -57,11 +57,18 @@ export async function ensureEveSkillsLayout(
           slug: string;
           files: Array<{ path: string; content: string }>;
         }>;
+        // Write to the centralized Eve store AND to ~/.claude/skills/ so every
+        // Claude Code session globally picks up the latest Synap skills without
+        // needing a per-project `eve init` run.
+        const globalClaudeSkillsDir = join(homedir(), '.claude', 'skills');
         for (const pkg of packages) {
           const pkgDir = join(skillsDir, pkg.slug);
+          const globalPkgDir = join(globalClaudeSkillsDir, pkg.slug);
           mkdirSync(pkgDir, { recursive: true });
+          mkdirSync(globalPkgDir, { recursive: true });
           for (const file of pkg.files) {
             writeFileSync(join(pkgDir, file.path), file.content, 'utf-8');
+            writeFileSync(join(globalPkgDir, file.path), file.content, 'utf-8');
           }
         }
         return;
@@ -169,19 +176,29 @@ export async function writeSandboxEnvFile(cwd: string = process.cwd()): Promise<
  * Claude Code loads skills from `<project>/.claude/skills/<name>/SKILL.md`.
  * Copies all Synap skill packages (synap, synap-schema, synap-ui) into the project.
  * Call after ensureEveSkillsLayout() has already written files to skillsDir.
+ *
+ * Also copies into the global `~/.claude/skills/` so Synap skills are available
+ * in every Claude Code session regardless of which project is open.
  */
 export function copySynapSkillIntoClaudeProject(projectDir: string, skillsDir: string = defaultSkillsDir()): void {
-  const { readdirSync: _readdirSync, statSync: _statSync } = require('node:fs') as typeof import('node:fs');
+  const { readdirSync: _readdirSync } = require('node:fs') as typeof import('node:fs');
   const skillPkgs = ['synap', 'synap-schema', 'synap-ui'];
+  // Copy into the project-level dir AND the global ~/.claude/skills/ dir.
+  const destRoots = [
+    join(projectDir, '.claude', 'skills'),
+    join(homedir(), '.claude', 'skills'),
+  ];
   for (const pkg of skillPkgs) {
     const srcDir = join(skillsDir, pkg);
-    const destDir = join(projectDir, '.claude', 'skills', pkg);
     try {
       const files = _readdirSync(srcDir);
-      mkdirSync(destDir, { recursive: true });
-      for (const file of files) {
-        if (file.endsWith('.md')) {
-          copyFileSync(join(srcDir, file), join(destDir, file));
+      for (const destRoot of destRoots) {
+        const destDir = join(destRoot, pkg);
+        mkdirSync(destDir, { recursive: true });
+        for (const file of files) {
+          if (file.endsWith('.md')) {
+            copyFileSync(join(srcDir, file), join(destDir, file));
+          }
         }
       }
     } catch {
@@ -203,6 +220,13 @@ export async function writeClaudeCodeSettings(projectDir: string, cwd: string = 
   const hub = resolveHubBaseUrl(secrets);
   const synapApiKey = await readAgentKeyOrLegacy('coder', cwd);
   const skillsDir = secrets?.builder?.skillsDir ?? defaultSkillsDir();
+
+  // Always pull the latest skill docs from the Hub before copying into the
+  // project. Without this, a fresh machine has an empty ~/.eve/skills/ and
+  // the Claude Code project gets stub content (or nothing) instead of the
+  // real Hub Protocol reference.
+  await ensureEveSkillsLayout(skillsDir, hub ?? undefined, synapApiKey ?? undefined);
+
   const dir = join(projectDir, '.claude');
   mkdirSync(dir, { recursive: true });
 
