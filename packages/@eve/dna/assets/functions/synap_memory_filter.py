@@ -130,11 +130,16 @@ class Filter:
 
     async def outlet(self, body: dict[str, Any], __user__: dict[str, Any] | None = None) -> dict[str, Any]:
         """Append a 'Recalled N' footer so users see the integration worked."""
+        cache_key = ((__user__ or {}).get("id", "anon"), body.get("chat_id") or body.get("id") or "unknown")
+        injected = self._last_injection.pop(cache_key, None)
+
+        if injected == (-1, -1):
+            _append_footer(body, "⚠️ Synap Memory: not configured (no API key set in valves)")
+            return body
+
         if not self.valves.SHOW_FOOTER:
             return body
 
-        cache_key = ((__user__ or {}).get("id", "anon"), body.get("chat_id") or body.get("id") or "unknown")
-        injected = self._last_injection.pop(cache_key, None)
         if not injected:
             return body
         n_mem, n_ent = injected

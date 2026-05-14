@@ -119,6 +119,8 @@ class Filter:
     async def outlet(self, body: dict[str, Any], __user__: dict[str, Any] | None = None) -> dict[str, Any]:
         """Mirror the model's response to Synap after the call completes."""
         if not self._enabled():
+            if self.valves.SHOW_FOOTER:
+                _append_footer(body, "⚠️ Synap Channel Sync: not configured (no API key set in valves)")
             return body
 
         last_assistant = _last_message(body, "assistant")
@@ -133,6 +135,8 @@ class Filter:
         except Exception as err:
             logger.warning("[synap-channel-sync] outlet thread lookup failed: %s", err)
             self._current_owui_user_id = None
+            if self.valves.SHOW_FOOTER:
+                _append_footer(body, f"⚠️ Synap Channel Sync: thread lookup failed — {err}")
             return body
 
         try:
@@ -140,6 +144,8 @@ class Filter:
         except Exception as err:
             logger.warning("[synap-channel-sync] outlet post failed: %s", err)
             self._current_owui_user_id = None
+            if self.valves.SHOW_FOOTER:
+                _append_footer(body, f"⚠️ Synap Channel Sync: message post failed — {err}")
             return body
         finally:
             self._current_owui_user_id = None
