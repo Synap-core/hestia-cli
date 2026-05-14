@@ -203,6 +203,24 @@ async function addOpenclaw(): Promise<void> {
   }
 }
 
+/** Wait for Nango to accept requests then create the initial admin account (idempotent). */
+async function nangoAutoSignup(secretKey: string): Promise<void> {
+  // Derived password satisfies Nango's complexity rules: uppercase + lowercase + number + special
+  const pw = `Nango_${secretKey.slice(0, 12)}`;
+  const node = `
+    const attempt = (n) => fetch('http://localhost:3003/api/v1/account/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Admin', email: 'admin@eve.local', password: ${JSON.stringify(pw)} }),
+    }).then(r => r.json()).then(d => {
+      if (d?.data?.uuid || d?.error === 'account_already_exists') process.exit(0);
+      if (n > 0) setTimeout(() => attempt(n - 1), 2000); else process.exit(1);
+    }).catch(() => { if (n > 0) setTimeout(() => attempt(n - 1), 2000); else process.exit(1); });
+    attempt(15);
+  `;
+  await execFileAsync('docker', ['exec', 'eve-arms-nango', 'node', '-e', node], { timeout: 40_000 }).catch(() => {/* non-fatal */});
+}
+
 async function addNango(): Promise<void> {
   if (!await isBrainReady()) {
     printError('Brain is not ready. Install Synap first: `eve add synap`');
@@ -306,6 +324,7 @@ async function addNango(): Promise<void> {
 
     printInfo('Starting Nango container...');
     await execFileAsync('docker', dockerRunArgs, { timeout: 30_000 });
+    await nangoAutoSignup(secretKey);
   } else {
     printInfo('Nango container already running — skipping start.');
   }
