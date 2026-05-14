@@ -40,7 +40,7 @@ export default function LoginPage() {
       } | null;
 
       if (res.ok) {
-        // Populate localStorage so EveAccountGate doesn't show a second form.
+        // Populate localStorage so EveAccountGate can resolve the pod session.
         if (data?.sessionToken && data?.podUrl) {
           storePodSession({
             podUrl: data.podUrl,
@@ -49,7 +49,10 @@ export default function LoginPage() {
             userId: data.user?.id ?? "",
           });
         }
-        router.push("/");
+        // First login: send to onboarding to propose the admin key setup.
+        const onboardingDone = typeof window !== "undefined"
+          && localStorage.getItem("eve:onboarding-done");
+        router.push(onboardingDone ? "/" : "/onboarding");
         return;
       }
       if (data?.messages?.length) {

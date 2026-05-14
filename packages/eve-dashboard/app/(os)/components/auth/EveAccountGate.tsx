@@ -1,82 +1,69 @@
 "use client";
 
 /**
- * `EveAccountGate` — top-level gate that ensures the operator is
- * authenticated through at least one of two **orthogonal** layers:
+ * `EveAccountGate` — ensures the operator is authenticated before
+ * rendering the dashboard.
  *
- *   • **CP layer**  — Synap account (`getSharedSession()`).
- *   • **Pod layer** — Kratos session for the local Eve pod URL,
- *                     stored in the per-pod `synap:pods` map (read via
- *                     `getAllPodSessions()`).
+ * Auth is handled by a single server-side layer (`proxy.ts` + the
+ * `eve-session` JWT cookie). This gate is the CLIENT-SIDE complement:
+ * it restores the `synap:pods` localStorage entry that other components
+ * read for pod-session data (e.g. podUrl, email).
  *
- * "Signed in" means **CP session OR pod session for the local pod**.
- * Either alone is sufficient — a user may opt out of the Synap
- * account entirely and still drive Eve through their local pod
- * (Mode B / self-hosted).
+ * On mount it calls `/api/auth/me` (the server-side source of truth).
+ *  • 200 → restore session in localStorage + render children.
+ *  • 401 → redirect to `/login` (cookie is gone/expired).
  *
- * Boot sequence:
+ * The gate never shows its own login form — `/login` is the single
+ * auth entry point. `EveSignInScreen` is used elsewhere (bootstrap
+ * flow, CP pairing) but not here.
  *
- *   1. Read both layers synchronously on mount. If at least one is
- *      present, render children optimistically.
- *   2. In parallel, ask `/api/secrets-summary` for the local pod URL
- *      (so we can disambiguate "signed in to local pod" from "signed
- *      in to some unrelated pod").
- *   3. Revalidate the CP session against CP via `checkCpSession()`.
- *      Skip when the only layer present is pod — there's no CP record
- *      to check.
- *   4. Listen for `storage` events on BOTH `synap:session` (CP) and
- *      `synap:pods` (pods) so a sign-out in another tab clears the
- *      gate here too.
- *
- * The gate does NOT manage pod connection — that's `PodConnectGate`'s
- * job, which composes underneath this one.
- *
- * See:
- *   synap-team-docs/content/team/platform/eve-auth-architecture.mdx
- *   synap-app/packages/core/auth/src/storage/shared-session.ts
+ * Cross-tab sign-out: a `storage` event on `synap:pods` triggers a
+ * re-check so logging out in one tab closes the gate in all tabs.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
-  checkCpSession,
   getAllPodSessions,
   getSharedSession,
-  isSelfHostedSession,
+  storePodSession,
   type SharedSession,
   type StoredPodSession,
 } from "@/lib/synap-auth";
-import { EveSignInScreen, type EveSignInMode } from "./EveSignInScreen";
 
-const SHARED_SESSION_KEY = "synap:session";
 const PODS_STORAGE_KEY = "synap:pods";
+const SHARED_SESSION_KEY = "synap:session";
+
+interface MeResponse {
+  ok: boolean;
+  user?: { uid: string; email: string };
+  podUrl?: string | null;
+}
+
+type GateStatus = "loading" | "signed-in" | "redirecting";
 
 interface GateState {
-  status: "loading" | "signed-out" | "signed-in";
-  /** CP session — present iff the user has a Synap account. */
+  status: GateStatus;
   cp?: SharedSession;
-  /** Pod session for the LOCAL pod URL — present iff Mode B / both. */
   localPod?: StoredPodSession;
 }
 
-/**
- * Resolve gate status from current localStorage + the local pod URL.
- * Pure — easy to call from useEffect listeners.
- */
-function resolveStatus(localPodUrl: string | null): GateState {
+function readLocalState(localPodUrl: string | null): GateState {
   if (typeof window === "undefined") return { status: "loading" };
   const cp = getSharedSession() ?? undefined;
   let localPod: StoredPodSession | undefined;
   if (localPodUrl) {
-    const all = getAllPodSessions();
     const normalized = localPodUrl.replace(/\/+$/, "");
-    localPod = Object.values(all).find(
+    localPod = Object.values(getAllPodSessions()).find(
       (s) => s.podUrl.replace(/\/+$/, "") === normalized,
     );
+  } else {
+    // No pod URL known yet — any pod session counts (loose fallback).
+    const all = Object.values(getAllPodSessions());
+    localPod = all[0];
   }
-  if (cp || localPod) {
-    return { status: "signed-in", cp, localPod };
-  }
-  return { status: "signed-out" };
+  if (cp || localPod) return { status: "signed-in", cp, localPod };
+  return { status: "loading" }; // pending server check
 }
 
 export interface EveAccountGateProps {
@@ -84,123 +71,88 @@ export interface EveAccountGateProps {
 }
 
 export function EveAccountGate({ children }: EveAccountGateProps) {
-  const [localPodUrl, setLocalPodUrl] = useState<string | null>(null);
-  const [state, setState] = useState<GateState>(() => resolveStatus(null));
-  // Ref so the CP revalidation effect can read current state values
-  // without them being reactive dependencies (avoids infinite loop).
-  const stateRef = useRef(state);
-  stateRef.current = state;
+  const router = useRouter();
+  const [state, setState] = useState<GateState>({ status: "loading" });
+  const checkedRef = useRef(false);
 
-  // ── Resolve the local pod URL ─────────────────────────────────────────
-  // Used to disambiguate "signed in to local pod" from "signed in to
-  // some other pod". Failure leaves `localPodUrl` null — the gate
-  // then only considers CP sessions and any pod session counts toward
-  // signed-in (loose fallback so we don't lock users out).
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetch("/api/secrets-summary", {
-          credentials: "include",
-          cache: "no-store",
-        });
-        if (!res.ok) return;
-        const data = (await res.json().catch(() => null)) as
-          | { synap?: { apiUrl?: string | null } }
-          | null;
-        const url = data?.synap?.apiUrl ?? null;
-        if (!cancelled) {
-          setLocalPodUrl(url);
-          setState(resolveStatus(url));
+  const checkAuth = useCallback(async () => {
+    // Fast path: localStorage already has a session for the local pod.
+    // We still ping /api/auth/me to get the canonical podUrl, but we
+    // can render optimistically while we wait.
+    const optimistic = readLocalState(null);
+    if (optimistic.status === "signed-in") {
+      setState(optimistic);
+    }
+
+    try {
+      const res = await fetch("/api/auth/me", {
+        credentials: "include",
+        cache: "no-store",
+      });
+
+      if (res.ok) {
+        const data = (await res.json().catch(() => null)) as MeResponse | null;
+        const podUrl = data?.podUrl ?? null;
+        const user = data?.user;
+
+        // Ensure localStorage is populated so cross-app components have
+        // the podUrl + email available without an extra API call.
+        if (podUrl && user) {
+          const existing = readLocalState(podUrl);
+          if (existing.status !== "signed-in") {
+            storePodSession({
+              podUrl,
+              sessionToken: "",
+              userEmail: user.email,
+              userId: user.uid,
+            });
+          }
         }
-      } catch {
-        // Network blip — leave `localPodUrl` null. The fallback path
-        // below treats "any pod session" as Mode B.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
-  // ── CP revalidation ───────────────────────────────────────────────────
-  // Skip when there's no CP session to check (Mode B or signed-out).
-  // IMPORTANT: read state.cp via stateRef, NOT as a reactive dep.
-  // state.cp is excluded from the dep array on purpose: getSharedSession()
-  // returns a new object reference every time, so including state.cp
-  // would cause setState → new reference → re-run → infinite loop.
+        setState({ status: "signed-in" });
+      } else {
+        // Cookie is gone or expired — send to login.
+        setState({ status: "redirecting" });
+        router.push("/login");
+      }
+    } catch {
+      // Network error — if we already have a localStorage session,
+      // keep rendering optimistically. Otherwise redirect.
+      const fallback = readLocalState(null);
+      if (fallback.status === "signed-in") {
+        setState(fallback);
+      } else {
+        setState({ status: "redirecting" });
+        router.push("/login");
+      }
+    }
+  }, [router]);
+
+  // Run once on mount.
   useEffect(() => {
-    const { status, cp } = stateRef.current;
-    if (status !== "signed-in" || !cp) return;
-    if (isSelfHostedSession(cp)) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const validCp = await checkCpSession();
-        if (cancelled) return;
-        if (!validCp) {
-          // CP session is gone. Re-resolve — if the user still has a
-          // pod session for the local pod, they remain signed-in
-          // (Mode B). Otherwise they fall back to signed-out.
-          setState(resolveStatus(localPodUrl));
-        }
-      } catch {
-        // Network blip — keep optimistic render. Next reload re-checks.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.status, localPodUrl]);
+    if (checkedRef.current) return;
+    checkedRef.current = true;
+    void checkAuth();
+  }, [checkAuth]);
 
-  // ── Cross-tab sign-in/sign-out (CP + pods) ────────────────────────────
+  // Cross-tab sign-out: re-check when storage changes.
   useEffect(() => {
     if (typeof window === "undefined") return;
     function onStorage(e: StorageEvent) {
-      if (e.key !== SHARED_SESSION_KEY && e.key !== PODS_STORAGE_KEY) return;
-      // Re-resolve from current localStorage for whichever layer
-      // changed. Either layer flipping can change the gate state.
-      setState(resolveStatus(localPodUrl));
+      if (e.key !== PODS_STORAGE_KEY && e.key !== SHARED_SESSION_KEY) return;
+      checkedRef.current = false;
+      void checkAuth();
     }
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
-  }, [localPodUrl]);
+  }, [checkAuth]);
 
-  const handleSuccess = useCallback(
-    (mode: EveSignInMode) => {
-      // Re-resolve so the gate-managed `state` is the source of truth.
-      const resolved = resolveStatus(localPodUrl);
-      if (resolved.status === "signed-in") {
-        setState(resolved);
-        return;
-      }
-      // Self-hosted path: synthesise a minimal session so the gate
-      // doesn't bounce back to sign-in if the wrapper failed to persist.
-      setState({
-        status: "signed-in",
-        cp: {
-          podUrl: mode.podUrl,
-          sessionToken: "",
-          workspaceId: null,
-          userId: "",
-          userName: mode.email,
-        } as SharedSession,
-      });
-    },
-    [localPodUrl],
-  );
-
-  if (state.status === "loading") {
+  if (state.status === "loading" || state.status === "redirecting") {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="h-2 w-24 rounded-full bg-foreground/10 animate-pulse" />
       </div>
     );
-  }
-
-  if (state.status === "signed-out") {
-    return <EveSignInScreen onSuccess={handleSuccess} />;
   }
 
   return <>{children}</>;

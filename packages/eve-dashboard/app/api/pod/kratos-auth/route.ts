@@ -171,10 +171,21 @@ async function issueEveSessionCookie(opts: {
   try {
     const secrets = await readEveSecrets();
     let dashboardSecret = secrets?.dashboard?.secret;
+    const updates: Record<string, unknown> = {};
 
     if (!dashboardSecret) {
       dashboardSecret = randomBytes(32).toString("hex");
-      await writeEveSecrets({ dashboard: { secret: dashboardSecret } });
+      updates["secret"] = dashboardSecret;
+    }
+
+    // Generate a one-time admin key the pod owner retrieves via `eve auth token`.
+    const existing = secrets as { dashboard?: { adminToken?: string } } | null | undefined;
+    if (!existing?.dashboard?.adminToken) {
+      updates["adminToken"] = randomBytes(32).toString("hex");
+    }
+
+    if (Object.keys(updates).length > 0) {
+      await writeEveSecrets({ dashboard: updates });
     }
 
     const key = new TextEncoder().encode(dashboardSecret);

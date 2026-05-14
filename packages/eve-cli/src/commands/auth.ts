@@ -759,6 +759,37 @@ export function authCommand(program: Command): void {
     });
 
   auth
+    .command('token')
+    .description(
+      'Print the Eve dashboard admin key. Enter this in the dashboard onboarding ' +
+        'page (or Settings → Admin) to unlock admin features.',
+    )
+    .action(async () => {
+      try {
+        const secrets = await readEveSecrets(process.cwd());
+        const adminToken = (secrets as { dashboard?: { adminToken?: string } } | null)
+          ?.dashboard?.adminToken;
+        if (!adminToken) {
+          printWarning('No admin key found in secrets.json.');
+          printInfo('The key is generated automatically on the first dashboard login.');
+          printInfo('If you have not logged in yet, visit the dashboard and sign in first.');
+          process.exitCode = 1;
+          return;
+        }
+        console.log();
+        printHeader('Eve dashboard admin key');
+        console.log();
+        console.log(`  ${colors.info(adminToken)}`);
+        console.log();
+        printInfo('Paste this into the dashboard onboarding page or Settings → Admin.');
+        console.log();
+      } catch (err) {
+        printError(err instanceof Error ? err.message : String(err));
+        process.exitCode = 1;
+      }
+    });
+
+  auth
     .command('bootstrap-token')
     .description(
       'Ensure the pod has a working PROVISIONING_TOKEN. Generates one if ' +
