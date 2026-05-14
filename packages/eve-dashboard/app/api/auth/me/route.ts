@@ -11,18 +11,27 @@
  * 503 { ok: false } (dashboard not configured)
  */
 
+import { randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth-server";
-import { readEveSecrets } from "@eve/dna";
+import { readEveSecrets, writeEveSecrets } from "@eve/dna";
 
 export async function GET() {
   const auth = await getAuthUser();
   if ("error" in auth) return auth.error;
 
-  const secrets = await readEveSecrets();
+  let secrets = await readEveSecrets();
   const podUrl = secrets?.synap?.apiUrl ?? null;
-  const hasAdminToken = !!(secrets as Record<string, unknown> | null | undefined
-    && (secrets as { dashboard?: { adminToken?: string } }).dashboard?.adminToken);
+
+  // Generate adminToken lazily so existing sessions don't need to re-login.
+  const dashboardSecrets = (secrets as { dashboard?: { adminToken?: string } } | null)?.dashboard;
+  if (!dashboardSecrets?.adminToken) {
+    await writeEveSecrets({ dashboard: { adminToken: randomBytes(32).toString("hex") } });
+    secrets = await readEveSecrets();
+  }
+
+  const hasAdminToken = !!(secrets as { dashboard?: { adminToken?: string } } | null)
+    ?.dashboard?.adminToken;
 
   return NextResponse.json({
     ok: true,
