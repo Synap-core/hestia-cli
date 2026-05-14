@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@heroui/react";
 import { Eye, EyeOff } from "lucide-react";
+import { storePodSession } from "@/lib/synap-auth";
 import { Wordmark } from "../components/wordmark";
 import { ThemeToggle } from "../components/theme-toggle";
 
@@ -29,16 +30,32 @@ export default function LoginPage() {
         body: JSON.stringify({ mode: "login", email: email.trim(), password }),
       });
 
+      const data = await res.json().catch(() => null) as {
+        ok?: boolean;
+        sessionToken?: string;
+        podUrl?: string;
+        user?: { id: string; email: string; name: string };
+        error?: string;
+        messages?: string[];
+      } | null;
+
       if (res.ok) {
+        // Populate localStorage so EveAccountGate doesn't show a second form.
+        if (data?.sessionToken && data?.podUrl) {
+          storePodSession({
+            podUrl: data.podUrl,
+            sessionToken: data.sessionToken,
+            userEmail: data.user?.email ?? email.trim(),
+            userId: data.user?.id ?? "",
+          });
+        }
         router.push("/");
         return;
       }
-
-      const data = await res.json() as { error?: string; messages?: string[] };
-      if (data.messages?.length) {
+      if (data?.messages?.length) {
         setErrors(data.messages);
       } else {
-        setErrors([data.error ?? "Login failed. Check your credentials."]);
+        setErrors([data?.error ?? "Login failed. Check your credentials."]);
       }
     } catch {
       setErrors(["Could not reach the dashboard API."]);
