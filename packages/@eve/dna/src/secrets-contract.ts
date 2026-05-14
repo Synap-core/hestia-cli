@@ -382,6 +382,8 @@ const SecretsSchema = z.object({
     .object({
       secret: z.string().optional(),
       port: z.number().optional(),
+      /** One-time admin key shown via `eve auth token`. Proves pod ownership. */
+      adminToken: z.string().optional(),
     })
     .optional(),
   /**
