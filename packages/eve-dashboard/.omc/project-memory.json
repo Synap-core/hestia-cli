@@ -153,6 +153,12 @@
   },
   "hotPaths": [
     {
+      "path": "app/(os)/components/home-header-content.tsx",
+      "accessCount": 23,
+      "lastAccessed": 1778808486823,
+      "type": "file"
+    },
+    {
       "path": "app/(os)/settings/ai/page.tsx",
       "accessCount": 11,
       "lastAccessed": 1778694864553,
@@ -183,9 +189,45 @@
       "type": "file"
     },
     {
+      "path": "app/(os)/page.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1778807582147,
+      "type": "file"
+    },
+    {
       "path": "app/api/ai/is-models/route.ts",
       "accessCount": 1,
       "lastAccessed": 1778694777930,
+      "type": "file"
+    },
+    {
+      "path": "app/global-error.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1778807301185,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/loading.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1778807305167,
+      "type": "file"
+    },
+    {
+      "path": "lib/use-toast.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778807378846,
+      "type": "file"
+    },
+    {
+      "path": "lib/use-session-health.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778807386353,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/components/connection-indicator.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1778807391938,
       "type": "file"
     }
   ],

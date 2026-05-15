@@ -100,10 +100,7 @@ function HomeContent() {
               pairingState={pairingState}
               onPairPod={() => setIsPairDialogOpen(true)}
             />
-            <PodStatusChip
-              pairingState={pairingState}
-              onClick={() => setIsPairDialogOpen(true)}
-            />
+            <ConnectionIndicator onClick={() => setIsPairDialogOpen(true)} />
             <AccountAvatar />
             <Button
               isIconOnly

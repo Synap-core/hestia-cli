@@ -21,22 +21,10 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import {
-  Button,
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-  addToast,
-} from "@heroui/react";
-import {
-  Circle,
-  ExternalLink,
-  LogOut,
-  Plug,
-  Server,
-  Sparkles,
-  User,
-} from "lucide-react";
+import { Button, Popover, PopoverContent, PopoverTrigger } from "@heroui/react";
+import { ExternalLink, LogOut, Plug, Server, Sparkles, User } from "lucide-react";
+import { useToast } from "@/lib/use-toast";
+import { ConnectionIndicator } from "./connection-indicator";
 import { useStats } from "../hooks/use-stats";
 import { useMemberCount } from "../hooks/use-member-count";
 import { usePodPairing, type PairingState } from "../hooks/use-pod-pairing";
@@ -277,78 +265,6 @@ function StatPill({ label, value, accent, href, isLoading }: StatPillProps) {
   );
 }
 
-// ─── Pod status chip (header-right) ──────────────────────────────────────────
-//
-// Single-glance health of the local pod. Click opens the pair dialog
-// — same affordance as the "Pair your pod" CTA pill, but always
-// visible (even when paired) so the operator can re-pair / switch
-// account from one place.
-
-interface PodStatusChipProps {
-  pairingState: PairingState;
-  onClick: () => void;
-}
-
-const STATUS_TONE: Record<
-  PairingState,
-  { dot: string; label: string; tone: string }
-> = {
-  loading: { dot: "#94A3B8", label: "Checking…", tone: "text-foreground/55" },
-  unconfigured: {
-    dot: "#94A3B8",
-    label: "No pod",
-    tone: "text-foreground/55",
-  },
-  unpaired: {
-    dot: "#F59E0B",
-    label: "Unclaimed",
-    tone: "text-warning",
-  },
-  paired: {
-    dot: "#34D399",
-    label: "Pod connected",
-    tone: "text-success",
-  },
-  "needs-refresh": {
-    dot: "#34D399",
-    label: "Pod connected",
-    tone: "text-success",
-  },
-  "stale-cred": {
-    dot: "#EF4444",
-    label: "Stale",
-    tone: "text-danger",
-  },
-};
-
-export function PodStatusChip({ pairingState, onClick }: PodStatusChipProps) {
-  const tone = STATUS_TONE[pairingState];
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={`Pod status — ${tone.label}`}
-      className="
-        hidden md:inline-flex items-center gap-1.5
-        rounded-full px-2.5 py-1
-        bg-foreground/[0.04] border border-foreground/[0.06]
-        transition-colors duration-150
-        hover:bg-foreground/[0.06]
-        focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40
-      "
-    >
-      <span
-        aria-hidden
-        className="h-2 w-2 shrink-0 rounded-full"
-        style={{ background: tone.dot }}
-      />
-      <span className={`text-[11.5px] font-medium ${tone.tone}`}>
-        {tone.label}
-      </span>
-    </button>
-  );
-}
-
 // ─── Account avatar + popover ────────────────────────────────────────────────
 //
 // Right-most cluster element. 32px circle with initials, click →
@@ -375,6 +291,7 @@ export interface AccountAvatarProps {
 }
 
 export function AccountAvatar({ hubAccountUrl }: AccountAvatarProps) {
+  const { success, error } = useToast();
   const [cpSession, setCpSession] = useState<ReturnType<
     typeof getSharedSession
   > | null>(null);
@@ -418,17 +335,9 @@ export function AccountAvatar({ hubAccountUrl }: AccountAvatarProps) {
     setSigningOutCp(true);
     try {
       await signOutOfControlPlane();
-      addToast({
-        title: "Signed out of Synap account",
-        description: "Your pod sessions are still active.",
-        color: "success",
-      });
+      success("Signed out of Synap account", "Your pod sessions are still active.");
     } catch (err) {
-      addToast({
-        title: "Couldn't sign out",
-        description: err instanceof Error ? err.message : "Unknown error",
-        color: "danger",
-      });
+      error("Couldn't sign out", err instanceof Error ? err.message : "Unknown error");
     } finally {
       setSigningOutCp(false);
     }
@@ -440,13 +349,9 @@ export function AccountAvatar({ hubAccountUrl }: AccountAvatarProps) {
     try {
       await signOutOfPod(podUrl);
       setPodSessions(Object.values(getAllPodSessions()));
-      addToast({ title: "Signed out of pod", color: "success" });
+      success("Signed out of pod");
     } catch (err) {
-      addToast({
-        title: "Couldn't sign out of pod",
-        description: err instanceof Error ? err.message : "Unknown error",
-        color: "danger",
-      });
+      error("Couldn't sign out of pod", err instanceof Error ? err.message : "Unknown error");
     } finally {
       setSigningOutPod(null);
     }
@@ -460,15 +365,11 @@ export function AccountAvatar({ hubAccountUrl }: AccountAvatarProps) {
         signOutOfControlPlane(),
         signOutOfAllPodsAndClearDisk(),
       ]);
-      addToast({ title: "Signed out everywhere", color: "success" });
+      success("Signed out everywhere");
       // Both layers cleared — reload so the gate flips to signed-out.
       window.location.reload();
     } catch (err) {
-      addToast({
-        title: "Couldn't sign out everywhere",
-        description: err instanceof Error ? err.message : "Unknown error",
-        color: "danger",
-      });
+      error("Couldn't sign out everywhere", err instanceof Error ? err.message : "Unknown error");
       setSigningOutAll(false);
     }
   }
@@ -671,8 +572,3 @@ function computeInitials(displayName: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-// Dummy reference so unused imports don't fail when the chip is hidden
-// behind a media query — keeps the bundler from tree-shaking lucide
-// icons we'll need at first paint.
-const _IconRefs = { Circle };
-void _IconRefs;

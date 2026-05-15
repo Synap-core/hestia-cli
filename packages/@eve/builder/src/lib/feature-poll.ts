@@ -1,6 +1,7 @@
 import type { Task } from '@eve/dna';
 import { TaskQueue } from './task-queue.js';
 import { TransientError, PollError } from './task-poll.js';
+import { PIPELINE_PERSONALITIES } from './pipeline-personalities.js';
 
 export type PipelinePhase = 'gather' | 'plan' | 'execute' | 'verify' | 'deploy';
 
@@ -72,9 +73,11 @@ const PHASE_PERSONALITY: Record<PipelinePhase, string> = {
 
 function buildPipelineTask(entity: PipelineEntity, phase: PipelinePhase, profileSlug: 'devplane_feature' | 'devplane_story'): Task {
   const now = new Date().toISOString();
+  const personality = PIPELINE_PERSONALITIES[PHASE_PERSONALITY[phase]];
   return {
     id: `pipeline:${entity.id}:${phase}:${Date.now()}`,
     title: `[${phase}] ${entity.title}`,
+    description: personality?.systemPrompt,
     type: phase === 'execute' ? 'code-gen' : 'custom',
     assignedAgentId: PHASE_PERSONALITY[phase],
     status: 'pending',

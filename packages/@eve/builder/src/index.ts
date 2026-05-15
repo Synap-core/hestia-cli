@@ -36,6 +36,10 @@ export { TaskPoller, type AgentConfigOverrides } from './lib/task-poll.js';
 export { FeaturePoller, type FeaturePollerConfig, type DevplaneFeature, type PipelinePhase } from './lib/feature-poll.js';
 export { TaskExecutor, type ResolvedPersonality } from './lib/task-executor.js';
 export { TaskQueue } from './lib/task-queue.js';
+export {
+  PIPELINE_PERSONALITIES,
+  type PipelinePersonality,
+} from './lib/pipeline-personalities.js';
 export { registerHermesCommands } from './commands/hermes.js';
 
 // Background-intent SDK — Hub Protocol REST wrapper used by the CLI's
