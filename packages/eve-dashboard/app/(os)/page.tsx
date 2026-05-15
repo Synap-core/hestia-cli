@@ -40,7 +40,6 @@ import {
   AccountAvatar,
   HomeGreeting,
   HomeStatPills,
-  PodStatusChip,
 } from "./components/home-header-content";
 import { AppGrid } from "./components/app-grid";
 import { SearchBar } from "./components/search-bar";
