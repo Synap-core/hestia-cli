@@ -229,6 +229,18 @@
       "accessCount": 1,
       "lastAccessed": 1778807391938,
       "type": "file"
+    },
+    {
+      "path": "app/(os)/components/auth/EveAccountGate.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1778813015570,
+      "type": "file"
+    },
+    {
+      "path": "lib/synap-auth.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778813016194,
+      "type": "file"
     }
   ],
   "userDirectives": []

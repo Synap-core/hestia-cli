@@ -30,7 +30,8 @@ export default function OSLoadding() {
         size="sm"
         classNames={{
           wrapper: "mt-2",
-          circle: "text-primary/60",
+          circle1: "text-primary/60",
+          circle2: "text-primary/40",
         }}
       />
       <p className="text-[12px] text-foreground/40 animate-pulse">

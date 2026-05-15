@@ -76,7 +76,7 @@ export function ConnectionIndicator({
       disabled={health === "reconnecting"}
     >
       {health === "reconnecting" ? (
-        <Spinner size="sm" classNames={{ circle: "text-warning" }} />
+        <Spinner size="sm" classNames={{ circle1: "text-warning", circle2: "text-warning/60" }} />
       ) : (
         <Icon className={`h-2.5 w-2.5 shrink-0 ${style.color}`} strokeWidth={2.5} />
       )}
