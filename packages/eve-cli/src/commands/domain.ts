@@ -426,7 +426,6 @@ export function domainCommand(program: Command): void {
         printInfo('No domain configured');
       }
     });
-}
 
   // ─── Add custom route ──────────────────────────────────────────────────────
   domain
@@ -552,3 +551,4 @@ export function domainCommand(program: Command): void {
 
       printSuccess('Traefik routes updated successfully');
     });
+}
