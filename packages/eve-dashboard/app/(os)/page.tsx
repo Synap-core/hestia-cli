@@ -41,6 +41,7 @@ import {
   HomeGreeting,
   HomeStatPills,
 } from "./components/home-header-content";
+import { ConnectionIndicator } from "./components/connection-indicator";
 import { AppGrid } from "./components/app-grid";
 import { SearchBar } from "./components/search-bar";
 import { EmptyState } from "./components/empty-state";

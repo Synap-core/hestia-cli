@@ -39,6 +39,7 @@ export async function refreshTraefikRoutes(cwd?: string): Promise<RefreshResult>
       secrets?.domain?.email,
       installedComponents,
       !!secrets?.domain?.behindProxy,
+      secrets?.domain?.customRoutes,
     );
     return { refreshed: true, domain };
   } catch (err) {

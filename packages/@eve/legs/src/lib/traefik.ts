@@ -238,7 +238,7 @@ export class TraefikService {
     console.log('Using Dokploy-managed Traefik');
   }
 
-  async configureSubdomains(domain: string, ssl: boolean, email?: string, installedComponents?: string[], behindProxy = false): Promise<void> {
+  async configureSubdomains(domain: string, ssl: boolean, email?: string, installedComponents?: string[], behindProxy = false, customRoutes?: Array<{ subdomain: string; port: number; domain?: string }>): Promise<void> {
     // Synap backend runs in its own docker-compose project. Connect it to
     // eve-network so Traefik (also on eve-network) can resolve it by name.
     const synapContainer = getSynapBackendContainer();
@@ -287,6 +287,24 @@ export class TraefikService {
         upstream: `http://${containerName}:${comp.service.internalPort}`,
         requires: comp.id,
       });
+    }
+
+    // Add custom routes from eve domain add
+    if (customRoutes && customRoutes.length > 0) {
+      for (const route of customRoutes) {
+        const routeDomain = route.domain || domain;
+        const subdomain = route.subdomain;
+        const upstream = `http://host.docker.internal:${route.port}`;
+        
+        services.push({
+          id: `custom-${subdomain}`,
+          subdomain,
+          upstream,
+          requires: null,
+        });
+        
+        console.log(`  Added custom route: ${subdomain}.${routeDomain} → ${upstream}`);
+      }
     }
 
     // Build routers:

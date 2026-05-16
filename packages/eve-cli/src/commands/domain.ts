@@ -111,9 +111,10 @@ export function domainCommand(program: Command): void {
 
       let writeOk = false;
       try {
-        const [result] = await materializeTargets(null, ['traefik-routes']);
-        if (!result?.ok) throw new Error(result?.error ?? result?.summary ?? 'unknown Traefik error');
-        writeOk = result.changed;
+        const results = await materializeTargets(null, ['backend-env', 'traefik-routes']);
+        const routeResult = results.find(r => r.target === 'traefik-routes');
+        if (!routeResult?.ok) throw new Error(routeResult?.error ?? routeResult?.summary ?? 'unknown Traefik error');
+        writeOk = routeResult.changed;
       } catch (err) {
         printError(`Could not write Traefik config: ${err instanceof Error ? err.message : String(err)}`);
         printInfo('Run this command on your server (where Docker is available).');
@@ -400,9 +401,10 @@ export function domainCommand(program: Command): void {
       printInfo('Reinstalling Traefik (fresh container)...');
       await traefik.install();
 
-      // 4. Reapply domain routes (Fix D: pass behindProxy)
+      // 4. Reapply domain routes + backend env (Fix D: pass behindProxy)
       printInfo('Applying domain routes...');
-      const [result] = await materializeTargets(secrets, ['traefik-routes']);
+      const results = await materializeTargets(secrets, ['backend-env', 'traefik-routes']);
+      const result = results.find(r => r.target === 'traefik-routes');
       if (!result?.ok) throw new Error(result?.error ?? result?.summary ?? 'unknown Traefik error');
 
       console.log();
@@ -417,9 +419,136 @@ export function domainCommand(program: Command): void {
       const secrets = await readEveSecrets(process.cwd());
       if (secrets?.domain?.primary) {
         await writeEveSecrets({ domain: { primary: undefined, ssl: undefined, email: undefined } });
+        // Also rewrite the backend .env so PUBLIC_URL / DOMAIN are cleared
+        await materializeTargets(null, ['backend-env']);
         printSuccess('Domain configuration removed');
       } else {
         printInfo('No domain configured');
       }
     });
 }
+
+  // ─── Add custom route ──────────────────────────────────────────────────────
+  domain
+    .command('add')
+    .argument('<subdomain>', 'Subdomain to route (e.g., "crm" for crm.example.com)')
+    .option('--port <port>', 'Target port on localhost', (v) => parseInt(v, 10))
+    .option('--domain <domain>', 'Override domain (default: uses primary domain)')
+    .description('Add a custom subdomain-to-port routing rule')
+    .action(async (subdomain: string, opts: { port?: number; domain?: string }) => {
+      const secrets = await readEveSecrets(process.cwd());
+      if (!secrets?.domain?.primary) {
+        printError('No primary domain configured. Run `eve domain set <domain>` first.');
+        process.exit(1);
+      }
+      if (!opts.port) {
+        printError('--port is required');
+        process.exit(1);
+      }
+
+      const customRoutes = secrets.domain.customRoutes || [];
+      const existing = customRoutes.find(r => r.subdomain === subdomain && (!r.domain || r.domain === (opts.domain || secrets.domain!.primary)));
+      if (existing) {
+        printWarning(`Route already exists: ${subdomain}.${opts.domain || secrets.domain!.primary} → port ${existing.port}`);
+        printInfo(`To update, remove first: eve domain remove ${subdomain}`);
+        return;
+      }
+
+      customRoutes.push({
+        subdomain,
+        port: opts.port,
+        domain: opts.domain,
+      });
+
+      secrets.domain.customRoutes = customRoutes;
+      await writeEveSecrets(secrets);
+
+      printSuccess(`Added route: ${subdomain}.${opts.domain || secrets.domain!.primary} → localhost:${opts.port}`);
+      printInfo('Run `eve domain apply` to update Traefik routes');
+    });
+
+  // ─── Remove custom route ───────────────────────────────────────────────────
+  domain
+    .command('remove')
+    .alias('rm')
+    .argument('<subdomain>', 'Subdomain to remove')
+    .option('--domain <domain>', 'Domain override (if set during add)')
+    .description('Remove a custom subdomain routing rule')
+    .action(async (subdomain: string, opts: { domain?: string }) => {
+      const secrets = await readEveSecrets(process.cwd());
+      if (!secrets?.domain?.customRoutes?.length) {
+        printInfo('No custom routes configured');
+        return;
+      }
+
+      const targetDomain = opts.domain || secrets.domain.primary;
+      const before = secrets.domain.customRoutes.length;
+      secrets.domain.customRoutes = secrets.domain.customRoutes.filter(
+        r => !(r.subdomain === subdomain && (!r.domain || r.domain === targetDomain))
+      );
+
+      if (secrets.domain.customRoutes.length === before) {
+        printWarning(`No route found for ${subdomain}.${targetDomain}`);
+        return;
+      }
+
+      await writeEveSecrets(secrets);
+      printSuccess(`Removed route: ${subdomain}.${targetDomain}`);
+      printInfo('Run `eve domain apply` to update Traefik routes');
+    });
+
+  // ─── List custom routes ────────────────────────────────────────────────────
+  domain
+    .command('list')
+    .description('List all custom subdomain routes')
+    .action(async () => {
+      const secrets = await readEveSecrets(process.cwd());
+      const routes = secrets?.domain?.customRoutes || [];
+      const primary = secrets?.domain?.primary || 'not configured';
+
+      console.log();
+      console.log(colors.primary.bold('Custom Domain Routes'));
+      console.log(colors.muted('─'.repeat(60)));
+      console.log(`Primary domain: ${colors.primary(primary)}`);
+      console.log();
+
+      if (routes.length === 0) {
+        printInfo('No custom routes configured. Add one with: eve domain add <subdomain> --port <number>');
+        return;
+      }
+
+      console.log(colors.muted('  Subdomain'.padEnd(30) + 'Domain'.padEnd(35) + 'Port'));
+      console.log(colors.muted('  ' + '─'.repeat(58)));
+      for (const route of routes) {
+        const domain = route.domain || primary;
+        const fullDomain = `${route.subdomain}.${domain}`;
+        console.log(`  ${route.subdomain.padEnd(28)}${fullDomain.padEnd(35)}${route.port}`);
+      }
+      console.log();
+    });
+
+  // ─── Apply routes to Traefik ───────────────────────────────────────────────
+  domain
+    .command('apply')
+    .description('Apply current domain configuration to Traefik')
+    .action(async () => {
+      const secrets = await readEveSecrets(process.cwd());
+      const domainName = secrets?.domain?.primary;
+      if (!domainName) {
+        printError('No primary domain configured. Run `eve domain set <domain>` first.');
+        process.exit(1);
+      }
+
+      printInfo(`Applying routes for domain: ${domainName}`);
+      
+      const traefik = new TraefikService();
+      await traefik.configureSubdomains(
+        domainName,
+        secrets?.domain?.ssl !== false,
+        secrets?.domain?.email,
+        undefined, // installedComponents - will be resolved internally
+        !!secrets?.domain?.behindProxy,
+      );
+
+      printSuccess('Traefik routes updated successfully');
+    });
