@@ -166,6 +166,58 @@ accessLog: {}
 `.trimStart();
 }
 
+
+/**
+ * Detect the Docker host gateway IP for reaching host-level services.
+ * On Linux: 172.17.0.1 (docker0 bridge)
+ * On Mac/Windows: host.docker.internal works via DNS
+ */
+function getDockerHostGateway(): string {
+  // Reach the host machine from inside a Docker container where PM2 apps run.
+  // The Docker network gateway (e.g., 172.18.0.1 for eve-network) routes to the host.
+  try {
+    const gw = execSync(
+      "docker network inspect eve-network --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}' 2>/dev/null",
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
+    ).trim();
+    if (gw) return gw;
+  } catch { /* try next */ }
+  
+  try {
+    const gw = execSync(
+      "docker network inspect bridge --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}' 2>/dev/null",
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
+    ).trim();
+    if (gw) return gw;
+  } catch { /* fallback */ }
+  
+  return '172.17.0.1';
+}
+
+/**
+ * Add UFW rules to allow Docker bridge networks to reach host ports.
+ * This is needed when PM2 apps run on the host and Traefik runs in Docker.
+ */
+function allowDockerToHostPorts(ports: number[]): void {
+  try {
+    // Get Docker network CIDRs
+    const networks = execSync(
+      "docker network ls --format '{{.Name}}' | grep -E 'eve-network|bridge' | while read net; do docker network inspect \$net --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}' 2>/dev/null; done",
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
+    ).trim().split('\n').filter(Boolean);
+    
+    for (const cidr of networks) {
+      for (const port of ports) {
+        try {
+          execSync(`ufw allow from ${cidr} to any port ${port} 2>/dev/null`, {
+            stdio: ['pipe', 'pipe', 'ignore'],
+          });
+        } catch { /* rule may already exist */ }
+      }
+    }
+  } catch { /* UFW not available or not running */ }
+}
+
 export class TraefikService {
   private configDir: string;
   private traefikConfigPath: string;
@@ -271,7 +323,7 @@ export class TraefikService {
     // Build routes from the component registry — single source of truth.
     // Every routed service (including the Eve dashboard) is a Docker container
     // on eve-network, addressable by its container name.
-    const services: Array<{ id: string; subdomain: string; upstream: string; requires: string | null }> = [];
+    const services: Array<{ id: string; subdomain: string; upstream: string; requires: string | null; domain?: string }> = [];
 
     for (const comp of COMPONENTS) {
       if (!comp.service || !comp.service.subdomain) continue;
@@ -291,16 +343,21 @@ export class TraefikService {
 
     // Add custom routes from eve domain add
     if (customRoutes && customRoutes.length > 0) {
+      // Ensure Docker can reach host ports (UFW fix)
+      allowDockerToHostPorts(customRoutes.map(r => r.port));
+      
       for (const route of customRoutes) {
         const routeDomain = route.domain || domain;
         const subdomain = route.subdomain;
-        const upstream = `http://host.docker.internal:${route.port}`;
+        const hostGateway = getDockerHostGateway();
+        const upstream = `http://${hostGateway}:${route.port}`;
         
         services.push({
           id: `custom-${subdomain}`,
           subdomain,
           upstream,
           requires: null,
+          domain: routeDomain,
         });
         
         console.log(`  Added custom route: ${subdomain}.${routeDomain} → ${upstream}`);
@@ -312,7 +369,8 @@ export class TraefikService {
     //   ssl:         HTTP redirects → HTTPS, HTTPS carries real cert.
     //   plain:       HTTP + HTTPS with self-signed (less confusing than protocol error).
     const routersYaml = services.map(s => {
-      const host = `${s.subdomain}.${domain}`;
+      const routeDomain = s.domain || domain;
+      const host = `${s.subdomain}.${routeDomain}`;
       if (behindProxy) {
         // Single HTTP router — external proxy already terminated TLS.
         // forward-https middleware rewrites X-Forwarded-Proto so backend

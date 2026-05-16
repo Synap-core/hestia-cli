@@ -25,7 +25,29 @@ import {
 } from "lucide-react";
 import { brandColorFor } from "../lib/brand-colors";
 import { createEmbeddedAppHref } from "../lib/app-launch-url";
+import { useCompanionStore } from "../stores/companion-store";
 import type { DockApp } from "./use-dock-apps";
+
+/** App IDs that open as a side-docked Companion instead of a full route. */
+const COMPANION_APP_IDS = new Set(["openwebui"]);
+
+/**
+ * Pinned apps have `path` set to `/apps/<id>?name=...&url=<iframeUrl>` (the
+ * embedded-app route), but the companion needs the raw iframe URL to hand
+ * to AppPane. Extract it from the route's `url` query param; fall back to
+ * the path itself if it's already an absolute URL (external pin form).
+ */
+function resolveCompanionUrl(path: string): string {
+  if (path.startsWith("http://") || path.startsWith("https://")) return path;
+  try {
+    const u = new URL(path, "http://_local_");
+    const embedded = u.searchParams.get("url");
+    if (embedded) return embedded;
+  } catch {
+    /* fall through */
+  }
+  return path;
+}
 
 const GLYPHS: Record<string, LucideIcon> = {
   Home,
@@ -69,6 +91,20 @@ export function DockIcon({ app, active, iconUrl }: DockIconProps) {
       })
     : app.path;
 
+  // Companion apps (e.g. AI chat / openwebui) toggle a side-docked
+  // surface instead of navigating to the embedded-app route.
+  const isCompanionApp = COMPANION_APP_IDS.has(app.id);
+  const toggleCompanion = useCompanionStore((s) => s.toggle);
+  const companionOpen = useCompanionStore((s) => s.open);
+  const companionKind = useCompanionStore((s) => s.kind);
+  const companionPayload = useCompanionStore((s) => s.payload);
+  const companionUrl = isCompanionApp ? resolveCompanionUrl(app.path) : "";
+  const companionActive =
+    isCompanionApp &&
+    companionOpen &&
+    companionKind === "ai-chat" &&
+    companionPayload?.url === companionUrl;
+
   const iconContent = useRemote ? (
     // eslint-disable-next-line @next/next/no-img-element
     <img
@@ -96,20 +132,41 @@ export function DockIcon({ app, active, iconUrl }: DockIconProps) {
     focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50
   `;
 
+  const showActive = isCompanionApp ? companionActive : active;
+
   return (
     <div className="relative flex h-10 w-10 shrink-0 items-center justify-center">
-      <Link
-        href={href}
-        aria-label={`Open ${app.name}`}
-        title={app.name}
-        className={sharedClassName}
-        style={{ background: palette.bg }}
-      >
-        {iconContent}
-      </Link>
+      {isCompanionApp ? (
+        <button
+          type="button"
+          aria-label={`Open ${app.name}`}
+          aria-pressed={companionActive}
+          title={app.name}
+          className={sharedClassName}
+          style={{ background: palette.bg }}
+          onClick={() =>
+            toggleCompanion("ai-chat", {
+              url: companionUrl,
+              title: app.name,
+            })
+          }
+        >
+          {iconContent}
+        </button>
+      ) : (
+        <Link
+          href={href}
+          aria-label={`Open ${app.name}`}
+          title={app.name}
+          className={sharedClassName}
+          style={{ background: palette.bg }}
+        >
+          {iconContent}
+        </Link>
+      )}
 
       {/* Active indicator pill — 3px tall x 10px wide, ~6px below the icon. */}
-      {active && (
+      {showActive && (
         <span
           className="absolute -bottom-1.5 left-1/2 h-[3px] w-2.5 -translate-x-1/2 rounded-full"
           style={{ background: palette.accent }}

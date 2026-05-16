@@ -547,6 +547,7 @@ export function domainCommand(program: Command): void {
         secrets?.domain?.email,
         undefined, // installedComponents - will be resolved internally
         !!secrets?.domain?.behindProxy,
+        secrets?.domain?.customRoutes,
       );
 
       printSuccess('Traefik routes updated successfully');
