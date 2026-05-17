@@ -23,9 +23,9 @@
  */
 
 import { Button } from "@heroui/react";
-import { ArrowRight, Sparkles, X } from "lucide-react";
-import Link from "next/link";
+import { X } from "lucide-react";
 import type { CSSProperties } from "react";
+import { ChatCompanion } from "./chat/chat-companion";
 import { useCompanionStore, type CompanionKind } from "../stores/companion-store";
 
 const COMPANION_FALLBACK_TITLE: Record<CompanionKind, string> = {
@@ -96,47 +96,7 @@ export function Companion({ width }: CompanionProps) {
 
 function CompanionBody({ kind }: { kind: CompanionKind }) {
   if (kind === "ai-chat") {
-    return <ChatPlaceholder />;
+    return <ChatCompanion />;
   }
   return null;
-}
-
-/**
- * Placeholder for the native Eve AI chat. The previous implementation
- * iframed OpenWebUI, which felt foreign and broke when not installed.
- * The companion shell (slide-in, hotkey, dock indicator) still works —
- * this body is what gets replaced when the native chat lands.
- */
-function ChatPlaceholder() {
-  return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-5 px-6 py-10 text-center">
-      <span
-        className="flex h-14 w-14 items-center justify-center rounded-2xl bg-foreground/[0.06] ring-1 ring-inset ring-foreground/10"
-        aria-hidden
-      >
-        <Sparkles className="h-6 w-6 text-foreground/55" strokeWidth={1.75} />
-      </span>
-      <div className="flex flex-col gap-1.5 max-w-[280px]">
-        <h3 className="text-[15px] font-medium text-foreground">
-          Native chat — coming soon
-        </h3>
-        <p className="text-[12.5px] leading-relaxed text-foreground/55">
-          Eve will host its own AI chat here, talking directly to your pod.
-          For now, install a chat app from the marketplace or use Studio.
-        </p>
-      </div>
-      <Link href="/marketplace" onClick={useCompanionStore.getState().close}>
-        <Button
-          size="sm"
-          radius="full"
-          variant="flat"
-          color="default"
-          endContent={<ArrowRight className="h-3.5 w-3.5" />}
-          className="text-foreground"
-        >
-          Browse marketplace
-        </Button>
-      </Link>
-    </div>
-  );
 }
