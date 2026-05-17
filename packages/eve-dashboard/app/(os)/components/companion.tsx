@@ -23,16 +23,10 @@
  */
 
 import { Button } from "@heroui/react";
-import { Maximize2, X } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { ArrowRight, Sparkles, X } from "lucide-react";
+import Link from "next/link";
 import type { CSSProperties } from "react";
 import { useCompanionStore, type CompanionKind } from "../stores/companion-store";
-import { AppPane } from "./app-pane";
-import { createEmbeddedAppHref } from "../lib/app-launch-url";
-
-const COMPANION_APP_ID: Partial<Record<CompanionKind, string>> = {
-  "ai-chat": "openwebui",
-};
 
 const COMPANION_FALLBACK_TITLE: Record<CompanionKind, string> = {
   "ai-chat": "Chat",
@@ -44,7 +38,6 @@ export interface CompanionProps {
 }
 
 export function Companion({ width }: CompanionProps) {
-  const router = useRouter();
   const open = useCompanionStore((s) => s.open);
   const kind = useCompanionStore((s) => s.kind);
   const payload = useCompanionStore((s) => s.payload);
@@ -52,16 +45,6 @@ export function Companion({ width }: CompanionProps) {
 
   const isMounted = open && kind && payload;
   const title = payload?.title ?? (kind ? COMPANION_FALLBACK_TITLE[kind] : "");
-
-  const expandToFullscreen = () => {
-    if (kind === "ai-chat") {
-      const appId = COMPANION_APP_ID[kind];
-      const url = payload?.url ?? "";
-      if (!appId || !url) return;
-      close();
-      router.push(createEmbeddedAppHref({ id: appId, name: title, url }));
-    }
-  };
 
   const style: CSSProperties = {
     width,
@@ -94,17 +77,6 @@ export function Companion({ width }: CompanionProps) {
                 variant="light"
                 size="sm"
                 radius="full"
-                aria-label="Expand to fullscreen"
-                onPress={expandToFullscreen}
-                className="text-foreground/55 hover:text-foreground"
-              >
-                <Maximize2 className="h-4 w-4" strokeWidth={2} />
-              </Button>
-              <Button
-                isIconOnly
-                variant="light"
-                size="sm"
-                radius="full"
                 aria-label="Close companion"
                 onPress={close}
                 className="text-foreground/55 hover:text-foreground"
@@ -114,7 +86,7 @@ export function Companion({ width }: CompanionProps) {
             </div>
           </header>
           <div className="min-h-0 flex-1 flex flex-col">
-            <CompanionBody kind={kind} url={payload?.url ?? ""} />
+            <CompanionBody kind={kind} />
           </div>
         </>
       ) : null}
@@ -122,11 +94,49 @@ export function Companion({ width }: CompanionProps) {
   );
 }
 
-function CompanionBody({ kind, url }: { kind: CompanionKind; url: string }) {
+function CompanionBody({ kind }: { kind: CompanionKind }) {
   if (kind === "ai-chat") {
-    const appId = COMPANION_APP_ID[kind];
-    if (!appId || !url) return null;
-    return <AppPane appId={appId} url={url} sendAuth />;
+    return <ChatPlaceholder />;
   }
   return null;
+}
+
+/**
+ * Placeholder for the native Eve AI chat. The previous implementation
+ * iframed OpenWebUI, which felt foreign and broke when not installed.
+ * The companion shell (slide-in, hotkey, dock indicator) still works —
+ * this body is what gets replaced when the native chat lands.
+ */
+function ChatPlaceholder() {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-5 px-6 py-10 text-center">
+      <span
+        className="flex h-14 w-14 items-center justify-center rounded-2xl bg-foreground/[0.06] ring-1 ring-inset ring-foreground/10"
+        aria-hidden
+      >
+        <Sparkles className="h-6 w-6 text-foreground/55" strokeWidth={1.75} />
+      </span>
+      <div className="flex flex-col gap-1.5 max-w-[280px]">
+        <h3 className="text-[15px] font-medium text-foreground">
+          Native chat — coming soon
+        </h3>
+        <p className="text-[12.5px] leading-relaxed text-foreground/55">
+          Eve will host its own AI chat here, talking directly to your pod.
+          For now, install a chat app from the marketplace or use Studio.
+        </p>
+      </div>
+      <Link href="/marketplace" onClick={useCompanionStore.getState().close}>
+        <Button
+          size="sm"
+          radius="full"
+          variant="flat"
+          color="default"
+          endContent={<ArrowRight className="h-3.5 w-3.5" />}
+          className="text-foreground"
+        >
+          Browse marketplace
+        </Button>
+      </Link>
+    </div>
+  );
 }
