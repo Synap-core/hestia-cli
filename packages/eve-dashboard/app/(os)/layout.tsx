@@ -19,10 +19,12 @@ import { Dock } from "./components/dock";
 import { PinContextProvider } from "./components/pin-context";
 import { OverlayHost } from "./components/overlay/overlay-host";
 import { PaneCompanionRow } from "./components/pane-companion-row";
+import { CompanionHotkeyBridge } from "./components/companion-hotkey-bridge";
 
 export default function OSLayout({ children }: { children: ReactNode }) {
   return (
     <PinContextProvider>
+      <CompanionHotkeyBridge />
       <Wallpaper />
       <PaneCompanionRow>{children}</PaneCompanionRow>
       <Dock />

@@ -17,16 +17,23 @@
  */
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Home, Sparkles, Settings as SettingsIcon, MessageSquare, Brain,
   Paperclip, Wrench, Code2, Users, LayoutGrid, Box,
-  Cpu, Rss,
+  Cpu, Rss, PinOff, ExternalLink, X,
   type LucideIcon, type LucideProps,
 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { brandColorFor } from "../lib/brand-colors";
 import { createEmbeddedAppHref } from "../lib/app-launch-url";
 import { useCompanionStore } from "../stores/companion-store";
+import { usePinContext } from "./pin-context";
 import type { DockApp } from "./use-dock-apps";
+
+/** Right-click context-menu bounding box (max-height estimate for clamping). */
+const MENU_W = 190;
+const MENU_H = 140;
 
 /** App IDs that open as a side-docked Companion instead of a full route. */
 const COMPANION_APP_IDS = new Set(["openwebui"]);
@@ -37,7 +44,7 @@ const COMPANION_APP_IDS = new Set(["openwebui"]);
  * to AppPane. Extract it from the route's `url` query param; fall back to
  * the path itself if it's already an absolute URL (external pin form).
  */
-function resolveCompanionUrl(path: string): string {
+export function resolveCompanionUrl(path: string): string {
   if (path.startsWith("http://") || path.startsWith("https://")) return path;
   try {
     const u = new URL(path, "http://_local_");
@@ -77,9 +84,15 @@ export interface DockIconProps {
   app: DockApp;
   active: boolean;
   iconUrl?: string;
+  /**
+   * When true, right-clicking the icon opens an "Unpin from dock" menu.
+   * Core apps (Home / Agents / Settings) pass `false` because they
+   * can't be removed from the dock.
+   */
+  unpinnable?: boolean;
 }
 
-export function DockIcon({ app, active, iconUrl }: DockIconProps) {
+export function DockIcon({ app, active, iconUrl, unpinnable = false }: DockIconProps) {
   const palette = brandColorFor(app.slug);
   const useRemote = !palette.glyph && iconUrl;
   const isExternal = app.path.startsWith("http");
@@ -91,10 +104,57 @@ export function DockIcon({ app, active, iconUrl }: DockIconProps) {
       })
     : app.path;
 
+  // Right-click context menu — only enabled for unpinnable (pinned) apps.
+  const router = useRouter();
+  const { unpin } = usePinContext();
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      if (!unpinnable) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const x = Math.min(e.clientX, window.innerWidth - MENU_W - 8);
+      const y = Math.min(e.clientY, window.innerHeight - MENU_H - 8);
+      setMenuPos({ x, y });
+    },
+    [unpinnable],
+  );
+
+  useEffect(() => {
+    if (!menuPos) return;
+    function onDown(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuPos(null);
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setMenuPos(null);
+    }
+    function onScroll() {
+      setMenuPos(null);
+    }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", onScroll, { capture: true });
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onScroll, { capture: true });
+    };
+  }, [menuPos]);
+
+  async function handleUnpin() {
+    setMenuPos(null);
+    await unpin(app.id);
+  }
+
   // Companion apps (e.g. AI chat / openwebui) toggle a side-docked
   // surface instead of navigating to the embedded-app route.
   const isCompanionApp = COMPANION_APP_IDS.has(app.id);
   const toggleCompanion = useCompanionStore((s) => s.toggle);
+  const closeCompanion = useCompanionStore((s) => s.close);
   const companionOpen = useCompanionStore((s) => s.open);
   const companionKind = useCompanionStore((s) => s.kind);
   const companionPayload = useCompanionStore((s) => s.payload);
@@ -104,6 +164,21 @@ export function DockIcon({ app, active, iconUrl }: DockIconProps) {
     companionOpen &&
     companionKind === "ai-chat" &&
     companionPayload?.url === companionUrl;
+
+  // Menu actions — Open re-opens (or navigates); Close only meaningful for companions.
+  const handleOpen = useCallback(() => {
+    setMenuPos(null);
+    if (isCompanionApp) {
+      toggleCompanion("ai-chat", { url: companionUrl, title: app.name });
+    } else {
+      router.push(href);
+    }
+  }, [isCompanionApp, toggleCompanion, companionUrl, app.name, router, href]);
+
+  const handleClose = useCallback(() => {
+    setMenuPos(null);
+    closeCompanion();
+  }, [closeCompanion]);
 
   const iconContent = useRemote ? (
     // eslint-disable-next-line @next/next/no-img-element
@@ -135,7 +210,10 @@ export function DockIcon({ app, active, iconUrl }: DockIconProps) {
   const showActive = isCompanionApp ? companionActive : active;
 
   return (
-    <div className="relative flex h-10 w-10 shrink-0 items-center justify-center">
+    <div
+      className="relative flex h-10 w-10 shrink-0 items-center justify-center"
+      onContextMenu={handleContextMenu}
+    >
       {isCompanionApp ? (
         <button
           type="button"
@@ -172,6 +250,57 @@ export function DockIcon({ app, active, iconUrl }: DockIconProps) {
           style={{ background: palette.accent }}
           aria-hidden
         />
+      )}
+
+      {/* Right-click context menu — only rendered for unpinnable apps. */}
+      {menuPos && (
+        <div
+          ref={menuRef}
+          role="menu"
+          aria-label="Dock icon options"
+          className="
+            fixed z-50 min-w-[190px] overflow-hidden
+            rounded-xl border border-foreground/10
+            bg-background/85 backdrop-blur-2xl
+            py-1
+          "
+          style={{ left: menuPos.x, top: menuPos.y }}
+        >
+          {!showActive && (
+            <button
+              role="menuitem"
+              type="button"
+              className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] text-foreground hover:bg-foreground/[0.07] transition-colors duration-100 cursor-default select-none"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={handleOpen}
+            >
+              <ExternalLink className="h-3.5 w-3.5 shrink-0 text-foreground/55" strokeWidth={2} aria-hidden />
+              Open
+            </button>
+          )}
+          {showActive && isCompanionApp && (
+            <button
+              role="menuitem"
+              type="button"
+              className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] text-foreground hover:bg-foreground/[0.07] transition-colors duration-100 cursor-default select-none"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={handleClose}
+            >
+              <X className="h-3.5 w-3.5 shrink-0 text-foreground/55" strokeWidth={2} aria-hidden />
+              Close
+            </button>
+          )}
+          <button
+            role="menuitem"
+            type="button"
+            className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] text-foreground hover:bg-foreground/[0.07] transition-colors duration-100 cursor-default select-none"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => void handleUnpin()}
+          >
+            <PinOff className="h-3.5 w-3.5 shrink-0 text-foreground/55" strokeWidth={2} aria-hidden />
+            Unpin from dock
+          </button>
+        </div>
       )}
     </div>
   );

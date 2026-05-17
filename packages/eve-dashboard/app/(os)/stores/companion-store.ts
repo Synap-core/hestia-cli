@@ -35,7 +35,10 @@ interface CompanionState {
   toggle: (kind: CompanionKind, payload: CompanionPayload) => void;
 }
 
-function primaryIdOf(payload: CompanionPayload | null): string | null {
+function primaryIdOf(
+  _kind: CompanionKind | null,
+  payload: CompanionPayload | null,
+): string | null {
   if (!payload) return null;
   return payload.entityId ?? payload.channelId ?? payload.url ?? null;
 }
@@ -57,7 +60,7 @@ export const useCompanionStore = create<CompanionState>((set, get) => ({
     const s = get();
     const sameKind = s.open && s.kind === kind;
     const samePrimary =
-      sameKind && primaryIdOf(s.payload) === primaryIdOf(payload);
+      sameKind && primaryIdOf(s.kind, s.payload) === primaryIdOf(kind, payload);
     if (samePrimary) {
       set({ open: false, kind: null, payload: null });
       return;

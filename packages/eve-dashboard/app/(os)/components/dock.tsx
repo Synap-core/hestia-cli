@@ -38,7 +38,12 @@ export function Dock() {
       "
     >
       {apps.map(app => (
-        <DockIcon key={app.id} app={app} active={isActive(app.path)} />
+        <DockIcon
+          key={app.id}
+          app={app}
+          active={isActive(app.path)}
+          unpinnable={app.kind === "pinned"}
+        />
       ))}
       <span
         className="mx-0.5 h-6 w-px shrink-0 bg-foreground/10"

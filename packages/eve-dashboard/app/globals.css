@@ -329,6 +329,13 @@ input {
   50%      { transform: scale(0.8); opacity: 0.4; }
 }
 
+/* Pop-up entrance for the dock pin popover — opacity + slight scale-up,
+   anchored at bottom-center so the surface unfolds from the `+` button. */
+@keyframes dock-pin-pop {
+  0%   { opacity: 0; transform: scale(0.96) translateY(2px); }
+  100% { opacity: 1; transform: scale(1)    translateY(0);   }
+}
+
 /* prefers-reduced-motion: kill the lift + pulse for users who asked
    the OS to keep things still. */
 @media (prefers-reduced-motion: reduce) {
