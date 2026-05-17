@@ -28,7 +28,6 @@ import {
   Cpu, Rss, Pin, PinOff, ExternalLink, X, PanelRightOpen,
   type LucideIcon, type LucideProps,
 } from "lucide-react";
-import { Tooltip, Kbd } from "@heroui/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { brandColorFor } from "../lib/brand-colors";
 import { createEmbeddedAppHref } from "../lib/app-launch-url";
@@ -306,15 +305,13 @@ export function DockIcon({ app, active, iconUrl, unpinnable = false }: DockIconP
   const showActive = isCompanionApp ? companionActive : active;
   const showRunningDot = isRunning && !companionActive;
 
-  // Tooltip content — AI chat companion app shows its hotkey hint.
-  const tooltipContent = isCompanionApp ? (
-    <span className="flex items-center gap-2">
-      <span>{app.name}</span>
-      <Kbd keys={isMac ? ["command", "shift"] : ["ctrl", "shift"]}>Space</Kbd>
-    </span>
-  ) : (
-    app.name
-  );
+  // Native tooltip text — React Aria's <Tooltip> intercepts pointerdown and
+  // breaks the outer div's contextmenu/long-press handlers, so we use the
+  // browser-native `title` attribute instead. The hotkey hint is appended for
+  // the AI chat icon so users discover ⌘⇧Space.
+  const titleText = isCompanionApp
+    ? `${app.name} — ${isMac ? "⌘⇧Space" : "Ctrl+Shift+Space"}`
+    : app.name;
 
   // Determine menu groups (state-matrix; see component docstring).
   const showOpenItem = isPinned && !isRunning;
@@ -338,40 +335,34 @@ export function DockIcon({ app, active, iconUrl, unpinnable = false }: DockIconP
       onPointerLeave={cancelLongPress}
       onPointerCancel={cancelLongPress}
     >
-      <Tooltip
-        content={tooltipContent}
-        placement="top"
-        delay={400}
-        offset={8}
-        isDisabled={menuPos !== null}
-      >
-        {isCompanionApp ? (
-          <button
-            type="button"
-            aria-label={`Open ${app.name}`}
-            aria-pressed={companionActive}
-            className={sharedClassName}
-            style={{ background: palette.bg }}
-            onClick={() =>
-              toggleCompanion("ai-chat", {
-                url: companionUrl,
-                title: app.name,
-              })
-            }
-          >
-            {iconContent}
-          </button>
-        ) : (
-          <Link
-            href={href}
-            aria-label={`Open ${app.name}`}
-            className={sharedClassName}
-            style={{ background: palette.bg }}
-          >
-            {iconContent}
-          </Link>
-        )}
-      </Tooltip>
+      {isCompanionApp ? (
+        <button
+          type="button"
+          aria-label={`Open ${app.name}`}
+          aria-pressed={companionActive}
+          title={titleText}
+          className={sharedClassName}
+          style={{ background: palette.bg }}
+          onClick={() =>
+            toggleCompanion("ai-chat", {
+              url: companionUrl,
+              title: app.name,
+            })
+          }
+        >
+          {iconContent}
+        </button>
+      ) : (
+        <Link
+          href={href}
+          aria-label={`Open ${app.name}`}
+          title={titleText}
+          className={sharedClassName}
+          style={{ background: palette.bg }}
+        >
+          {iconContent}
+        </Link>
+      )}
 
       {/* Active indicator pill — 3px tall x 10px wide, ~6px below the icon. */}
       {showActive && (

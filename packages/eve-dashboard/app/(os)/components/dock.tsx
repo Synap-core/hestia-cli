@@ -13,7 +13,6 @@
  * See: synap-team-docs/content/team/platform/eve-os-shell.mdx §5
  */
 
-import { Tooltip } from "@heroui/react";
 import { usePathname } from "next/navigation";
 import { DockIcon } from "./dock-icon";
 import { AddAppButton } from "./add-app-button";
@@ -50,9 +49,7 @@ export function Dock() {
         className="mx-0.5 h-6 w-px shrink-0 bg-foreground/10"
         aria-hidden
       />
-      <Tooltip content="Pin apps to dock" placement="top" delay={400} offset={8}>
-        <AddAppButton />
-      </Tooltip>
+      <AddAppButton />
     </nav>
   );
 }

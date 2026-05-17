@@ -47,6 +47,9 @@ export function useCompanionHotkeys() {
   }, [pinnedApps]);
 
   useEffect(() => {
+    // Mount log so devtools can confirm the bridge is loaded.
+    console.info("[companion-hotkeys] mounted — press ⌘⇧Space (Mac) or Ctrl+Shift+Space");
+
     async function resolveUrl(): Promise<string | null> {
       // 1. Check cached value.
       if (resolvedUrlRef.current !== null) return resolvedUrlRef.current;
