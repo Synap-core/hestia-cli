@@ -1,8 +1,12 @@
 "use client";
 
 /**
- * use-companion-hotkeys — global Cmd+L (Mac) / Ctrl+L (others) that toggles
- * the AI chat companion. Mount once at the OS shell layout level.
+ * use-companion-hotkeys — global Cmd+Shift+Space (Mac) / Ctrl+Shift+Space (others)
+ * that toggles the AI chat companion. Mount once at the OS shell layout level.
+ *
+ * Uses `e.code === "Space"` (not `e.key`) for layout-independence, and
+ * Cmd+Shift+Space to avoid colliding with the browser's Cmd+L address-bar
+ * shortcut that the previous binding stole.
  *
  * Resolution order for the OpenWebUI iframe URL:
  *   1. pinnedApps (slug === "openwebui") — synchronous, no network cost.
@@ -72,9 +76,9 @@ export function useCompanionHotkeys() {
     }
 
     function onKeyDown(e: KeyboardEvent) {
-      const isCmdL = isMac && e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && e.key === "l";
-      const isCtrlL = !isMac && e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && e.key === "l";
-      if (!isCmdL && !isCtrlL) return;
+      const isMacCombo = isMac && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey && e.code === "Space";
+      const isOtherCombo = !isMac && e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && e.code === "Space";
+      if (!isMacCombo && !isOtherCombo) return;
 
       // Don't steal focus from text inputs.
       const active = document.activeElement;
@@ -86,12 +90,12 @@ export function useCompanionHotkeys() {
         return;
       }
 
-      // Intercept before the browser selects the address bar.
+      // Intercept before the browser/OS routes the combo elsewhere.
       e.preventDefault();
 
       resolveUrl().then((url) => {
         if (!url) {
-          console.warn("[companion-hotkeys] OpenWebUI not found — install or pin it to use Cmd+L.");
+          console.warn("[companion-hotkeys] OpenWebUI not found — install or pin it to use Cmd+Shift+Space.");
           return;
         }
         useCompanionStore.getState().toggle("ai-chat", { url, title: "AI Chat" });
