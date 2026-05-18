@@ -4,8 +4,12 @@
  * `useEveChat` — native Synap chat plumbing for the Eve companion.
  *
  * Three responsibilities:
- *   1. Resolve a default channel id (the operator's pod-wide personal
- *      THREAD) the first time the companion mounts.
+ *   1. Resolve a default channel id on mount via `chat.resolveAiChannel`
+ *      (get-or-create) using the operator's active workspace. This
+ *      mirrors the Relay pattern at `relay-app/src/hooks/useAIChat.ts`
+ *      and guarantees `sendMessage` is always called with a `channelId`,
+ *      eliminating the "workspaceId is required when sending a message
+ *      without a thread" 400 from `chat.sendMessage`.
  *   2. Hydrate that channel's messages from the pod via
  *      `chat.getMessages` (REST through `/api/pod/trpc/*`).
  *   3. Subscribe to the pod's Socket.IO realtime bridge for
@@ -23,11 +27,14 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
+import { useActiveWorkspace } from "../../hooks/use-active-workspace";
 import type {
   ChatMessage,
   ChatMessagePayload,
   ChatStreamPayload,
+  PodAgent,
   PodChannel,
+  PodIntelligenceService,
   PodMessage,
   StreamState,
 } from "./types";
@@ -46,13 +53,26 @@ function unwrapTrpc<T>(env: TrpcEnvelope<T> | null): T | null {
   return (data as T) ?? null;
 }
 
-async function podGet<T>(procedure: string, input: unknown = {}): Promise<T> {
+async function podGet<T>(
+  procedure: string,
+  input: unknown = {},
+  workspaceId?: string | null,
+): Promise<T> {
   const enc = encodeURIComponent(JSON.stringify({ json: input }));
+  const headers: Record<string, string> = {};
+  if (workspaceId) headers["x-workspace-id"] = workspaceId;
   const r = await fetch(`/api/pod/trpc/${procedure}?input=${enc}`, {
     credentials: "include",
     cache: "no-store",
+    headers,
   });
-  if (!r.ok) throw new Error(`Pod returned ${r.status}`);
+  if (!r.ok) {
+    // Surface the inner tRPC error message when available so callers can
+    // render meaningful status text instead of the bare HTTP code.
+    const env = (await r.json().catch(() => null)) as TrpcEnvelope<T> | null;
+    const message = env?.error?.message ?? `Pod returned ${r.status}`;
+    throw new Error(message);
+  }
   const env = (await r.json().catch(() => null)) as TrpcEnvelope<T> | null;
   if (env?.error?.message) throw new Error(env.error.message);
   const data = unwrapTrpc<T>(env);
@@ -60,15 +80,25 @@ async function podGet<T>(procedure: string, input: unknown = {}): Promise<T> {
   return data;
 }
 
-async function podMutate<T>(procedure: string, input: unknown): Promise<T> {
+async function podMutate<T>(
+  procedure: string,
+  input: unknown,
+  workspaceId?: string | null,
+): Promise<T> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (workspaceId) headers["x-workspace-id"] = workspaceId;
   const r = await fetch(`/api/pod/trpc/${procedure}`, {
     method: "POST",
     credentials: "include",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({ json: input }),
     cache: "no-store",
   });
-  if (!r.ok) throw new Error(`Pod returned ${r.status}`);
+  if (!r.ok) {
+    const env = (await r.json().catch(() => null)) as TrpcEnvelope<T> | null;
+    const message = env?.error?.message ?? `Pod returned ${r.status}`;
+    throw new Error(message);
+  }
   const env = (await r.json().catch(() => null)) as TrpcEnvelope<T> | null;
   if (env?.error?.message) throw new Error(env.error.message);
   return (unwrapTrpc<T>(env) ?? ({} as T)) as T;
@@ -94,7 +124,27 @@ export interface UseEveChatResult {
   isSending: boolean;
   status: ChatStatus;
   channelId: string | null;
+  /**
+   * Channel's default `assigned_agent_id` resolved at mount. Used by the
+   * agent picker to label the "Default for this channel" row with the
+   * actual agent name (resolved from `agents.workspaceList`).
+   */
+  channelAgentId: string | null;
+  /**
+   * User-picked agent slug for the next sendMessage. `null` ⇒ use the
+   * channel's default agent (i.e. don't pass `agentHandle`).
+   */
+  selectedAgentSlug: string | null;
+  setSelectedAgent: (slug: string | null) => void;
   sendMessage: (content: string) => Promise<void>;
+  /**
+   * Lazy-resolved id→display-name maps for the provenance badge under
+   * assistant bubbles. Hydrated once when the first assistant message
+   * with metadata lands; UUIDs missing from the map render as short
+   * 6-char placeholders.
+   */
+  providerNames: Record<string, string>;
+  agentNames: Record<string, string>;
 }
 
 function toIsoTimestamp(t: string | Date): string {
@@ -109,54 +159,115 @@ function normaliseMessage(m: PodMessage): ChatMessage {
     role: m.role,
     content: m.content,
     timestamp: toIsoTimestamp(m.timestamp),
+    intelligenceServiceId: m.metadata?.intelligenceServiceId ?? null,
+    agentId: m.metadata?.agentId ?? null,
   };
 }
 
 const PAGE_LIMIT = 50;
+/**
+ * Default agent slug for Eve's chat. "orchestrator" is the canonical
+ * meta-agent in the backend (`agents` table seed). If the pod doesn't
+ * have it the backend falls back to the next available agent — see
+ * `resolveSlugToAgentId` in `synap-backend/packages/api/src/utils/
+ * resolve-ai-channel-family.ts`.
+ */
+const DEFAULT_AGENT_SLUG = "orchestrator";
 
 export function useEveChat(): UseEveChatResult {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [stream, setStream] = useState<StreamState | null>(null);
   const [channelId, setChannelId] = useState<string | null>(null);
+  const [channelAgentId, setChannelAgentId] = useState<string | null>(null);
   const [status, setStatus] = useState<ChatStatus>({ kind: "loading" });
   const [isSending, setIsSending] = useState(false);
+  // Internal counter so React re-renders when the per-channel map mutates.
+  const [agentPickVersion, setAgentPickVersion] = useState(0);
+  // Provenance display-name caches. Hydrated once on first message that
+  // surfaces a non-null intelligenceServiceId or agentId.
+  const [providerNames, setProviderNames] = useState<Record<string, string>>({});
+  const [agentNames, setAgentNames] = useState<Record<string, string>>({});
+  const provenanceHydratedRef = useRef(false);
+
+  const { workspaceId, isLoading: workspaceLoading } = useActiveWorkspace();
 
   const socketRef = useRef<Socket | null>(null);
   const channelIdRef = useRef<string | null>(null);
   channelIdRef.current = channelId;
+  const workspaceIdRef = useRef<string | null>(workspaceId);
+  workspaceIdRef.current = workspaceId;
+  // Per-channel agent override map. Survives composer re-mounts because
+  // it lives on the hook instance; reset only when the operator picks a
+  // different channel (Eve's chat companion is single-channel for now,
+  // so in practice this is one entry).
+  const agentByChannelRef = useRef<Map<string, string | null>>(new Map());
+  void agentPickVersion;
 
-  // ─── Initial load: personal channel + history ──────────────────────
+  const selectedAgentSlug = channelId
+    ? agentByChannelRef.current.get(channelId) ?? null
+    : null;
+
+  const setSelectedAgent = useCallback((slug: string | null) => {
+    const cid = channelIdRef.current;
+    if (!cid) return;
+    if (slug === null) {
+      agentByChannelRef.current.delete(cid);
+    } else {
+      agentByChannelRef.current.set(cid, slug);
+    }
+    setAgentPickVersion((n) => n + 1);
+  }, []);
+
+  // ─── Initial load: resolve agent channel + history ─────────────────
   useEffect(() => {
+    // Wait until the active workspace has been resolved (or known absent).
+    if (workspaceLoading) return;
+
     let cancelled = false;
 
     (async () => {
       try {
-        // List personal threads. The pod scopes these to the caller via
-        // protectedProcedure + userId in channels.listChannels.
-        const list = await podGet<{ channels: PodChannel[] } | PodChannel[]>(
-          "chat.listChannels",
-          { channelType: "thread", threadKind: "personal", limit: 5 },
+        if (!workspaceId) {
+          if (cancelled) return;
+          setStatus({ kind: "error", message: "Workspace not available" });
+          return;
+        }
+
+        // Get-or-create the operator's personal AI channel. `family: "agent"`
+        // returns one channel per (userId, agent) — pod-wide, not scoped to
+        // a single workspace, but the procedure requires a workspace header
+        // for the protected context.
+        const resolved = await podGet<{ channel: PodChannel }>(
+          "chat.resolveAiChannel",
+          { workspaceId, family: "agent", agentSlug: DEFAULT_AGENT_SLUG },
+          workspaceId,
         );
-        const items = Array.isArray(list)
-          ? list
-          : (list?.channels ?? []);
         if (cancelled) return;
 
-        const personal = items[0];
-        if (personal) {
-          setChannelId(personal.id);
-          const history = await podGet<{ messages: PodMessage[] }>(
-            "chat.getMessages",
-            { threadId: personal.id, limit: PAGE_LIMIT },
-          );
-          if (cancelled) return;
-          // Backend returns newest-first; reverse to render oldest → newest.
-          const rows = (history?.messages ?? [])
-            .slice()
-            .reverse()
-            .map(normaliseMessage);
-          setMessages(rows);
+        const resolvedChannel = resolved?.channel;
+        if (!resolvedChannel?.id) {
+          setStatus({
+            kind: "error",
+            message: "Channel resolution returned no channel",
+          });
+          return;
         }
+
+        setChannelId(resolvedChannel.id);
+        setChannelAgentId(resolvedChannel.assignedAgentId ?? null);
+
+        const history = await podGet<{ messages: PodMessage[] }>(
+          "chat.getMessages",
+          { threadId: resolvedChannel.id, limit: PAGE_LIMIT },
+          workspaceId,
+        );
+        if (cancelled) return;
+        // Backend returns newest-first; reverse to render oldest → newest.
+        const rows = (history?.messages ?? [])
+          .slice()
+          .reverse()
+          .map(normaliseMessage);
+        setMessages(rows);
         setStatus({ kind: "ready" });
       } catch (err) {
         if (cancelled) return;
@@ -168,7 +279,7 @@ export function useEveChat(): UseEveChatResult {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [workspaceId, workspaceLoading]);
 
   // ─── Realtime: subscribe to chat:stream + chat:message ─────────────
   useEffect(() => {
@@ -232,6 +343,8 @@ export function useEveChat(): UseEveChatResult {
               role: m.role,
               content: m.content,
               timestamp: toIsoTimestamp(m.timestamp),
+              intelligenceServiceId: m.metadata?.intelligenceServiceId ?? null,
+              agentId: m.metadata?.agentId ?? null,
             },
           ];
         });
@@ -254,15 +367,21 @@ export function useEveChat(): UseEveChatResult {
       const trimmed = content.trim();
       if (!trimmed || isSending) return;
 
-      const optimisticId = `local-${Date.now()}`;
       const targetChannelId = channelIdRef.current;
+      if (!targetChannelId) {
+        // The resolver hasn't finished yet (or it failed). Surface as a
+        // status error rather than firing a request we know will 400.
+        setStatus({ kind: "error", message: "Chat channel not ready" });
+        return;
+      }
 
+      const optimisticId = `local-${Date.now()}`;
       setIsSending(true);
       setMessages((prev) => [
         ...prev,
         {
           id: optimisticId,
-          channelId: targetChannelId ?? "pending",
+          channelId: targetChannelId,
           role: "user",
           content: trimmed,
           timestamp: new Date().toISOString(),
@@ -270,19 +389,24 @@ export function useEveChat(): UseEveChatResult {
       ]);
 
       try {
-        const result = await podMutate<{
+        // Read the picker's choice for this channel at send time so a
+        // late pick (between optimistic insert and mutation dispatch)
+        // still flows through.
+        const pickedSlug = agentByChannelRef.current.get(targetChannelId) ?? null;
+        const payload: {
+          channelId: string;
+          content: string;
+          agentHandle?: string;
+        } = {
+          channelId: targetChannelId,
+          content: trimmed,
+        };
+        if (pickedSlug) payload.agentHandle = pickedSlug;
+        await podMutate<{
           channelId: string;
           messageId: string;
           content: string;
-        }>("chat.sendMessage", {
-          ...(targetChannelId ? { channelId: targetChannelId } : {}),
-          content: trimmed,
-          aiChannelFamily: "agent",
-        });
-
-        if (!targetChannelId && result.channelId) {
-          setChannelId(result.channelId);
-        }
+        }>("chat.sendMessage", payload, workspaceIdRef.current);
       } catch (err) {
         // Roll back the optimistic bubble and surface the error.
         setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
@@ -294,6 +418,59 @@ export function useEveChat(): UseEveChatResult {
     [isSending],
   );
 
+  // Hydrate provider + agent display-name maps once we have something to
+  // resolve. Runs at most one fetch per hook instance.
+  useEffect(() => {
+    if (provenanceHydratedRef.current) return;
+    const needsLookup = messages.some(
+      (m) =>
+        (m.intelligenceServiceId &&
+          !providerNames[m.intelligenceServiceId]) ||
+        (m.agentId && !agentNames[m.agentId]),
+    );
+    if (!needsLookup) return;
+    provenanceHydratedRef.current = true;
+    const ws = workspaceIdRef.current;
+
+    void (async () => {
+      // Pull both maps in parallel; ignore failures per-side.
+      const [isResult, agentsResult] = await Promise.allSettled([
+        podGet<{ services: PodIntelligenceService[] } | PodIntelligenceService[]>(
+          "intelligenceRegistry.list",
+          {},
+          ws,
+        ),
+        podGet<{ agents: PodAgent[] } | PodAgent[]>(
+          "agents.workspaceList",
+          {},
+          ws,
+        ),
+      ]);
+
+      if (isResult.status === "fulfilled") {
+        const list = Array.isArray(isResult.value)
+          ? isResult.value
+          : (isResult.value?.services ?? []);
+        const map: Record<string, string> = {};
+        for (const s of list) {
+          if (s?.id && s.name) map[s.id] = s.name;
+        }
+        setProviderNames(map);
+      }
+
+      if (agentsResult.status === "fulfilled") {
+        const list = Array.isArray(agentsResult.value)
+          ? agentsResult.value
+          : (agentsResult.value?.agents ?? []);
+        const map: Record<string, string> = {};
+        for (const a of list) {
+          if (a?.id && a.name) map[a.id] = a.name;
+        }
+        setAgentNames(map);
+      }
+    })();
+  }, [messages, providerNames, agentNames]);
+
   return {
     messages,
     stream,
@@ -301,6 +478,11 @@ export function useEveChat(): UseEveChatResult {
     isSending,
     status,
     channelId,
+    channelAgentId,
+    selectedAgentSlug,
+    setSelectedAgent,
     sendMessage,
+    providerNames,
+    agentNames,
   };
 }

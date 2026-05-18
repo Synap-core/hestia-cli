@@ -241,6 +241,54 @@ export function synapCommand(program: Command): void {
 
       printSuccess('Restarted');
     });
+
+  // ─── health ──────────────────────────────────────────────────────────────
+  synap
+    .command('health')
+    .alias('h')
+    .description('Quick health check — ports, PM2 status, HTTP response')
+    .action(() => {
+      printHeader('eve synap health');
+      console.log();
+
+      console.log('  APP         PORT     STATUS     URL');
+      console.log('  ----------  -------  ---------  ----------------------------------------');
+
+      for (const app of PM2_APPS) {
+        const dir = appDir(app.name);
+        if (!hasPackageJson(dir)) continue;
+
+        // Check PM2 status
+        let pm2Online = false;
+        try {
+          const list = pm2Cmd('jlist');
+          const apps = JSON.parse(list);
+          const existing = apps.find((a: any) => a.name === app.name);
+          pm2Online = existing && existing.pm_uptime > 0;
+        } catch { /* pm2 not ready */ }
+
+        // Check HTTP response
+        let httpCode = '000';
+        try {
+          httpCode = runSilent(`curl -s -o /dev/null -w '%{http_code}' http://localhost:${app.port} 2>/dev/null || echo '000'`).trim();
+        } catch { /* curl failed */ }
+
+        // Determine status display
+        let status = 'stopped';
+        if (pm2Online && httpCode === '200') {
+          status = 'online';
+        } else if (pm2Online) {
+          status = `running (${httpCode})`;
+        } else if (httpCode !== '000') {
+          status = `responding (${httpCode})`;
+        }
+
+        const domain = getStagingDomain(app.name);
+        console.log(`  ${app.name.padEnd(12)}${String(app.port).padEnd(9)}${status.padEnd(12)}https://${domain}`);
+      }
+
+      console.log();
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -386,4 +434,17 @@ function readEveSecretsSync() {
     }
   } catch { /* ignore */ }
   return null;
+}
+
+function getStagingDomain(name: string): string {
+  const domainMap: Record<string, string> = {
+    hub: 'hub.staging.synap.live',
+    canvas: 'canvas.staging.synap.live',
+    base: 'base.staging.synap.live',
+    web: 'web.staging.synap.live',
+    studio: 'studio.staging.synap.live',
+    devplane: 'devplane.staging.synap.live',
+    crm: 'crm.staging.synap.live',
+  };
+  return domainMap[name] || `${name}.staging.synap.live`;
 }

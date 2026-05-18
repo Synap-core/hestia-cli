@@ -47,7 +47,7 @@
     "runtime": null
   },
   "build": {
-    "buildCommand": "ls /Users/antoine/Documents/Code/synap/synap-app/packages/features/ai-chat/dist 2>&1 ; echo '---' ; ls /Users/antoine/Documents/Code/synap/synap-app/packages/features/ai-chat/node_modules/.bin 2>&1 | grep -E 'tsup|tsc' | head -5",
+    "buildCommand": "cd /Users/antoine/documents/code/synap/hestia-cli/packages/eve-dashboard && pnpm exec tsc --noEmit 2>&1 | tail -15; echo \"===EXIT=$?===\"",
     "testCommand": "npm test",
     "lintCommand": null,
     "devCommand": "npm run dev",

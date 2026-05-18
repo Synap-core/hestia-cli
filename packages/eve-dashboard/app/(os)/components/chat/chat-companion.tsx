@@ -25,8 +25,10 @@ import {
   useRef,
   useState,
 } from "react";
+import { useActiveWorkspace } from "../../hooks/use-active-workspace";
 import { useEveChat } from "../../lib/chat/use-eve-chat";
 import type { ChatMessage, StreamState } from "../../lib/chat/types";
+import { AgentPicker } from "./agent-picker";
 
 export function ChatCompanion() {
   const {
@@ -35,8 +37,14 @@ export function ChatCompanion() {
     isLoading,
     isSending,
     status,
+    channelAgentId,
+    selectedAgentSlug,
+    setSelectedAgent,
     sendMessage,
+    providerNames,
+    agentNames,
   } = useEveChat();
+  const { workspaceId } = useActiveWorkspace();
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -74,7 +82,12 @@ export function ChatCompanion() {
         ) : (
           <>
             {messages.map((msg) => (
-              <MessageBubble key={msg.id} message={msg} />
+              <MessageBubble
+                key={msg.id}
+                message={msg}
+                providerNames={providerNames}
+                agentNames={agentNames}
+              />
             ))}
             {stream && !stream.isComplete ? (
               <StreamingBubble stream={stream} />
@@ -82,7 +95,14 @@ export function ChatCompanion() {
           </>
         )}
       </div>
-      <Composer onSend={sendMessage} disabled={isSending} />
+      <Composer
+        onSend={sendMessage}
+        disabled={isSending}
+        workspaceId={workspaceId}
+        selectedAgentSlug={selectedAgentSlug}
+        channelAgentId={channelAgentId}
+        onPickAgent={setSelectedAgent}
+      />
     </div>
   );
 }
@@ -118,10 +138,21 @@ function ErrorState({ message }: { message: string }) {
   );
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
+function MessageBubble({
+  message,
+  providerNames,
+  agentNames,
+}: {
+  message: ChatMessage;
+  providerNames: Record<string, string>;
+  agentNames: Record<string, string>;
+}) {
   const isUser = message.role === "user";
+  const providerLabel = isUser
+    ? null
+    : resolveProvenanceLabel(message, providerNames, agentNames);
   return (
-    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+    <div className={`flex flex-col ${isUser ? "items-end" : "items-start"}`}>
       <div
         className={
           isUser
@@ -131,8 +162,32 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       >
         <PlainMarkdown content={message.content} />
       </div>
+      {providerLabel ? (
+        <p className="mt-1 text-[10.5px] leading-none text-foreground/40 tabular-nums">
+          {providerLabel}
+        </p>
+      ) : null}
     </div>
   );
+}
+
+/**
+ * Format the small "Provider · Agent" caption rendered under assistant
+ * messages. Returns `null` when neither id is populated (older rows
+ * pre-provenance) so the bubble lays out without the trailing gap.
+ */
+function resolveProvenanceLabel(
+  message: ChatMessage,
+  providerNames: Record<string, string>,
+  agentNames: Record<string, string>,
+): string | null {
+  const isId = message.intelligenceServiceId ?? null;
+  const agId = message.agentId ?? null;
+  if (!isId && !agId) return null;
+  const parts: string[] = [];
+  if (isId) parts.push(providerNames[isId] ?? isId.slice(0, 6));
+  if (agId) parts.push(agentNames[agId] ?? agId.slice(0, 6));
+  return parts.join(" · ");
 }
 
 function StreamingBubble({ stream }: { stream: StreamState }) {
@@ -186,9 +241,20 @@ function PlainMarkdown({ content }: { content: string }) {
 interface ComposerProps {
   onSend: (content: string) => Promise<void> | void;
   disabled: boolean;
+  workspaceId: string | null;
+  selectedAgentSlug: string | null;
+  channelAgentId: string | null;
+  onPickAgent: (slug: string | null) => void;
 }
 
-function Composer({ onSend, disabled }: ComposerProps) {
+function Composer({
+  onSend,
+  disabled,
+  workspaceId,
+  selectedAgentSlug,
+  channelAgentId,
+  onPickAgent,
+}: ComposerProps) {
   const [value, setValue] = useState("");
 
   // Refocus after a send completes so the composer stays hot.
@@ -243,6 +309,15 @@ function Composer({ onSend, disabled }: ComposerProps) {
         >
           <ArrowUp className="h-4 w-4" strokeWidth={2.25} />
         </Button>
+      </div>
+      {/* Agent picker — bottom-left of composer, Cursor/Claude.ai style. */}
+      <div className="mt-2 flex items-center">
+        <AgentPicker
+          workspaceId={workspaceId}
+          selectedSlug={selectedAgentSlug}
+          channelAgentId={channelAgentId}
+          onChange={onPickAgent}
+        />
       </div>
     </div>
   );

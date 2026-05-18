@@ -22,6 +22,15 @@ export interface ChatMessage {
   content: string;
   /** ISO-8601 string. The pod returns a Date; we serialise on receive. */
   timestamp: string;
+  /**
+   * Provenance — populated for assistant messages. UUID of the
+   * IntelligenceService that produced the response. Rendered as a small
+   * "Provider · Agent" badge under the bubble. Missing on user messages
+   * and on assistant rows written before this field was introduced.
+   */
+  intelligenceServiceId?: string | null;
+  /** UUID of the agent that produced this message. Pairs with the IS id above. */
+  agentId?: string | null;
 }
 
 /**
@@ -62,8 +71,19 @@ export interface ChatMessagePayload {
     content: string;
     userId: string;
     timestamp: string | Date;
+    metadata?: PodMessageMetadata | null;
   };
   userId: string;
+}
+
+/**
+ * Subset of `ConversationMessageMetadata` Eve cares about. Mirrors the
+ * fields populated by the backend in `channels.ts::sendMessage` on the
+ * assistant row insert.
+ */
+export interface PodMessageMetadata {
+  intelligenceServiceId?: string;
+  agentId?: string;
 }
 
 /** Pod listChannels item — narrow subset Eve actually reads. */
@@ -74,6 +94,28 @@ export interface PodChannel {
   title: string | null;
   userId: string;
   workspaceId: string | null;
+  /**
+   * Channel's default agent — set when the AI channel was resolved via
+   * `chat.resolveAiChannel({ family: "agent", agentSlug })`. The picker
+   * uses this to show the channel's default agent name when nothing is
+   * explicitly picked.
+   */
+  assignedAgentId?: string | null;
+}
+
+/**
+ * One row returned by `agents.workspaceList`. Mirrors the `agents` table
+ * (`synap-backend/packages/database/src/schema/agents.ts`). Eve only
+ * needs the identity + categorisation fields.
+ */
+export interface PodAgent {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string | null;
+  ownerType: "system" | "user" | "provider";
+  intelligenceServiceId?: string | null;
+  active?: boolean | null;
 }
 
 /** Pod getMessages return shape — narrow subset. */
@@ -83,4 +125,12 @@ export interface PodMessage {
   role: ChatRole;
   content: string;
   timestamp: string | Date;
+  metadata?: PodMessageMetadata | null;
+}
+
+/** Subset of an IntelligenceService row from `intelligenceRegistry.list`. */
+export interface PodIntelligenceService {
+  id: string;
+  serviceId?: string | null;
+  name: string;
 }
