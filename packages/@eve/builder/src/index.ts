@@ -3,10 +3,6 @@ import { OpenCodeService } from './lib/opencode.js';
 import { OpenClaudeService } from './lib/openclaude.js';
 import { DokployService, type DokployStatus, type DokployProject } from './lib/dokploy.js';
 import { ClaudeCodeService } from './lib/claudecode.js';
-import { HermesDaemon } from './lib/hermes-daemon.js';
-import { TaskPoller } from './lib/task-poll.js';
-import { TaskExecutor } from './lib/task-executor.js';
-import { TaskQueue } from './lib/task-queue.js';
 import { runBuilderOrganSetup } from './lib/builder-organ.js';
 import { initCommand } from './commands/init.js';
 import { deployCommand } from './commands/deploy.js';
@@ -26,15 +22,14 @@ export {
   type DokployProject
 } from './lib/dokploy.js';
 
-// Re-export Hermes
+// Re-export Hermes types (daemon runs in Docker, not from CLI)
 export {
-  HermesDaemon,
   type PersonalityRecord,
   type HermesConfig,
+  type HermesStats,
 } from './lib/hermes-daemon.js';
 export { TaskPoller, type AgentConfigOverrides } from './lib/task-poll.js';
 export { FeaturePoller, type FeaturePollerConfig, type DevplaneFeature, type PipelinePhase } from './lib/feature-poll.js';
-export { TaskExecutor, type ResolvedPersonality } from './lib/task-executor.js';
 export { TaskQueue } from './lib/task-queue.js';
 export {
   PIPELINE_PERSONALITIES,
@@ -63,23 +58,6 @@ export {
   type BackgroundIntentPatch,
   type BackgroundIntentErrorKind,
 } from './lib/background-intent.js';
-
-export {
-  IntentPoller,
-  computeNextRunAt,
-  parseDurationMs,
-  nextCronFire,
-  INTENT_FAILURE_THRESHOLD,
-  type IntentPollerConfig,
-  type IntentRunResult,
-} from './lib/intent-poll.js';
-
-// Coder routing — single agent slug, three engine spawn shapes
-export {
-  type SpawnSpec,
-  resolveCoderSpawn,
-  isCoderTask,
-} from './lib/coder-router.js';
 
 // Re-export commands
 export { initCommand } from './commands/init.js';

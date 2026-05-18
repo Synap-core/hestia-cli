@@ -9,7 +9,6 @@ import { OpenCodeService } from './opencode.js';
 import { OpenClaudeService } from './openclaude.js';
 import { ClaudeCodeService } from './claudecode.js';
 import { DokployService } from './dokploy.js';
-import { HermesDaemon } from './hermes-daemon.js';
 import { scaffoldNonOpencodeProject } from './project-paths.js';
 
 export type BuilderEngine = 'opencode' | 'openclaude' | 'claudecode';

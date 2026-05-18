@@ -90,15 +90,14 @@ export interface PodMessageMetadata {
 export interface PodChannel {
   id: string;
   channelType: string;
-  threadKind: string | null;
   title: string | null;
   userId: string;
   workspaceId: string | null;
   /**
-   * Channel's default agent — set when the AI channel was resolved via
-   * `chat.resolveAiChannel({ family: "agent", agentSlug })`. The picker
-   * uses this to show the channel's default agent name when nothing is
-   * explicitly picked.
+   * Channel's default agent — set when the personal channel was resolved via
+   * `chat.resolveOrCreateChannel({ channelType: "personal", agentSlug })`.
+   * The picker uses this to show the channel's default agent name when
+   * nothing is explicitly picked.
    */
   assignedAgentId?: string | null;
 }

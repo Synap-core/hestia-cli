@@ -31,8 +31,9 @@ export interface RunningApp {
 }
 
 /** App IDs that run as a side-docked Companion (mirror of dock-icon's set). */
-const COMPANION_APP_IDS_BY_KIND: Record<"ai-chat", string> = {
+const COMPANION_APP_IDS_BY_KIND: Record<"ai-chat" | "app", string> = {
   "ai-chat": "openwebui",
+  app: "generated-app",
 };
 
 export function useRunningApps(): RunningApp[] {
@@ -56,7 +57,10 @@ export function useRunningApps(): RunningApp[] {
 
     // 1. Companion-driven running app.
     if (companionOpen && companionKind && companionPayload) {
-      const id = COMPANION_APP_IDS_BY_KIND[companionKind];
+      const id =
+        companionKind === "app" && companionPayload.appId
+          ? companionPayload.appId
+          : COMPANION_APP_IDS_BY_KIND[companionKind];
       if (id) {
         const pinned = pinnedApps.find((a) => a.id === id || a.slug === id);
         out.push({

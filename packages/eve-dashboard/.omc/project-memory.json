@@ -47,7 +47,7 @@
     "runtime": null
   },
   "build": {
-    "buildCommand": "cd /Users/antoine/documents/code/synap/hestia-cli/packages/eve-dashboard && pnpm exec tsc --noEmit 2>&1 | tail -15; echo \"===EXIT=$?===\"",
+    "buildCommand": "cd /Users/antoine/documents/code/synap/hestia-cli/packages/eve-dashboard && pnpm exec tsc --noEmit 2>&1 | grep \"error TS\" | head -20; echo \"DONE\"",
     "testCommand": "npm test",
     "lintCommand": null,
     "devCommand": "npm run dev",

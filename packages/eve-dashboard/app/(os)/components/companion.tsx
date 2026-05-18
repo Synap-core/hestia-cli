@@ -25,11 +25,13 @@
 import { Button } from "@heroui/react";
 import { X } from "lucide-react";
 import type { CSSProperties } from "react";
+import { AppPane } from "./app-pane";
 import { ChatCompanion } from "./chat/chat-companion";
 import { useCompanionStore, type CompanionKind } from "../stores/companion-store";
 
 const COMPANION_FALLBACK_TITLE: Record<CompanionKind, string> = {
   "ai-chat": "Chat",
+  app: "App",
 };
 
 export interface CompanionProps {
@@ -95,8 +97,23 @@ export function Companion({ width }: CompanionProps) {
 }
 
 function CompanionBody({ kind }: { kind: CompanionKind }) {
+  const payload = useCompanionStore((s) => s.payload);
+
   if (kind === "ai-chat") {
     return <ChatCompanion />;
   }
+
+  if (kind === "app" && payload) {
+    return (
+      <AppPane
+        appId={payload.appId ?? "generated-app"}
+        url={payload.url}
+        srcdoc={payload.srcdoc}
+        sendAuth={payload.rendererType !== "iframe-srcdoc"}
+        trustLevel={payload.rendererType === "iframe-srcdoc" ? "generated" : "installed"}
+      />
+    );
+  }
+
   return null;
 }

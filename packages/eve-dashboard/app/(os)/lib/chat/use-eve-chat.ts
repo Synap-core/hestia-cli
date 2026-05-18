@@ -4,12 +4,13 @@
  * `useEveChat` — native Synap chat plumbing for the Eve companion.
  *
  * Three responsibilities:
- *   1. Resolve a default channel id on mount via `chat.resolveAiChannel`
- *      (get-or-create) using the operator's active workspace. This
- *      mirrors the Relay pattern at `relay-app/src/hooks/useAIChat.ts`
- *      and guarantees `sendMessage` is always called with a `channelId`,
- *      eliminating the "workspaceId is required when sending a message
- *      without a thread" 400 from `chat.sendMessage`.
+ *   1. Resolve a default channel id on mount via
+ *      `chat.resolveOrCreateChannel` (V2 canonical, get-or-create) using
+ *      the operator's active workspace. This mirrors the Relay pattern
+ *      at `relay-app/src/hooks/useAIChat.ts` and guarantees
+ *      `sendMessage` is always called with a `channelId`, eliminating
+ *      the "workspaceId is required when sending a message without a
+ *      thread" 400 from `chat.sendMessage`.
  *   2. Hydrate that channel's messages from the pod via
  *      `chat.getMessages` (REST through `/api/pod/trpc/*`).
  *   3. Subscribe to the pod's Socket.IO realtime bridge for
@@ -233,13 +234,14 @@ export function useEveChat(): UseEveChatResult {
           return;
         }
 
-        // Get-or-create the operator's personal AI channel. `family: "agent"`
-        // returns one channel per (userId, agent) — pod-wide, not scoped to
-        // a single workspace, but the procedure requires a workspace header
-        // for the protected context.
+        // Get-or-create the operator's personal AI channel via the V2
+        // canonical procedure. `channelType: "personal"` returns one
+        // channel per (userId, agent) — pod-wide, not scoped to a single
+        // workspace, but the procedure requires a workspace header for
+        // the protected context.
         const resolved = await podGet<{ channel: PodChannel }>(
-          "chat.resolveAiChannel",
-          { workspaceId, family: "agent", agentSlug: DEFAULT_AGENT_SLUG },
+          "chat.resolveOrCreateChannel",
+          { workspaceId, channelType: "personal", agentSlug: DEFAULT_AGENT_SLUG },
           workspaceId,
         );
         if (cancelled) return;

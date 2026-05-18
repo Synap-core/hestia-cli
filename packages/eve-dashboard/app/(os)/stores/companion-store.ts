@@ -16,10 +16,13 @@
 
 import { create } from "zustand";
 
-export type CompanionKind = "ai-chat"; // future: "vault" | "thread" | "entity-preview"
+export type CompanionKind = "ai-chat" | "app"; // future: "vault" | "thread" | "entity-preview"
 
 export interface CompanionPayload {
+  appId?: string;
   url?: string;
+  srcdoc?: string;
+  rendererType?: "external" | "iframe-srcdoc";
   entityId?: string;
   channelId?: string;
   title?: string;
@@ -40,7 +43,7 @@ function primaryIdOf(
   payload: CompanionPayload | null,
 ): string | null {
   if (!payload) return null;
-  return payload.entityId ?? payload.channelId ?? payload.url ?? null;
+  return payload.entityId ?? payload.channelId ?? payload.appId ?? payload.url ?? null;
 }
 
 export const useCompanionStore = create<CompanionState>((set, get) => ({

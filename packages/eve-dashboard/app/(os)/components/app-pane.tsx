@@ -95,7 +95,9 @@ export interface AppPaneProps {
   /** Stable app identifier — used as the iframe `title` and in error copy. */
   appId: string;
   /** Full URL to load in the iframe. */
-  url: string;
+  url?: string;
+  /** Inline generated app document. Used by Eve-compatible generated app surfaces. */
+  srcdoc?: string;
   /** Whether this pane may receive the current pod session. */
   sendAuth?: boolean;
   /**
@@ -115,6 +117,7 @@ export interface AppPaneProps {
 export function AppPane({
   appId,
   url,
+  srcdoc,
   sendAuth = true,
   isActive = true,
   className,
@@ -124,18 +127,19 @@ export function AppPane({
   const [reloadKey, setReloadKey] = useState(0);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const openOverlay = useOverlayStore((s) => s.open);
+  const iframeUrl = srcdoc ? undefined : url;
 
   // Derive the exact origin once so we never use "*" when posting the session.
   // Also build a per-pane origin checker that includes this app URL explicitly —
   // covers custom-domain Eve installs that don't match *.synap.live or localhost.
   const { targetOrigin, isAllowed } = useMemo(() => {
     let origin: string | null = null;
-    try { origin = new URL(url).origin; } catch { /* invalid URL */ }
+    try { origin = iframeUrl ? new URL(iframeUrl).origin : null; } catch { /* invalid URL */ }
     return {
       targetOrigin: origin,
-      isAllowed: createAllowedEmbedOriginChecker(origin ? [url] : undefined),
+      isAllowed: createAllowedEmbedOriginChecker(origin && iframeUrl ? [iframeUrl] : undefined),
     };
-  }, [url, reloadKey]);
+  }, [iframeUrl, reloadKey]);
 
   // Push the session to a target window using the exact origin.
   // No-op when there is no active session or the origin is unknown.
@@ -158,7 +162,7 @@ export function AppPane({
       setStatus((current) => current === "loading" ? "unreachable" : current);
     }, 12000);
     return () => window.clearTimeout(timeout);
-  }, [url]);
+  }, [iframeUrl, srcdoc]);
 
   // Phase 1 — proactive push once the iframe reports it has loaded.
   const handleLoad = useCallback(() => {
@@ -246,7 +250,9 @@ export function AppPane({
               </p>
               <p className="text-xs text-foreground/40">
                 Could not reach{" "}
-                <code className="font-mono text-foreground/60">{url}</code>
+                <code className="font-mono text-foreground/60">
+                  {iframeUrl ?? "generated app"}
+                </code>
               </p>
             </div>
             <button
@@ -262,13 +268,18 @@ export function AppPane({
 
       <iframe
         ref={iframeRef}
-        key={`${url}:${reloadKey}`}
-        src={url}
+        key={`${iframeUrl ?? "srcdoc"}:${reloadKey}`}
+        src={iframeUrl}
+        srcDoc={srcdoc}
         title={appId}
         className="w-full h-full border-0"
         onLoad={handleLoad}
         allow="clipboard-read; clipboard-write"
-        sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads"
+        sandbox={
+          srcdoc
+            ? "allow-scripts allow-forms allow-popups"
+            : "allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads"
+        }
       />
     </div>
   );

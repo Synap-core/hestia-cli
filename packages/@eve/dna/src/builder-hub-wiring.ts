@@ -254,6 +254,22 @@ export async function writeClaudeCodeSettings(projectDir: string, cwd: string = 
     };
     writeFileSync(join(mcpServersDir, 'hermes.json'), JSON.stringify(hermesMcp, null, 2), 'utf-8');
   }
+
+  // Register Synap MCP server so Claude Code can call Synap tools directly
+  const synapUrl = resolveSynapUrl(secrets);
+  const synapMcpUrl = synapUrl ? `${synapUrl.replace(/\/$/, '')}/mcp` : '';
+  if (synapMcpUrl && synapApiKey) {
+    const mcpServersDir = join(dir, 'mcp-servers');
+    mkdirSync(mcpServersDir, { recursive: true });
+    const synapMcp = {
+      type: 'http',
+      url: synapMcpUrl,
+      name: 'synap',
+      description: 'Synap Data Pod — entities, memory, search, documents, channels, governance',
+      headers: { Authorization: `Bearer ${synapApiKey}` },
+    };
+    writeFileSync(join(mcpServersDir, 'synap.json'), JSON.stringify(synapMcp, null, 2), 'utf-8');
+  }
 }
 
 /**
@@ -390,6 +406,7 @@ const HERMES_CONFIG_YAML = (
   model: string,
   baseUrl: string,
   apiKey: string,
+  mcpUrl: string,
 ) => `# Hermes config — managed by Eve (eve install / eve ai apply)
 # Editing this file directly is fine; Eve will overwrite the managed sections on the next apply.
 
@@ -417,6 +434,16 @@ mcp:
     enabled: true
     port: 9120
     host: 0.0.0.0
+
+# MCP clients — external MCP servers Hermes can call tools on.
+# Synap Data Pod: all Synap tools available natively (search, entities, memory, etc.)
+  clients:
+    synap:
+      url: ${mcpUrl}
+      transport: http
+      auth:
+        type: bearer
+        token: \${SYNAP_API_KEY}
 
 # Hermes dashboard — admin UI
 dashboard:
@@ -505,10 +532,16 @@ export function writeHermesConfigYamlSync(secrets: EveSecrets | null): string {
     modelApiKey = readAgentKeyOrLegacySync('hermes', secrets);
   }
 
+  // Compute the Synap MCP URL (Docker-network URL for Hermes container).
+  const rawSynapUrl = resolveSynapUrl(secrets);
+  const mcpUrl = rawSynapUrl
+    ? `${rawSynapUrl.replace(/\/$/, '').replace(/localhost|127\.0\.0\.1/, 'eve-brain-synap')}/mcp`
+    : 'http://eve-brain-synap:4000/mcp';
+
   const hermesDir = join(homedir(), '.eve', 'hermes');
   mkdirSync(hermesDir, { recursive: true });
   const configPath = join(hermesDir, 'config.yaml');
-  writeFileSync(configPath, HERMES_CONFIG_YAML(model, resolvedBaseUrl, modelApiKey), { mode: 0o600 });
+  writeFileSync(configPath, HERMES_CONFIG_YAML(model, resolvedBaseUrl, modelApiKey, mcpUrl), { mode: 0o600 });
   return configPath;
 }
 
