@@ -94,7 +94,9 @@ interface ToolServersConfigForm {
 }
 
 const SYNAP_TOOL_SERVER_NAME = 'Synap Hub Protocol';
+const SYNAP_MCP_SERVER_NAME = 'Synap MCP';
 const HUB_OPENAPI_PATH = '/api/hub/openapi.json';
+const MCP_PATH = '/mcp';
 
 // ── Helpers ──
 
@@ -114,6 +116,11 @@ function synapOpenapiContainerUrl(): string {
   // Using a host loopback (127.0.0.1) here would resolve to OWUI's own
   // container loopback, not to the synap-backend.
   return `${SYNAP_BACKEND_INTERNAL_URL.replace(/\/+$/, '')}${HUB_OPENAPI_PATH}`;
+}
+
+/** Container-internal URL for the Synap pod's MCP endpoint. */
+function synapMcpContainerUrl(): string {
+  return `${SYNAP_BACKEND_INTERNAL_URL.replace(/\/+$/, '')}${MCP_PATH}`;
 }
 
 /**
@@ -333,6 +340,31 @@ export async function registerSynapAsOpenwebuiToolServer(
     next[existingIdx] = { ...existing, ...updatedEntry };
   } else {
     next.push(updatedEntry);
+  }
+
+  // Register the Synap MCP server alongside the OpenAPI tool server.
+  // OWUI 0.4+ supports `type: 'mcp'` in TOOL_SERVER_CONNECTIONS — the same
+  // bearer key is used, since the MCP endpoint is served by the same pod and
+  // authenticated with the same agent API key.
+  const mcpUrl = synapMcpContainerUrl();
+  const mcpEntry: OpenwebuiToolServerConnection = {
+    url: mcpUrl,
+    path: '',
+    type: 'mcp',
+    auth_type: 'bearer',
+    key: apiKey,
+    name: SYNAP_MCP_SERVER_NAME,
+    config: {},
+  };
+  const mcpIdx = next.findIndex((c) => c.name === SYNAP_MCP_SERVER_NAME);
+  if (mcpIdx >= 0) {
+    const existingMcp = next[mcpIdx];
+    // Only update if URL or key changed.
+    if (existingMcp.url !== mcpUrl || existingMcp.key !== apiKey) {
+      next[mcpIdx] = { ...existingMcp, ...mcpEntry };
+    }
+  } else {
+    next.push(mcpEntry);
   }
 
   await saveToolServerConnections(jwt, baseUrl, next);

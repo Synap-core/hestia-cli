@@ -1571,6 +1571,12 @@ async function* postUpdateReconcileHermes(): AsyncGenerator<LifecycleEvent> {
       line: `Warning: could not regenerate Hermes config — ${err instanceof Error ? err.message : String(err)}`,
     };
   }
+  // Push HERMES_TRIGGER_URL + HERMES_TRIGGER_KEY into the backend env so the
+  // trigger worker activates without manual intervention. Non-fatal if the
+  // pod deploy dir isn't found (e.g. remote-only install).
+  try {
+    await materializeTargets(null, ["backend-env"]);
+  } catch { /* non-fatal */ }
   yield* wireHermesIntoOpenwebui();
 }
 
@@ -1599,6 +1605,11 @@ async function* installHermes(): AsyncGenerator<LifecycleEvent> {
       `Failed to write Hermes config: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+  // Inject HERMES_TRIGGER_URL + HERMES_TRIGGER_KEY into the backend env so the
+  // hermes-trigger-worker activates on next backend restart. Non-fatal.
+  try {
+    await materializeTargets(null, ["backend-env"]);
+  } catch { /* non-fatal — remote pod installs won't have a local deploy dir */ }
 
   yield* ensureEveNetwork();
 

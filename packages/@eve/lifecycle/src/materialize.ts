@@ -77,12 +77,20 @@ export async function materializeTargets(
           const publicUrl = resolveSynapUrl(resolvedSecrets);
           const domainResult = domain ? writeEnvVar(deployDir, 'DOMAIN', domain) : { changed: false, previous: null };
           const publicUrlResult = publicUrl ? writeEnvVar(deployDir, 'PUBLIC_URL', publicUrl) : { changed: false, previous: null };
+          // Hermes trigger: inject URL + key so the backend cron worker activates automatically.
+          const hermesApiKey = resolvedSecrets?.builder?.hermes?.apiServerKey;
+          const hermesTriggerUrlResult = hermesApiKey
+            ? writeEnvVar(deployDir, 'HERMES_TRIGGER_URL', 'http://eve-builder-hermes:8642')
+            : { changed: false, previous: null };
+          const hermesTriggerKeyResult = hermesApiKey
+            ? writeEnvVar(deployDir, 'HERMES_TRIGGER_KEY', hermesApiKey)
+            : { changed: false, previous: null };
           result = {
             target,
             ok: true,
-            changed: domainResult.changed || publicUrlResult.changed,
+            changed: domainResult.changed || publicUrlResult.changed || hermesTriggerUrlResult.changed || hermesTriggerKeyResult.changed,
             summary: 'Backend env synchronized',
-            details: { deployDir, domainChanged: domainResult.changed, publicUrlChanged: publicUrlResult.changed },
+            details: { deployDir, domainChanged: domainResult.changed, publicUrlChanged: publicUrlResult.changed, hermesTriggerChanged: hermesTriggerUrlResult.changed },
           };
           break;
         }
