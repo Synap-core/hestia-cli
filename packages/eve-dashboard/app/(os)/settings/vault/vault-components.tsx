@@ -21,7 +21,7 @@ import {
   SECRET_FIELD_LABELS, makeVaultReference, isSensitiveField,
   cleanFieldKey, type SecretType,
 } from "@synap-core/types";
-import { podTrpcFetch } from "../../inbox/lib/pod-fetch";
+import { podTrpcFetch } from "@/lib/pod-fetch";
 import {
   generateSetupParams, tryUnlock, encryptWithKey, decryptWithKey,
 } from "./vault-crypto";
@@ -121,7 +121,7 @@ export function MasterPasswordSetup({ onSetup }: { onSetup: (key: CryptoKey) => 
         verificationCipher: params.verificationCipher,
         verificationIv: params.verificationIv,
         verificationTag: params.verificationTag,
-      }, { method: "POST" });
+      }, { method: "POST", workspaceId: null });
       onSetup(params.key);
     } catch (e) {
       console.error("Vault setup failed", e);
@@ -172,7 +172,7 @@ export function VaultUnlock({ metadata, onUnlock }: { metadata: VaultMetadata; o
     try {
       const key = await tryUnlock(password, metadata);
       if (!key) { setInvalid(true); return; }
-      await podTrpcFetch("secretsVault.recordUnlock", undefined, { method: "POST" });
+      await podTrpcFetch("secretsVault.recordUnlock", undefined, { method: "POST", workspaceId: null });
       onUnlock(key);
     } finally {
       setWorking(false);
@@ -230,7 +230,7 @@ export function CreateSecretModal({
       await podTrpcFetch("secretsVault.create", {
         name: name.trim(), type, url: fields.url?.trim() || undefined,
         category: category.trim() || undefined, encryptedData, iv, authTag,
-      }, { method: "POST" });
+      }, { method: "POST", workspaceId: null });
       reset(); onCreated(); onClose();
     } catch (e) { console.error("Create secret failed", e); }
     finally { setWorking(false); }
@@ -301,7 +301,7 @@ export function SecretRow({ secret, vaultKey, onDeleted, onSelectRef }: SecretRo
     if (decrypted) { setDecrypted(null); return; }
     setRevealing(true);
     try {
-      const detail = await podTrpcFetch<SecretDetail>("secretsVault.get", { id: secret.id });
+      const detail = await podTrpcFetch<SecretDetail>("secretsVault.get", { id: secret.id }, { workspaceId: null });
       const pt = await decryptWithKey(detail.encryptedData, detail.iv, detail.authTag, vaultKey);
       setDecrypted(JSON.parse(pt) as DecryptedSecret);
     } catch { /* silent */ }
@@ -310,7 +310,7 @@ export function SecretRow({ secret, vaultKey, onDeleted, onSelectRef }: SecretRo
 
   const del = async () => {
     setDeleting(true);
-    try { await podTrpcFetch("secretsVault.delete", { id: secret.id }, { method: "POST" }); onDeleted(); }
+    try { await podTrpcFetch("secretsVault.delete", { id: secret.id }, { method: "POST", workspaceId: null }); onDeleted(); }
     catch (e) { console.error("Delete failed", e); setDeleting(false); }
   };
 
@@ -416,7 +416,7 @@ export function VaultContent({ vaultKey, onLock, onSelectRef }: VaultContentProp
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await podTrpcFetch<SecretListItem[]>("secretsVault.list", typeFilter ? { type: typeFilter } : undefined);
+      const data = await podTrpcFetch<SecretListItem[]>("secretsVault.list", typeFilter ? { type: typeFilter } : undefined, { workspaceId: null });
       setSecrets(Array.isArray(data) ? data : []);
     } finally { setLoading(false); }
   }, [typeFilter]);
@@ -486,9 +486,9 @@ export function VaultApp({ onSelectRef }: VaultAppProps = {}) {
   useEffect(() => {
     void (async () => {
       try {
-        const hasVault = await podTrpcFetch<boolean>("secretsVault.hasVault");
+        const hasVault = await podTrpcFetch<boolean>("secretsVault.hasVault", undefined, { workspaceId: null });
         if (!hasVault) { setState("no-vault"); return; }
-        const meta = await podTrpcFetch<VaultMetadata>("secretsVault.getVaultMetadata");
+        const meta = await podTrpcFetch<VaultMetadata>("secretsVault.getVaultMetadata", undefined, { workspaceId: null });
         setMetadata(meta);
         setState("locked");
       } catch { setState("no-vault"); }
@@ -497,7 +497,7 @@ export function VaultApp({ onSelectRef }: VaultAppProps = {}) {
 
   const handleSetup = (key: CryptoKey) => {
     vaultKeyRef.current = key;
-    void podTrpcFetch<VaultMetadata>("secretsVault.getVaultMetadata").then(setMetadata).catch(() => null);
+    void podTrpcFetch<VaultMetadata>("secretsVault.getVaultMetadata", undefined, { workspaceId: null }).then(setMetadata).catch(() => null);
     setState("unlocked");
   };
 

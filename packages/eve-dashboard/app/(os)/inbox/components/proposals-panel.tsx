@@ -43,6 +43,7 @@ import {
   resolveTargetName,
 } from "@synap-core/types";
 import { PanelEmpty, PanelError, PanelLoader } from "./panel-states";
+import { podTrpcFetch } from "@/lib/pod-fetch";
 
 interface WireProposal {
   id: string;
@@ -137,24 +138,8 @@ interface ProposalReviewModel {
 
 /**
  * Standard tRPC + superjson response envelope. The transformer wraps
- * the actual data inside `result.data.json`. We accept the unwrapped
- * shape too as a defensive fallback (some procedures emit raw payloads
- * when superjson finds nothing to serialize).
+ * the actual data inside `result.data.json` — handled by `podTrpcFetch`.
  */
-interface TrpcEnvelope<T> {
-  result?: { data?: { json?: T } | T };
-  error?: { message?: string };
-}
-
-function unwrapTrpc<T>(env: TrpcEnvelope<T> | null): T | null {
-  if (!env) return null;
-  const data = env.result?.data;
-  if (data && typeof data === "object" && "json" in data) {
-    return (data as { json?: T }).json ?? null;
-  }
-  return (data as T) ?? null;
-}
-
 type LoadState =
   | { kind: "loading" }
   | { kind: "ready"; proposals: WireProposal[] }
@@ -167,29 +152,14 @@ export function ProposalsPanel() {
   const fetchProposals = useCallback(async () => {
     setLoad({ kind: "loading" });
     try {
-      const input = encodeURIComponent(
-        JSON.stringify({ json: { status: "pending" } }),
-      );
-      const r = await fetch(`/api/pod/trpc/proposals.list?input=${input}`, {
-        credentials: "include",
-        cache: "no-store",
-      });
-      if (!r.ok) {
-        const txt = await r.text().catch(() => "");
-        throw new Error(
-          txt && txt.length < 200 ? txt : `Pod returned ${r.status}`,
-        );
-      }
-      const json = (await r.json().catch(() => null)) as TrpcEnvelope<
-        | { proposals?: WireProposal[]; items?: WireProposal[] }
-        | WireProposal[]
-      > | null;
-      // tRPC + superjson envelope: { result: { data: { json: <data> } } }
-      const data = unwrapTrpc<
+      // `proposals.list` is a `protectedProcedure` — passing no `workspaceId`
+      // in the input returns proposals from EVERY workspace the user belongs
+      // to plus pod-wide ones, which is what Eve OS wants. We still skip
+      // the `x-workspace-id` header (`workspaceId: null`) because the input
+      // already encodes the scope decision.
+      const data = await podTrpcFetch<
         { proposals?: WireProposal[]; items?: WireProposal[] } | WireProposal[]
-      >(json);
-      // The list procedure returns `{ proposals }` or `{ items }` — accept
-      // either, and a bare array as a defensive fallback.
+      >("proposals.list", { status: "pending" }, { workspaceId: null });
       const list: WireProposal[] = Array.isArray(data)
         ? data
         : Array.isArray(data?.proposals)
@@ -214,25 +184,15 @@ export function ProposalsPanel() {
     async (id: string, action: "approve" | "reject") => {
       setRowState((prev) => ({ ...prev, [id]: "working" }));
       try {
-        // tRPC mutation: POST /trpc/proposals.{approve|reject}
-        // body { json: { proposalId } } (superjson)
+        // approve / reject are `protectedProcedure` mutations — no workspace
+        // header needed (the proposal record carries its own workspaceId).
         const procedure =
           action === "approve" ? "proposals.approve" : "proposals.reject";
-        const r = await fetch(`/api/pod/trpc/${procedure}`, {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ json: { proposalId: id } }),
-          cache: "no-store",
-        });
-        if (!r.ok) {
-          const txt = await r.text().catch(() => "");
-          throw new Error(
-            txt && txt.length < 200
-              ? txt
-              : `Pod returned ${r.status} for ${action}`,
-          );
-        }
+        await podTrpcFetch(
+          procedure,
+          { proposalId: id },
+          { method: "POST", workspaceId: null },
+        );
         // Optimistic remove. We don't trust the upstream payload here —
         // the panel only displays pending rows, so anything not-pending
         // is gone from this view regardless of the precise response.

@@ -20,15 +20,30 @@ import { PinContextProvider } from "./components/pin-context";
 import { OverlayHost } from "./components/overlay/overlay-host";
 import { PaneCompanionRow } from "./components/pane-companion-row";
 import { CompanionHotkeyBridge } from "./components/companion-hotkey-bridge";
+import { ScopeProvider } from "@/lib/scope";
 
+/**
+ * Eve OS sits **above** any single workspace — the operator sees their whole
+ * pod, not one workspace's lens. Every pod query issued from inside this
+ * subtree therefore defaults to user-wide via the `usePodQuery` helper:
+ *   - prefers `.listAll` procedures (entities, proposals, notifCenter, …)
+ *   - reverts to per-workspace fan-out via `workspaces.list` for procedures
+ *     that don't expose a user-wide variant yet (compat path)
+ *
+ * Surfaces that need a specific workspace lens (drilling into one workspace
+ * inside Eve) can nest `<ScopeProvider scope={{ kind: "workspace", id }}>`
+ * locally — the nearest provider wins.
+ */
 export default function OSLayout({ children }: { children: ReactNode }) {
   return (
-    <PinContextProvider>
-      <CompanionHotkeyBridge />
-      <Wallpaper />
-      <PaneCompanionRow>{children}</PaneCompanionRow>
-      <Dock />
-      <OverlayHost />
-    </PinContextProvider>
+    <ScopeProvider scope={{ kind: "user-wide" }}>
+      <PinContextProvider>
+        <CompanionHotkeyBridge />
+        <Wallpaper />
+        <PaneCompanionRow>{children}</PaneCompanionRow>
+        <Dock />
+        <OverlayHost />
+      </PinContextProvider>
+    </ScopeProvider>
   );
 }

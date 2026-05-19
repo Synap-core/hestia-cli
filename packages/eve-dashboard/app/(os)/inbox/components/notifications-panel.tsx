@@ -32,7 +32,7 @@
  * 401 otherwise and that's noisier than necessary.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Card, Chip, addToast } from "@heroui/react";
 import {
   AlertTriangle,
@@ -43,15 +43,15 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { PanelEmpty, PanelError, PanelLoader } from "./panel-states";
-import { useActiveWorkspace } from "../../hooks/use-active-workspace";
-import { podTrpcFetch } from "../lib/pod-fetch";
+import { podTrpcFetch } from "@/lib/pod-fetch";
+import { usePodQuery } from "@/lib/use-pod-query";
 
 // Pod severity is a wider enum (info|success|warning|error|critical) but
 // the panel collapses critical → danger and treats error as danger. We
 // keep the local enum tight so the styling table stays exhaustive.
 type NotificationCategory = "info" | "success" | "warning" | "danger";
 
-/** A single row in the wire response (`notifCenter.list`). */
+/** A single row in the wire response (`notifCenter.list` / `.listAll`). */
 interface WireNotification {
   id: string;
   type: string;
@@ -63,17 +63,15 @@ interface WireNotification {
   createdAt?: string | Date | null;
   actionUrl?: string | null;
   data?: Record<string, unknown> | null;
+  /** Workspace the notification belongs to. Null = pod-wide.
+   *  Needed so per-row mark-read can target the right workspace. */
+  workspaceId?: string | null;
 }
 
 interface NotifListResponse {
   notifications: WireNotification[];
   total: number;
 }
-
-type LoadState =
-  | { kind: "loading" }
-  | { kind: "ready"; items: WireNotification[] }
-  | { kind: "error"; message: string };
 
 const SEVERITY_TO_CATEGORY: Record<string, NotificationCategory> = {
   info: "info",
@@ -89,119 +87,105 @@ function severityToCategory(s: string | null | undefined): NotificationCategory 
 }
 
 export function NotificationsPanel() {
-  const {
-    workspaceId,
-    isLoading: workspaceLoading,
-  } = useActiveWorkspace();
-  const [load, setLoad] = useState<LoadState>({ kind: "loading" });
+  // Single canonical query — scope-aware via `usePodQuery`. In Eve OS
+  // (user-wide scope) this routes to `notifCenter.listAll`; in any future
+  // workspace-scoped surface it routes to `notifCenter.list` with the
+  // workspace header. No more `useActiveWorkspace` plumbing here.
+  const { state, refresh } = usePodQuery<NotifListResponse>(
+    "notifCenter.list",
+    { status: "all", limit: 50 },
+    { userWideProcedure: "notifCenter.listAll" },
+  );
 
-  const fetchAll = useCallback(async () => {
-    if (!workspaceId) {
-      // Nothing to fetch yet — the outer effect will retrigger when
-      // workspaceId resolves (or stays null and we render empty).
-      return;
-    }
-    setLoad({ kind: "loading" });
-    try {
-      // status: "all" — the panel renders unread badges on individual
-      // rows but otherwise mixes read + unread in chronological order.
-      const data = await podTrpcFetch<NotifListResponse>(
-        "notifCenter.list",
-        { status: "all", limit: 50 },
-        { workspaceId },
-      );
-      const items = Array.isArray(data?.notifications) ? data.notifications : [];
-      setLoad({ kind: "ready", items });
-    } catch (err) {
-      setLoad({
-        kind: "error",
-        message: err instanceof Error ? err.message : "Network error",
-      });
-    }
-  }, [workspaceId]);
+  // Local optimistic copy — needed so mark-read can flip rows immediately
+  // without waiting on a refresh round-trip.
+  const [localOverrides, setLocalOverrides] = useState<
+    Record<string, WireNotification["status"]>
+  >({});
 
-  useEffect(() => {
-    void fetchAll();
-  }, [fetchAll]);
+  const items: WireNotification[] = useMemo(() => {
+    if (state.kind !== "ready") return [];
+    const wire = Array.isArray(state.data?.notifications)
+      ? state.data.notifications
+      : [];
+    return wire.map((n) =>
+      localOverrides[n.id]
+        ? { ...n, status: localOverrides[n.id] }
+        : n,
+    );
+  }, [state, localOverrides]);
 
-  const unreadCount = useMemo(() => {
-    if (load.kind !== "ready") return 0;
-    return load.items.filter((n) => n.status === "unread").length;
-  }, [load]);
+  const unreadCount = useMemo(
+    () => items.filter((n) => n.status === "unread").length,
+    [items],
+  );
 
   const handleMarkAllRead = useCallback(async () => {
-    if (load.kind !== "ready" || !workspaceId) return;
-    const targets = load.items.filter((n) => n.status === "unread");
+    const targets = items.filter((n) => n.status === "unread");
     if (targets.length === 0) return;
-    // Optimistic local flip — the mutation is best-effort.
-    setLoad((prev) =>
-      prev.kind === "ready"
-        ? {
-            kind: "ready",
-            items: prev.items.map((n) =>
-              n.status === "unread" ? { ...n, status: "read" } : n,
-            ),
-          }
-        : prev,
+    // Optimistic flip first.
+    setLocalOverrides((prev) => {
+      const next = { ...prev };
+      for (const n of targets) next[n.id] = "read";
+      return next;
+    });
+    // Fan out per workspace — `notifCenter.markAllRead` is workspaceProcedure,
+    // so we group unread rows by source workspace and one shot each.
+    const byWorkspace = new Map<string | null, WireNotification[]>();
+    for (const n of targets) {
+      const key = n.workspaceId ?? null;
+      const list = byWorkspace.get(key) ?? [];
+      list.push(n);
+      byWorkspace.set(key, list);
+    }
+    const results = await Promise.allSettled(
+      Array.from(byWorkspace.entries()).map(([ws]) =>
+        podTrpcFetch<{ success: boolean }>(
+          "notifCenter.markAllRead",
+          undefined,
+          { method: "POST", workspaceId: ws },
+        ),
+      ),
     );
+    if (results.some((r) => r.status === "rejected")) {
+      addToast({ title: "Mark-as-read sync partially failed", color: "warning" });
+    }
+  }, [items]);
+
+  const handleOpen = useCallback(async (n: WireNotification) => {
+    if (n.actionUrl) {
+      window.open(n.actionUrl, "_blank", "noopener,noreferrer");
+    }
+    if (n.status !== "unread") return;
+    // Optimistic flip
+    setLocalOverrides((prev) => ({ ...prev, [n.id]: "read" }));
     try {
       await podTrpcFetch<{ success: boolean }>(
-        "notifCenter.markAllRead",
-        undefined,
-        { method: "POST", workspaceId },
+        "notifCenter.markRead",
+        { notificationId: n.id },
+        { method: "POST", workspaceId: n.workspaceId ?? null },
       );
     } catch {
-      // The local flip already happened; a future fetchAll will reconcile.
-      addToast({
-        title: "Mark-as-read sync failed",
-        color: "warning",
-      });
+      /* leave optimistic flip — next refresh reconciles */
     }
-  }, [load, workspaceId]);
-
-  const handleOpen = useCallback(
-    async (n: WireNotification) => {
-      if (n.actionUrl) {
-        window.open(n.actionUrl, "_blank", "noopener,noreferrer");
-      }
-      if (n.status !== "unread" || !workspaceId) return;
-      // Best-effort mark-read on click.
-      try {
-        await podTrpcFetch<{ success: boolean }>(
-          "notifCenter.markRead",
-          { notificationId: n.id },
-          { method: "POST", workspaceId },
-        );
-      } catch {
-        /* swallow — visual stays consistent */
-      }
-    },
-    [workspaceId],
-  );
+  }, []);
 
   // ─── Render guards ────────────────────────────────────────────────────────
 
-  // Workspace resolver still working — show loader; the panel re-renders
-  // automatically once the hook reports either an id or a final null.
-  if (workspaceLoading) return <PanelLoader />;
-
-  // No workspace at all (no pod session, no memberships). Don't bother
-  // calling the pod — surface a friendly empty.
-  if (!workspaceId) {
+  if (state.kind === "loading") return <PanelLoader />;
+  if (state.kind === "unpaired") {
     return (
       <PanelEmpty
         icon={Bell}
-        title="No workspace yet"
-        hint="Once your pod is paired and you’ve joined a workspace, alerts will appear here."
+        title="Pair your pod"
+        hint="Once your Eve is paired with a Synap pod, alerts will appear here."
       />
     );
   }
-
-  if (load.kind === "loading") return <PanelLoader />;
-  if (load.kind === "error") {
-    return <PanelError message={load.message} onRetry={fetchAll} />;
+  if (state.kind === "error") {
+    return <PanelError message={state.message} onRetry={refresh} />;
   }
-  if (load.items.length === 0) {
+  if (items.length === 0) {
     return (
       <PanelEmpty
         icon={Bell}
@@ -229,7 +213,7 @@ export function NotificationsPanel() {
           </button>
         </div>
       )}
-      {load.items.map((n) => (
+      {items.map((n) => (
         <NotificationRow key={n.id} n={n} onOpen={handleOpen} />
       ))}
     </div>

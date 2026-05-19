@@ -37,10 +37,7 @@ import {
 
 import { PaneHeader } from "../../components/pane-header";
 import { PodNotPairedCard } from "../../inbox/components/pod-not-paired-card";
-import {
-  podTrpcFetch,
-  PodTrpcError,
-} from "../../inbox/lib/pod-fetch";
+import { podTrpcFetch, PodTrpcError } from "@/lib/pod-fetch";
 
 // ─── Domain types ─────────────────────────────────────────────────────────────
 
@@ -118,9 +115,11 @@ export default function DataDetailPage() {
     setState({ kind: "loading" });
     (async () => {
       try {
-        const result = await podTrpcFetch<{ entity?: Entity }>("entities.get", {
-          id,
-        });
+        const result = await podTrpcFetch<{ entity?: Entity }>(
+          "entities.get",
+          { id },
+          { workspaceId: null },
+        );
         if (cancelled) return;
         const entity = result.entity ?? (result as unknown as Entity);
         if (!entity || !entity.id) {
@@ -164,15 +163,18 @@ export default function DataDetailPage() {
       }
       setState({ kind: "ready", entity: next });
       try {
-        await podTrpcFetch("entities.update", { id, ...input }, {
-          method: "POST",
-        });
+        await podTrpcFetch(
+          "entities.update",
+          { id, ...input },
+          { method: "POST", workspaceId: null },
+        );
       } catch {
         // Roll back on error — re-fetch authoritative copy.
         try {
           const refreshed = await podTrpcFetch<{ entity?: Entity }>(
             "entities.get",
             { id },
+            { workspaceId: null },
           );
           if (refreshed.entity) {
             setState({ kind: "ready", entity: refreshed.entity });

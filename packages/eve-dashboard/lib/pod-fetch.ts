@@ -1,32 +1,24 @@
 "use client";
 
 /**
- * `podTrpcFetch` — thin client-side wrapper around `/api/pod/trpc/<proc>`.
+ * `podTrpcFetch` — low-level pod tRPC primitive. **Most code should use
+ * `usePodQuery` instead** — it picks up the active scope and chooses the
+ * right procedure variant + workspace header for you.
  *
- * The Inbox panels and any other operator-action UI talk to the pod's
- * tRPC surface through the user-channel proxy at `/api/pod/*`. The
- * superjson envelope, the URL-encoded `?input=…` for queries, and the
- * `x-workspace-id` header for `workspaceProcedure` calls have all
- * shown up inline in three or four places already — this helper
- * centralises the boilerplate so panels don't drift apart.
+ * Direct callers must declare their scope explicitly via `opts.workspaceId`:
+ *   - `string`  → send as `x-workspace-id` header (workspace-scoped call)
+ *   - `null`    → send NO header (user-wide / pod-level call)
  *
- * Header contract:
- *   - Pass `opts.workspaceId` to override the active workspace
- *     explicitly (e.g. workspace switcher preview).
- *   - Otherwise we read `eve.activeWorkspaceId` from `localStorage`
- *     via `readActiveWorkspaceId()`. If still null, we send NO
- *     `x-workspace-id` header — `workspaceProcedure` calls will fail
- *     loud upstream and the caller's UI shows the empty state.
+ * The previous implicit default that read `localStorage.eve.activeWorkspaceId`
+ * has been removed — it silently coerced every Eve query to one workspace
+ * (or to "globals only" when unset), which broke pod-wide views. All scope
+ * decisions now flow through `<ScopeProvider>` + `usePodQuery`.
  *
  * Returns the unwrapped data payload (`result.data.json` or `result.data`).
  * Throws `PodTrpcError` on non-2xx with the upstream tRPC error message
  * pulled out of the standard envelope when present.
- *
- * Why client-only: the helper reads `localStorage`. Server components
- * shouldn't call this — they have no concept of an "active workspace".
  */
 
-import { readActiveWorkspaceId } from "../../hooks/use-active-workspace";
 import { unwrapTrpc } from "@/lib/trpc-utils";
 import type { TrpcEnvelope } from "@/lib/trpc-utils";
 
@@ -46,25 +38,15 @@ export class PodTrpcError extends Error {
 
 export interface PodTrpcFetchOptions {
   method?: "GET" | "POST";
-  /** Override the active workspace id. Pass `null` to send no header. */
-  workspaceId?: string | null;
+  /**
+   * Required scope decision for this call:
+   *   - `string` → send `x-workspace-id` header (workspace-scoped).
+   *   - `null`   → send no header (user-wide / pod-level).
+   * No implicit default — the caller MUST pick one.
+   */
+  workspaceId: string | null;
   /** AbortSignal for cancellation. */
   signal?: AbortSignal;
-}
-
-/**
- * Resolve the workspace header for a single call. Order of precedence:
- *   1. Explicit `opts.workspaceId` (string → use, null → no header).
- *   2. localStorage cached value.
- *   3. Nothing.
- */
-function resolveWorkspaceHeader(
-  opts: PodTrpcFetchOptions | undefined,
-): string | null {
-  if (opts && "workspaceId" in opts) {
-    return opts.workspaceId ?? null;
-  }
-  return readActiveWorkspaceId();
 }
 
 /**
@@ -80,16 +62,15 @@ function buildInputQuery(input: unknown): string {
 
 export async function podTrpcFetch<T>(
   procedure: string,
-  input?: unknown,
-  opts?: PodTrpcFetchOptions,
+  input: unknown,
+  opts: PodTrpcFetchOptions,
 ): Promise<T> {
-  const method: "GET" | "POST" = opts?.method ?? "GET";
+  const method: "GET" | "POST" = opts.method ?? "GET";
   const headers: Record<string, string> = {
     Accept: "application/json",
   };
 
-  const workspaceId = resolveWorkspaceHeader(opts);
-  if (workspaceId) headers["x-workspace-id"] = workspaceId;
+  if (opts.workspaceId !== null) headers["x-workspace-id"] = opts.workspaceId;
 
   let url = `/api/pod/trpc/${procedure}`;
   let body: string | undefined;

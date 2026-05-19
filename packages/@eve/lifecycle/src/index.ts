@@ -1778,15 +1778,19 @@ async function* installT3Code(): AsyncGenerator<LifecycleEvent> {
     yield { type: "log", line: "Backend .env updated with T3CODE_URL and T3CODE_API_KEY" };
   }
 
-  await new Promise((r) => setTimeout(r, 5_000));
-  const running = await isContainerInState(T3CODE_CONTAINER, "running");
-  if (!running) {
-    yield {
-      type: "log",
-      line: `warning: ${T3CODE_CONTAINER} exited — run \`docker logs ${T3CODE_CONTAINER}\` for details`,
-    };
+  yield { type: "log", line: "Waiting for T3 Code to start…" };
+  let healthy = false;
+  for (let i = 0; i < 5; i++) {
+    await new Promise((r) => setTimeout(r, 3000));
+    try {
+      const res = await fetch(`http://127.0.0.1:${T3CODE_PORT}/health`, { signal: AbortSignal.timeout(2000) });
+      if (res.ok) { healthy = true; break; }
+    } catch { /* not ready yet */ }
+  }
+  if (healthy) {
+    yield { type: "log", line: `T3 Code is healthy on port ${T3CODE_PORT}` };
   } else {
-    yield { type: "log", line: `T3 Code server running on ws://eve-builder-t3code:${T3CODE_PORT}` };
+    yield { type: "log", line: `T3 Code container started but health endpoint not yet responding — it may still be bootstrapping. Check: docker logs ${T3CODE_CONTAINER}` };
   }
 }
 

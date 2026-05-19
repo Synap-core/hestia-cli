@@ -159,15 +159,39 @@
       "type": "file"
     },
     {
+      "path": "app/(os)/settings/vault/vault-components.tsx",
+      "accessCount": 12,
+      "lastAccessed": 1779200412289,
+      "type": "file"
+    },
+    {
       "path": "app/(os)/settings/ai/page.tsx",
       "accessCount": 11,
       "lastAccessed": 1778694864553,
       "type": "file"
     },
     {
+      "path": "app/(os)/inbox/components/notifications-panel.tsx",
+      "accessCount": 9,
+      "lastAccessed": 1779204367820,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/data/[id]/page.tsx",
+      "accessCount": 6,
+      "lastAccessed": 1779200366882,
+      "type": "file"
+    },
+    {
       "path": "app/api/ai/apply/route.ts",
       "accessCount": 5,
       "lastAccessed": 1778691525856,
+      "type": "file"
+    },
+    {
+      "path": "lib/use-pod-query.ts",
+      "accessCount": 4,
+      "lastAccessed": 1779200237230,
       "type": "file"
     },
     {
@@ -195,6 +219,12 @@
       "type": "file"
     },
     {
+      "path": "app/(os)/data/hooks/use-entities-graph.ts",
+      "accessCount": 3,
+      "lastAccessed": 1779200333734,
+      "type": "file"
+    },
+    {
       "path": "app/(os)/page.tsx",
       "accessCount": 2,
       "lastAccessed": 1778807582147,
@@ -207,9 +237,15 @@
       "type": "file"
     },
     {
-      "path": "app/(os)/inbox/components/notifications-panel.tsx",
+      "path": "app/(os)/layout.tsx",
       "accessCount": 2,
-      "lastAccessed": 1779161941846,
+      "lastAccessed": 1779200048790,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/inbox/lib/pod-fetch.ts",
+      "accessCount": 2,
+      "lastAccessed": 1779200095614,
       "type": "file"
     },
     {
@@ -318,6 +354,18 @@
       "path": "app/(os)/lib/brand-colors.ts",
       "accessCount": 1,
       "lastAccessed": 1779161950158,
+      "type": "file"
+    },
+    {
+      "path": "app/lib/scope.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1779199958567,
+      "type": "file"
+    },
+    {
+      "path": "app/lib/use-pod-query.ts",
+      "accessCount": 1,
+      "lastAccessed": 1779199997633,
       "type": "file"
     }
   ],
