@@ -195,6 +195,12 @@
       "type": "file"
     },
     {
+      "path": "Dockerfile",
+      "accessCount": 2,
+      "lastAccessed": 1779160231345,
+      "type": "file"
+    },
+    {
       "path": "app/api/ai/is-models/route.ts",
       "accessCount": 1,
       "lastAccessed": 1778694777930,
