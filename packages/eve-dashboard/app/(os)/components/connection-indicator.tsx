@@ -14,16 +14,20 @@
 
 import { useSessionHealth } from "@/lib/use-session-health";
 import { Spinner } from "@heroui/react";
-import { CheckCircle, Circle, CircleSlash } from "lucide-react";
+import { CheckCircle, Circle, CircleSlash, type LucideIcon } from "lucide-react";
 import { useCallback } from "react";
 
 interface ConnectionIndicatorProps {
   onClick?: () => void;
 }
 
+// `icon` is the Lucide glyph used by every state EXCEPT reconnecting, which
+// renders a HeroUI Spinner via its own branch in JSX. Typing the slot as
+// LucideIcon keeps `className` / `strokeWidth` props inferable; the unused
+// `Circle` placeholder on `reconnecting` is never rendered.
 const HEALTH_STYLE: Record<
   import("@/lib/use-session-health").SessionHealth,
-  { color: string; icon: React.ElementType; label: string }
+  { color: string; icon: LucideIcon; label: string }
 > = {
   connected: {
     color: "text-success",
@@ -32,7 +36,7 @@ const HEALTH_STYLE: Record<
   },
   reconnecting: {
     color: "text-warning",
-    icon: Spinner,
+    icon: Circle,
     label: "Reconnecting",
   },
   disconnected: {

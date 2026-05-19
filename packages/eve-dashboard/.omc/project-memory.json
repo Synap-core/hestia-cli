@@ -47,7 +47,7 @@
     "runtime": null
   },
   "build": {
-    "buildCommand": "npx tsc --noEmit 2>&1 | grep -E \"data/\" | head -20 && echo \"---all errors count---\" && cd /Users/antoine/Documents/Code/synap/hestia-cli/packages/eve-dashboard && npx tsc --noEmit 2>&1 | wc -l",
+    "buildCommand": "npx tsc --noEmit 2>&1 | head -10",
     "testCommand": "npm test",
     "lintCommand": null,
     "devCommand": "npm run dev",
@@ -189,6 +189,12 @@
       "type": "file"
     },
     {
+      "path": "app/(os)/components/connection-indicator.tsx",
+      "accessCount": 3,
+      "lastAccessed": 1779193589162,
+      "type": "file"
+    },
+    {
       "path": "app/(os)/page.tsx",
       "accessCount": 2,
       "lastAccessed": 1778807582147,
@@ -234,12 +240,6 @@
       "path": "lib/use-session-health.ts",
       "accessCount": 1,
       "lastAccessed": 1778807386353,
-      "type": "file"
-    },
-    {
-      "path": "app/(os)/components/connection-indicator.tsx",
-      "accessCount": 1,
-      "lastAccessed": 1778807391938,
       "type": "file"
     },
     {
