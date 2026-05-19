@@ -8,7 +8,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Button, Chip, Input, Modal, ModalBody, ModalContent,
-  ModalFooter, ModalHeader, Select, SelectItem, Spinner, Textarea,
+  ModalFooter, ModalHeader, Select, SelectItem, Spinner, Tab, Tabs, Textarea,
+  addToast,
 } from "@heroui/react";
 import {
   Check, ChevronDown, ChevronUp, ClipboardCopy, Copy,
@@ -470,6 +471,185 @@ export function VaultContent({ vaultKey, onLock, onSelectRef }: VaultContentProp
   );
 }
 
+// ─── ServiceCredentialsForm ───────────────────────────────────────────────────
+
+interface ServiceCfg {
+  configured: boolean;
+  source: "vault" | "workspace_settings" | "env" | null;
+  dsn: string | null;
+  hasApiKey: boolean;
+  hasWebhookSecret: boolean;
+  migration: { available: boolean; hasDsn: boolean; hasApiKey: boolean };
+}
+
+export function ServiceCredentialsForm() {
+  const [status, setStatus] = useState<ServiceCfg | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [dsn, setDsn] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [webhookSecret, setWebhookSecret] = useState("");
+  const [showKey, setShowKey] = useState(false);
+  const [showWebhook, setShowWebhook] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [migrating, setMigrating] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await fetch("/api/pod/api/hub/messaging/service-config", { credentials: "include" });
+      if (r.ok) setStatus(await r.json() as ServiceCfg);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const save = async () => {
+    if (!dsn.trim() || !apiKey.trim()) return;
+    setSaving(true);
+    try {
+      const r = await fetch("/api/pod/api/hub/messaging/service-config", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dsn: dsn.trim(), apiKey: apiKey.trim(), webhookSecret: webhookSecret.trim() || undefined }),
+      });
+      if (r.ok) {
+        addToast({ title: "Credentials saved", color: "success" });
+        setDsn(""); setApiKey(""); setWebhookSecret("");
+        await load();
+      } else {
+        addToast({ title: "Failed to save credentials", color: "danger" });
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const migrate = async () => {
+    setMigrating(true);
+    try {
+      const r = await fetch("/api/pod/api/hub/messaging/service-config/migrate", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (r.ok) {
+        addToast({ title: "Migrated to vault", color: "success" });
+        await load();
+      } else {
+        addToast({ title: "Migration failed", color: "danger" });
+      }
+    } finally {
+      setMigrating(false);
+    }
+  };
+
+  if (loading) return <div className="flex justify-center py-12"><Spinner size="sm" /></div>;
+
+  const SOURCE_LABELS: Record<string, string> = {
+    vault: "Vault (encrypted)",
+    workspace_settings: "Workspace settings",
+    env: "Environment variables",
+  };
+
+  return (
+    <div className="space-y-5 max-w-lg">
+      <div>
+        <p className="text-sm font-semibold text-foreground mb-1">Unipile</p>
+        <p className="text-xs text-foreground/50">
+          Unified messaging gateway for LinkedIn, WhatsApp, Gmail and more. Credentials are server-encrypted and used by Synap agents on your behalf.
+        </p>
+      </div>
+
+      {/* Current status */}
+      {status?.configured && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-content2 border border-divider">
+          <div className="w-1.5 h-1.5 rounded-full bg-success shrink-0" />
+          <p className="text-xs text-foreground/70 flex-1">
+            Active via <span className="font-medium">{SOURCE_LABELS[status.source ?? ""] ?? status.source}</span>
+            {status.dsn && <span className="text-foreground/40"> · {status.dsn}</span>}
+          </p>
+          <Chip size="sm" variant="flat" color="success" className="text-[10px] h-4">configured</Chip>
+        </div>
+      )}
+
+      {/* Migration banner */}
+      {status?.migration.available && (
+        <div className="flex items-start gap-3 px-3 py-3 rounded-lg bg-warning/5 border border-warning/20">
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-medium text-warning">Credentials found in workspace settings</p>
+            <p className="text-[11px] text-foreground/50 mt-0.5">
+              Migrate them to the vault for server-side encryption and agent access.
+            </p>
+          </div>
+          <Button size="sm" color="warning" variant="flat" isLoading={migrating} onPress={() => void migrate()}>
+            Migrate
+          </Button>
+        </div>
+      )}
+
+      {/* Form to add / update vault credentials */}
+      {status?.source !== "vault" && (
+        <div className="space-y-3 pt-1">
+          <p className="text-xs font-medium text-foreground/60">
+            {status?.configured ? "Override with vault credentials:" : "Add credentials to vault:"}
+          </p>
+          <Input size="sm" variant="bordered" label="DSN" placeholder="https://api7.unipile.com:13xxx"
+            value={dsn} onValueChange={setDsn} />
+          <Input size="sm" variant="bordered" label="API Key" placeholder="up_live_…"
+            type={showKey ? "text" : "password"} value={apiKey} onValueChange={setApiKey}
+            endContent={
+              <button type="button" onClick={() => setShowKey((v) => !v)} className="text-foreground/40 hover:text-foreground">
+                {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            }
+          />
+          <Input size="sm" variant="bordered" label="Webhook Secret (optional)" placeholder="whsec_…"
+            type={showWebhook ? "text" : "password"} value={webhookSecret} onValueChange={setWebhookSecret}
+            endContent={
+              <button type="button" onClick={() => setShowWebhook((v) => !v)} className="text-foreground/40 hover:text-foreground">
+                {showWebhook ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            }
+          />
+          <Button size="sm" color="primary" isLoading={saving} isDisabled={!dsn.trim() || !apiKey.trim()} onPress={() => void save()}>
+            Save to vault
+          </Button>
+        </div>
+      )}
+
+      {status?.source === "vault" && (
+        <div className="space-y-3 pt-1">
+          <p className="text-xs text-foreground/50">To update credentials, enter new values below:</p>
+          <Input size="sm" variant="bordered" label="DSN" placeholder="https://api7.unipile.com:13xxx"
+            value={dsn} onValueChange={setDsn} />
+          <Input size="sm" variant="bordered" label="API Key" placeholder="up_live_…"
+            type={showKey ? "text" : "password"} value={apiKey} onValueChange={setApiKey}
+            endContent={
+              <button type="button" onClick={() => setShowKey((v) => !v)} className="text-foreground/40 hover:text-foreground">
+                {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            }
+          />
+          <Input size="sm" variant="bordered" label="Webhook Secret (optional)" placeholder="whsec_…"
+            type={showWebhook ? "text" : "password"} value={webhookSecret} onValueChange={setWebhookSecret}
+            endContent={
+              <button type="button" onClick={() => setShowWebhook((v) => !v)} className="text-foreground/40 hover:text-foreground">
+                {showWebhook ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            }
+          />
+          <Button size="sm" color="primary" variant="flat" isLoading={saving} isDisabled={!dsn.trim() || !apiKey.trim()} onPress={() => void save()}>
+            Update credentials
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── VaultApp (state machine) ─────────────────────────────────────────────────
 
 export type VaultState = "checking" | "no-vault" | "locked" | "unlocked";
@@ -504,11 +684,45 @@ export function VaultApp({ onSelectRef }: VaultAppProps = {}) {
   const handleUnlock = (key: CryptoKey) => { vaultKeyRef.current = key; setState("unlocked"); };
   const handleLock = () => { vaultKeyRef.current = null; setState(metadata ? "locked" : "no-vault"); };
 
-  if (state === "checking") return <div className="flex justify-center py-16"><Spinner size="sm" /></div>;
-  if (state === "no-vault") return <MasterPasswordSetup onSetup={handleSetup} />;
-  if (state === "locked" && metadata) return <VaultUnlock metadata={metadata} onUnlock={handleUnlock} />;
-  if (state === "unlocked" && vaultKeyRef.current) {
-    return <VaultContent vaultKey={vaultKeyRef.current} onLock={handleLock} onSelectRef={onSelectRef} />;
+  // When used as a secret picker, skip the tab UI
+  if (onSelectRef) {
+    if (state === "checking") return <div className="flex justify-center py-16"><Spinner size="sm" /></div>;
+    if (state === "no-vault") return <MasterPasswordSetup onSetup={handleSetup} />;
+    if (state === "locked" && metadata) return <VaultUnlock metadata={metadata} onUnlock={handleUnlock} />;
+    if (state === "unlocked" && vaultKeyRef.current) {
+      return <VaultContent vaultKey={vaultKeyRef.current} onLock={handleLock} onSelectRef={onSelectRef} />;
+    }
+    return <div className="flex justify-center py-16"><Spinner size="sm" /></div>;
   }
-  return <div className="flex justify-center py-16"><Spinner size="sm" /></div>;
+
+  const secretsContent = () => {
+    if (state === "checking") return <div className="flex justify-center py-16"><Spinner size="sm" /></div>;
+    if (state === "no-vault") return <MasterPasswordSetup onSetup={handleSetup} />;
+    if (state === "locked" && metadata) return <VaultUnlock metadata={metadata} onUnlock={handleUnlock} />;
+    if (state === "unlocked" && vaultKeyRef.current) {
+      return <VaultContent vaultKey={vaultKeyRef.current} onLock={handleLock} />;
+    }
+    return <div className="flex justify-center py-16"><Spinner size="sm" /></div>;
+  };
+
+  return (
+    <Tabs
+      aria-label="Vault sections"
+      variant="underlined"
+      classNames={{
+        base: "w-full",
+        tabList: "gap-6 p-0 border-b border-divider w-full rounded-none",
+        tab: "px-0 h-10 text-[13px]",
+        cursor: "bg-foreground",
+        panel: "pt-5 px-0",
+      }}
+    >
+      <Tab key="secrets" title={<span className="flex items-center gap-1.5"><Shield className="h-3.5 w-3.5" />Keys &amp; Passwords</span>}>
+        {secretsContent()}
+      </Tab>
+      <Tab key="integrations" title={<span className="flex items-center gap-1.5"><Key className="h-3.5 w-3.5" />Integrations</span>}>
+        <ServiceCredentialsForm />
+      </Tab>
+    </Tabs>
+  );
 }

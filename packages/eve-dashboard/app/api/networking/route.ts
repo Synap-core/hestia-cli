@@ -29,7 +29,7 @@ function isTraefikRunning(): boolean {
   try {
     const out = execSync(
       'docker ps --filter "name=^eve-legs-traefik$" --format "{{.Names}}"',
-      { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] },
+      { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"], timeout: 5000 },
     ).trim();
     return out === "eve-legs-traefik";
   } catch {

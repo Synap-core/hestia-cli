@@ -42,12 +42,14 @@ import { Headline } from "./components/headline";
 import { ComponentsGrid } from "./components/components-grid";
 import { Connectivity } from "./components/connectivity";
 import { Issues } from "./components/issues";
+import { ActivityFeed } from "./components/activity-feed";
 import type {
   ComponentRow,
   SecretsSummary,
   NetworkingInfo,
   PodInfo,
   DoctorReport,
+  ActivityFeedData,
 } from "./components/types";
 
 // ─── Page ────────────────────────────────────────────────────────────────────
@@ -60,6 +62,8 @@ export default function PulsePage() {
   const [networking, setNetworking] = useState<NetworkingInfo | null>(null);
   const [podInfo, setPodInfo] = useState<PodInfo | null>(null);
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
+  const [activity, setActivity] = useState<ActivityFeedData | null>(null);
+  const [activityError, setActivityError] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -68,18 +72,31 @@ export default function PulsePage() {
   const fetchAll = useCallback(async (silent = false) => {
     if (!silent) setRefreshing(true);
 
+    const timedFetch = (url: string, ms = 12_000) => {
+      const ctrl = new AbortController();
+      const id = setTimeout(() => ctrl.abort(), ms);
+      return fetch(url, { credentials: "include", cache: "no-store", signal: ctrl.signal })
+        .finally(() => clearTimeout(id));
+    };
+
+    const ACTIVITY_INPUT = encodeURIComponent(
+      JSON.stringify({ "0": { json: { limit: 30, offset: 0 } } })
+    );
+
     const [
       componentsRes,
       secretsRes,
       networkingRes,
       podInfoRes,
       doctorRes,
+      activityRes,
     ] = await Promise.allSettled([
-      fetch("/api/components",             { credentials: "include", cache: "no-store" }),
-      fetch("/api/secrets-summary",        { credentials: "include", cache: "no-store" }),
-      fetch("/api/networking",             { credentials: "include", cache: "no-store" }),
-      fetch("/api/components/synap/info",  { credentials: "include", cache: "no-store" }),
-      fetch("/api/doctor",                 { credentials: "include", cache: "no-store" }),
+      timedFetch("/api/components"),
+      timedFetch("/api/secrets-summary"),
+      timedFetch("/api/networking"),
+      timedFetch("/api/components/synap/info"),
+      timedFetch("/api/doctor", 20_000),
+      timedFetch(`/api/pod/trpc/system.listAuditLogs?batch=1&input=${ACTIVITY_INPUT}`),
     ]);
 
     // Auth: if any source 401s, kick to /login. We check raw responses
@@ -126,6 +143,23 @@ export default function PulsePage() {
       setDoctor(await doctorRes.value.json() as DoctorReport);
     } else {
       failed += 1;
+    }
+
+    if (activityRes.status === "fulfilled" && activityRes.value.ok) {
+      try {
+        const batch = await activityRes.value.json() as Array<{ result: { data: { json: ActivityFeedData } } }>;
+        const payload = batch?.[0]?.result?.data?.json;
+        if (payload) {
+          setActivity(payload);
+          setActivityError(false);
+        } else {
+          setActivityError(true);
+        }
+      } catch {
+        setActivityError(true);
+      }
+    } else {
+      setActivityError(true);
     }
 
     setUnreachable(failed);
@@ -207,6 +241,8 @@ export default function PulsePage() {
             />
 
             <Issues doctor={doctor} onRepaired={() => void fetchAll(true)} />
+
+            <ActivityFeed data={activity} error={activityError} />
           </div>
         )}
       </div>

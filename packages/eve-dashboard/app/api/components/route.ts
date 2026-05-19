@@ -36,7 +36,7 @@ function isContainerRunning(name: string): boolean {
   try {
     const out = execSync(
       `docker ps --filter "name=^${name}$" --format "{{.Names}}"`,
-      { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] },
+      { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"], timeout: 5000 },
     ).trim();
     return out === name;
   } catch {

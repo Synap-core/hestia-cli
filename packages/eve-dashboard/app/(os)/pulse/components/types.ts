@@ -111,3 +111,22 @@ export interface DoctorReport {
     total: number;
   };
 }
+
+// ─── Activity feed (pod events) ───────────────────────────────────────────────
+
+export interface ActivityEvent {
+  id: string;
+  timestamp: string;
+  eventType: string;
+  action: string;
+  subjectType: string;
+  subjectId: string;
+  userId: string;
+  workspaceId: string | null;
+  source: string;
+}
+
+export interface ActivityFeedData {
+  events: ActivityEvent[];
+  actors: Record<string, { id: string; email: string | null; name: string | null }>;
+}
