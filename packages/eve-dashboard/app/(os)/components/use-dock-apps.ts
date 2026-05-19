@@ -40,6 +40,7 @@ export interface DockApp {
 const CORE_APPS: DockApp[] = [
   { id: "home",     slug: "home",     name: "Home",     path: "/",         kind: "core" },
   { id: "agents",   slug: "agents",   name: "Agents",   path: "/agents",   kind: "core" },
+  { id: "data",     slug: "data",     name: "Data",     path: "/data",     kind: "core" },
   { id: "settings", slug: "settings", name: "Settings", path: "/settings", kind: "core" },
 ];
 

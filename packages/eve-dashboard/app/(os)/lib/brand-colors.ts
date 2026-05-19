@@ -34,6 +34,7 @@ export const BRAND_COLORS: Record<string, BrandColor> = {
   // ── Core / pinned ────────────────────────────────────────────────────────
   home:        { bg: vGrad("#A78BFA", "#7C3AED"), glyph: "Home",          accent: "#A78BFA" },
   agents:      { bg: vGrad("#34D399", "#10B981"), glyph: "Sparkles",      accent: "#34D399" },
+  data:        { bg: vGrad("#67E8F9", "#0891B2"), glyph: "Database",      accent: "#22D3EE" },
   inbox:       { bg: vGrad("#60A5FA", "#2563EB"), glyph: "Inbox",         accent: "#60A5FA" },
   pulse:       { bg: vGrad("#F472B6", "#DB2777"), glyph: "Activity",      accent: "#F472B6" },
   marketplace: { bg: vGrad("#FBBF24", "#D97706"), glyph: "Store",         accent: "#FBBF24" },
