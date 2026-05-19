@@ -240,6 +240,10 @@ const SecretsSchema = z.object({
           url: z.string().optional(),
           /** Bearer token for the T3 Code server */
           apiKey: z.string().optional(),
+          /** API key forwarded to the AI provider (OpenAI, OpenRouter, etc.) */
+          openaiApiKey: z.string().optional(),
+          /** Optional base URL override — e.g. https://openrouter.ai/api/v1 for OpenRouter */
+          openaiBaseUrl: z.string().optional(),
         })
         .optional(),
     })

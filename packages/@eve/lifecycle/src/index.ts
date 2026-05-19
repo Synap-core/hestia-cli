@@ -1700,6 +1700,96 @@ async function* installHermes(): AsyncGenerator<LifecycleEvent> {
  * immediate model-picker visibility, `registerPipelinesInOpenwebui`
  * calls the admin API upsert instead — which works without a recreate.
  */
+// ---------------------------------------------------------------------------
+// T3 Code install — node:22-slim container running `npx t3` headlessly
+// ---------------------------------------------------------------------------
+
+const T3CODE_CONTAINER = "eve-builder-t3code";
+const T3CODE_PORT = 3773;
+
+async function* installT3Code(): AsyncGenerator<LifecycleEvent> {
+  const secrets = await readEveSecrets();
+  const existing = secrets?.builder?.t3code;
+
+  // Auth token — generate once, reuse on reinstall.
+  let authToken = existing?.apiKey;
+  if (!authToken) {
+    authToken = randomBytes(32).toString("hex");
+    await writeEveSecrets({ builder: { t3code: { ...(existing ?? {}), apiKey: authToken } } });
+    yield { type: "log", line: "Generated T3 Code auth token (saved to secrets)" };
+  }
+
+  const openaiApiKey = existing?.openaiApiKey ?? process.env.OPENAI_API_KEY ?? "";
+  if (!openaiApiKey) {
+    yield { type: "error", message: "API key required — run `eve add t3code` from the CLI to provide it." };
+    return;
+  }
+  const openaiBaseUrl = existing?.openaiBaseUrl ?? process.env.OPENAI_BASE_URL ?? "";
+
+  const workspaceDir = secrets?.builder?.workspaceDir ?? join(homedir(), ".eve", "workspace");
+  mkdirSync(workspaceDir, { recursive: true });
+
+  // Remove any stale container first (idempotent reinstall).
+  const exists = await containerExists(T3CODE_CONTAINER);
+  if (exists) {
+    yield { type: "log", line: `Removing existing ${T3CODE_CONTAINER} container…` };
+    await runCommand("docker", ["rm", "-f", T3CODE_CONTAINER]);
+  }
+
+  yield { type: "step", label: "Starting T3 Code server…" };
+
+  // node:22-slim + npx t3 headless. A named volume caches the npm global
+  // install so subsequent starts don't re-download the package.
+  const args = [
+    "run", "-d",
+    "--name", T3CODE_CONTAINER,
+    "--network", "eve-network",
+    "--restart", "unless-stopped",
+    "-p", `${T3CODE_PORT}:${T3CODE_PORT}`,
+    "-v", "t3code-npm-global:/root/.npm",
+    "-v", `${workspaceDir}:/workspace`,
+    "-w", "/workspace",
+    "-e", `OPENAI_API_KEY=${openaiApiKey}`,
+    ...(openaiBaseUrl ? ["-e", `OPENAI_BASE_URL=${openaiBaseUrl}`] : []),
+    "node:22-slim",
+    "sh", "-c",
+    `npm install -g t3@latest --prefer-offline 2>/dev/null || npm install -g t3@latest; ` +
+    `t3 --host 0.0.0.0 --port ${T3CODE_PORT} --auth-token ${authToken} --no-browser --auto-bootstrap-project-from-cwd=false`,
+  ];
+
+  const code = yield* runCommand("docker", args);
+  if (code !== 0) throw new Error(`docker run exited ${code}`);
+
+  // Persist the internal Docker URL so materialize backend-env picks it up.
+  await writeEveSecrets({
+    builder: {
+      t3code: {
+        ...(secrets?.builder?.t3code ?? {}),
+        url: `ws://eve-builder-t3code:${T3CODE_PORT}`,
+        apiKey: authToken,
+        openaiApiKey,
+      },
+    },
+  });
+
+  // Inject T3CODE_URL + T3CODE_API_KEY into backend .env.
+  const [envResult] = await materializeTargets(null, ["backend-env"]);
+  if (envResult?.changed) {
+    yield { type: "log", line: "Backend .env updated with T3CODE_URL and T3CODE_API_KEY" };
+  }
+
+  await new Promise((r) => setTimeout(r, 5_000));
+  const running = await isContainerInState(T3CODE_CONTAINER, "running");
+  if (!running) {
+    yield {
+      type: "log",
+      line: `warning: ${T3CODE_CONTAINER} exited — run \`docker logs ${T3CODE_CONTAINER}\` for details`,
+    };
+  } else {
+    yield { type: "log", line: `T3 Code server running on ws://eve-builder-t3code:${T3CODE_PORT}` };
+  }
+}
+
 async function* wireHermesIntoOpenwebui(): AsyncGenerator<LifecycleEvent> {
   const owEnv = "/opt/openwebui/.env";
   if (!existsSync(owEnv)) {
@@ -2078,6 +2168,11 @@ async function* runInstallRecipe(
 
     case "hermes": {
       yield* installHermes();
+      return;
+    }
+
+    case "t3code": {
+      yield* installT3Code();
       return;
     }
 

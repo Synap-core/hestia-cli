@@ -748,6 +748,65 @@ volumes:
           for (const line of result.logs) console.log('  ' + line);
         },
       };
+    case 't3code':
+      // T3 Code: prompt for AI provider + key, then lifecycle deploys the
+      // container (node:22-slim + npx t3) and wires backend .env.
+      return {
+        label: 'Installing T3 Code server…',
+        async fn() {
+          const { select: clackSelect, input, password } = await import('@clack/prompts');
+          const secrets = await readEveSecrets(process.cwd()).catch(() => null);
+          const existing = secrets?.builder?.t3code ?? {};
+
+          // Provider selection — default to whatever is already configured.
+          const currentBaseUrl = existing.openaiBaseUrl ?? '';
+          const currentProvider = currentBaseUrl.includes('openrouter') ? 'openrouter'
+            : currentBaseUrl ? 'custom'
+            : 'openai';
+
+          const provider = await clackSelect({
+            message: 'AI provider for Codex (T3 Code uses the OpenAI-compatible API)',
+            options: [
+              { value: 'openai',     label: 'OpenAI',      hint: 'api.openai.com — official' },
+              { value: 'openrouter', label: 'OpenRouter',  hint: 'openrouter.ai — 200+ models, unified key' },
+              { value: 'custom',     label: 'Custom',      hint: 'Any OpenAI-compatible base URL' },
+            ],
+            initialValue: currentProvider,
+          });
+          if (typeof provider !== 'string') throw new Error('Cancelled');
+
+          let openaiBaseUrl = '';
+          if (provider === 'openrouter') {
+            openaiBaseUrl = 'https://openrouter.ai/api/v1';
+          } else if (provider === 'custom') {
+            const url = await input({
+              message: 'Base URL (e.g. https://my-proxy.example.com/v1)',
+              initialValue: currentBaseUrl,
+              validate: (v) => v.trim() ? undefined : 'URL is required',
+            });
+            if (typeof url !== 'string') throw new Error('Cancelled');
+            openaiBaseUrl = url.trim();
+          }
+
+          const existingKey = existing.openaiApiKey ?? process.env.OPENAI_API_KEY ?? '';
+          let openaiApiKey = existingKey;
+          if (!openaiApiKey) {
+            const keyLabel = provider === 'openrouter' ? 'OpenRouter API key' : 'API key';
+            const val = await password({ message: keyLabel });
+            if (typeof val !== 'string' || !val.trim()) throw new Error('API key is required');
+            openaiApiKey = val.trim();
+          }
+
+          await writeEveSecrets({
+            builder: { t3code: { ...existing, openaiApiKey, openaiBaseUrl: openaiBaseUrl || undefined } },
+          });
+
+          const { runActionToCompletion } = await import('@eve/lifecycle');
+          const result = await runActionToCompletion('t3code', 'install');
+          if (!result.ok) throw new Error(result.error ?? 'T3 Code install failed');
+          for (const line of result.logs) console.log('  ' + line);
+        },
+      };
     default:
       throw new Error(`No add handler for component: ${componentId}`);
   }
@@ -770,6 +829,7 @@ async function updateStateAfterAdd(componentId: string, finalState: 'ready' | 'e
     dokploy: 'builder',
     opencode: 'builder',
     openclaude: 'builder',
+    t3code: 'builder',
     'eve-dashboard': 'legs',
   };
 
@@ -812,6 +872,11 @@ const BUILDER_OPTIONS = [
     id: 'dokploy',
     label: 'Dokploy',
     hint: 'Visual PaaS for deploying apps (like a self-hosted Railway)',
+  },
+  {
+    id: 't3code',
+    label: 'T3 Code',
+    hint: 'External code execution backend — store connection details for DevPlane pipeline',
   },
 ] as const;
 
@@ -867,7 +932,7 @@ export function addCommand(program: Command): void {
         const groups: Array<{ heading: string; ids: string[] }> = [
           { heading: 'AI agents',      ids: ['hermes', 'openclaw'] },
           { heading: 'Data & inference', ids: ['synap', 'ollama', 'openwebui', 'openwebui-pipelines', 'rsshub'] },
-          { heading: 'Builders',        ids: ['opencode', 'openclaude', 'dokploy'] },
+          { heading: 'Builders',        ids: ['opencode', 'openclaude', 'dokploy', 't3code'] },
           { heading: 'Infrastructure',  ids: ['traefik', 'eve-dashboard'] },
         ];
 

@@ -335,6 +335,19 @@ Requires an Anthropic API key. After install, run \`claude\` to start a session 
     doctor: { critical: false },
   },
   {
+    id: 't3code',
+    label: 'T3 Code',
+    emoji: '⚡',
+    description: 'Self-hosted code execution backend (WebSocket). Connects the DevPlane pipeline to a T3 Code server for executing, verifying, and debugging phases.',
+    longDescription: `T3 Code is a self-hosted WebSocket server that wraps OpenAI Codex. The DevPlane agent pipeline delegates code execution phases (executing / verifying / debugging) to it via the Eve CodexFeaturePoller daemon.
+
+Unlike other builders, T3 Code is not installed by Eve — it runs separately on your infrastructure. This command stores the connection details (URL + API key) so Eve can wire them into the backend and CodexFeaturePoller automatically.`,
+    homepage: 'https://github.com/openai/codex',
+    category: 'add-on',
+    lifecycle: { restartStrategy: 'none' },
+    doctor: { critical: false },
+  },
+  {
     id: 'openwebui',
     label: 'Open WebUI',
     emoji: '💬',
