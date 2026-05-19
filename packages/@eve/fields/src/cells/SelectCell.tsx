@@ -61,7 +61,8 @@ function StatusChip({ option }: { option: FieldOption }) {
 /**
  * Single-select cell. Status variant renders a colored chip; plain select
  * renders the option label as text. Both use HeroUI's Select under the hood
- * for accessibility, keyboard nav, and animation.
+ * for accessibility, keyboard nav, and animation, with classNames slotted
+ * so the trigger sheds its default form-control chrome.
  */
 export function SelectCell({
   value,
@@ -146,7 +147,7 @@ export function SelectCell({
           "block w-full bg-transparent outline-none transition-colors",
           typography,
           minHeight,
-          "text-foreground placeholder:text-foreground/30 caret-primary",
+          "text-foreground placeholder:text-default-400 caret-primary",
           align === "right" ? "text-right" : "text-left",
         ].join(" ")}
       />
@@ -186,7 +187,6 @@ export function SelectCell({
       disallowEmptySelection={false}
       renderValue={() => {
         if (isCustomValue && value) {
-          // Custom value displayed as plain text or a neutral chip
           if (appearance === "status") {
             return (
               <StatusChip option={{ value, label: value, color: "neutral" }} />
@@ -201,7 +201,7 @@ export function SelectCell({
             <span className="truncate">{selectedOption.label}</span>
           );
         }
-        return <span className="italic text-foreground/35">{placeholder}</span>;
+        return <span className="italic text-default-400">{placeholder}</span>;
       }}
       classNames={{
         base: "w-full",
@@ -214,10 +214,9 @@ export function SelectCell({
         ].join(" "),
         innerWrapper: [typography, "py-0"].join(" "),
         value: getValueColor(Boolean(selectedOption || isCustomValue)),
-        selectorIcon: "text-foreground/30 right-0",
+        selectorIcon: "text-default-400 right-0",
         popoverContent: [
-          "bg-background/95 backdrop-blur-xl border border-divider rounded-xl",
-          "shadow-lg p-0 min-w-[200px]",
+          "bg-content1 border border-divider rounded-xl p-0 min-w-[200px]",
         ].join(" "),
         listbox: "p-1",
       }}
@@ -230,9 +229,9 @@ export function SelectCell({
               appearance === "status" ? <StatusDot color={opt.color} /> : null
             }
             classNames={{
-              base: "rounded-lg data-[hover=true]:bg-content1",
-              title: "text-[13px] text-foreground/85",
-              description: "text-[11px] text-foreground/45",
+              base: "rounded-lg data-[hover=true]:bg-default-100",
+              title: "text-[13px] text-foreground",
+              description: "text-[11px] text-default-500",
             }}
             description={opt.description}
           >
@@ -244,8 +243,8 @@ export function SelectCell({
               <SelectItem
                 key={CUSTOM_KEY}
                 classNames={{
-                  base: "rounded-lg data-[hover=true]:bg-content1 border-t border-divider/60 mt-1 pt-1 rounded-t-none",
-                  title: "text-[12px] italic text-foreground/45",
+                  base: "rounded-lg data-[hover=true]:bg-default-100 border-t border-divider mt-1 pt-1 rounded-t-none",
+                  title: "text-[12px] italic text-default-500",
                 }}
               >
                 Other…

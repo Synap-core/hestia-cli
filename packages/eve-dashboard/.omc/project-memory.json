@@ -47,7 +47,7 @@
     "runtime": null
   },
   "build": {
-    "buildCommand": "cd /Users/antoine/Documents/Code/synap/hestia-cli/packages/eve-dashboard && npx tsc --noEmit 2>&1 | head -50",
+    "buildCommand": "npx tsc --noEmit 2>&1 | grep -E \"data/\" | head -20 && echo \"---all errors count---\" && cd /Users/antoine/Documents/Code/synap/hestia-cli/packages/eve-dashboard && npx tsc --noEmit 2>&1 | wc -l",
     "testCommand": "npm test",
     "lintCommand": null,
     "devCommand": "npm run dev",
@@ -201,6 +201,12 @@
       "type": "file"
     },
     {
+      "path": "app/(os)/inbox/components/notifications-panel.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1779161941846,
+      "type": "file"
+    },
+    {
       "path": "app/api/ai/is-models/route.ts",
       "accessCount": 1,
       "lastAccessed": 1778694777930,
@@ -246,6 +252,72 @@
       "path": "lib/synap-auth.ts",
       "accessCount": 1,
       "lastAccessed": 1778813016194,
+      "type": "file"
+    },
+    {
+      "path": "app/globals.css",
+      "accessCount": 1,
+      "lastAccessed": 1779161887780,
+      "type": "file"
+    },
+    {
+      "path": "tailwind.config.js",
+      "accessCount": 1,
+      "lastAccessed": 1779161888071,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/inbox/page.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1779161891783,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/inbox/components/proposals-panel.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1779161892685,
+      "type": "file"
+    },
+    {
+      "path": "app/api/hub/_lib.ts",
+      "accessCount": 1,
+      "lastAccessed": 1779161900312,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/agents/components/agent-graph.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1779161900481,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/agents/components/graph/agent-node.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1779161908331,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/inbox/components/pod-not-paired-card.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1779161923728,
+      "type": "file"
+    },
+    {
+      "path": "app/api/pod/[...path]/route.ts",
+      "accessCount": 1,
+      "lastAccessed": 1779161936285,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/settings/page.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1779161936605,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/lib/brand-colors.ts",
+      "accessCount": 1,
+      "lastAccessed": 1779161950158,
       "type": "file"
     }
   ],

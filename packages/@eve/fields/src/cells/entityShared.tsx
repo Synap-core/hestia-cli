@@ -35,7 +35,7 @@ export function EntityAvatar({
     <span
       className={[
         AVATAR_SIZE[size],
-        "rounded-full bg-foreground/10 text-foreground/55 font-medium",
+        "rounded-full bg-default-200 text-default-600 font-medium",
         "inline-flex items-center justify-center shrink-0",
       ].join(" ")}
     >

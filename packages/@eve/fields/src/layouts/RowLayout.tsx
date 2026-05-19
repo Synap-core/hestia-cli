@@ -37,15 +37,15 @@ export function RowLayout({
       className={[
         "group/field flex items-center justify-between gap-4 rounded-lg -mx-2 px-2 transition-colors",
         SIZE_PADDING[size],
-        interactive ? "hover:bg-content1/70" : "",
+        interactive ? "hover:bg-default-100" : "",
       ].join(" ")}
     >
-      <div className="flex items-center gap-2 text-xs text-foreground/55 shrink-0">
+      <div className="flex items-center gap-2 text-xs text-default-500 shrink-0">
         {Icon ? (
           <Icon
             size={LABEL_ICON_SIZE}
             className={
-              iconState === "filled" ? "text-foreground/45" : "text-foreground/30"
+              iconState === "filled" ? "text-default-500" : "text-default-400"
             }
           />
         ) : null}

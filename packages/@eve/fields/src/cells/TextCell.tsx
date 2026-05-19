@@ -127,9 +127,7 @@ export function TextCell({
         placeholder={placeholder}
         className={[
           sharedClasses,
-          "text-foreground placeholder:text-foreground/30",
-          // subtle highlight while editing — only the bottom border (caret hint)
-          "caret-primary",
+          "text-foreground placeholder:text-default-400 caret-primary",
         ].join(" ")}
       />
     );

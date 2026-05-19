@@ -100,15 +100,13 @@ export function MultiSelectCell({
   const selected = value ?? [];
   const selectedKeys = useMemo(() => new Set(selected), [selected]);
 
-  // Resolve each selected value into a FieldOption (falling back to a neutral
-  // option for free-form values not present in the options list)
   const selectedOptions: FieldOption[] = useMemo(() => {
     return selected.map((v) => {
       const opt = options.find((o) => o.value === v);
       if (opt) return opt;
-      return { value: v, label: v, color: appearance === "tags" ? "neutral" : "neutral" };
+      return { value: v, label: v, color: "neutral" };
     });
-  }, [selected, options, appearance]);
+  }, [selected, options]);
 
   const filteredOptions = useMemo(() => {
     if (!query.trim()) return options;
@@ -159,6 +157,9 @@ export function MultiSelectCell({
     setQuery("");
   }
 
+  // appearance variable retained for future styling differentiation
+  void appearance;
+
   const minHeight = getValueMinHeight(size);
 
   const triggerContent = (
@@ -169,7 +170,7 @@ export function MultiSelectCell({
       ].join(" ")}
     >
       {selectedOptions.length === 0 ? (
-        <span className="text-sm italic text-foreground/35">{placeholder}</span>
+        <span className="text-sm italic text-default-400">{placeholder}</span>
       ) : (
         selectedOptions.map((opt) => (
           <ValueChip
@@ -183,8 +184,8 @@ export function MultiSelectCell({
       {!readOnly ? (
         <span
           className={[
-            "inline-flex items-center gap-0.5 rounded-full border border-divider/60",
-            "text-foreground/40 hover:text-foreground/70 hover:border-foreground/30 transition-colors",
+            "inline-flex items-center gap-0.5 rounded-full border border-divider",
+            "text-default-400 hover:text-foreground hover:border-default-400 transition-colors",
             CHIP_SIZES[size],
           ].join(" ")}
         >
@@ -199,6 +200,9 @@ export function MultiSelectCell({
     return triggerContent;
   }
 
+  // variant retained for API parity with other cells
+  void variant;
+
   return (
     <Popover
       isOpen={open}
@@ -206,7 +210,7 @@ export function MultiSelectCell({
       placement="bottom-start"
       offset={6}
       classNames={{
-        content: "bg-background/95 backdrop-blur-xl border border-divider rounded-xl shadow-lg p-0 min-w-[220px]",
+        content: "bg-content1 border border-divider rounded-xl p-0 min-w-[220px]",
       }}
     >
       <PopoverTrigger>
@@ -217,7 +221,7 @@ export function MultiSelectCell({
       <PopoverContent>
         <div className="flex flex-col">
           {(options.length > 0 || allowCustom) && (
-            <div className="border-b border-divider/60 p-1.5">
+            <div className="border-b border-divider p-1.5">
               <Input
                 ref={inputRef}
                 value={query}
@@ -228,15 +232,13 @@ export function MultiSelectCell({
                     addCustom();
                   }
                 }}
-                placeholder={
-                  allowCustom ? "Search or add…" : "Search…"
-                }
+                placeholder={allowCustom ? "Search or add…" : "Search…"}
                 variant="flat"
                 size="sm"
-                startContent={<Search size={12} className="text-foreground/40" />}
+                startContent={<Search size={12} className="text-default-400" />}
                 classNames={{
-                  inputWrapper: "bg-content1/50 shadow-none h-8 min-h-0",
-                  input: "text-[13px] placeholder:text-foreground/35",
+                  inputWrapper: "bg-default-100 shadow-none h-8 min-h-0",
+                  input: "text-[13px] placeholder:text-default-400",
                 }}
               />
             </div>
@@ -256,7 +258,7 @@ export function MultiSelectCell({
                     <ListboxItem
                       key={opt.value}
                       startContent={
-                        appearance === "select" ? (
+                        opt.color ? (
                           <span
                             className={`inline-block w-1.5 h-1.5 rounded-full ${classes.dot}`}
                           />
@@ -264,9 +266,9 @@ export function MultiSelectCell({
                       }
                       description={opt.description}
                       classNames={{
-                        base: "rounded-lg data-[hover=true]:bg-content1",
-                        title: "text-[13px] text-foreground/85",
-                        description: "text-[11px] text-foreground/45",
+                        base: "rounded-lg data-[hover=true]:bg-default-100",
+                        title: "text-[13px] text-foreground",
+                        description: "text-[11px] text-default-500",
                       }}
                     >
                       {opt.label}
@@ -275,7 +277,7 @@ export function MultiSelectCell({
                 })}
               </Listbox>
             ) : (
-              <div className="px-3 py-2 text-[12px] text-foreground/40 italic">
+              <div className="px-3 py-2 text-[12px] text-default-400 italic">
                 {query.trim()
                   ? allowCustom
                     ? `Press Enter to add "${query.trim()}"`
@@ -289,12 +291,12 @@ export function MultiSelectCell({
                 onClick={addCustom}
                 className={[
                   "w-full flex items-center gap-2 px-2 py-1.5 mt-0.5 rounded-lg",
-                  "text-[12px] text-foreground/70 hover:bg-content1 transition-colors text-left",
-                  "border-t border-divider/40",
+                  "text-[12px] text-default-500 hover:bg-default-100 transition-colors text-left",
+                  "border-t border-divider",
                 ].join(" ")}
               >
-                <Plus size={11} className="text-foreground/40" />
-                Add <span className="font-medium text-foreground/90">"{query.trim()}"</span>
+                <Plus size={11} className="text-default-400" />
+                Add <span className="font-medium text-foreground">"{query.trim()}"</span>
               </button>
             ) : null}
           </div>

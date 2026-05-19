@@ -23,8 +23,9 @@ const SIZE_PADDING: Record<HeroFieldSize, string> = {
 const LABEL_ICON_SIZE = 11;
 
 /**
- * Card layout — stacked, label-on-top. Matches the engagement-grid look.
- * The card itself is the hover surface; the cell child fills the value row.
+ * Card layout — stacked, label-on-top. The engagement-grid look. Surfaces
+ * are pure HeroUI tokens (bg-default-50, border-divider) so the card picks
+ * up whatever brand the host app's theme defines.
  */
 export function CardLayout({
   label,
@@ -38,18 +39,17 @@ export function CardLayout({
   return (
     <div
       className={[
-        "group/field flex flex-col gap-1.5 rounded-xl border bg-content1/30",
-        "border-divider/60 transition-colors",
+        "group/field flex flex-col gap-1.5 rounded-xl border bg-default-50 border-divider transition-colors",
         SIZE_PADDING[size],
-        interactive ? "hover:border-foreground/20 hover:bg-content1/50" : "",
+        interactive ? "hover:bg-default-100" : "",
       ].join(" ")}
     >
-      <div className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-foreground/40">
+      <div className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-default-500">
         {Icon ? (
           <Icon
             size={LABEL_ICON_SIZE}
             className={
-              iconState === "filled" ? "text-foreground/55" : "text-foreground/30"
+              iconState === "filled" ? "text-default-500" : "text-default-400"
             }
           />
         ) : null}
@@ -57,7 +57,7 @@ export function CardLayout({
       </div>
       <div className="min-h-[1.5rem]">{children}</div>
       {helper ? (
-        <div className="text-[11px] text-foreground/40 mt-0.5">{helper}</div>
+        <div className="text-[11px] text-default-400 mt-0.5">{helper}</div>
       ) : null}
     </div>
   );

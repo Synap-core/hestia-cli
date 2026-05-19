@@ -20,8 +20,12 @@ export function getValueTypography(
   return size === "lg" ? "text-[15px]" : size === "sm" ? "text-[12px]" : "text-sm";
 }
 
+/**
+ * Read-state text color. HeroUI's `foreground` token is the primary text
+ * color (auto-themed); `default-400` is the placeholder/empty tier.
+ */
 export function getValueColor(hasValue: boolean): string {
-  return hasValue ? "text-foreground/85" : "text-foreground/35 italic";
+  return hasValue ? "text-foreground" : "text-default-400 italic";
 }
 
 /** Min-height keeps the value row from collapsing when empty. */

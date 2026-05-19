@@ -157,7 +157,7 @@ export function NumberCell({
         placeholder={placeholder}
         className={[
           sharedClasses,
-          "text-foreground placeholder:text-foreground/30 caret-primary",
+          "text-foreground placeholder:text-default-400 caret-primary",
         ].join(" ")}
       />
     );

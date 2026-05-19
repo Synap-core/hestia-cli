@@ -24,12 +24,12 @@ const SWITCH_SIZE: Record<HeroFieldSize, "sm" | "md" | "lg"> = {
 /**
  * Boolean cell — always rendered as an interactive widget (no read/write
  * swap). Switch is the default; pass `appearance="checkbox"` for compact
- * yes/no fields.
+ * yes/no fields. HeroUI Switch picks up the app's primary color natively.
  */
 export function BooleanCell({
   value,
   onChange,
-  appearance = "switch",
+  appearance: _appearance = "switch",
   trueLabel,
   falseLabel,
   size = "md",
@@ -46,16 +46,13 @@ export function BooleanCell({
         isSelected={checked}
         isDisabled={readOnly}
         onValueChange={(next) => onChange?.(next)}
-        classNames={{
-          wrapper: "group-data-[selected=true]:bg-primary",
-        }}
         aria-label={label ?? (checked ? "On" : "Off")}
       />
       {label ? (
         <span
           className={[
             "text-[13px]",
-            checked ? "text-foreground/80" : "text-foreground/45",
+            checked ? "text-foreground" : "text-default-500",
           ].join(" ")}
         >
           {label}

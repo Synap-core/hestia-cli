@@ -35,13 +35,11 @@ export function RichTextCell({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    // Re-sync from external changes when the textarea isn't focused
     if (textareaRef.current && document.activeElement !== textareaRef.current) {
       setDraft(value ?? "");
     }
   }, [value]);
 
-  // Auto-grow
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
@@ -90,7 +88,7 @@ export function RichTextCell({
         "block w-full bg-transparent outline-none resize-none",
         "whitespace-pre-wrap break-words leading-relaxed",
         typography,
-        "text-foreground/85 placeholder:text-foreground/30 caret-primary",
+        "text-foreground placeholder:text-default-400 caret-primary",
         "transition-colors",
       ].join(" ")}
       style={{ maxHeight }}

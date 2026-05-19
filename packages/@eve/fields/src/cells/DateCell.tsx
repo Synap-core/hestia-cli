@@ -76,9 +76,10 @@ function formatDate(
 }
 
 /**
- * Date cell — Popover-anchored HeroUI Calendar. The trigger button is styled
- * to look identical to the display text, so opening the calendar feels like
- * a natural extension of the value, not a separate form widget.
+ * Date cell — Popover-anchored HeroUI Calendar. Trigger is styled identical
+ * to the display text so opening the calendar feels like a natural extension
+ * of the value, not a separate form widget. Surfaces use HeroUI tokens so
+ * the field auto-themes with whatever app consumes it.
  */
 export function DateCell({
   value,
@@ -129,7 +130,7 @@ export function DateCell({
       placement="bottom-start"
       offset={6}
       classNames={{
-        content: "bg-background border border-divider shadow-lg rounded-xl p-0",
+        content: "bg-content1 border border-divider rounded-xl p-0",
       }}
     >
       <PopoverTrigger>
@@ -165,7 +166,7 @@ export function DateCell({
                   onChange?.(undefined);
                   setOpen(false);
                 }}
-                className="text-foreground/60 hover:text-foreground"
+                className="text-default-500 hover:text-foreground"
               >
                 Clear
               </Button>

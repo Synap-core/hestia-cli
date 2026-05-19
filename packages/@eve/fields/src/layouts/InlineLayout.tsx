@@ -5,7 +5,7 @@ import type { FieldIcon, HeroFieldSize } from "../types";
 
 interface Props {
   icon?: FieldIcon;
-  /** Drives icon brightness — "filled" when the field has a value. */
+  /** Drives icon tier — "filled" when the field has a value. */
   iconState?: "filled" | "empty";
   /** The interactive value cell (display + popover/input). */
   children: ReactNode;
@@ -32,8 +32,8 @@ const SIZE_ICON: Record<HeroFieldSize, number> = {
 
 /**
  * Inline layout — sidebar row. Icon + value in a single horizontal line.
- * The layout itself never carries onClick: the cell child is responsible for
- * its own trigger so popovers/inputs always have a stable anchor.
+ * Surfaces use HeroUI semantic tokens (default-X / divider / foreground) so
+ * the field auto-themes with whatever app consumes it.
  */
 export function InlineLayout({
   icon: Icon,
@@ -50,9 +50,7 @@ export function InlineLayout({
       className={[
         "group/field flex items-center gap-2.5 rounded-lg -mx-2 transition-colors",
         SIZE_PADDING[size],
-        interactive
-          ? "hover:bg-content1/70"
-          : "",
+        interactive ? "hover:bg-default-100" : "",
       ].join(" ")}
     >
       {Icon ? (
@@ -60,7 +58,7 @@ export function InlineLayout({
           size={SIZE_ICON[size]}
           className={[
             "shrink-0 transition-colors",
-            iconState === "filled" ? "text-foreground/45" : "text-foreground/25",
+            iconState === "filled" ? "text-default-500" : "text-default-400",
           ].join(" ")}
         />
       ) : null}
