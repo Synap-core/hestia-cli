@@ -532,11 +532,10 @@ export function writeHermesConfigYamlSync(secrets: EveSecrets | null): string {
     modelApiKey = readAgentKeyOrLegacySync('hermes', secrets);
   }
 
-  // Compute the Synap MCP URL (Docker-network URL for Hermes container).
-  const rawSynapUrl = resolveSynapUrl(secrets);
-  const mcpUrl = rawSynapUrl
-    ? `${rawSynapUrl.replace(/\/$/, '').replace(/localhost|127\.0\.0\.1/, 'eve-brain-synap')}/mcp`
-    : 'http://eve-brain-synap:4000/mcp';
+  // Hermes always runs inside Docker on eve-network — use the internal alias
+  // regardless of what the external pod URL is. External URLs go through Caddy
+  // (HTTP→HTTPS redirect) which breaks Hermes's MCP client.
+  const mcpUrl = 'http://eve-brain-synap:4000/mcp';
 
   const hermesDir = join(homedir(), '.eve', 'hermes');
   mkdirSync(hermesDir, { recursive: true });
