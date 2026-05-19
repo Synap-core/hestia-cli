@@ -85,12 +85,33 @@ export async function materializeTargets(
           const hermesTriggerKeyResult = hermesApiKey
             ? writeEnvVar(deployDir, 'HERMES_TRIGGER_KEY', hermesApiKey)
             : { changed: false, previous: null };
+          // T3 Code executor — used by the DevPlane pipeline for code phases.
+          const t3codeUrl = resolvedSecrets?.builder?.t3code?.url;
+          const t3codeApiKey = resolvedSecrets?.builder?.t3code?.apiKey;
+          const t3codeUrlResult = t3codeUrl
+            ? writeEnvVar(deployDir, 'T3CODE_URL', t3codeUrl)
+            : { changed: false, previous: null };
+          const t3codeKeyResult = t3codeApiKey
+            ? writeEnvVar(deployDir, 'T3CODE_API_KEY', t3codeApiKey)
+            : { changed: false, previous: null };
           result = {
             target,
             ok: true,
-            changed: domainResult.changed || publicUrlResult.changed || hermesTriggerUrlResult.changed || hermesTriggerKeyResult.changed,
+            changed:
+              domainResult.changed ||
+              publicUrlResult.changed ||
+              hermesTriggerUrlResult.changed ||
+              hermesTriggerKeyResult.changed ||
+              t3codeUrlResult.changed ||
+              t3codeKeyResult.changed,
             summary: 'Backend env synchronized',
-            details: { deployDir, domainChanged: domainResult.changed, publicUrlChanged: publicUrlResult.changed, hermesTriggerChanged: hermesTriggerUrlResult.changed },
+            details: {
+              deployDir,
+              domainChanged: domainResult.changed,
+              publicUrlChanged: publicUrlResult.changed,
+              hermesTriggerChanged: hermesTriggerUrlResult.changed,
+              t3codeChanged: t3codeUrlResult.changed,
+            },
           };
           break;
         }

@@ -9,6 +9,7 @@ import { deployCommand } from './commands/deploy.js';
 import { stackCommand } from './commands/stack.js';
 import { sandboxCommand } from './commands/sandbox.js';
 import { registerHermesCommands } from './commands/hermes.js';
+import { registerCodexCommands } from './commands/codex.js';
 
 // Re-export services
 export { OpenCodeService } from './lib/opencode.js';
@@ -36,6 +37,10 @@ export {
   type PipelinePersonality,
 } from './lib/pipeline-personalities.js';
 export { registerHermesCommands } from './commands/hermes.js';
+export { registerCodexCommands } from './commands/codex.js';
+export { T3CodeClient, type T3CodeClientConfig, type T3CodeTurnResult } from './lib/t3code-client.js';
+export { CodexPipeline, type CodexPipelineConfig, type CodePhase } from './lib/codex-pipeline.js';
+export { CodexFeaturePoller, type CodexPollerConfig } from './lib/codex-feature-poller.js';
 
 // Background-intent SDK — Hub Protocol REST wrapper used by the CLI's
 // `eve intent ...` commands and re-used by the Hermes daemon's
@@ -135,6 +140,7 @@ export function registerBuilderCommands(builder: Command): void {
   stackCommand(builder);
   sandboxCommand(builder);
   registerHermesCommands(builder);
+  registerCodexCommands(builder);
 
   builder
     .command('generate')

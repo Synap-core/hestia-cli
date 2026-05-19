@@ -79,10 +79,16 @@ importers:
       commander:
         specifier: ^11.0.0
         version: 11.1.0
+      ws:
+        specifier: ^8.18.0
+        version: 8.20.0
     devDependencies:
       '@types/node':
         specifier: ^20.0.0
         version: 20.19.39
+      '@types/ws':
+        specifier: ^8.5.0
+        version: 8.18.1
       tsup:
         specifier: ^8.0.0
         version: 8.5.1(jiti@1.21.7)(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)

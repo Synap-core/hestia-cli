@@ -228,6 +228,20 @@ const SecretsSchema = z.object({
           lastConfigReconciledAt: z.string().optional(),
         })
         .optional(),
+      /**
+       * T3 Code — self-hosted WebSocket server wrapping the Codex binary.
+       * Handles code execution phases (executing / verifying / debugging)
+       * in the DevPlane agentic pipeline.
+       * Wire path: `materialize backend-env` injects T3CODE_URL + T3CODE_API_KEY.
+       */
+      t3code: z
+        .object({
+          /** WebSocket URL, e.g. ws://localhost:5004 */
+          url: z.string().optional(),
+          /** Bearer token for the T3 Code server */
+          apiKey: z.string().optional(),
+        })
+        .optional(),
     })
     .optional(),
   /**
