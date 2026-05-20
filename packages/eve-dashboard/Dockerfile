@@ -36,10 +36,11 @@ COPY packages/@eve/legs ./packages/@eve/legs
 COPY packages/@eve/lifecycle ./packages/@eve/lifecycle
 COPY packages/@eve/brain ./packages/@eve/brain
 COPY packages/@eve/eyes ./packages/@eve/eyes
-# @eve/fields is source-direct (no build step) — Next.js transpiles it via
-# `transpilePackages` in next.config.ts, so we just need the src/ available
-# during the dashboard build.
+# @eve/fields and @eve/profile-renderer are source-direct (no build step) —
+# Next.js transpiles them via `transpilePackages` in next.config.ts, so we
+# just need their src/ trees available during the dashboard build.
 COPY packages/@eve/fields ./packages/@eve/fields
+COPY packages/@eve/profile-renderer ./packages/@eve/profile-renderer
 COPY packages/eve-dashboard ./packages/eve-dashboard
 
 # Install all deps in one pass — pnpm cache persists across rebuilds via BuildKit mount
