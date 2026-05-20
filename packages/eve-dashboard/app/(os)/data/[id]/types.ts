@@ -13,6 +13,9 @@
 
 import type { ComponentType, ReactNode } from "react";
 
+import type { Connection } from "./renderers/entity-detail/relations-panel";
+import type { EffectivePropertyDef } from "./renderers/entity-detail/field-builder";
+
 export interface Entity {
   id: string;
   title?: string | null;
@@ -31,12 +34,23 @@ export type EntityPatchFn = (input: Record<string, unknown>) => Promise<void>;
 /**
  * Props every Eve detail renderer receives.
  *
- * - `entity` — the pod entity to render
+ * - `entity` — the pod entity to render.
  * - `config` — the `RendererRef.props` payload from the resolver
- *   (renderer-specific knobs; ignore if not relevant)
- * - `workspaceId` — the entity's workspace (or null for cross-pod entities)
- * - `patch` — optimistic update helper, already wired with rollback
- * - `onBack` — navigation back to the list slot
+ *   (renderer-specific knobs; ignore if not relevant).
+ * - `workspaceId` — the entity's workspace (or `null` for cross-pod entities).
+ * - `patch` — optimistic update helper, already wired with rollback.
+ * - `onBack` — navigation back to the list slot.
+ * - `effectiveProperties` — property defs from `profiles.get` for the
+ *   entity's profile. Drives schema-aware field widgets in renderers that
+ *   support it. Undefined when the call wasn't made (cross-pod) or is
+ *   in-flight; renderers should fall back to `classifyValue()` heuristics.
+ * - `connections` — output of `relations.getConnections` for the entity.
+ *   Already a unified list across graph relations, property links, and
+ *   thread mentions.
+ * - `connectionsLoading` — true while connections are in flight (so
+ *   renderers can show a skeleton in the relations panel).
+ * - `onOpenEntity` — navigate to another entity's detail page. Used by
+ *   the relations panel.
  */
 export interface EveDetailRendererProps {
   entity: Entity;
@@ -44,6 +58,10 @@ export interface EveDetailRendererProps {
   workspaceId: string | null;
   patch: EntityPatchFn;
   onBack: () => void;
+  effectiveProperties?: EffectivePropertyDef[];
+  connections?: Connection[];
+  connectionsLoading?: boolean;
+  onOpenEntity?: (entityId: string) => void;
 }
 
 export type EveDetailRenderer = ComponentType<EveDetailRendererProps>;

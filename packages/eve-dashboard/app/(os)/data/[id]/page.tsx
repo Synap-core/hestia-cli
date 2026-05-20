@@ -3,20 +3,26 @@
 /**
  * Eve OS — Data detail (`/data/[id]`).
  *
- * Page-level orchestration only. Fetches the entity, then mounts
- * `<EntityRenderer>` from `@eve/profile-renderer`. The resolver
- * (`podRendererResolver`) calls the pod's `profiles.getEffectiveRenderers`
- * tRPC procedure (workspace overlay → profile default → hardcoded fallback)
- * and returns a `RendererRef`. The `renderTarget` callback dispatches by
- * `kind` and (for cells) by `cellKey` to a registered Eve renderer.
+ * Page-level orchestration only. Three independent fetches:
  *
- * Adding a new renderer = add a `cellKey → ComponentType<EveDetailRendererProps>`
- * entry to `EVE_DETAIL_RENDERERS` and create the component. No backend
- * changes; the resolver already returns whatever ref the workspace owner
- * (or, eventually, the AI) put on the profile.
+ *   1. **entity**           — `entities.get` (podProcedure, cross-pod safe)
+ *   2. **profile schema**   — `profiles.get` (workspaceProcedure — only
+ *                              when the entity has a `workspaceId`).
+ *                              Gives us `effectiveProperties` so the
+ *                              renderer can build schema-driven widgets
+ *                              (status → colored Select, dates → Calendar,
+ *                              entity_id → chip, etc.).
+ *   3. **connections**      — `relations.getConnections` (protectedProcedure
+ *                              — works without workspace). Unified across
+ *                              graph relations, structural property links,
+ *                              and channel mentions.
  *
- * File-path renderers (`iframe-srcdoc` / `external-app`) are Phase 3 —
- * for now they show the `UnsupportedRenderer` placeholder.
+ * Once the entity is loaded, schema and connections fetch in parallel and
+ * pass straight through to the registered renderer. The page itself does
+ * no rendering of entity content — that's the renderer's job.
+ *
+ * The resolver picks which renderer mounts (via the Renderer Picker the
+ * user can swap workspace overrides).
  *
  * Spec: synap-team-docs/content/team/platform/profile-renderer.mdx
  */
@@ -37,14 +43,11 @@ import { RendererPicker } from "../components/renderer-picker";
 import { EVE_RENDERER_CATALOG } from "../eve-renderer-catalog";
 import { EntityDetailRenderer } from "./renderers/entity-detail";
 import { UnsupportedRenderer } from "./renderers/unsupported";
+import type { Connection } from "./renderers/entity-detail/relations-panel";
+import type { EffectivePropertyDef } from "./renderers/entity-detail/field-builder";
 import type { Entity, EveDetailRenderer } from "./types";
 
 // ─── Eve's local renderer registry ────────────────────────────────────────────
-//
-// Maps backend `cellKey` → Eve-native React component. The two entries below
-// cover the system-fallback cell key from `ProfileResolutionService` plus the
-// canonical "form" alias. Adding a kanban-card / gallery-detail renderer is a
-// single entry here + a sibling file in `./renderers/`.
 
 const EVE_DETAIL_RENDERERS: Record<string, EveDetailRenderer> = {
   "entity-detail": EntityDetailRenderer,
@@ -58,19 +61,36 @@ type DetailState =
   | { kind: "error"; message: string }
   | { kind: "ready"; entity: Entity };
 
+interface SchemaState {
+  effectiveProperties?: EffectivePropertyDef[];
+  loading: boolean;
+}
+
+interface ConnectionsState {
+  connections: Connection[];
+  loading: boolean;
+}
+
 export default function DataDetailPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const id = params.id;
 
   const [state, setState] = useState<DetailState>({ kind: "loading" });
+  const [schema, setSchema] = useState<SchemaState>({ loading: false });
+  const [conns, setConns] = useState<ConnectionsState>({
+    connections: [],
+    loading: false,
+  });
   const [refreshToken, setRefreshToken] = useState(0);
 
-  // ─── Fetch entity ───────────────────────────────────────────────────────────
+  // ─── Fetch entity ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
     setState({ kind: "loading" });
+    setSchema({ loading: false });
+    setConns({ connections: [], loading: false });
     (async () => {
       try {
         const result = await podTrpcFetch<{ entity?: Entity }>(
@@ -107,6 +127,81 @@ export default function DataDetailPage() {
     };
   }, [id]);
 
+  // ─── Fetch profile schema (when entity is workspace-scoped) ────────────────
+  //
+  // `profiles.get` is a workspaceProcedure today, so we can only resolve
+  // schema when the entity carries a workspace id. Cross-pod entities skip
+  // this fetch and the renderer falls back to `classifyValue()` heuristics
+  // for property widgets.
+  useEffect(() => {
+    if (state.kind !== "ready") return;
+    const slug = state.entity.profileSlug ?? state.entity.type;
+    const ws = state.entity.workspaceId ?? null;
+    if (!slug || !ws) {
+      setSchema({ loading: false });
+      return;
+    }
+
+    let cancelled = false;
+    setSchema({ loading: true });
+    (async () => {
+      try {
+        const result = await podTrpcFetch<{
+          profile?: unknown;
+          effectiveProperties?: EffectivePropertyDef[];
+        }>(
+          "profiles.get",
+          { identifier: slug },
+          { workspaceId: ws, method: "GET" },
+        );
+        if (cancelled) return;
+        setSchema({
+          loading: false,
+          effectiveProperties: result.effectiveProperties ?? [],
+        });
+      } catch {
+        if (cancelled) return;
+        // Schema fetch is best-effort — the renderer degrades cleanly to
+        // `classifyValue()` when no defs are present.
+        setSchema({ loading: false });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [state]);
+
+  // ─── Fetch connections (always, after entity loads) ────────────────────────
+  //
+  // `relations.getConnections` is a protectedProcedure — no workspace
+  // required. Works for cross-pod entities too.
+  useEffect(() => {
+    if (state.kind !== "ready") return;
+
+    let cancelled = false;
+    setConns((prev) => ({ ...prev, loading: true }));
+    (async () => {
+      try {
+        const result = await podTrpcFetch<{ connections?: Connection[] }>(
+          "relations.getConnections",
+          { entityId: state.entity.id, limit: 50 },
+          { workspaceId: null, method: "GET" },
+        );
+        if (cancelled) return;
+        setConns({
+          connections: result.connections ?? [],
+          loading: false,
+        });
+      } catch {
+        if (cancelled) return;
+        setConns({ connections: [], loading: false });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [state]);
+
   // ─── Optimistic patch ───────────────────────────────────────────────────────
   const patch = useCallback(
     async (input: Record<string, unknown>) => {
@@ -126,7 +221,6 @@ export default function DataDetailPage() {
           { method: "POST", workspaceId: null },
         );
       } catch {
-        // Re-fetch authoritative copy on error.
         try {
           const refreshed = await podTrpcFetch<{ entity?: Entity }>(
             "entities.get",
@@ -145,6 +239,10 @@ export default function DataDetailPage() {
   );
 
   const onBack = useCallback(() => router.push("/data"), [router]);
+  const onOpenEntity = useCallback(
+    (entityId: string) => router.push(`/data/${entityId}`),
+    [router],
+  );
 
   // ─── Non-ready states ──────────────────────────────────────────────────────
   if (state.kind === "loading") {
@@ -216,8 +314,12 @@ export default function DataDetailPage() {
   return (
     <ResolvedDetail
       entity={state.entity}
+      effectiveProperties={schema.effectiveProperties}
+      connections={conns.connections}
+      connectionsLoading={conns.loading}
       patch={patch}
       onBack={onBack}
+      onOpenEntity={onOpenEntity}
       refreshToken={refreshToken}
       onRefresh={() => setRefreshToken((t) => t + 1)}
     />
@@ -228,14 +330,22 @@ export default function DataDetailPage() {
 
 function ResolvedDetail({
   entity,
+  effectiveProperties,
+  connections,
+  connectionsLoading,
   patch,
   onBack,
+  onOpenEntity,
   refreshToken,
   onRefresh,
 }: {
   entity: Entity;
+  effectiveProperties?: EffectivePropertyDef[];
+  connections: Connection[];
+  connectionsLoading: boolean;
   patch: (input: Record<string, unknown>) => Promise<void>;
   onBack: () => void;
+  onOpenEntity: (entityId: string) => void;
   refreshToken: number;
   onRefresh: () => void;
 }) {
@@ -245,14 +355,9 @@ function ResolvedDetail({
     undefined,
   );
 
-  // `renderTarget` is the only place that maps backend kinds → Eve UI.
-  // Closure over `entity`/`patch`/`onBack` keeps the registry components
-  // free of host plumbing.
   const renderTarget = useMemo(
     () => (target: RendererRef) => {
-      // Track what cellKey resolved so the picker can mark the active one.
       if (target.kind === "cell" && target.cellKey !== currentCellKey) {
-        // Schedule outside render to avoid setState-during-render warnings.
         queueMicrotask(() => setCurrentCellKey(target.cellKey));
       }
 
@@ -270,12 +375,14 @@ function ResolvedDetail({
             workspaceId={workspaceId}
             patch={patch}
             onBack={onBack}
+            effectiveProperties={effectiveProperties}
+            connections={connections}
+            connectionsLoading={connectionsLoading}
+            onOpenEntity={onOpenEntity}
           />
         );
       }
 
-      // `view`, `iframe-srcdoc`, `external-app`, `url` — all Phase 3+.
-      // Eve will learn how to mount them later; for now, be honest.
       return (
         <UnsupportedRenderer
           kind={target.kind}
@@ -287,15 +394,21 @@ function ResolvedDetail({
         />
       );
     },
-    [entity, patch, onBack, workspaceId, currentCellKey],
+    [
+      entity,
+      patch,
+      onBack,
+      workspaceId,
+      currentCellKey,
+      effectiveProperties,
+      connections,
+      connectionsLoading,
+      onOpenEntity,
+    ],
   );
 
   return (
     <>
-      {/* Picker overlay — pinned top-right, above the renderer's own UI.
-          The renderer paints the full page; the picker floats on top so
-          any registered renderer (form, document, dashboard, …) gets the
-          affordance for free. */}
       <div className="absolute top-3 right-3 z-20">
         <RendererPicker
           profileSlug={profileSlug}
