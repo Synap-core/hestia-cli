@@ -17,6 +17,7 @@
     "@eve/fields": "workspace:*",
     "@eve/legs": "workspace:*",
     "@eve/lifecycle": "workspace:*",
+    "@eve/profile-renderer": "workspace:*",
     "@heroui/react": "^2.4.0",
     "@heroui/theme": "^2.4.0",
     "@internationalized/date": "^3.5.0",
