@@ -424,7 +424,10 @@ export class EntityStateManager {
   /** Get the list of installed components from the setup profile */
   async getInstalledComponents(): Promise<string[]> {
     const state = await this.getState();
-    return state.setupProfile?.components ?? [];
+    const all = state.setupProfile?.components ?? [];
+    // Filter out components explicitly marked missing in installed state
+    // (e.g. retired openwebui-pipelines) so they don't re-enter wiring loops.
+    return all.filter(id => state.installed?.[id]?.state !== 'missing');
   }
 
   /** Check if a specific component is registered */
