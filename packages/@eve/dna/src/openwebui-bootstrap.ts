@@ -118,6 +118,9 @@ export function writeOpenwebuiEnv(
     WEBUI_ADMIN_PASSWORD: options.adminPassword,
     WEBUI_ADMIN_NAME: options.adminName,
     WEBUI_SECRET_KEY: existing.get('WEBUI_SECRET_KEY')?.trim() || randomBytes(32).toString('hex'),
+    // Preserve pinned tag across updates; default to 'latest' (stable release)
+    // rather than 'main' (nightly) to avoid regressions from unvetted builds.
+    WEBUI_DOCKER_TAG: existing.get('WEBUI_DOCKER_TAG')?.trim() || 'latest',
   };
 
   const unknown: string[] = [];
