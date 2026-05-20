@@ -3,26 +3,23 @@
 /**
  * Eve OS — Data detail (`/data/[id]`).
  *
- * Page-level orchestration only. Three independent fetches:
+ * Thin host: fetches data, then mounts `<EntityRenderer>` from
+ * `@eve/profile-renderer`. The renderer resolves which detail UI to use
+ * via the resolver chain (workspace overlay → profile default → fallback)
+ * and the `renderTarget` callback dispatches by `cellKey` to a registered
+ * Eve renderer.
+ *
+ * The actual entity UI lives in `@eve/profile-renderer/detail` — schema-
+ * driven fields, relations panel, multi-column layout. The page just
+ * provides chrome (PaneHeader, picker overlay) and data.
+ *
+ * Three parallel fetches once the entity loads:
  *
  *   1. **entity**           — `entities.get` (podProcedure, cross-pod safe)
  *   2. **profile schema**   — `profiles.get` (workspaceProcedure — only
- *                              when the entity has a `workspaceId`).
- *                              Gives us `effectiveProperties` so the
- *                              renderer can build schema-driven widgets
- *                              (status → colored Select, dates → Calendar,
- *                              entity_id → chip, etc.).
+ *                              when the entity has a `workspaceId`)
  *   3. **connections**      — `relations.getConnections` (protectedProcedure
- *                              — works without workspace). Unified across
- *                              graph relations, structural property links,
- *                              and channel mentions.
- *
- * Once the entity is loaded, schema and connections fetch in parallel and
- * pass straight through to the registered renderer. The page itself does
- * no rendering of entity content — that's the renderer's job.
- *
- * The resolver picks which renderer mounts (via the Renderer Picker the
- * user can swap workspace overrides).
+ *                              — works without workspace)
  *
  * Spec: synap-team-docs/content/team/platform/profile-renderer.mdx
  */
@@ -32,7 +29,15 @@ import { useParams, useRouter } from "next/navigation";
 import { Button, Card, CardBody, Spinner } from "@heroui/react";
 import { ChevronLeft } from "lucide-react";
 
-import { EntityRenderer, type RendererRef } from "@eve/profile-renderer";
+import {
+  EntityDetailRenderer,
+  EntityRenderer,
+  type Connection,
+  type EffectivePropertyDef,
+  type Entity,
+  type EntityDetailRendererProps,
+  type RendererRef,
+} from "@eve/profile-renderer";
 
 import { PaneHeader } from "../../components/pane-header";
 import { PodNotPairedCard } from "../../inbox/components/pod-not-paired-card";
@@ -41,13 +46,17 @@ import { podRendererResolver } from "@/lib/profile-renderer-resolver";
 
 import { RendererPicker } from "../components/renderer-picker";
 import { EVE_RENDERER_CATALOG } from "../eve-renderer-catalog";
-import { EntityDetailRenderer } from "./renderers/entity-detail";
 import { UnsupportedRenderer } from "./renderers/unsupported";
-import type { Connection } from "./renderers/entity-detail/relations-panel";
-import type { EffectivePropertyDef } from "./renderers/entity-detail/field-builder";
-import type { Entity, EveDetailRenderer } from "./types";
 
-// ─── Eve's local renderer registry ────────────────────────────────────────────
+// ─── Eve's local detail renderer registry ─────────────────────────────────────
+//
+// Maps backend `cellKey` → React component. Both keys point at the canonical
+// `EntityDetailRenderer` from `@eve/profile-renderer` — `entity-detail` is
+// the backend's hardcoded detail-slot fallback, `form` is the canonical
+// alias. Adding a new variant (kanban-card, gallery-detail, etc.) =
+// one new component file + one entry here.
+
+type EveDetailRenderer = React.ComponentType<EntityDetailRendererProps>;
 
 const EVE_DETAIL_RENDERERS: Record<string, EveDetailRenderer> = {
   "entity-detail": EntityDetailRenderer,
@@ -128,11 +137,6 @@ export default function DataDetailPage() {
   }, [id]);
 
   // ─── Fetch profile schema (when entity is workspace-scoped) ────────────────
-  //
-  // `profiles.get` is a workspaceProcedure today, so we can only resolve
-  // schema when the entity carries a workspace id. Cross-pod entities skip
-  // this fetch and the renderer falls back to `classifyValue()` heuristics
-  // for property widgets.
   useEffect(() => {
     if (state.kind !== "ready") return;
     const slug = state.entity.profileSlug ?? state.entity.type;
@@ -161,8 +165,8 @@ export default function DataDetailPage() {
         });
       } catch {
         if (cancelled) return;
-        // Schema fetch is best-effort — the renderer degrades cleanly to
-        // `classifyValue()` when no defs are present.
+        // Schema lookup is best-effort — the renderer degrades cleanly to
+        // `classifyValue()` heuristics when no defs are present.
         setSchema({ loading: false });
       }
     })();
@@ -172,9 +176,6 @@ export default function DataDetailPage() {
   }, [state]);
 
   // ─── Fetch connections (always, after entity loads) ────────────────────────
-  //
-  // `relations.getConnections` is a protectedProcedure — no workspace
-  // required. Works for cross-pod entities too.
   useEffect(() => {
     if (state.kind !== "ready") return;
 
@@ -374,7 +375,6 @@ function ResolvedDetail({
             config={target.props}
             workspaceId={workspaceId}
             patch={patch}
-            onBack={onBack}
             effectiveProperties={effectiveProperties}
             connections={connections}
             connectionsLoading={connectionsLoading}
@@ -397,7 +397,6 @@ function ResolvedDetail({
     [
       entity,
       patch,
-      onBack,
       workspaceId,
       currentCellKey,
       effectiveProperties,
@@ -407,8 +406,11 @@ function ResolvedDetail({
     ],
   );
 
+  const slug = entity.profileSlug ?? entity.type ?? "entity";
+
   return (
     <>
+      <PaneHeader title={humanize(slug)} back={onBack} />
       <div className="absolute top-3 right-3 z-20">
         <RendererPicker
           profileSlug={profileSlug}
@@ -427,12 +429,9 @@ function ResolvedDetail({
         resolve={podRendererResolver}
         renderTarget={renderTarget}
         fallback={
-          <>
-            <PaneHeader title="Loading…" back={onBack} />
-            <div className="flex flex-1 items-center justify-center py-16">
-              <Spinner size="md" />
-            </div>
-          </>
+          <div className="flex flex-1 items-center justify-center py-16">
+            <Spinner size="md" />
+          </div>
         }
         empty={
           <UnsupportedRenderer
@@ -449,4 +448,8 @@ function ResolvedDetail({
       />
     </>
   );
+}
+
+function humanize(s: string): string {
+  return s.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }

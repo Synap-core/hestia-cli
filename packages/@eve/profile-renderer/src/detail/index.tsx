@@ -1,31 +1,39 @@
 "use client";
 
 /**
- * `EntityDetailRenderer` — Eve OS's built-in detail-slot renderer.
+ * `EntityDetailRenderer` — the canonical detail-slot renderer.
  *
- * Registered against `cellKey: 'entity-detail'` (the backend's hardcoded
- * detail-slot fallback) and the alias `cellKey: 'form'`.
+ * Lives in `@eve/profile-renderer` so any HeroUI-based app gets the
+ * beautiful entity view by importing one component. The renderer is **pure
+ * content** — chrome (page header, breadcrumbs, navigation actions) is the
+ * host app's responsibility.
  *
  * Two-column layout:
- * - Main: hero header, description, properties (schema-driven via
- *   `buildSchemaAwareField`), system metadata.
- * - Aside: `RelationsPanel` fed by `relations.getConnections`.
  *
- * Field widgets come from `@eve/fields/HeroField`. When the parent page
- * supplies `effectiveProperties` (fetched from `profiles.get`), the
- * builder uses real schema — `status` becomes a colored Select, dates
- * become Calendars, enum properties become typed dropdowns, etc.
- * Without schema (cross-pod entities, AI-added keys) the builder falls
- * back to `classifyValue()`.
+ *   Main column                     Aside
+ *   ────────────                    ─────
+ *   Hero (icon + editable title)    RelationsPanel
+ *   Description (richtext)             ├ Related (graph)
+ *   Properties (schema-driven)         ├ Referenced in (property links)
+ *   System (read-only metadata)        └ Mentioned in channels (threads)
+ *
+ * Schema-driven widgets come from the 5-tier dispatch in `field-builder.ts`:
+ *   1. uiHints.inputType    → email/url/select/markdown/...
+ *   2. uiHints.displayAs    → status/priority semantic
+ *   3. slug pattern         → `*status` → status, `*priority` → priority
+ *   4. constraints.enum     → select with options
+ *   5. valueType            → boolean/date/number/entity_id/array/...
+ *   6. classifyValue fallback when no def is supplied (AI-added keys etc.)
+ *
+ * Spec: synap-team-docs/content/team/platform/profile-renderer.mdx
  */
 
 import { useMemo } from "react";
-import { Button, Card, CardBody } from "@heroui/react";
+import { Card, CardBody } from "@heroui/react";
 import {
   Briefcase,
   Building2,
   Calendar as CalendarIcon,
-  ChevronLeft,
   FileText,
   Layers,
   StickyNote,
@@ -39,14 +47,12 @@ import {
   type HeroFieldDef,
 } from "@eve/fields";
 
-import { PaneHeader } from "../../../components/pane-header";
-import type { EveDetailRendererProps } from "../../types";
-
 import {
   buildSchemaAwareField,
   type EffectivePropertyDef,
 } from "./field-builder";
 import { RelationsPanel } from "./relations-panel";
+import type { EntityDetailRendererProps } from "./types";
 
 // ─── Profile palette ─────────────────────────────────────────────────────────
 
@@ -96,16 +102,14 @@ export function EntityDetailRenderer({
   connections,
   connectionsLoading,
   onOpenEntity,
-  onBack,
   patch,
-}: EveDetailRendererProps) {
+  topSlot,
+}: EntityDetailRendererProps) {
   const slug = entity.profileSlug ?? entity.type ?? "entity";
   const Icon = PROFILE_ICON[slug] ?? Layers;
   const gradient =
     PROFILE_GRADIENT[slug] ?? "from-default-200 to-default-100";
 
-  // Build a quick lookup from slug → propertyDef so the field builder can
-  // pick up uiHints/constraints/valueType per property in O(1).
   const propertyDefBySlug = useMemo(() => {
     const map = new Map<string, EffectivePropertyDef>();
     for (const def of effectiveProperties ?? []) {
@@ -114,9 +118,6 @@ export function EntityDetailRenderer({
     return map;
   }, [effectiveProperties]);
 
-  // Properties from the entity body (non-system keys), sorted by the
-  // property def displayOrder when available so layouts are stable
-  // across workspaces.
   const propertyFields: HeroFieldDef[] = useMemo(() => {
     const props = entity.properties ?? {};
     const entries = Object.entries(props).filter(
@@ -177,105 +178,90 @@ export function EntityDetailRenderer({
   );
 
   return (
-    <>
-      <PaneHeader title={humanize(slug)} back={onBack} />
-
-      <div className="flex-1 overflow-y-auto animate-pane-content-in">
-        <div className="mx-auto max-w-[1400px] px-5 py-6 sm:py-8 flex flex-col lg:flex-row gap-6">
-          {/* ── Main column ───────────────────────────────────────────────── */}
-          <main className="flex-1 min-w-0 flex flex-col gap-8 lg:max-w-2xl">
-            {/* Hero */}
-            <header className="flex items-start gap-4">
-              <div
-                className={`shrink-0 inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-gradient-to-br ${gradient} border border-divider text-foreground`}
-              >
-                <Icon size={20} />
+    <div className="flex-1 overflow-y-auto">
+      {topSlot}
+      <div className="mx-auto max-w-[1400px] px-5 py-6 sm:py-8 flex flex-col lg:flex-row gap-6">
+        {/* ── Main column ─────────────────────────────────────────────────── */}
+        <main className="flex-1 min-w-0 flex flex-col gap-8 lg:max-w-2xl">
+          {/* Hero */}
+          <header className="flex items-start gap-4">
+            <div
+              className={`shrink-0 inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-gradient-to-br ${gradient} border border-divider text-foreground`}
+            >
+              <Icon size={20} />
+            </div>
+            <div className="flex-1 min-w-0 flex flex-col gap-1">
+              <HeroField
+                type="text"
+                label="Title"
+                placeholder="Untitled"
+                value={entity.title ?? ""}
+                size="lg"
+                onChange={(v) => patch({ title: v })}
+              />
+              <div className="flex items-center gap-2 text-[12px] text-default-400">
+                <span>{humanize(slug)}</span>
               </div>
-              <div className="flex-1 min-w-0 flex flex-col gap-1">
-                <HeroField
-                  type="text"
-                  label="Title"
-                  placeholder="Untitled"
-                  value={entity.title ?? ""}
-                  size="lg"
-                  onChange={(v) => patch({ title: v })}
-                />
-                <div className="flex items-center gap-2 text-[12px] text-default-400">
-                  <span>{humanize(slug)}</span>
-                </div>
-              </div>
-            </header>
+            </div>
+          </header>
 
-            {/* Description */}
+          {/* Description */}
+          <section className="flex flex-col gap-2">
+            <SectionLabel>Description</SectionLabel>
+            <div className="rounded-2xl border border-divider bg-default-50 px-4 py-3">
+              <HeroField
+                type="richtext"
+                label="Description"
+                placeholder="One-line summary of this record…"
+                value={entity.description ?? ""}
+                rows={2}
+                maxHeight={140}
+                onChange={(v) => patch({ description: v })}
+              />
+            </div>
+          </section>
+
+          {/* Properties */}
+          {propertyFields.length > 0 && (
             <section className="flex flex-col gap-2">
-              <SectionLabel>Description</SectionLabel>
-              <div className="rounded-2xl border border-divider bg-default-50 px-4 py-3">
-                <HeroField
-                  type="richtext"
-                  label="Description"
-                  placeholder="One-line summary of this record…"
-                  value={entity.description ?? ""}
-                  rows={2}
-                  maxHeight={140}
-                  onChange={(v) => patch({ description: v })}
-                />
-              </div>
-            </section>
-
-            {/* Properties */}
-            {propertyFields.length > 0 && (
-              <section className="flex flex-col gap-2">
-                <SectionLabel>Properties</SectionLabel>
-                <div className="rounded-2xl border border-divider bg-default-50 p-3 sm:p-4">
-                  <HeroFieldList
-                    variant="row"
-                    layout="column"
-                    gap={1}
-                    fields={propertyFields}
-                  />
-                </div>
-              </section>
-            )}
-
-            {/* System */}
-            <section className="flex flex-col gap-2">
-              <SectionLabel>System</SectionLabel>
+              <SectionLabel>Properties</SectionLabel>
               <div className="rounded-2xl border border-divider bg-default-50 p-3 sm:p-4">
                 <HeroFieldList
                   variant="row"
                   layout="column"
                   gap={1}
-                  fields={systemFields}
+                  fields={propertyFields}
                 />
               </div>
             </section>
+          )}
 
-            {/* Footer */}
-            <div className="pt-2">
-              <Button
-                size="sm"
-                variant="flat"
-                startContent={<ChevronLeft size={14} />}
-                onPress={onBack}
-              >
-                Back to Data
-              </Button>
+          {/* System */}
+          <section className="flex flex-col gap-2">
+            <SectionLabel>System</SectionLabel>
+            <div className="rounded-2xl border border-divider bg-default-50 p-3 sm:p-4">
+              <HeroFieldList
+                variant="row"
+                layout="column"
+                gap={1}
+                fields={systemFields}
+              />
             </div>
-          </main>
+          </section>
+        </main>
 
-          {/* ── Side panel ────────────────────────────────────────────────── */}
-          <aside className="lg:w-80 lg:shrink-0 flex flex-col gap-4">
-            <RelationsPanel
-              connections={connections ?? []}
-              loading={connectionsLoading}
-              onOpenEntity={onOpenEntity ?? (() => {})}
-            />
-          </aside>
-        </div>
+        {/* ── Side panel ───────────────────────────────────────────────────── */}
+        <aside className="lg:w-80 lg:shrink-0 flex flex-col gap-4">
+          <RelationsPanel
+            connections={connections ?? []}
+            loading={connectionsLoading}
+            onOpenEntity={onOpenEntity ?? noopOpen}
+          />
+        </aside>
       </div>
 
       <RendererAttribution cellKey="entity-detail" />
-    </>
+    </div>
   );
 }
 
@@ -309,4 +295,8 @@ function RendererAttribution({ cellKey }: { cellKey: string }) {
 
 function humanize(s: string): string {
   return s.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function noopOpen(): void {
+  // no-op — used when the host doesn't wire entity navigation.
 }

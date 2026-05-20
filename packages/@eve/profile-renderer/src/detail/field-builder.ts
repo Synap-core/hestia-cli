@@ -22,7 +22,6 @@ import type {
   ChipColor,
   FieldOption,
   HeroFieldDef,
-  HeroFieldType,
 } from "@eve/fields";
 
 import { priorityColorFor, statusColorFor } from "./color-maps";
@@ -114,15 +113,33 @@ function buildFromInputType(p: {
   const { args, label, placeholder, inputType, constraints } = p;
   switch (inputType) {
     case "email":
-    case "phone":
-    case "url":
       return {
         id: args.key,
-        type: inputType as HeroFieldType,
+        type: "email",
         label,
         placeholder,
         value: stringValue(args.value),
-        onChange: (v) => args.onChange(v),
+        onChange: (v: string) => args.onChange(v),
+      };
+
+    case "phone":
+      return {
+        id: args.key,
+        type: "phone",
+        label,
+        placeholder,
+        value: stringValue(args.value),
+        onChange: (v: string) => args.onChange(v),
+      };
+
+    case "url":
+      return {
+        id: args.key,
+        type: "url",
+        label,
+        placeholder,
+        value: stringValue(args.value),
+        onChange: (v: string) => args.onChange(v),
       };
 
     case "select": {
