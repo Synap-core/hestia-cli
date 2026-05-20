@@ -2,6 +2,36 @@ import { execSync, spawnSync } from 'node:child_process';
 import { execa } from './exec.js';
 import { resolveSynapDelegate } from './synap-delegate.js';
 
+/**
+ * Connect the running synap-backend container to eve-network as
+ * 'eve-brain-synap' so OpenWebUI / Hermes can resolve it by hostname.
+ * Idempotent — safe to call even when already connected.
+ */
+function reconnectSynapToEveNetwork(): void {
+  try {
+    const name = execSync(
+      `docker ps --filter "label=com.docker.compose.project=synap-backend" --filter "label=com.docker.compose.service=backend" --format "{{.Names}}"`,
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
+    ).trim().split('\n')[0]?.trim();
+    if (!name) return;
+
+    const inspect = execSync(
+      `docker inspect --format "{{json .NetworkSettings.Networks}}" ${name}`,
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
+    ).trim();
+    const networks = JSON.parse(inspect) as Record<string, { Aliases?: string[] | null }>;
+    const eve = networks['eve-network'];
+    if (eve && (eve.Aliases ?? []).includes('eve-brain-synap')) return;
+    if (eve) {
+      try { execSync(`docker network disconnect eve-network ${name}`, { stdio: ['pipe', 'pipe', 'ignore'] }); } catch { /* ignore */ }
+    }
+    execSync(`docker network connect --alias eve-brain-synap eve-network ${name}`, { stdio: ['pipe', 'pipe', 'ignore'] });
+    console.log(`  Connected ${name} → eve-network (alias: eve-brain-synap)`);
+  } catch {
+    // Synap not running or eve-network doesn't exist — skip silently.
+  }
+}
+
 export interface SynapHealth {
   status: 'healthy' | 'unhealthy' | 'starting';
   version?: string;
@@ -54,6 +84,7 @@ export class SynapService {
         env: { ...process.env, SYNAP_DEPLOY_DIR: d.deployDir },
         stdio: 'inherit',
       });
+      reconnectSynapToEveNetwork();
       return;
     }
 
@@ -68,6 +99,7 @@ export class SynapService {
         console.log(`\n  Admin bootstrap token: ${result.bootstrapToken}`);
         console.log(`  Use at: http://localhost:4000/admin/bootstrap`);
       }
+      reconnectSynapToEveNetwork();
       return;
     }
     console.log(`Starting ${containers.length} synap-backend container(s) directly...`);
@@ -77,6 +109,7 @@ export class SynapService {
         throw new Error(`Failed to start container: ${name}`);
       }
     }
+    reconnectSynapToEveNetwork();
   }
 
   async stop(): Promise<void> {
