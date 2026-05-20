@@ -41,8 +41,14 @@ export async function POST() {
   // `docker run` time (openclaw). Replace their wire result with a
   // recreate via lifecycle so the manual "Apply" button is actually
   // sufficient — same guarantee as auto-apply.
+  //
+  // Only recreate when wiring wrote a new env ('ok'). Skipped/failed
+  // wiring means the env didn't change — killing the running container
+  // would leave it down with nothing fixed.
   for (const id of AI_CONSUMERS_NEEDING_RECREATE) {
     if (!components.includes(id)) continue;
+    const wireOutcome = results.find(r => r.id === id)?.outcome;
+    if (wireOutcome !== 'ok') continue;
     const r = await runActionToCompletion(id, "recreate");
     const recreated: WireAiResult = {
       id,

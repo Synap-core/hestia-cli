@@ -82,8 +82,15 @@ async function applyAiWiring(): Promise<WireAiResult[]> {
   // wire-only restart leaves the env stale. Recreate via lifecycle so
   // the new DEFAULT_MODEL etc. actually land. Mirrors the dashboard's
   // /api/ai/apply route — same single source of truth.
+  //
+  // Only recreate when wiring actually wrote a new env ('ok'). If wiring
+  // was skipped (e.g. no agent key provisioned) or failed, the current
+  // container is running with its last-good config — killing it here
+  // would leave it down with no improvement to show for it.
   for (const id of AI_CONSUMERS_NEEDING_RECREATE) {
     if (!installed.includes(id)) continue;
+    const wireOutcome = results.find(r => r.id === id)?.outcome;
+    if (wireOutcome !== 'ok') continue;
     const r = await runActionToCompletion(id, 'recreate');
     const recreated: WireAiResult = {
       id,
