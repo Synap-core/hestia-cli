@@ -24,7 +24,7 @@ import {
   Tab,
   Tabs,
 } from "@heroui/react";
-import { RefreshCw, Share2 } from "lucide-react";
+import { Layers, RefreshCw, Share2 } from "lucide-react";
 
 import { PaneHeader } from "../components/pane-header";
 import { PodNotPairedCard } from "../inbox/components/pod-not-paired-card";
@@ -141,15 +141,26 @@ export default function DataPage() {
       <PaneHeader
         title="Data"
         actions={
-          <Button
-            size="sm"
-            variant="light"
-            startContent={<RefreshCw size={14} />}
-            onPress={refresh}
-            className="text-default-500 hover:text-foreground"
-          >
-            Refresh
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              size="sm"
+              variant="light"
+              startContent={<Layers size={14} />}
+              onPress={() => router.push("/data/profiles")}
+              className="text-default-500 hover:text-foreground"
+            >
+              Browse by profile
+            </Button>
+            <Button
+              size="sm"
+              variant="light"
+              startContent={<RefreshCw size={14} />}
+              onPress={refresh}
+              className="text-default-500 hover:text-foreground"
+            >
+              Refresh
+            </Button>
+          </div>
         }
       />
       <div className="flex-1 overflow-y-auto animate-pane-content-in">

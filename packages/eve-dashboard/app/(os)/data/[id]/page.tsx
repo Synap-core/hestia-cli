@@ -33,6 +33,8 @@ import { PodNotPairedCard } from "../../inbox/components/pod-not-paired-card";
 import { podTrpcFetch, PodTrpcError } from "@/lib/pod-fetch";
 import { podRendererResolver } from "@/lib/profile-renderer-resolver";
 
+import { RendererPicker } from "../components/renderer-picker";
+import { EVE_RENDERER_CATALOG } from "../eve-renderer-catalog";
 import { EntityDetailRenderer } from "./renderers/entity-detail";
 import { UnsupportedRenderer } from "./renderers/unsupported";
 import type { Entity, EveDetailRenderer } from "./types";
@@ -62,6 +64,7 @@ export default function DataDetailPage() {
   const id = params.id;
 
   const [state, setState] = useState<DetailState>({ kind: "loading" });
+  const [refreshToken, setRefreshToken] = useState(0);
 
   // ─── Fetch entity ───────────────────────────────────────────────────────────
   useEffect(() => {
@@ -215,6 +218,8 @@ export default function DataDetailPage() {
       entity={state.entity}
       patch={patch}
       onBack={onBack}
+      refreshToken={refreshToken}
+      onRefresh={() => setRefreshToken((t) => t + 1)}
     />
   );
 }
@@ -225,19 +230,32 @@ function ResolvedDetail({
   entity,
   patch,
   onBack,
+  refreshToken,
+  onRefresh,
 }: {
   entity: Entity;
   patch: (input: Record<string, unknown>) => Promise<void>;
   onBack: () => void;
+  refreshToken: number;
+  onRefresh: () => void;
 }) {
   const profileSlug = entity.profileSlug ?? entity.type ?? "entity";
   const workspaceId = entity.workspaceId ?? null;
+  const [currentCellKey, setCurrentCellKey] = useState<string | undefined>(
+    undefined,
+  );
 
   // `renderTarget` is the only place that maps backend kinds → Eve UI.
   // Closure over `entity`/`patch`/`onBack` keeps the registry components
   // free of host plumbing.
   const renderTarget = useMemo(
     () => (target: RendererRef) => {
+      // Track what cellKey resolved so the picker can mark the active one.
+      if (target.kind === "cell" && target.cellKey !== currentCellKey) {
+        // Schedule outside render to avoid setState-during-render warnings.
+        queueMicrotask(() => setCurrentCellKey(target.cellKey));
+      }
+
       if (target.kind === "cell") {
         const Renderer = EVE_DETAIL_RENDERERS[target.cellKey];
         if (!Renderer) {
@@ -269,36 +287,53 @@ function ResolvedDetail({
         />
       );
     },
-    [entity, patch, onBack, workspaceId],
+    [entity, patch, onBack, workspaceId, currentCellKey],
   );
 
   return (
-    <EntityRenderer
-      profileSlug={profileSlug}
-      workspaceId={workspaceId}
-      entityId={entity.id}
-      resolve={podRendererResolver}
-      renderTarget={renderTarget}
-      fallback={
-        <>
-          <PaneHeader title="Loading…" back={onBack} />
-          <div className="flex flex-1 items-center justify-center py-16">
-            <Spinner size="md" />
-          </div>
-        </>
-      }
-      empty={
-        <UnsupportedRenderer
-          kind="(none)"
-          detail="The resolver returned no renderer for this profile in this workspace."
+    <>
+      {/* Picker overlay — pinned top-right, above the renderer's own UI.
+          The renderer paints the full page; the picker floats on top so
+          any registered renderer (form, document, dashboard, …) gets the
+          affordance for free. */}
+      <div className="absolute top-3 right-3 z-20">
+        <RendererPicker
+          profileSlug={profileSlug}
+          slot="detail"
+          workspaceId={workspaceId}
+          currentCellKey={currentCellKey}
+          options={EVE_RENDERER_CATALOG.detail}
+          onSaved={onRefresh}
         />
-      }
-      errorFallback={(error) => (
-        <UnsupportedRenderer
-          kind="(error)"
-          detail={`Resolver failed: ${error.message}`}
-        />
-      )}
-    />
+      </div>
+      <EntityRenderer
+        key={refreshToken}
+        profileSlug={profileSlug}
+        workspaceId={workspaceId}
+        entityId={entity.id}
+        resolve={podRendererResolver}
+        renderTarget={renderTarget}
+        fallback={
+          <>
+            <PaneHeader title="Loading…" back={onBack} />
+            <div className="flex flex-1 items-center justify-center py-16">
+              <Spinner size="md" />
+            </div>
+          </>
+        }
+        empty={
+          <UnsupportedRenderer
+            kind="(none)"
+            detail="The resolver returned no renderer for this profile in this workspace."
+          />
+        }
+        errorFallback={(error) => (
+          <UnsupportedRenderer
+            kind="(error)"
+            detail={`Resolver failed: ${error.message}`}
+          />
+        )}
+      />
+    </>
   );
 }

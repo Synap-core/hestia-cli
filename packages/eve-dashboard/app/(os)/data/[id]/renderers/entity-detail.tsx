@@ -184,13 +184,16 @@ export function EntityDetailRenderer({
             </div>
           </section>
 
-          {/* Properties — schema-free, type inferred per value */}
+          {/* Properties — schema-free, type inferred per value.
+              `row` variant keeps the field name visible left of the value
+              instead of icon-only inline rendering. Schema-driven rendering
+              from property_defs is a follow-up. */}
           {propertyFields.length > 0 && (
             <section className="flex flex-col gap-2">
               <SectionLabel>Properties</SectionLabel>
               <div className="rounded-2xl border border-divider bg-default-50 p-3 sm:p-4">
                 <HeroFieldList
-                  variant="inline"
+                  variant="row"
                   layout="column"
                   gap={1}
                   fields={propertyFields}
