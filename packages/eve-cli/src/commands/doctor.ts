@@ -637,6 +637,35 @@ async function runDiagnostics(opts: DoctorOptions = { verbose: false, skipProbes
         });
       }
     }
+    // Extra check: T3 Code container running but codex daemon not active
+    try {
+      const { execSync } = await import('child_process');
+      const t3Running = execSync(
+        `docker inspect -f '{{.State.Running}}' eve-builder-t3code 2>/dev/null || echo false`,
+        { encoding: 'utf-8' }
+      ).trim() === 'true';
+      if (t3Running) {
+        const daemonActive = (() => {
+          try {
+            const out = execSync(
+              `docker exec eve-builder-hermes sh -c 'pgrep -f "codex.js daemon" >/dev/null 2>&1 && echo yes || echo no' 2>/dev/null || echo no`,
+              { encoding: 'utf-8' }
+            ).trim();
+            return out === 'yes';
+          } catch { return false; }
+        })();
+        if (!daemonActive) {
+          checks.push({
+            name: 'Codex daemon',
+            status: 'warn',
+            message: 'T3 Code container is running but codex feature-poller daemon is not active',
+            fix: 'eve builder codex daemon',
+          });
+        } else {
+          checks.push({ name: 'Codex daemon', status: 'pass', message: 'Codex daemon is active' });
+        }
+      }
+    } catch { /* non-fatal */ }
   } catch (error) {
     stateCheck.fail('Cannot read entity state');
     checks.push({ name: 'Entity State', status: 'fail', message: 'Failed to read state' });

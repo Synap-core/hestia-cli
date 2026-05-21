@@ -759,14 +759,20 @@ volumes:
           const existing = secrets?.builder?.t3code ?? {};
 
           // Provider selection — default to whatever is already configured.
+          // Prefer pod IS if already set up (no external key needed).
           const currentBaseUrl = existing.openaiBaseUrl ?? '';
-          const currentProvider = currentBaseUrl.includes('openrouter') ? 'openrouter'
+          const podApiUrl = secrets?.synap?.apiUrl ? `${secrets.synap.apiUrl}/v1` : '';
+          const isPodIs = currentBaseUrl && podApiUrl && currentBaseUrl === podApiUrl;
+          const currentProvider = isPodIs ? 'pod'
+            : currentBaseUrl.includes('openrouter') ? 'openrouter'
             : currentBaseUrl ? 'custom'
+            : podApiUrl ? 'pod'
             : 'openai';
 
           const provider = await clackSelect({
             message: 'AI provider for Codex (T3 Code uses the OpenAI-compatible API)',
             options: [
+              ...(podApiUrl ? [{ value: 'pod', label: 'Pod IS', hint: `${podApiUrl} — already configured` }] : []),
               { value: 'openai',     label: 'OpenAI',      hint: 'api.openai.com — official' },
               { value: 'openrouter', label: 'OpenRouter',  hint: 'openrouter.ai — 200+ models, unified key' },
               { value: 'custom',     label: 'Custom',      hint: 'Any OpenAI-compatible base URL' },
@@ -776,7 +782,9 @@ volumes:
           if (typeof provider !== 'string') throw new Error('Cancelled');
 
           let openaiBaseUrl = '';
-          if (provider === 'openrouter') {
+          if (provider === 'pod') {
+            openaiBaseUrl = podApiUrl;
+          } else if (provider === 'openrouter') {
             openaiBaseUrl = 'https://openrouter.ai/api/v1';
           } else if (provider === 'custom') {
             const url = await input({
@@ -788,8 +796,10 @@ volumes:
             openaiBaseUrl = url.trim();
           }
 
+          // Pod IS uses the agent API key — no separate key needed.
+          const podKey = secrets?.synap?.agentApiKey ?? '';
           const existingKey = existing.openaiApiKey ?? process.env.OPENAI_API_KEY ?? '';
-          let openaiApiKey = existingKey;
+          let openaiApiKey = provider === 'pod' ? podKey : existingKey;
           if (!openaiApiKey) {
             const keyLabel = provider === 'openrouter' ? 'OpenRouter API key' : 'API key';
             const val = await password({ message: keyLabel });

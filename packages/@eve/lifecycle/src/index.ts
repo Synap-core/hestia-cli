@@ -1740,6 +1740,9 @@ async function* installT3Code(): AsyncGenerator<LifecycleEvent> {
 
   // node:22-slim + npx t3 headless. A named volume caches the npm global
   // install so subsequent starts don't re-download the package.
+  const secrets2 = await readEveSecrets();
+  const traefikHost = secrets2?.traefik?.domain ? `t3.${secrets2.traefik.domain}` : "";
+
   const args = [
     "run", "-d",
     "--name", T3CODE_CONTAINER,
@@ -1751,6 +1754,12 @@ async function* installT3Code(): AsyncGenerator<LifecycleEvent> {
     "-w", "/workspace",
     "-e", `OPENAI_API_KEY=${openaiApiKey}`,
     ...(openaiBaseUrl ? ["-e", `OPENAI_BASE_URL=${openaiBaseUrl}`] : []),
+    // Traefik labels — expose T3 Code UI via subdomain if domain is configured
+    "--label", "traefik.enable=true",
+    "--label", `traefik.http.routers.t3code.rule=Host(\`${traefikHost || `t3.eve.local`}\`)`,
+    "--label", "traefik.http.routers.t3code.entrypoints=websecure",
+    "--label", "traefik.http.routers.t3code.tls.certresolver=le",
+    "--label", `traefik.http.services.t3code.loadbalancer.server.port=${T3CODE_PORT}`,
     "node:22-slim",
     "sh", "-c",
     `npm install -g t3@latest --prefer-offline 2>/dev/null || npm install -g t3@latest; ` +
@@ -1791,6 +1800,19 @@ async function* installT3Code(): AsyncGenerator<LifecycleEvent> {
     yield { type: "log", line: `T3 Code is healthy on port ${T3CODE_PORT}` };
   } else {
     yield { type: "log", line: `T3 Code container started but health endpoint not yet responding — it may still be bootstrapping. Check: docker logs ${T3CODE_CONTAINER}` };
+  }
+
+  // Start the codex feature-poller daemon so it begins watching for pipeline work.
+  yield { type: "step", label: "Starting codex feature-poller daemon…" };
+  const daemonCode = yield* runCommand("docker", [
+    "exec", "-d", "eve-builder-hermes",
+    "sh", "-c",
+    "node /app/dist/commands/codex.js daemon start --detach 2>/tmp/codex-daemon.log &",
+  ]);
+  if (daemonCode === 0) {
+    yield { type: "log", line: "Codex daemon started inside eve-builder-hermes" };
+  } else {
+    yield { type: "log", line: "Could not auto-start codex daemon — run `eve builder codex daemon` manually once Hermes is running" };
   }
 }
 

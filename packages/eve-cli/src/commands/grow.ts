@@ -101,7 +101,7 @@ const ORGAN_TO_COMPONENT: Record<string, string> = {
   arms: 'openclaw',
   eyes: 'rsshub',
   legs: 'traefik',
-  builder: 'openclaude',
+  builder: 't3code',
 };
 
 async function growOrgan(

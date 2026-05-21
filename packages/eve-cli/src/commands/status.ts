@@ -187,7 +187,7 @@ async function showStatus(json = false): Promise<void> {
   const RESTART_COMMANDS: Record<Organ, string> = {
     brain:   'docker start $(docker ps -a --filter "label=com.docker.compose.project=synap-backend" --filter "label=com.docker.compose.service=backend" -q)',
     arms:    'docker start eve-arms-openclaw',
-    builder: 'docker start eve-builder-hermes',
+    builder: 'docker start eve-builder-hermes eve-builder-t3code && eve builder codex daemon',
     eyes:    'docker start eve-eyes-rsshub',
     legs:    'docker start eve-legs-traefik',
   };

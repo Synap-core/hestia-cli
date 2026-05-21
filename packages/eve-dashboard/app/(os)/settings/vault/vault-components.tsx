@@ -83,7 +83,7 @@ export function SecretIcon({ type, className }: { type: SecretType; className?: 
     case "card":         return <CreditCard className={cls} />;
     case "identity":     return <UserCircle className={cls} />;
     case "ssh_key":      return <Terminal className={cls} />;
-    case "certificate":  return <Server className={cls} />;
+    case "certificate":  return <Shield className={cls} />;
     case "env_variable": return <Terminal className={cls} />;
     case "database":     return <Database className={cls} />;
     case "oauth":        return <Globe className={cls} />;

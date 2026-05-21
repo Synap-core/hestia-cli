@@ -36,7 +36,7 @@ const CONTEXT_GATHERER_PROMPT = `You are the Context Gatherer — the first phas
 3. **Read decision records** — search for decision_records related to the app or feature domain. These capture past architectural choices you must respect.
 4. **Read best practices** — search for best_practices documents that apply to this codebase or domain.
 5. **Read codebase maps** — if available, read codebase_map documents to understand the project structure, key modules, and file organization.
-6. **Scan the local codebase** — read CLAUDE.md, package.json, directory structure, and any architecture docs in the project root. Identify the files and modules this feature will touch.
+6. **Resolve the repo path** — search for the devplane_service entity linked to this feature (via relations or the feature's linkedServiceId property). Read its `repoLocalPath` property (e.g. `/opt/synap/synap-app`). Then update the feature entity using synap_entity_update to set its `t3code_cwd` property to that path. This is required so T3 Code knows where to find the code on the server. If no service is linked or `repoLocalPath` is empty, note it in Open Questions.
 
 ## Output
 
@@ -59,7 +59,7 @@ Write a comprehensive structured context document to the feature's AI channel us
 - List applicable coding standards, patterns, and conventions
 
 ### Codebase Touch Points
-- Files and modules likely to be modified or created
+- Modules and packages likely to be modified or created (derived from codebase_map entities and decision records)
 - Existing patterns to follow
 - Integration points with other modules
 
@@ -236,7 +236,7 @@ export const PIPELINE_PERSONALITIES: Record<string, PipelinePersonality> = {
     displayName: 'Context Gatherer',
     model: 'claude-sonnet-4-20250514',
     systemPrompt: CONTEXT_GATHERER_PROMPT,
-    toolWhitelist: ['read', 'grep', 'bash', 'synap_orient', 'synap_entity_search', 'synap_entity_get', 'synap_document_read', 'synap_document_create', 'synap_channel_message', 'synap_channel_get', 'synap_knowledge_read', 'synap_search', 'synap_relation_list'],
+    toolWhitelist: ['synap_orient', 'synap_entity_search', 'synap_entity_get', 'synap_entity_update', 'synap_document_read', 'synap_document_create', 'synap_channel_message', 'synap_channel_get', 'synap_knowledge_read', 'synap_search', 'synap_relation_list'],
     maxSteps: 30,
   },
   planner: {
