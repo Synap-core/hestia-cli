@@ -1114,12 +1114,38 @@ async function* postUpdateReconcileAiWiring(): AsyncGenerator<LifecycleEvent> {
       if (retried) {
         results = results.map(r => (r.id === "openwebui" ? retried : r));
         const retried401 = /\b401\b|Unauthorized/i.test(retried.summary);
-        yield {
-          type: "log",
-          line: retried401
-            ? "↳ retry still 401 — run `eve auth provision --agent openwebui` then `eve auth provision --agent eve`"
-            : "↳ OpenWebUI wiring retry succeeded",
-        };
+        if (!retried401) {
+          yield { type: "log", line: "↳ OpenWebUI wiring retry succeeded" };
+        } else {
+          // The DB was updated with the new key but OpenWebUI's in-memory config
+          // still holds the old one. Recreate the container to flush the cache,
+          // then do one final wiring pass.
+          yield { type: "log", line: "↳ retry still 401 — recreating OpenWebUI to flush in-memory key cache" };
+          const recreateResult = await runActionToCompletion("openwebui", "recreate");
+          if (recreateResult.ok) {
+            const refreshed2 = await readEveSecrets();
+            const [final] = await materializeTargets(refreshed2, ["ai-wiring"], { components: ["openwebui"] });
+            const finalResults = Array.isArray(final?.details?.results)
+              ? final.details.results as WireAiResult[]
+              : [];
+            const finalRetried = finalResults.find(r => r.id === "openwebui");
+            if (finalRetried) {
+              results = results.map(r => (r.id === "openwebui" ? finalRetried : r));
+              const final401 = /\b401\b|Unauthorized/i.test(finalRetried.summary);
+              yield {
+                type: "log",
+                line: final401
+                  ? "↳ still 401 after recreate — run `eve auth provision --agent openwebui` then `eve auth provision --agent eve`"
+                  : "↳ OpenWebUI wiring succeeded after container reload ✓",
+              };
+            }
+          } else {
+            yield {
+              type: "log",
+              line: `↳ recreate failed (${recreateResult.error ?? "unknown"}) — run \`eve auth provision --agent openwebui\` then \`eve auth provision --agent eve\``,
+            };
+          }
+        }
       }
       void anyRotated;
     }
