@@ -98,7 +98,6 @@ export function AgentPicker({
         setAgents([]);
       })
       .finally(() => {
-        if (cancelled) return;
         setIsLoading(false);
       });
     return () => {

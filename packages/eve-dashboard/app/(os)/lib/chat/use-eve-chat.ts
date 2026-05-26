@@ -304,7 +304,7 @@ export function useEveChat(): UseEveChatResult {
       const socket = io(creds.realtimeUrl, {
         path: "/socket.io/",
         transports: ["websocket", "polling"],
-        auth: { apiKey: creds.apiKey },
+        auth: { apiKey: creds.apiKey, workspaceId: workspaceIdRef.current ?? undefined },
         reconnection: true,
         reconnectionAttempts: Infinity,
         reconnectionDelay: 1000,

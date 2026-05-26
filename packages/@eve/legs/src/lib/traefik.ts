@@ -434,6 +434,69 @@ export class TraefikService {
       `          - url: "${s.upstream}"`
     ).join('\n');
 
+    // Socket.IO / realtime — needs a dedicated higher-priority router so WebSocket
+    // upgrade requests reach the realtime container (port 4001), not the API backend (4000).
+    const synapRealtimeContainer = findComposeContainer('realtime');
+    const synapService = services.find(s => s.id === 'synap');
+    let realtimeRouterYaml = '';
+    let realtimeServiceYaml = '';
+    if (synapService && synapRealtimeContainer) {
+      connectToEveNetwork(synapRealtimeContainer);
+      const rHost = `${synapService.subdomain}.${domain}`;
+      const rRule = `Host(\`${rHost}\`) && (PathPrefix(\`/socket.io/\`) || PathPrefix(\`/realtime/\`))`;
+      const rUpstream = `http://${synapRealtimeContainer}:4001`;
+      if (behindProxy) {
+        realtimeRouterYaml =
+          `\n    synap-realtime:\n` +
+          `      rule: "${rRule}"\n` +
+          `      priority: 100\n` +
+          `      entryPoints:\n` +
+          `        - web\n` +
+          `      middlewares:\n` +
+          `        - forward-https\n` +
+          `      service: synap-realtime-svc`;
+      } else if (ssl) {
+        realtimeRouterYaml =
+          `\n    synap-realtime-http:\n` +
+          `      rule: "${rRule}"\n` +
+          `      priority: 100\n` +
+          `      entryPoints:\n` +
+          `        - web\n` +
+          `      middlewares:\n` +
+          `        - redirect-to-https\n` +
+          `      service: synap-realtime-svc\n` +
+          `    synap-realtime:\n` +
+          `      rule: "${rRule}"\n` +
+          `      priority: 100\n` +
+          `      entryPoints:\n` +
+          `        - websecure\n` +
+          `      tls:\n` +
+          `        certResolver: letsencrypt\n` +
+          `      service: synap-realtime-svc`;
+      } else {
+        realtimeRouterYaml =
+          `\n    synap-realtime-http:\n` +
+          `      rule: "${rRule}"\n` +
+          `      priority: 100\n` +
+          `      entryPoints:\n` +
+          `        - web\n` +
+          `      service: synap-realtime-svc\n` +
+          `    synap-realtime-https:\n` +
+          `      rule: "${rRule}"\n` +
+          `      priority: 100\n` +
+          `      entryPoints:\n` +
+          `        - websecure\n` +
+          `      tls: {}\n` +
+          `      service: synap-realtime-svc`;
+      }
+      realtimeServiceYaml =
+        `\n    synap-realtime-svc:\n` +
+        `      loadBalancer:\n` +
+        (behindProxy ? `        passHostHeader: true\n` : '') +
+        `        servers:\n` +
+        `          - url: "${rUpstream}"`;
+    }
+
     const middlewaresYaml = behindProxy
       // In proxy mode: inject X-Forwarded-Proto so backend apps see "https"
       ? `  middlewares:\n    forward-https:\n      headers:\n        customRequestHeaders:\n          X-Forwarded-Proto: "https"\n`
@@ -445,8 +508,8 @@ export class TraefikService {
       `# Domain: ${domain} | Mode: ${modeComment}\n` +
       `http:\n` +
       `${middlewaresYaml}` +
-      `  routers:\n${routersYaml}\n` +
-      `  services:\n${servicesYaml}\n`;
+      `  routers:\n${routersYaml}${realtimeRouterYaml}\n` +
+      `  services:\n${servicesYaml}${realtimeServiceYaml}\n`;
 
     // Write static config (proxy mode skips SSL/cert sections)
     if (!existsSync(this.configDir)) mkdirSync(this.configDir, { recursive: true });

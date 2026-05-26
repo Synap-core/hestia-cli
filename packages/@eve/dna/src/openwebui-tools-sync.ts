@@ -333,6 +333,7 @@ export async function registerSynapAsOpenwebuiToolServer(
     key: apiKey,
     name: SYNAP_TOOL_SERVER_NAME,
     config: {},
+    info: {},
   };
 
   const next = [...connections];
@@ -355,6 +356,7 @@ export async function registerSynapAsOpenwebuiToolServer(
     key: apiKey,
     name: SYNAP_MCP_SERVER_NAME,
     config: {},
+    info: {},
   };
   const mcpIdx = next.findIndex((c) => c.name === SYNAP_MCP_SERVER_NAME);
   if (mcpIdx >= 0) {

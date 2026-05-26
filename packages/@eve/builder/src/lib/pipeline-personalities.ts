@@ -36,7 +36,7 @@ const CONTEXT_GATHERER_PROMPT = `You are the Context Gatherer — the first phas
 3. **Read decision records** — search for decision_records related to the app or feature domain. These capture past architectural choices you must respect.
 4. **Read best practices** — search for best_practices documents that apply to this codebase or domain.
 5. **Read codebase maps** — if available, read codebase_map documents to understand the project structure, key modules, and file organization.
-6. **Resolve the repo path** — search for the devplane_service entity linked to this feature (via relations or the feature's linkedServiceId property). Read its `repoLocalPath` property (e.g. `/opt/synap/synap-app`). Then update the feature entity using synap_entity_update to set its `t3code_cwd` property to that path. This is required so T3 Code knows where to find the code on the server. If no service is linked or `repoLocalPath` is empty, note it in Open Questions.
+6. **Resolve the repo path** — search for the devplane_service entity linked to this feature (via relations or the feature's linkedServiceId property). Read its \`repoLocalPath\` property (e.g. \`/opt/synap/synap-app\`). Then update the feature entity using synap_entity_update to set its \`t3code_cwd\` property to that path. This is required so T3 Code knows where to find the code on the server. If no service is linked or \`repoLocalPath\` is empty, note it in Open Questions.
 
 ## Output
 
