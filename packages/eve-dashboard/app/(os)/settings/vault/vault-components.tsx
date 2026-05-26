@@ -7,21 +7,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-// ─── Session cache ─────────────────────────────────────────────────────────────
-// Survives component remount for SESSION_TTL_MS so the user isn't re-prompted
-// every time they open the vault panel within a session.
-const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
-let _sessionKey: CryptoKey | null = null;
-let _sessionExpiry = 0;
-
-function getSessionKey(): CryptoKey | null {
-  if (!_sessionKey || Date.now() > _sessionExpiry) { _sessionKey = null; return null; }
-  return _sessionKey;
-}
-function setSessionKey(key: CryptoKey) {
-  _sessionKey = key; _sessionExpiry = Date.now() + SESSION_TTL_MS;
-}
-function clearSessionKey() { _sessionKey = null; }
+import {
+  getSessionKey, setSessionKey, clearSessionKey,
+  encryptWithKey, decryptWithKey, generateSetupParams, tryUnlock,
+} from "@synap/vault";
 import {
   Button, Chip, Input, Modal, ModalBody, ModalContent,
   ModalFooter, ModalHeader, Select, SelectItem, Spinner, Textarea,
@@ -38,9 +27,6 @@ import {
   cleanFieldKey, type SecretType,
 } from "@synap-core/types";
 import { podTrpcFetch } from "@/lib/pod-fetch";
-import {
-  generateSetupParams, tryUnlock, encryptWithKey, decryptWithKey,
-} from "./vault-crypto";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
