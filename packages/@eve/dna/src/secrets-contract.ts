@@ -518,6 +518,13 @@ const SecretsSchema = z.object({
       })).optional(),
     })
     .optional(),
+  /** Traefik reverse-proxy config (written by `eve domain set`). */
+  traefik: z
+    .object({
+      /** Primary domain Traefik is configured for. */
+      domain: z.string().optional(),
+    })
+    .optional(),
 });
 
 export type EveSecrets = z.infer<typeof SecretsSchema>;
