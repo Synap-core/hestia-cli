@@ -358,6 +358,7 @@ const SecretsSchema = z.object({
       openclaw: z
         .object({
           synapApiKey: z.string().optional(),
+          gatewayToken: z.string().optional(),
         })
         .optional(),
       /**
