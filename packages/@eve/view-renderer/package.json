@@ -1,0 +1,25 @@
+{
+  "name": "@eve/view-renderer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "HeroUI view adapters for the Synap viewAdapterRegistry. Self-contained — no @synap-core imports.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "type-check": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "@heroui/react": "^2.4.0",
+    "lucide-react": "^0.441.0"
+  },
+  "devDependencies": {
+    "@heroui/react": "^2.4.0",
+    "@types/react": "^19.0.0",
+    "lucide-react": "^0.441.0",
+    "typescript": "^5.5.0"
+  }
+}

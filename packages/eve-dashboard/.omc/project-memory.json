@@ -47,7 +47,7 @@
     "runtime": null
   },
   "build": {
-    "buildCommand": "npx tsc --noEmit 2>&1 | head -10",
+    "buildCommand": "npx tsc --noEmit 2>&1 && echo \"vault OK\" && cd /Users/antoine/Documents/Code/synap/hestia-cli/packages/eve-dashboard && npx tsc --noEmit 2>&1 && echo \"dashboard OK\"",
     "testCommand": "npm test",
     "lintCommand": null,
     "devCommand": "npm run dev",
