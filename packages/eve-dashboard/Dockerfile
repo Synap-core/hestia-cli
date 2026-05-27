@@ -42,6 +42,9 @@ COPY packages/@eve/eyes ./packages/@eve/eyes
 COPY packages/@eve/fields ./packages/@eve/fields
 COPY packages/@eve/profile-renderer ./packages/@eve/profile-renderer
 COPY packages/@eve/vault ./packages/@eve/vault
+# @synap-core/chat-ui is source-direct (no build step) — vendored into the
+# monorepo so it's available inside the Docker build context.
+COPY packages/@synap-core/chat-ui ./packages/@synap-core/chat-ui
 COPY packages/eve-dashboard ./packages/eve-dashboard
 
 # Install all deps in one pass — pnpm cache persists across rebuilds via BuildKit mount

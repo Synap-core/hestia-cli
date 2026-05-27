@@ -1,5 +1,6 @@
 packages:
   - "packages/@eve/*"
+  - "packages/@synap-core/*"
   - "packages/eve-cli"
   - "packages/eve-dashboard"
   - "packages/cli-kit"

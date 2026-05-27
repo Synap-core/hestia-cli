@@ -226,6 +226,13 @@ const SecretsSchema = z.object({
           adminName: z.string().optional(),
           /** Last successful Eve-managed admin API config reconcile. */
           lastConfigReconciledAt: z.string().optional(),
+          /**
+           * Per-OWUI-user Synap sub-tokens, keyed by OWUI user ID.
+           * Values are plaintext sub-tokens minted by provisionOwuiUserInSynap.
+           * Written once on first mint — the endpoint never re-returns the
+           * plaintext so these must be persisted here at creation time.
+           */
+          userTokens: z.record(z.string()).optional(),
         })
         .optional(),
       /**

@@ -346,6 +346,16 @@ export {
   type ExtrasOutcome,
   type SyncOpenwebuiExtrasOptions,
 } from './openwebui-extras.js';
+export {
+  provisionOwuiUserInSynap,
+  type ProvisionOwuiUserOptions,
+  type ProvisionOwuiUserResult,
+} from './openwebui-user-provision.js';
+export {
+  syncOwuiUsersToSynap,
+  type OwuiUser,
+  type UsersSyncResult,
+} from './openwebui-users-sync.js';
 
 export {
   DEFAULT_HUB_PATH,

@@ -34,6 +34,10 @@ import {
   pushSynapFunctionsToOpenwebui,
   type FunctionsSyncResult,
 } from './openwebui-functions-sync.js';
+import {
+  syncOwuiUsersToSynap,
+  type UsersSyncResult,
+} from './openwebui-users-sync.js';
 import type { EveSecrets } from './secrets-contract.js';
 
 export type ExtrasOutcome<T> =
@@ -47,6 +51,7 @@ export interface OpenwebuiExtrasResult {
   knowledge?: ExtrasOutcome<KnowledgeSyncResult>;
   tools?: ExtrasOutcome<ToolsSyncResult>;
   functions?: ExtrasOutcome<FunctionsSyncResult>;
+  users?: ExtrasOutcome<UsersSyncResult>;
 }
 
 export interface SyncOpenwebuiExtrasOptions {
@@ -82,11 +87,12 @@ export async function syncOpenwebuiExtras(
   const hubBaseUrl = await resolveHubBaseUrlOnHost(secrets);
   if (!hubBaseUrl) return { skipped: true };
 
-  const [skills, knowledge, tools, functions] = await Promise.allSettled([
+  const [skills, knowledge, tools, functions, users] = await Promise.allSettled([
     pushSynapSkillsToOpenwebuiPrompts(cwd, hubBaseUrl, secrets),
     syncSynapKnowledgeToOpenwebui(cwd, hubBaseUrl, secrets, opts?.knowledge),
     registerSynapAsOpenwebuiToolServer(cwd, hubBaseUrl, secrets),
     pushSynapFunctionsToOpenwebui(cwd, hubBaseUrl, secrets),
+    syncOwuiUsersToSynap(cwd, secrets),
   ]);
 
   return {
@@ -95,6 +101,7 @@ export async function syncOpenwebuiExtras(
     knowledge: settled(knowledge),
     tools: settled(tools),
     functions: settled(functions),
+    users: settled(users),
   };
 }
 
@@ -106,6 +113,7 @@ export function formatExtrasSummary(r: OpenwebuiExtrasResult): string {
   parts.push(formatPart('knowledge', r.knowledge, (v) => `+${v.added}/~${v.updated}/-${v.removed} skipped=${v.skipped.length}`));
   parts.push(formatPart('tools', r.tools, (v) => v.registered ? `registered ${v.toolCount} ops` : 'not registered'));
   parts.push(formatPart('functions', r.functions, (v) => `synced=${v.synced.length} skipped=${v.skipped.length}`));
+  parts.push(formatPart('users', r.users, (v) => `total=${v.total} provisioned=${v.provisioned} skipped=${v.skipped} errors=${v.errors}`));
   return `OpenWebUI extras: ${parts.join(' | ')}`;
 }
 

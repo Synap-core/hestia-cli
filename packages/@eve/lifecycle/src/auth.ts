@@ -16,6 +16,15 @@
  *     `POST /api/hub/setup/agent`, atomically updates `secrets.json`,
  *     and returns the new prefix.
  *
+ * Sub-tokens (per-OWUI-user identities):
+ *   Eve's parent Hub API key can mint child keys for individual external
+ *   users (e.g. each OpenWebUI user gets their own Synap identity).
+ *   Use `provisionOwuiUserInSynap()` from `@eve/dna` to mint a sub-token
+ *   on first OWUI login and store it alongside the OWUI user record.
+ *   The child key is bound to the parent — revoking the parent cascades.
+ *   See `POST /api/hub/setup/external-user` (mintSubToken: true) for the
+ *   backend contract.
+ *
  * Both consume the existing `IDoctorRunner` abstraction so the same code
  * works inside the dashboard (FetchRunner) and on the CLI host where
  * synap-backend has no host port mapping (DockerExecRunner — picked by
