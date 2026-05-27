@@ -2528,6 +2528,37 @@ async function* installOpenclaw(): AsyncGenerator<LifecycleEvent> {
   const m = secrets?.arms?.messaging ?? {};
   const v = secrets?.arms?.voice ?? {};
 
+  // Newer OpenClaw versions require an existing config to start — they no
+  // longer self-seed on first boot. Pre-seed a minimal bootstrap config at
+  // a host-bind-mounted path so the container always finds it. The reconcile
+  // step that runs after install/update merges in the public domain origin.
+  // The config dir is bind-mounted so it survives `docker rm -f` across updates.
+  const openclawConfigDir = join(homedir(), ".eve", "openclaw");
+  const openclawConfigFile = join(openclawConfigDir, "openclaw.json");
+  mkdirSync(openclawConfigDir, { recursive: true });
+  if (!existsSync(openclawConfigFile)) {
+    writeFileSync(openclawConfigFile, JSON.stringify({
+      gateway: {
+        mode: "local",
+        controlUi: {
+          allowedOrigins: ["http://localhost:18789", "http://127.0.0.1:18789"],
+        },
+      },
+    }, null, 2));
+  }
+  // The container runs as node (uid 1000) — ensure it can write logs/state
+  // into the bind-mounted directory.
+  try { execSync(`chown -R 1000:1000 ${openclawConfigDir} 2>/dev/null || true`); } catch { /* non-fatal */ }
+
+  // OpenClaw gateway requires auth in container (auto-bind mode). Read an
+  // existing token from secrets or generate + persist a new one so the same
+  // token survives recreates and `eve update` runs.
+  let gatewayToken: string = secrets?.arms?.openclaw?.gatewayToken ?? "";
+  if (!gatewayToken) {
+    gatewayToken = randomBytes(32).toString("hex");
+    await writeEveSecrets({ arms: { ...(secrets?.arms ?? {}), openclaw: { gatewayToken } } });
+  }
+
   yield* ensureEveNetwork();
 
   yield { type: "step", label: "Pulling OpenClaw image…" };
@@ -2547,6 +2578,7 @@ async function* installOpenclaw(): AsyncGenerator<LifecycleEvent> {
     "-e", `SYNAP_API_URL=${synapApiUrl}`,
     "-e", `SYNAP_API_KEY=${synapApiKey}`,
     "-e", `DOKPLOY_API_URL=${dokployApiUrl}`,
+    "-e", `OPENCLAW_GATEWAY_TOKEN=${gatewayToken}`,
     "-e", `MESSAGING_ENABLED=${Boolean(m.enabled)}`,
     "-e", `MESSAGING_PLATFORM=${m.platform ?? ""}`,
     "-e", `MESSAGING_BOT_TOKEN=${m.botToken ?? ""}`,
@@ -2554,7 +2586,7 @@ async function* installOpenclaw(): AsyncGenerator<LifecycleEvent> {
     "-e", `VOICE_PROVIDER=${v.provider ?? ""}`,
     "-e", `VOICE_PHONE_NUMBER=${v.phoneNumber ?? ""}`,
     "-e", `VOICE_SIP_URI=${v.sipUri ?? ""}`,
-    "-v", "eve-arms-openclaw-data:/data",
+    "-v", `${openclawConfigDir}:/home/node/.openclaw`,
     "--restart", "unless-stopped",
     "ghcr.io/openclaw/openclaw:latest",
   ];
