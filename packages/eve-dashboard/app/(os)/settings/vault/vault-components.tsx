@@ -7,10 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import {
-  getSessionKey, setSessionKey, clearSessionKey,
-  encryptWithKey, decryptWithKey, generateSetupParams, tryUnlock,
-} from "@synap/vault";
+import { getSessionKey, setSessionKey, clearSessionKey, encryptWithKey, decryptWithKey, generateSetupParams, tryUnlock } from "@eve/vault";
 import {
   Button, Chip, Input, Modal, ModalBody, ModalContent,
   ModalFooter, ModalHeader, Select, SelectItem, Spinner, Textarea,

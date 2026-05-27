@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@eve/dna": "workspace:*",
+    "@eve/vault": "workspace:*",
     "@eve/fields": "workspace:*",
     "@eve/legs": "workspace:*",
     "@eve/lifecycle": "workspace:*",
@@ -22,9 +23,7 @@
     "@heroui/theme": "^2.4.0",
     "@internationalized/date": "^3.5.0",
     "@synap-core/auth": "^1.1.0",
-    "@synap-core/client": "workspace:*",
     "@synap-core/types": "^1.11.3",
-    "@synap/vault": "workspace:*",
     "@types/qrcode": "^1.5.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",

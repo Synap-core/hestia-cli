@@ -248,6 +248,19 @@ importers:
         specifier: ^5.5.0
         version: 5.9.3
 
+  packages/@eve/vault:
+    dependencies:
+      react:
+        specifier: ^19.0.0
+        version: 19.1.0
+    devDependencies:
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.2.14
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+
   packages/cli-kit:
     dependencies:
       chalk:
@@ -351,6 +364,9 @@ importers:
       '@eve/profile-renderer':
         specifier: workspace:*
         version: link:../@eve/profile-renderer
+      '@eve/vault':
+        specifier: workspace:*
+        version: link:../@eve/vault
       '@heroui/react':
         specifier: ^2.4.0
         version: 2.8.10(@react-spectrum/provider@3.11.0(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(@types/react@19.2.14)(framer-motion@11.18.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(tailwindcss@3.4.19(tsx@4.21.0)(yaml@2.8.3))

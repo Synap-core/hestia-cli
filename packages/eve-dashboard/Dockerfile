@@ -41,6 +41,7 @@ COPY packages/@eve/eyes ./packages/@eve/eyes
 # just need their src/ trees available during the dashboard build.
 COPY packages/@eve/fields ./packages/@eve/fields
 COPY packages/@eve/profile-renderer ./packages/@eve/profile-renderer
+COPY packages/@eve/vault ./packages/@eve/vault
 COPY packages/eve-dashboard ./packages/eve-dashboard
 
 # Install all deps in one pass — pnpm cache persists across rebuilds via BuildKit mount
