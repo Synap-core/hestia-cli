@@ -1,7 +1,7 @@
 {
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"sed -n '545,610p' packages/api/src/routers/channels.ts\",\"description\":\"Read resolveAiChannel router\"}",
-  "error": "Exit code 1\nsed: packages/api/src/routers/channels.ts: No such file or directory",
-  "timestamp": "2026-05-17T23:37:43.265Z",
+  "tool_name": "Read",
+  "tool_input_preview": "{\"file_path\":\"/Users/antoine/Documents/Code/synap/synap-app/scripts/check-token-usage.mjs\"}",
+  "error": "File does not exist. Note: your current working directory is /Users/antoine/Documents/Code/synap/hestia-cli/packages/eve-dashboard.",
+  "timestamp": "2026-05-31T23:42:00.163Z",
   "retry_count": 2
 }

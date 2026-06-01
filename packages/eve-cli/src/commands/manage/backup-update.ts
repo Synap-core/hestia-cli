@@ -350,6 +350,8 @@ async function buildUpdateTargets(deployDir: string | undefined): Promise<Update
   if (has('openwebui'))           targets.push(lifecycleUpdate('openwebui', '💬 Open WebUI'));
   if (has('openwebui-pipelines')) targets.push(lifecycleUpdate('openwebui-pipelines', '🪈 Pipelines'));
   if (has('hermes'))              targets.push(lifecycleUpdate('hermes', '🧠 Hermes'));
+  if (has('stalwart'))            targets.push(lifecycleUpdate('stalwart', '📧 Stalwart Mail'));
+  if (has('bulwark'))             targets.push(lifecycleUpdate('bulwark', '✉️  Bulwark Webmail'));
 
   // Traefik can recreate its container on update; reconnect synap to
   // eve-network afterwards so cross-container DNS keeps working. (Done

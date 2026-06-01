@@ -257,6 +257,62 @@ The Synap plugin is the crown jewel: Eve generates \`synap_provider.py\` into th
     doctor: { critical: false, integrationId: 'hermes-synap' },
   },
   {
+    id: 'stalwart',
+    organ: 'mouth',
+    label: 'Stalwart Mail',
+    emoji: '📧',
+    description: 'Sovereign mail server. SMTP/IMAP/JMAP in one Rust binary — own your inbox, no Gmail in the loop.',
+    longDescription: `Stalwart is a complete, self-hosted mail server: SMTP, IMAP, POP3, JMAP and ManageSieve in a single Rust binary. It replaces renting Gmail (and routing your mail through an aggregator) with owning the mailbox outright on your own server.
+
+Why a sovereign stack runs Stalwart: email is the last big piece of your digital life that usually lives in someone else's cloud. With Stalwart, every message — inbound and outbound — passes through your machine. DKIM, SPF, DMARC and MTA-STS records are generated for you; you publish them in DNS and your mail authenticates like any major provider.
+
+The HTTP surface (JMAP + admin console) is fronted by Traefik at \`mail.<domain>\`. The raw mail protocols (SMTP 25, submission 465/587, IMAP 143/993, POP3 110/995, ManageSieve 4190) are published directly on the host — Traefik is HTTP-only, and binding them straight to the container preserves the real sender IP that SPF/DMARC depend on.
+
+Once running, Synap's email channel talks to Stalwart over JMAP: your agent reads threads and drafts replies, and every send is gated by a proposal you approve. Pair it with the Bulwark webmail component for a human inbox at \`webmail.<domain>\`.
+
+Heads up: deliverability needs a PTR/reverse-DNS record set at your VPS provider (the one record Stalwart can't automate), and some providers block outbound port 25 — \`eve doctor\` checks both. Stalwart is pre-1.0; the image tag is pinned and upgrades may require data migration.`,
+    homepage: 'https://stalw.art',
+    category: 'data',
+    requires: ['traefik'],
+    service: {
+      containerName: 'eve-mouth-stalwart',
+      // HTTP listener (JMAP + admin). Fronted by Traefik via Docker DNS; the
+      // raw-TCP mail ports are published on the host by the install recipe.
+      internalPort: 8080,
+      hostPort: null,
+      subdomain: 'mail',
+      healthPath: '/healthz/live',
+    },
+    health: { kind: 'http', path: '/healthz/live' },
+    lifecycle: { restartStrategy: 'restart' },
+    doctor: { critical: false },
+  },
+  {
+    id: 'bulwark',
+    organ: 'mouth',
+    label: 'Bulwark Webmail',
+    emoji: '✉️',
+    description: 'Modern JMAP webmail for Stalwart. A fast, private inbox UI at webmail.<domain>.',
+    longDescription: `Bulwark is a modern, self-hosted webmail client built for Stalwart over the JMAP protocol — email, calendar, contacts and files in one fast UI. It's the human front door to the mailbox your Stalwart server hosts.
+
+Eve runs it as a sidecar fronted by Traefik at \`webmail.<domain>\`. On first launch Bulwark's setup wizard asks for the JMAP server URL (\`https://mail.<domain>\`), OAuth, branding and an admin password — Eve pre-fills the JMAP URL for you.
+
+Install this when you want a browser inbox alongside the agent-driven email channel in Synap. Skip it if you only ever touch email through your AI.`,
+    homepage: 'https://bulwarkmail.org',
+    category: 'add-on',
+    requires: ['stalwart'],
+    service: {
+      containerName: 'eve-mouth-bulwark',
+      internalPort: 3000,
+      hostPort: null,
+      subdomain: 'webmail',
+      healthPath: '/',
+    },
+    health: { kind: 'http', path: '/' },
+    lifecycle: { restartStrategy: 'restart' },
+    doctor: { critical: false },
+  },
+  {
     id: 'rsshub',
     organ: 'eyes',
     label: 'RSSHub Feeds',

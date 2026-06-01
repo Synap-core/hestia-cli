@@ -73,14 +73,25 @@ export const AGENTS: AgentInfo[] = [
     label: "OpenClaw",
     description: "OpenClaw agent runtime — reads/writes Synap data on behalf of the user.",
     componentId: "openclaw",
-    alwaysProvision: false,
+    // Always provision so the agent user exists in the pod from the moment
+    // Eve connects — even before the OpenClaw Docker container is running.
+    // This makes the agent visible in the browser Agents app (agentUsers.listAll)
+    // and lets the operator grant/review it without waiting for a container install.
+    // The install step still mints the key when the component is added; this flag
+    // just ensures the pod registration (user row + workspace membership) happens
+    // on every connect/auto-provision rather than only when docker ps finds the container.
+    alwaysProvision: true,
   },
   {
     agentType: "hermes",
     label: "Hermes",
     description: "Hermes builder daemon — scaffolds apps via Synap proposals.",
     componentId: "hermes",
-    alwaysProvision: false,
+    // Always provision for the same reason as openclaw above: the Hermes agent
+    // user should exist in the pod's user table as soon as Eve connects, so it
+    // appears in the browser Agents app and can be governed before the container
+    // is installed. The Docker install path still owns env/config/key wiring.
+    alwaysProvision: true,
   },
   {
     agentType: "openwebui",

@@ -1,27 +1,17 @@
 {
-  "name": "@eve/lifecycle",
+  "name": "@eve/mouth",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": [
-    "dist",
-    "assets"
-  ],
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts",
     "dev": "tsup src/index.ts --format esm --dts --watch",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "sync-builder-template": "node scripts/sync-builder-template.mjs"
+    "test": "vitest run"
   },
   "dependencies": {
-    "@eve/dna": "workspace:*",
-    "@eve/legs": "workspace:*",
-    "@eve/eyes": "workspace:*",
-    "@eve/mouth": "workspace:*",
-    "@eve/brain": "workspace:*",
-    "@clack/prompts": "^0.7.0"
+    "@eve/dna": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

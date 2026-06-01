@@ -21,6 +21,7 @@ import { randomBytes } from "node:crypto";
 import {
   COMPONENTS,
   resolveComponent,
+  publicComponentUrl,
   entityStateManager,
   readAgentKey,
   readEveSecrets,
@@ -234,6 +235,8 @@ const UPDATE_PLAN: Record<string, UpdatePlan> = {
   hermes: { imagePull: "nousresearch/hermes-agent:latest" },
   rsshub: { imagePull: "diygod/rsshub:latest" },
   nango: { imagePull: "nangohq/nango:latest" },
+  stalwart: { imagePull: "stalwartlabs/stalwart:v0.16" },
+  bulwark: { imagePull: "ghcr.io/bulwarkmail/webmail:latest" },
   // openwebui + pipelines were installed via `docker compose up -d`. After
   // a remove/down the container is gone, so a plain `docker restart` after
   // pull would fail with "No such container". `compose pull && compose up
@@ -1904,6 +1907,8 @@ const HAS_INSTALL_RECIPE: ReadonlySet<string> = new Set([
   "openclaw",
   "hermes",
   "eve-dashboard",
+  "stalwart",
+  "bulwark",
 ]);
 
 /**
@@ -2197,6 +2202,68 @@ async function* runInstallRecipe(
 
     case "openwebui": {
       yield* installOpenWebUi();
+      return;
+    }
+
+    case "stalwart": {
+      const { StalwartService } = await import("@eve/mouth");
+      const secrets = await readEveSecrets();
+      const domain = secrets?.domain?.primary;
+      const ssl = secrets?.domain?.ssl ?? false;
+      // mail.<domain> — the Traefik-fronted JMAP + admin surface.
+      const publicUrl = publicComponentUrl("stalwart", domain, ssl) ?? undefined;
+      const svc = new StalwartService({
+        publicUrl,
+        adminPassword: secrets?.stalwart?.adminPassword,
+      });
+      const { adminPassword } = await svc.install();
+      await writeEveSecrets({
+        stalwart: {
+          domain: domain ?? undefined,
+          adminPassword,
+          jmapUrl: publicUrl ? `${publicUrl}/jmap` : undefined,
+          installedAt: new Date().toISOString(),
+        },
+      });
+      yield { type: "log", line: "Stalwart mail server running" };
+      if (publicUrl) {
+        yield { type: "log", line: `Admin console: ${publicUrl}/admin (user: admin)` };
+      } else {
+        yield { type: "log", line: "Set a domain (`eve domain set`) then recreate Stalwart to route mail.<domain>." };
+      }
+      yield { type: "log", line: "Admin password saved to ~/.eve/secrets.json (stalwart.adminPassword)" };
+      yield {
+        type: "log",
+        line:
+          "⚠ Mail ports 25, 465, 587, 993, 995 are now reachable on ALL host interfaces — " +
+          "allow them through your firewall and keep everything else closed. " +
+          "(143/110/4190 are bound to loopback only.)",
+      };
+      yield { type: "log", line: "Next: set DKIM/SPF/DMARC + a PTR record, then verify with `eve doctor`." };
+      return;
+    }
+
+    case "bulwark": {
+      const { BulwarkService } = await import("@eve/mouth");
+      const secrets = await readEveSecrets();
+      const domain = secrets?.domain?.primary;
+      const ssl = secrets?.domain?.ssl ?? false;
+      const jmapUrl = publicComponentUrl("stalwart", domain, ssl) ?? undefined;
+      const { sessionSecret } = await new BulwarkService({
+        jmapUrl,
+        sessionSecret: secrets?.stalwart?.bulwarkSessionSecret,
+      }).install();
+      // Persist the session secret so a reinstall keeps saved logins valid.
+      if (sessionSecret) {
+        await writeEveSecrets({ stalwart: { bulwarkSessionSecret: sessionSecret } });
+      }
+      yield { type: "log", line: "Bulwark webmail running" };
+      yield {
+        type: "log",
+        line: jmapUrl
+          ? `Open webmail.<domain> and point the setup wizard at ${jmapUrl}`
+          : "Open the webmail UI and point the setup wizard at your Stalwart JMAP URL",
+      };
       return;
     }
 

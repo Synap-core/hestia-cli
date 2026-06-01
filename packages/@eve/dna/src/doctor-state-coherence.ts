@@ -62,12 +62,14 @@ export async function runStateCoherenceChecks(
     ...checkServiceRouting(secrets),
     ...checkChannels(secrets),
     ...checkTranscription(secrets),
+    ...checkStalwart(secrets),
     ...checkWiringStatus(secrets, opts.now ?? (() => new Date())),
   ];
 
   if (opts.probeRemote !== false) {
     checks.push(...await probeSynapHub(secrets, opts));
     checks.push(...await probeOpenwebuiExtras(secrets, opts));
+    checks.push(...await probeStalwartDeliverability(secrets, opts));
   }
 
   return checks;
@@ -285,6 +287,134 @@ function checkTranscription(secrets: EveSecrets): DoctorCheck[] {
     status: 'pass',
     message: `${engine}, API key configured`,
   }];
+}
+
+/**
+ * Stalwart mail: local config coherence. Skips entirely when the mail server
+ * isn't installed (no `stalwart` secrets section).
+ */
+function checkStalwart(secrets: EveSecrets): DoctorCheck[] {
+  const sw = secrets.stalwart;
+  if (!sw || (!sw.installedAt && !sw.domain)) return []; // not installed → nothing to check
+
+  if (!sw.domain) {
+    return [{
+      group: 'config',
+      name: 'Stalwart Mail',
+      status: 'warn',
+      message: 'No mail domain configured — set one and recreate Stalwart to route mail.<domain>',
+      fix: 'Run `eve domain set <domain>` then `eve recreate stalwart` (or reinstall)',
+      componentId: 'stalwart',
+    }];
+  }
+  return [{
+    group: 'config',
+    name: 'Stalwart Mail',
+    status: 'pass',
+    message: `domain=${sw.domain}`,
+    componentId: 'stalwart',
+  }];
+}
+
+/**
+ * Stalwart deliverability: DNS authentication records + SMTP reachability.
+ *
+ * These determine whether outbound mail authenticates (SPF/DKIM/DMARC) and
+ * whether inbound mail can arrive (MX + port 25). PTR/reverse-DNS is the one
+ * record Stalwart cannot publish — it's set at the VPS provider — so it is
+ * surfaced as a manual instruction, never auto-failed.
+ *
+ * Best-effort: each lookup skips cleanly on error rather than failing the run.
+ */
+async function probeStalwartDeliverability(
+  secrets: EveSecrets,
+  opts: StateCoherenceOptions,
+): Promise<DoctorCheck[]> {
+  const domain = secrets.stalwart?.domain;
+  if (!domain) return []; // covered by checkStalwart's warn
+
+  const timeoutMs = opts.timeoutMs ?? 5000;
+  const checks: DoctorCheck[] = [];
+
+  let resolveTxt: (h: string) => Promise<string[][]>;
+  let resolveMx: (h: string) => Promise<Array<{ exchange: string; priority: number }>>;
+  try {
+    const dns = await import('node:dns/promises');
+    resolveTxt = dns.resolveTxt;
+    resolveMx = dns.resolveMx;
+  } catch {
+    return []; // no DNS module (e.g. non-node runtime) — skip silently
+  }
+
+  const txtAt = async (host: string): Promise<string[]> => {
+    try {
+      const records = await resolveTxt(host);
+      return records.map(parts => parts.join(''));
+    } catch {
+      return [];
+    }
+  };
+
+  // SPF — published at the bare domain.
+  const spf = (await txtAt(domain)).find(r => r.toLowerCase().startsWith('v=spf1'));
+  checks.push(spf
+    ? { group: 'integrations', name: 'Mail SPF', status: 'pass', message: spf, componentId: 'stalwart' }
+    : { group: 'integrations', name: 'Mail SPF', status: 'warn', message: 'No v=spf1 record found', fix: `Publish the SPF TXT record for ${domain} (see the Stalwart admin console → Domains)`, componentId: 'stalwart' });
+
+  // DMARC — _dmarc.<domain>.
+  const dmarc = (await txtAt(`_dmarc.${domain}`)).find(r => r.toLowerCase().startsWith('v=dmarc1'));
+  checks.push(dmarc
+    ? { group: 'integrations', name: 'Mail DMARC', status: 'pass', message: dmarc, componentId: 'stalwart' }
+    : { group: 'integrations', name: 'Mail DMARC', status: 'warn', message: 'No _dmarc record found', fix: `Publish the DMARC TXT record at _dmarc.${domain}`, componentId: 'stalwart' });
+
+  // DKIM — Stalwart's default selector is configurable; check the common one.
+  const dkim = (await txtAt(`stalwart._domainkey.${domain}`)).find(r => r.toLowerCase().includes('v=dkim1'));
+  checks.push(dkim
+    ? { group: 'integrations', name: 'Mail DKIM', status: 'pass', message: 'stalwart._domainkey published', componentId: 'stalwart' }
+    : { group: 'integrations', name: 'Mail DKIM', status: 'warn', message: 'No stalwart._domainkey DKIM record found (selector may differ)', fix: 'Copy the DKIM record from the Stalwart admin console → Domains → DKIM and publish it', componentId: 'stalwart' });
+
+  // MX — inbound mail needs an MX pointing at this server.
+  let mx: Array<{ exchange: string; priority: number }> = [];
+  try { mx = await resolveMx(domain); } catch { /* none */ }
+  checks.push(mx.length > 0
+    ? { group: 'integrations', name: 'Mail MX', status: 'pass', message: mx.map(m => `${m.priority} ${m.exchange}`).join(', '), componentId: 'stalwart' }
+    : { group: 'integrations', name: 'Mail MX', status: 'warn', message: 'No MX record found — inbound mail cannot be delivered', fix: `Publish an MX record for ${domain} pointing at mail.${domain}`, componentId: 'stalwart' });
+
+  // SMTP reachability — can we open a TCP connection to port 25?
+  checks.push(await probeTcp(`mail.${domain}`, 25, timeoutMs));
+
+  // PTR / reverse DNS — cannot be automated; always a manual instruction.
+  checks.push({
+    group: 'integrations',
+    name: 'Mail PTR (reverse DNS)',
+    status: 'warn',
+    message: 'PTR cannot be verified automatically — set it at your VPS/hosting provider',
+    fix: `Set reverse DNS for this server's public IP to mail.${domain}, or outbound mail will be flagged as spam`,
+    componentId: 'stalwart',
+  });
+
+  return checks;
+}
+
+/** Best-effort TCP connect probe for an SMTP listener. */
+async function probeTcp(host: string, port: number, timeoutMs: number): Promise<DoctorCheck> {
+  const name = `Mail SMTP (${host}:${port})`;
+  try {
+    const net = await import('node:net');
+    const reachable = await new Promise<boolean>((resolve) => {
+      const socket = net.connect({ host, port });
+      const done = (ok: boolean) => { socket.destroy(); resolve(ok); };
+      socket.setTimeout(timeoutMs);
+      socket.once('connect', () => done(true));
+      socket.once('timeout', () => done(false));
+      socket.once('error', () => done(false));
+    });
+    return reachable
+      ? { group: 'integrations', name, status: 'pass', message: 'SMTP port reachable', componentId: 'stalwart' }
+      : { group: 'integrations', name, status: 'warn', message: 'Port 25 not reachable — many VPS providers block it; check your firewall and provider', fix: 'Open inbound :25 in your firewall and confirm your provider allows port 25', componentId: 'stalwart' };
+  } catch {
+    return { group: 'integrations', name, status: 'skip', message: 'Could not probe SMTP port', componentId: 'stalwart' };
+  }
 }
 
 // ─── Remote probes ───────────────────────────────────────────────────────────

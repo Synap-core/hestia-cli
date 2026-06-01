@@ -403,6 +403,29 @@ const SecretsSchema = z.object({
         .optional(),
     })
     .optional(),
+  /**
+   * Stalwart mail server config (the "mouth" organ).
+   *
+   * Written by `eve install --components stalwart`. `bearerToken` is the
+   * JMAP credential the Synap StalwartConnector uses to read mail and submit
+   * sends on the operator's behalf; `adminPassword` is the preseeded bootstrap
+   * admin shown once after install.
+   */
+  stalwart: z
+    .object({
+      /** Primary mail domain, e.g. example.com (mail served at mail.<domain>). */
+      domain: z.string().optional(),
+      /** Preseeded bootstrap admin password (STALWART_RECOVERY_ADMIN). */
+      adminPassword: z.string().optional(),
+      /** JMAP base URL the Synap connector targets, e.g. https://mail.<domain>/jmap. */
+      jmapUrl: z.string().optional(),
+      /** Bearer token minted for the Synap connector's JMAP access. */
+      bearerToken: z.string().optional(),
+      /** Bulwark webmail SESSION_SECRET — persisted so reinstalls keep saved logins. */
+      bulwarkSessionSecret: z.string().optional(),
+      installedAt: z.string().optional(),
+    })
+    .optional(),
   /** Eve web dashboard config */
   dashboard: z
     .object({
@@ -690,6 +713,10 @@ export async function writeEveSecrets(
     current.arms as Record<string, unknown> | undefined,
     partial.arms as Record<string, unknown> | undefined,
   );
+  const mergedStalwart = mergeNested(
+    current.stalwart as Record<string, unknown> | undefined,
+    partial.stalwart as Record<string, unknown> | undefined,
+  );
   const mergedDashboard = mergeNested(
     current.dashboard as Record<string, unknown> | undefined,
     partial.dashboard as Record<string, unknown> | undefined,
@@ -715,6 +742,7 @@ export async function writeEveSecrets(
     inference: mergedInference as EveSecrets['inference'],
     builder: mergedBuilder as EveSecrets['builder'],
     arms: mergedArms as EveSecrets['arms'],
+    stalwart: mergedStalwart as EveSecrets['stalwart'],
     dashboard: mergedDashboard as EveSecrets['dashboard'],
     domain: mergedDomain as EveSecrets['domain'],
     cp: mergedCp as EveSecrets['cp'],

@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@eve/dna": "workspace:*",
+    "@eve/mouth": "workspace:*",
     "@eve/vault": "workspace:*",
     "@eve/fields": "workspace:*",
     "@eve/legs": "workspace:*",

@@ -195,6 +195,12 @@
       "type": "file"
     },
     {
+      "path": "app/(os)/data/hooks/use-entities-graph.ts",
+      "accessCount": 4,
+      "lastAccessed": 1780270833518,
+      "type": "file"
+    },
+    {
       "path": "app/api/ai/route.ts",
       "accessCount": 3,
       "lastAccessed": 1778691514491,
@@ -216,12 +222,6 @@
       "path": "app/(os)/components/connection-indicator.tsx",
       "accessCount": 3,
       "lastAccessed": 1779193589162,
-      "type": "file"
-    },
-    {
-      "path": "app/(os)/data/hooks/use-entities-graph.ts",
-      "accessCount": 3,
-      "lastAccessed": 1779200333734,
       "type": "file"
     },
     {
@@ -366,6 +366,18 @@
       "path": "app/lib/use-pod-query.ts",
       "accessCount": 1,
       "lastAccessed": 1779199997633,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/data/page.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1780270832160,
+      "type": "file"
+    },
+    {
+      "path": "app/(os)/data/components/knowledge-graph-canvas.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1780270833129,
       "type": "file"
     }
   ],
