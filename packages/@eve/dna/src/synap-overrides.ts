@@ -113,7 +113,13 @@ services:
       - "127.0.0.1:${SYNAP_HOST_LOOPBACK_PORT}:4000"
     networks:
       synap-net: {}
-      eve-network: {}
+      eve-network:
+        # Stable alias so OpenWebUI / Hermes / wire-ai can resolve the pod
+        # backend by the canonical hostname eve-brain-synap on eve-network.
+        # Standalone-compose deploys do not get the "docker network connect
+        # --alias" step that Eve's synap-image path runs, so set it here.
+        aliases:
+          - eve-brain-synap
   # Pod Admin — operator console served at pod-admin.<root>. Joins eve-network
   # under a stable alias so eve-legs-traefik can route pod-admin.<domain> by
   # name (its Traefik file provider builds upstreams from container names).

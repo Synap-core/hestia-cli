@@ -1027,7 +1027,34 @@ EOF
         echo "    Start with: hestia ai:chat:start librechat"
     fi
     echo ""
-    
+
+    # ── Auto-start + provision Open WebUI ────────────────────────────────────
+    # A fresh install should come up already wired to the pod: models in the
+    # picker plus Synap tools/knowledge/skills. `eve openwebui sync` registers
+    # the model sources and runs the extras push (it has its own health-check
+    # budget, so it tolerates OpenWebUI still starting). Best-effort: a failure
+    # here never aborts the install — the sync is idempotent and re-runnable
+    # with `eve openwebui sync` once the pod backend is reachable.
+    if [[ "$install_openwebui" == "true" ]]; then
+        local eve_bin=""
+        if command -v eve &>/dev/null; then eve_bin="eve"
+        elif [[ -x /root/.local/share/pnpm/eve ]]; then eve_bin="/root/.local/share/pnpm/eve"; fi
+
+        log_info "Starting Open WebUI and provisioning Synap models/tools..."
+        docker compose -f "$compose_target" --profile openwebui up -d >> "$install_log" 2>&1 || \
+            log_warn "Open WebUI failed to start automatically — start it with: hestia ai:chat:start openwebui"
+
+        if [[ -n "$eve_bin" ]]; then
+            if "$eve_bin" openwebui sync >> "$install_log" 2>&1; then
+                log_success "Open WebUI provisioned (models + Synap tools/skills)"
+            else
+                log_warn "Open WebUI auto-provision incomplete — re-run later with: $eve_bin openwebui sync"
+            fi
+        else
+            log_warn "eve CLI not found — provision Open WebUI later with: eve openwebui sync"
+        fi
+    fi
+
     mark_step_completed "$step_name"
 }
 
