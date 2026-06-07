@@ -60,12 +60,13 @@ async function findSynapBackendContainer(): Promise<string | null> {
 
 async function findSynapPostgresContainer(): Promise<string | null> {
   try {
+    // Match any compose postgres service regardless of project name
     const { stdout } = await execFileAsync(
       'docker',
       [
         'ps',
-        '--filter', 'label=com.docker.compose.project=synap-backend',
         '--filter', 'label=com.docker.compose.service=postgres',
+        '--filter', 'ancestor=postgres',
         '--format', '{{.Names}}',
       ],
       { timeout: 4000 },
