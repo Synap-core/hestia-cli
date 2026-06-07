@@ -57,6 +57,9 @@ importers:
       '@eve/legs':
         specifier: workspace:*
         version: link:../legs
+      cli-table3:
+        specifier: ^0.6.3
+        version: 0.6.5
       commander:
         specifier: ^11.0.0
         version: 11.1.0

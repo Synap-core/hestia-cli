@@ -12,6 +12,7 @@
   "dependencies": {
     "@eve/dna": "workspace:*",
     "@eve/legs": "workspace:*",
+    "cli-table3": "^0.6.3",
     "commander": "^11.0.0"
   },
   "devDependencies": {
