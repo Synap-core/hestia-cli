@@ -209,18 +209,31 @@ async function nangoAutoSignup(secretKey: string, ownerEmail?: string): Promise<
   const email = ownerEmail ?? 'admin@eve.local';
   // Derived password satisfies Nango's complexity rules: uppercase + lowercase + number + special
   const pw = `Nango_${secretKey.slice(0, 12)}`;
+  // Use 127.0.0.1 explicitly — inside the container `localhost` may resolve to IPv6 ::1
+  // while Nango only binds on IPv4, causing ECONNREFUSED.
   const node = `
-    const attempt = (n) => fetch('http://localhost:3003/api/v1/account/signup', {
+    const attempt = (n) => fetch('http://127.0.0.1:3003/api/v1/account/signup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'Admin', email: ${JSON.stringify(email)}, password: ${JSON.stringify(pw)} }),
     }).then(r => r.json()).then(d => {
-      if (d?.data?.uuid || d?.error === 'account_already_exists') process.exit(0);
+      const code = d?.error?.code ?? d?.error;
+      if (d?.data?.uuid || code === 'account_already_exists' || code === 'email_not_verified') process.exit(0);
       if (n > 0) setTimeout(() => attempt(n - 1), 2000); else process.exit(1);
     }).catch(() => { if (n > 0) setTimeout(() => attempt(n - 1), 2000); else process.exit(1); });
     attempt(15);
   `;
   await execFileAsync('docker', ['exec', 'eve-arms-nango', 'node', '-e', node], { timeout: 40_000 }).catch(() => {/* non-fatal */});
+
+  // Auto-verify the email directly in the DB so login works without SMTP.
+  const pgContainer = await findSynapPostgresContainer();
+  if (pgContainer) {
+    await execFileAsync('docker', [
+      'exec', pgContainer,
+      'psql', '-U', 'synap', '-d', 'nango',
+      '-c', `UPDATE nango._nango_users SET email_verified = true WHERE email = '${email}';`,
+    ], { timeout: 10_000 }).catch(() => {/* non-fatal — table may not exist yet */});
+  }
 }
 
 async function addNango(): Promise<void> {
