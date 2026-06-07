@@ -339,6 +339,16 @@ export class TraefikService {
         upstream: `http://${containerName}:${comp.service.internalPort}`,
         requires: comp.id,
       });
+
+      // Register additional subdomains (e.g. Nango Connect UI on port 3009)
+      for (const extra of comp.service.additionalSubdomains ?? []) {
+        services.push({
+          id: `${comp.id}-${extra.subdomain}`,
+          subdomain: extra.subdomain,
+          upstream: `http://${containerName}:${extra.internalPort}`,
+          requires: comp.id,
+        });
+      }
     }
 
     // Add custom routes from eve domain add

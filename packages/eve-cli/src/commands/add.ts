@@ -325,6 +325,12 @@ async function addNango(): Promise<void> {
   const nangoHost = _nangoDomain
     ? `${_nangoSsl ? 'https' : 'http'}://nango.${_nangoDomain}`
     : 'http://eve-arms-nango:3003';
+  // Connect UI is served on port 3009 at a dedicated subdomain.
+  // Falls back to empty string when no domain is configured — written to
+  // deploy/.env only when a domain is known.
+  const connectUrl = _nangoDomain
+    ? `${_nangoSsl ? 'https' : 'http'}://connect.${_nangoDomain}`
+    : '';
 
   if (!alreadyRunning) {
     // Remove stopped/exited container if it exists so docker run can reuse the name
@@ -341,7 +347,10 @@ async function addNango(): Promise<void> {
       '-e', `NANGO_DATABASE_URL=postgresql://${pgUser}:${pgPassword}@eve-brain-postgres:5432/nango`,
       '-e', 'NODE_ENV=production',
       '-e', 'NANGO_EMAIL_ACCOUNT_VERIFICATION_REQUIRED=false',
+      '-e', 'FLAG_SERVE_CONNECT_UI=true',
+      '-e', 'NANGO_CONNECT_UI_PORT=3009',
       ...(nangoHost ? ['-e', `NANGO_SERVER_URL=${nangoHost}`] : []),
+      ...(connectUrl ? ['-e', `NANGO_CONNECT_URL=${connectUrl}`] : []),
       ...(podPublicUrl ? ['-e', `NANGO_WEBHOOK_URL=${podPublicUrl}/api/connectors/nango-webhook`] : []),
       '-v', 'eve-arms-nango-data:/var/lib/nango',
       'nangohq/nango-server:hosted',
@@ -391,8 +400,9 @@ async function addNango(): Promise<void> {
     // the same hostname that OAuth providers redirect to.
     envContent = setEnvVar(envContent, 'NANGO_HOST', nangoHost);
     envContent = setEnvVar(envContent, 'NANGO_SECRET_KEY', secretKey);
+    if (connectUrl) envContent = setEnvVar(envContent, 'NANGO_CONNECT_URL', connectUrl);
     await writeFile(envPath, envContent.trimStart(), 'utf8');
-    printInfo(`  Wrote NANGO_HOST=${nangoHost} + NANGO_SECRET_KEY to ${envPath}`);
+    printInfo(`  Wrote NANGO_HOST=${nangoHost} + NANGO_SECRET_KEY${connectUrl ? ` + NANGO_CONNECT_URL=${connectUrl}` : ''} to ${envPath}`);
 
     // Recreate synap-backend so it picks up the new env vars from .env.
     // `docker restart` keeps the original env — `compose up --force-recreate`

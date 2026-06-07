@@ -30,6 +30,12 @@ export interface ServiceInfo {
   subdomain: string | null;
   /** Health check path that should return 2xx/3xx when the service is up. */
   healthPath?: string;
+  /**
+   * Extra subdomains served by the same container on different ports.
+   * Each entry generates an additional Traefik router + service.
+   * Example: Nango's Connect UI runs on port 3009 alongside the API on 3003.
+   */
+  additionalSubdomains?: Array<{ subdomain: string; internalPort: number }>;
 }
 
 export interface ComponentInfo {
@@ -123,6 +129,7 @@ Requires Postgres (already part of the Brain). Listens on port 3003, accessible 
       hostPort: null,
       subdomain: 'nango',
       healthPath: '/health',
+      additionalSubdomains: [{ subdomain: 'connect', internalPort: 3009 }],
     },
     health: { kind: 'http', path: '/health' },
     lifecycle: { restartStrategy: 'restart' },

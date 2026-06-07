@@ -234,7 +234,7 @@ const UPDATE_PLAN: Record<string, UpdatePlan> = {
   // container starts with the current Synap memory provider and AI wiring.
   hermes: { imagePull: "nousresearch/hermes-agent:latest" },
   rsshub: { imagePull: "diygod/rsshub:latest" },
-  nango: { imagePull: "nangohq/nango:latest" },
+  nango: { imagePull: "nangohq/nango-server:hosted" },
   stalwart: { imagePull: "stalwartlabs/stalwart:v0.16" },
   bulwark: { imagePull: "ghcr.io/bulwarkmail/webmail:latest" },
   // openwebui + pipelines were installed via `docker compose up -d`. After
