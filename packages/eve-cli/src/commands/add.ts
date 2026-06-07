@@ -336,11 +336,13 @@ async function addNango(): Promise<void> {
 
     printInfo('Starting Nango container...');
     await execFileAsync('docker', dockerRunArgs, { timeout: 30_000 });
-    const ownerEmail = secrets?.synap?.userSession?.email ?? secrets?.builder?.openwebui?.adminEmail;
-    await nangoAutoSignup(secretKey, ownerEmail);
   } else {
-    printInfo('Nango container already running — skipping start.');
+    printInfo('Nango container already running — will retry account signup if needed.');
   }
+
+  // Always attempt signup — idempotent, safe to retry if rate-limited on first install.
+  const ownerEmail = secrets?.synap?.userSession?.email ?? secrets?.builder?.openwebui?.adminEmail;
+  await nangoAutoSignup(secretKey, ownerEmail);
 
   if (!podPublicUrl) {
     printWarning('  PUBLIC_URL not found in deploy/.env — NANGO_WEBHOOK_URL not set.');
@@ -379,14 +381,25 @@ async function addNango(): Promise<void> {
     await writeFile(envPath, envContent.trimStart(), 'utf8');
     printInfo(`  Wrote NANGO_HOST=${nangoHost} + NANGO_SECRET_KEY to ${envPath}`);
 
-    // Restart synap-backend so it picks up the new env vars immediately.
+    // Recreate synap-backend so it picks up the new env vars from .env.
+    // `docker restart` keeps the original env — `compose up --force-recreate`
+    // re-reads .env and creates a fresh container with updated vars.
     const backendContainer = await findSynapBackendContainer();
     if (backendContainer) {
-      printInfo(`  Restarting ${backendContainer} to apply NANGO_SECRET_KEY...`);
-      await execFileAsync('docker', ['restart', backendContainer], { timeout: 60_000 });
-      printInfo('  Backend restarted.');
+      printInfo(`  Recreating ${backendContainer} to apply NANGO_SECRET_KEY...`);
+      // Derive the compose service name from the container label
+      const { stdout: svcOut } = await execFileAsync('docker', [
+        'inspect', backendContainer,
+        '--format', '{{index .Config.Labels "com.docker.compose.service"}}',
+      ], { timeout: 4000 }).catch(() => ({ stdout: 'backend' }));
+      const serviceName = svcOut.trim() || 'backend';
+      await execFileAsync('docker', [
+        'compose', '--project-directory', deployDir,
+        'up', '-d', '--no-deps', '--force-recreate', serviceName,
+      ], { timeout: 120_000 });
+      printInfo('  Backend recreated with updated env.');
     } else {
-      printWarning('  Could not find synap-backend container — restart it manually to apply NANGO_SECRET_KEY.');
+      printWarning('  Could not find synap-backend container — run `docker compose up -d --force-recreate backend` in your deploy dir to apply NANGO_SECRET_KEY.');
     }
   } else {
     printWarning('  Could not locate deploy/.env — set SYNAP_DEPLOY_DIR and rerun to write env vars.');
