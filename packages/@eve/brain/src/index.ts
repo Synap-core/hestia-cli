@@ -3,6 +3,7 @@ import { initCommand } from './commands/init.js';
 import { statusCommand } from './commands/status.js';
 import { startCommand } from './commands/start.js';
 import { stopCommand } from './commands/stop.js';
+import { providersCommand } from './commands/providers.js';
 
 // Services
 export { SynapService, type SynapHealth } from './lib/synap.js';
@@ -33,4 +34,7 @@ export function registerBrainCommands(brain: Command): void {
   statusCommand(brain);
   startCommand(brain);
   stopCommand(brain);
+  providersCommand(brain);
 }
+
+export { providersCommand } from './commands/providers.js';

@@ -1,42 +1,71 @@
 /**
  * AI providers CRUD.
  *
- * POST   /api/ai/providers          → add or update a provider entry
- * DELETE /api/ai/providers?id=...   → remove a provider (built-in or custom)
+ * POST   /api/ai/providers  → add or update a provider (upsert)
+ * DELETE /api/ai/providers  → remove a provider
+ *
+ * Source of truth: pod `ai_providers` table via tRPC `aiProviders.*`.
+ * A local mirror is kept in `secrets.ai.providers` for backwards
+ * compatibility with the local AI-wiring / autoApply pipeline
+ * (materializeTargets reads from secrets to set env vars on containers).
+ *
+ * If the pod is unreachable the route falls back to local-only mode
+ * (same behaviour as before the migration) and logs a warning.
  */
 
 import { NextResponse } from "next/server";
 import {
   readEveSecrets, writeEveSecrets, entityStateManager,
   AI_CONSUMERS, AI_CONSUMERS_NEEDING_RECREATE,
+  resolveSynapUrl, readAgentKeyOrLegacy,
 } from "@eve/dna";
 import { materializeTargets, runActionToCompletion } from "@eve/lifecycle";
 import { requireAuth } from "@/lib/auth-server";
 
-type ProviderId = "ollama" | "openrouter" | "anthropic" | "openai";
-const VALID_PROVIDERS: ProviderId[] = ["ollama", "openrouter", "anthropic", "openai"];
+// ── tRPC batch-HTTP helpers (server-side, uses hub API key) ───────────────────
 
-const NAME_MAP: Record<ProviderId, string> = {
-  ollama: "Ollama (local)",
-  openrouter: "OpenRouter",
-  anthropic: "Anthropic",
-  openai: "OpenAI",
-};
+interface TrpcBatchResult<T> {
+  result: { data: { json: T } };
+}
 
-const DEFAULT_MODELS: Record<ProviderId, string> = {
-  anthropic: "claude-sonnet-4-7",
-  openai: "gpt-5",
-  openrouter: "anthropic/claude-sonnet-4-7",
-  ollama: "llama3.1:8b",
-};
+async function podMutation<T>(
+  podUrl: string,
+  apiKey: string,
+  path: string,
+  input?: unknown,
+): Promise<T> {
+  const res = await fetch(`${podUrl.replace(/\/$/, "")}/trpc/${path}?batch=1`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ "0": { json: input ?? null } }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Pod tRPC ${path} → ${res.status}: ${text}`);
+  }
+  const data: TrpcBatchResult<T>[] = await res.json();
+  return data[0].result.data.json;
+}
 
-const DEFAULT_BASE_URLS: Partial<Record<ProviderId, string>> = {
-  ollama: "http://localhost:11434",
-};
+async function resolvePodAuth(): Promise<{ podUrl: string; apiKey: string } | null> {
+  try {
+    const secrets = await readEveSecrets();
+    const podUrl = resolveSynapUrl(secrets);
+    if (!podUrl) return null;
+    const apiKey = await readAgentKeyOrLegacy("eve", process.env.EVE_HOME ?? process.cwd());
+    if (!apiKey) return null;
+    return { podUrl, apiKey };
+  } catch {
+    return null;
+  }
+}
 
-/**
- * Apply AI config changes to running services.
- */
+// ── Local AI wiring (unchanged — operates on secrets.json) ───────────────────
+
 async function autoApply(opts: { recreate?: boolean } = {}) {
   try {
     const installed = await entityStateManager.getInstalledComponents();
@@ -65,8 +94,6 @@ async function autoApply(opts: { recreate?: boolean } = {}) {
       }
     }
 
-    // Persist wiringStatus so the UI can show "Last applied" in the
-    // per-service routing panel.
     if (wireResults.length > 0) {
       const wiringStatus: Record<string, { lastApplied: string; outcome: string }> =
         wireResults.reduce((acc, r) => {
@@ -82,21 +109,7 @@ async function autoApply(opts: { recreate?: boolean } = {}) {
   }
 }
 
-/**
- * Resolve a provider id: strip `custom-` prefix for display, and check
- * whether the id refers to a built-in provider.
- */
-function isBuiltIn(id: string): id is ProviderId {
-  return VALID_PROVIDERS.includes(id as ProviderId);
-}
-
-/**
- * Ensure a provider entry has a name — derive from id for built-ins,
- * use the provided name or the id itself for custom providers.
- */
-function withName(id: string, name: string | undefined): string {
-  return name || NAME_MAP[id as ProviderId] || id;
-}
+// ── POST — add or update provider ────────────────────────────────────────────
 
 export async function POST(req: Request) {
   const auth = await requireAuth();
@@ -108,117 +121,124 @@ export async function POST(req: Request) {
     baseUrl?: string;
     defaultModel?: string;
     enabled?: boolean;
-    /** Whether this is a custom provider (vs built-in) */
     isCustom?: boolean;
-    /** Display name for custom providers */
     name?: string;
+    /** Models array (for richer pod sync) */
+    models?: Array<{ id: string; tier?: string }>;
+    priority?: number;
   };
 
+  if (!body.id) {
+    return NextResponse.json({ error: "Missing provider id" }, { status: 400 });
+  }
+
+  const providerId = body.id;
+  const name = body.name ?? providerId;
+
+  // Infer a sensible env-var name from the provider id.
+  const apiKeyEnvVar = `${providerId.toUpperCase().replace(/-/g, "_")}_API_KEY`;
+
+  // ── 1. Push to pod DB (source of truth) ──────────────────────────────
+  const podAuth = await resolvePodAuth();
+  let podSynced = false;
+
+  if (podAuth) {
+    try {
+      await podMutation(podAuth.podUrl, podAuth.apiKey, "aiProviders.upsert", {
+        providerId,
+        name,
+        baseUrl: body.baseUrl ?? "",
+        apiKeyEnvVar,
+        ...(body.apiKey ? { apiKey: body.apiKey } : {}),
+        enabled: body.enabled ?? true,
+        priority: body.priority ?? 10,
+        models: body.models ?? (body.defaultModel ? [{ id: body.defaultModel }] : []),
+      });
+      podSynced = true;
+    } catch (err) {
+      console.warn("[ai/providers] Pod upsert failed (falling back to local only):", err);
+    }
+  }
+
+  // ── 2. Mirror to secrets.json (for local service wiring) ─────────────
   const secrets = await readEveSecrets();
   const list = [...(secrets?.ai?.providers ?? [])];
-
-  // Determine the canonical id and whether this is a custom entry.
-  let resolvedId: string;
-  let isCustom: boolean;
-
-  if (body.isCustom || body.id?.startsWith('custom-')) {
-    isCustom = true;
-    resolvedId = body.id ?? `custom-${Date.now()}`;
-  } else if (body.id && VALID_PROVIDERS.includes(body.id as ProviderId)) {
-    isCustom = false;
-    resolvedId = body.id as ProviderId;
-  } else {
-    return NextResponse.json({ error: "Invalid provider id" }, { status: 400 });
-  }
-
-  const idx = list.findIndex((p) => p.id === resolvedId);
+  const idx = list.findIndex(p => p.id === providerId);
   const existing = idx >= 0 ? list[idx] : undefined;
 
-  // Built-in cloud providers require an API key (Ollama is local — no key needed).
-  if (!isCustom && isBuiltIn(resolvedId)) {
-    const apiKey = body.apiKey ?? existing?.apiKey;
-    if (resolvedId !== "ollama" && (!apiKey || apiKey.trim().length === 0)) {
-      return NextResponse.json({ error: `${resolvedId} requires an API key` }, { status: 400 });
-    }
-
-    const next = {
-      id: resolvedId,
-      name: withName(resolvedId, body.name),
-      enabled: body.enabled ?? existing?.enabled ?? true,
-      apiKey: apiKey ?? undefined,
-      baseUrl: body.baseUrl ?? existing?.baseUrl ?? DEFAULT_BASE_URLS[resolvedId],
-      defaultModel: body.defaultModel ?? existing?.defaultModel ?? DEFAULT_MODELS[resolvedId],
-    };
-
-    if (idx >= 0) list[idx] = next;
-    else list.push(next);
-
-    await writeEveSecrets({ ai: { providers: list } });
-    const applied = await autoApply({ recreate: true });
-    return NextResponse.json({
-      ok: true,
-      provider: { ...next, apiKey: undefined },
-      applied,
-    });
-  }
-
-  // Custom provider path.
-  const apiKey = body.apiKey ?? existing?.apiKey;
-  const next = {
-    id: resolvedId,
-    name: withName(resolvedId, body.name ?? existing?.name),
+  const localEntry = {
+    id: providerId,
+    name,
     enabled: body.enabled ?? existing?.enabled ?? true,
-    apiKey: apiKey ?? undefined,
-    baseUrl: body.baseUrl ?? existing?.baseUrl ?? '',
-    defaultModel: body.defaultModel ?? existing?.defaultModel ?? '',
+    apiKey: body.apiKey ?? existing?.apiKey ?? undefined,
+    baseUrl: body.baseUrl ?? existing?.baseUrl ?? "",
+    defaultModel: body.defaultModel ?? existing?.defaultModel ?? "",
   };
 
-  if (idx >= 0) list[idx] = next;
-  else list.push(next);
+  if (idx >= 0) list[idx] = localEntry;
+  else list.push(localEntry);
 
   await writeEveSecrets({ ai: { providers: list } });
+
+  // ── 3. Re-wire local services ─────────────────────────────────────────
   const applied = await autoApply({ recreate: true });
+
   return NextResponse.json({
     ok: true,
-    provider: { ...next, apiKey: undefined },
+    podSynced,
+    provider: { ...localEntry, apiKey: undefined },
     applied,
   });
 }
+
+// ── DELETE — remove provider ──────────────────────────────────────────────────
 
 export async function DELETE(req: Request) {
   const auth = await requireAuth();
   if ("error" in auth) return auth.error;
 
   const { searchParams } = new URL(req.url);
-  const id = searchParams.get("id");
-  if (!id) {
+  const providerId = searchParams.get("id");
+  if (!providerId) {
     return NextResponse.json({ error: "Missing provider id" }, { status: 400 });
   }
 
+  // ── 1. Remove from pod DB ─────────────────────────────────────────────
+  const podAuth = await resolvePodAuth();
+  let podSynced = false;
+
+  if (podAuth) {
+    try {
+      await podMutation(podAuth.podUrl, podAuth.apiKey, "aiProviders.remove", { providerId });
+      podSynced = true;
+    } catch (err) {
+      console.warn("[ai/providers] Pod remove failed (falling back to local only):", err);
+    }
+  }
+
+  // ── 2. Remove from secrets.json mirror ───────────────────────────────
   const secrets = await readEveSecrets();
   const existingList = secrets?.ai?.providers ?? [];
 
-  const targetIdx = existingList.findIndex(p => p.id === id);
-  if (targetIdx < 0) {
-    return NextResponse.json({ error: "Provider not found" }, { status: 404 });
-  }
-
-  const list = existingList.filter(p => p.id !== id);
+  const list = existingList.filter(p => p.id !== providerId);
 
   const aiUpdate: Parameters<typeof writeEveSecrets>[0]["ai"] = { providers: list };
-  if (secrets?.ai?.defaultProvider === id) aiUpdate.defaultProvider = undefined;
-  if (secrets?.ai?.fallbackProvider === id) aiUpdate.fallbackProvider = undefined;
+  if (secrets?.ai?.defaultProvider === providerId) aiUpdate.defaultProvider = undefined;
+  if (secrets?.ai?.fallbackProvider === providerId) aiUpdate.fallbackProvider = undefined;
 
   const currentSvc = secrets?.ai?.serviceProviders ?? {};
   const cleanedSvc: Record<string, string> = {};
   for (const [svc, prov] of Object.entries(currentSvc)) {
-    if (prov !== id) cleanedSvc[svc] = prov;
+    if (prov !== providerId) cleanedSvc[svc] = prov;
   }
   if (Object.keys(cleanedSvc).length !== Object.keys(currentSvc).length) {
     aiUpdate.serviceProviders = cleanedSvc;
   }
 
   await writeEveSecrets({ ai: aiUpdate });
+
+  // ── 3. Re-wire local services ─────────────────────────────────────────
   const applied = await autoApply({ recreate: true });
-  return NextResponse.json({ ok: true, applied });
+
+  return NextResponse.json({ ok: true, podSynced, applied });
 }

@@ -71,11 +71,15 @@ import { SYNAP_HOST_LOOPBACK_PORT } from "./components.js";
  * decide "is this file ours, can we refresh it?" — long enough that an
  * accidental match in a hand-written override would be deeply unlikely.
  */
-const OVERRIDE_MARKER = "eve-managed:synap-loopback-override:v2";
+const OVERRIDE_MARKER = "eve-managed:synap-loopback-override:v3";
 // Older markers we still recognise as Eve-managed so pre-existing override
 // files from earlier installs get refreshed on upgrade rather than left
-// behind as "user-owned".
-const LEGACY_MARKERS = ["eve-managed:synap-loopback-override:v1"];
+// behind as "user-owned". v2 omitted the `realtime` service from eve-network,
+// which broke socket.io routing (Traefik 502) — v3 adds it.
+const LEGACY_MARKERS = [
+  "eve-managed:synap-loopback-override:v1",
+  "eve-managed:synap-loopback-override:v2",
+];
 
 const OVERRIDE_CONTENT = `# Eve-managed docker-compose override — DO NOT edit by hand.
 #
@@ -129,6 +133,18 @@ services:
       eve-network:
         aliases:
           - eve-brain-pod-admin
+  # Realtime — the Socket.IO server served at pod.<root>/socket.io/ (and
+  # /realtime/). Traefik's file provider routes those path prefixes to the
+  # container synap-backend-realtime-1 BY NAME, so realtime must also join
+  # eve-network — otherwise Traefik can't resolve it, every socket.io
+  # connection 502s, and live chat streaming / notifications silently die
+  # (the browser hangs on "Thinking…"). v2 of this override omitted it.
+  realtime:
+    networks:
+      synap-net: {}
+      eve-network:
+        aliases:
+          - eve-brain-realtime
 `;
 
 export interface EnsureOverrideResult {

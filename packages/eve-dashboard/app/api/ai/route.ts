@@ -10,6 +10,7 @@ import {
   readEveSecrets, writeEveSecrets, entityStateManager,
   AI_CONSUMERS, AI_CONSUMERS_NEEDING_RECREATE,
   pickPrimaryProvider,
+  resolveSynapUrl, readAgentKeyOrLegacy,
   type WireAiResult,
 } from "@eve/dna";
 import { materializeTargets, runActionToCompletion } from "@eve/lifecycle";
@@ -18,6 +19,30 @@ import { requireAuth } from "@/lib/auth-server";
 type ProviderId = "ollama" | "openrouter" | "anthropic" | "openai";
 
 const VALID_PROVIDERS: ProviderId[] = ["ollama", "openrouter", "anthropic", "openai"];
+
+// ── Pod tRPC helper ───────────────────────────────────────────────────────────
+
+interface TrpcBatchResult<T> {
+  result: { data: { json: T } };
+}
+
+async function podQuery<T>(podUrl: string, apiKey: string, path: string): Promise<T> {
+  const url = `${podUrl.replace(/\/$/, "")}/trpc/${path}?batch=1&input=${encodeURIComponent(JSON.stringify({ "0": { json: null } }))}`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(8_000),
+  });
+  if (!res.ok) throw new Error(`Pod tRPC ${path} → ${res.status}`);
+  const data: TrpcBatchResult<T>[] = await res.json();
+  return data[0].result.data.json;
+}
+
+interface PodProviderRow {
+  id: string; providerId: string; name: string; baseUrl: string;
+  apiKeyEnvVar: string; hasApiKey: boolean; enabled: boolean; priority: number;
+  tags: string[]; models: Array<{ id: string; tier?: string }>;
+  metadata: Record<string, unknown>; createdAt: string; updatedAt: string;
+}
 
 function maskKey(key?: string): string | undefined {
   if (!key) return undefined;
@@ -31,16 +56,52 @@ export async function GET() {
 
   const secrets = await readEveSecrets();
   const ai = secrets?.ai ?? {};
-  const providers = (ai.providers ?? []).map(p => ({
-    id: p.id,
-    enabled: p.enabled !== false,
-    hasApiKey: !!(p.apiKey && p.apiKey.trim().length > 0),
-    apiKeyMasked: maskKey(p.apiKey),
-    baseUrl: p.baseUrl,
-    defaultModel: p.defaultModel,
-    isCustom: p.id.startsWith('custom-'),
-    name: p.name,
-  }));
+
+  // ── Try to load providers from pod (source of truth) ─────────────────
+  let providers: Array<{
+    id: string; enabled: boolean; hasApiKey: boolean; apiKeyMasked?: string;
+    baseUrl?: string; defaultModel?: string; isCustom: boolean; name?: string;
+    models?: Array<{ id: string; tier?: string }>; priority?: number; fromPod?: boolean;
+  }> | null = null;
+
+  try {
+    const podUrl = resolveSynapUrl(secrets);
+    if (podUrl) {
+      const apiKey = await readAgentKeyOrLegacy("eve", process.env.EVE_HOME ?? process.cwd()).catch(() => null);
+      if (apiKey) {
+        const rows = await podQuery<PodProviderRow[]>(podUrl, apiKey, "aiProviders.list");
+        providers = rows.map(p => ({
+          id: p.providerId,
+          enabled: p.enabled,
+          hasApiKey: p.hasApiKey,
+          baseUrl: p.baseUrl,
+          defaultModel: p.models[0]?.id,
+          isCustom: !VALID_PROVIDERS.includes(p.providerId as ProviderId),
+          name: p.name,
+          models: p.models,
+          priority: p.priority,
+          fromPod: true,
+        }));
+      }
+    }
+  } catch {
+    // Pod unreachable — fall through to local secrets
+  }
+
+  // Fall back to local secrets if pod unavailable
+  if (!providers) {
+    providers = (ai.providers ?? []).map(p => ({
+      id: p.id,
+      enabled: p.enabled !== false,
+      hasApiKey: !!(p.apiKey && p.apiKey.trim().length > 0),
+      apiKeyMasked: maskKey(p.apiKey),
+      baseUrl: p.baseUrl,
+      defaultModel: p.defaultModel,
+      isCustom: p.id.startsWith("custom-"),
+      name: p.name,
+      fromPod: false,
+    }));
+  }
 
   return NextResponse.json({
     mode: ai.mode ?? null,
@@ -49,14 +110,12 @@ export async function GET() {
     serviceProviders: ai.serviceProviders ?? {},
     serviceModels: ai.serviceModels ?? {},
     wiringStatus: ai.wiringStatus ?? {},
-    // Resolved (provider, model) per consumer — same logic as materializeTargets.
-    // Authoritative "what would be / was wired" without a separate endpoint.
     resolvedPerConsumer: Object.fromEntries(
       Array.from(AI_CONSUMERS).map(id => {
         const p = pickPrimaryProvider(secrets, id);
-        const isISClient = id !== 'synap';
+        const isISClient = id !== "synap";
         return [id, {
-          provider: isISClient ? 'synap' : (p?.id ?? null),
+          provider: isISClient ? "synap" : (p?.id ?? null),
           model: p?.defaultModel ?? null,
           isISClient,
         }];
@@ -64,9 +123,6 @@ export async function GET() {
     ),
     providers,
     validProviders: VALID_PROVIDERS,
-    // Single source of truth: the client uses this list to filter
-    // components for the per-service routing panel. Avoids drift
-    // between the hardcoded list on the page and `@eve/dna`.
     aiConsumers: Array.from(AI_CONSUMERS),
     aiConsumersNeedingRecreate: Array.from(AI_CONSUMERS_NEEDING_RECREATE),
   });
