@@ -204,6 +204,68 @@ async function addOpenclaw(): Promise<void> {
   }
 }
 
+/**
+ * Patch Nango's Connect UI index.html with a setImmediate polyfill, copy the
+ * patched file to the host, then recreate the container with it volume-mounted
+ * read-only so the fix survives restarts and image updates.
+ */
+async function applyNangoConnectUiPolyfill(originalDockerRunArgs: string[]): Promise<void> {
+  const hostPath = '/opt/nango/connect-ui-index.html';
+  const containerPath = '/app/nango/packages/connect-ui/dist/index.html';
+  const containerName = 'eve-arms-nango';
+
+  // Inline node script — patches index.html in-place (idempotent).
+  const patchScript = `
+const fs = require('fs');
+const p = '${containerPath}';
+let h = fs.readFileSync(p, 'utf8');
+if (h.includes('setImmediate polyfill')) { console.log('already patched'); process.exit(0); }
+const poly = '<script>\\n(function() {\\n' +
+  '  window.setImmediate = function(fn) {\\n' +
+  '    var args = Array.prototype.slice.call(arguments, 1);\\n' +
+  '    var id = setTimeout(function() { fn.apply(null, args); }, 0);\\n' +
+  '    return { _id: id, type: \\'Immediate\\' };\\n' +
+  '  };\\n' +
+  '  window.clearImmediate = function(h) { clearTimeout(h && h._id !== undefined ? h._id : h); };\\n' +
+  '})();\\n' +
+  '<\\/script>';
+h = h.replace('<script type="module"', poly + '\\n    <script type="module"');
+fs.writeFileSync(p, h);
+console.log('patched ok');
+`.trim();
+
+  printInfo('Applying setImmediate polyfill to Nango Connect UI...');
+  try {
+    const { stdout } = await execFileAsync(
+      'docker', ['exec', containerName, 'node', '-e', patchScript],
+      { timeout: 15_000 },
+    );
+    printInfo(`  Polyfill: ${stdout.trim()}`);
+  } catch (err) {
+    printWarning(`  Could not patch Connect UI index.html: ${(err as Error).message}`);
+    return;
+  }
+
+  // Ensure host directory exists, then copy patched file out.
+  await execFileAsync('sh', ['-c', `mkdir -p "$(dirname ${hostPath})"`], { timeout: 5_000 }).catch(() => {});
+  try {
+    await execFileAsync('docker', ['cp', `${containerName}:${containerPath}`, hostPath], { timeout: 10_000 });
+  } catch (err) {
+    printWarning(`  Could not copy patched index.html to host (${hostPath}): ${(err as Error).message}`);
+    return;
+  }
+
+  // Recreate container with the patched file mounted read-only.
+  printInfo('  Recreating container with polyfill volume mount...');
+  await execFileAsync('docker', ['rm', '-f', containerName], { timeout: 10_000 }).catch(() => {});
+  const newArgs = [
+    ...originalDockerRunArgs,
+    '-v', `${hostPath}:${containerPath}:ro`,
+  ];
+  await execFileAsync('docker', newArgs, { timeout: 30_000 });
+  printInfo('  Container recreated — polyfill is now permanent.');
+}
+
 /** Wait for Nango to accept requests then create the initial admin account (idempotent). */
 async function nangoAutoSignup(secretKey: string, ownerEmail?: string): Promise<void> {
   const email = ownerEmail ?? 'admin@eve.local';
@@ -360,6 +422,12 @@ async function addNango(): Promise<void> {
 
     printInfo('Starting Nango container...');
     await execFileAsync('docker', dockerRunArgs, { timeout: 30_000 });
+
+    // Patch Connect UI index.html with a setImmediate polyfill, then remount it
+    // as a read-only volume so the fix survives container restarts.
+    // The browser's native polyfill returns a number; Nango's bundle does
+    // `'type' in handle` which throws TypeError on primitives → infinite spinner.
+    await applyNangoConnectUiPolyfill(dockerRunArgs);
   } else {
     printInfo('Nango container already running — will retry account signup if needed.');
   }
