@@ -35,6 +35,7 @@ COPY packages/@eve/dna ./packages/@eve/dna
 COPY packages/@eve/legs ./packages/@eve/legs
 COPY packages/@eve/lifecycle ./packages/@eve/lifecycle
 COPY packages/@eve/brain ./packages/@eve/brain
+COPY packages/@eve/mouth ./packages/@eve/mouth
 COPY packages/@eve/eyes ./packages/@eve/eyes
 # @eve/fields and @eve/profile-renderer are source-direct (no build step) —
 # Next.js transpiles them via `transpilePackages` in next.config.ts, so we
@@ -58,6 +59,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN pnpm --filter @eve/dna run build
 RUN pnpm --filter @eve/legs run build
 RUN pnpm --filter @eve/brain run build
+RUN pnpm --filter @eve/mouth run build
 RUN pnpm --filter @eve/eyes run build
 RUN pnpm --filter @eve/lifecycle run build
 RUN pnpm --filter @eve/dashboard run build
