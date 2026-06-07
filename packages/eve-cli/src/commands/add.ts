@@ -432,7 +432,12 @@ async function addNango(): Promise<void> {
   // Wire nango.{domain} subdomain via Traefik (no-op if no domain configured yet)
   await materializeTargets(null, ['traefik-routes']);
 
-  printSuccess('Nango installed. Connect your first account: eve connectors setup google');
+  const adminPw = `Nango_${secretKey.slice(0, 12)}`;
+  printSuccess('Nango installed.');
+  printInfo(`  Dashboard: ${nangoHost}`);
+  printInfo(`  Admin email: ${ownerEmail ?? 'admin@eve.local'}`);
+  printInfo(`  Admin password: ${adminPw}`);
+  printInfo('  Email verification is bypassed — sign in directly, do not use the "sign up" link.');;
 }
 
 async function addRsshub(): Promise<void> {
