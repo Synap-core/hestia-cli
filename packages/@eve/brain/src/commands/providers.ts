@@ -13,67 +13,45 @@ import type { Command } from 'commander';
 import Table from 'cli-table3';
 import { readEveSecrets, resolveSynapUrl, readAgentKeyOrLegacy } from '@eve/dna';
 
-// ── tRPC batch HTTP helpers ──────────────────────────────────────────────────
+// ── Hub Protocol REST helpers ─────────────────────────────────────────────────
 
-interface TrpcBatchResult<T> {
-  result: { data: { json: T } };
-}
-
-async function trpcQuery<T>(
-  podUrl: string,
-  apiKey: string,
-  path: string,
-  input?: unknown,
-): Promise<T> {
-  const base = podUrl.replace(/\/$/, '');
-  const inputParam = input !== undefined
-    ? encodeURIComponent(JSON.stringify({ '0': { json: input } }))
-    : encodeURIComponent(JSON.stringify({ '0': { json: null } }));
-  const url = `${base}/trpc/${path}?batch=1&input=${inputParam}`;
-
-  const res = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
+async function hubGet<T>(podUrl: string, apiKey: string, path: string): Promise<T> {
+  const res = await fetch(`${podUrl.replace(/\/$/, '')}/api/hub/${path}`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
     signal: AbortSignal.timeout(15_000),
   });
-
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`Pod responded ${res.status}: ${text}`);
   }
-
-  const data: TrpcBatchResult<T>[] = await res.json();
-  return data[0].result.data.json;
+  return res.json() as Promise<T>;
 }
 
-async function trpcMutation<T>(
-  podUrl: string,
-  apiKey: string,
-  path: string,
-  input?: unknown,
-): Promise<T> {
-  const base = podUrl.replace(/\/$/, '');
-  const url = `${base}/trpc/${path}?batch=1`;
-
-  const res = await fetch(url, {
+async function hubPost<T>(podUrl: string, apiKey: string, path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${podUrl.replace(/\/$/, '')}/api/hub/${path}`, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ '0': { json: input ?? null } }),
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(15_000),
   });
-
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`Pod responded ${res.status}: ${text}`);
   }
+  return res.json() as Promise<T>;
+}
 
-  const data: TrpcBatchResult<T>[] = await res.json();
-  return data[0].result.data.json;
+async function hubDelete<T>(podUrl: string, apiKey: string, path: string): Promise<T> {
+  const res = await fetch(`${podUrl.replace(/\/$/, '')}/api/hub/${path}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Pod responded ${res.status}: ${text}`);
+  }
+  return res.json() as Promise<T>;
 }
 
 // ── Auth resolution ──────────────────────────────────────────────────────────
@@ -122,7 +100,7 @@ export function providersCommand(brain: Command): void {
     .action(async (opts: { json?: boolean }) => {
       try {
         const { podUrl, apiKey } = await resolveAuth(process.env.EVE_HOME ?? process.cwd());
-        const rows = await trpcQuery<ProviderRow[]>(podUrl, apiKey, 'aiProviders.list');
+        const { providers: rows } = await hubGet<{ providers: ProviderRow[] }>(podUrl, apiKey, 'ai-providers');
 
         if (opts.json) {
           console.log(JSON.stringify(rows, null, 2));
@@ -163,36 +141,89 @@ export function providersCommand(brain: Command): void {
 
   // ── add / update (upsert) ─────────────────────────────────────────────────
 
+  // Well-known provider defaults so `eve brain providers add openrouter --key X` works.
+  const KNOWN_PROVIDERS: Record<string, {
+    name: string; url: string; envVar: string; priority: number;
+    models: Array<{ id: string; tier: string; contextWindow?: number }>;
+  }> = {
+    openrouter: {
+      name: 'OpenRouter', url: 'https://openrouter.ai/api/v1',
+      envVar: 'OPENROUTER_API_KEY', priority: 10,
+      models: [
+        { id: 'deepseek/deepseek-v4-flash:free', tier: 'balanced', contextWindow: 1_000_000 },
+        { id: 'deepseek/deepseek-v4-flash:free', tier: 'free', contextWindow: 1_000_000 },
+        { id: 'nvidia/nemotron-3-super-120b-a12b:free', tier: 'advanced', contextWindow: 1_000_000 },
+        { id: 'openai/gpt-oss-20b:free', tier: 'complex', contextWindow: 131_072 },
+      ],
+    },
+    groq: {
+      name: 'Groq', url: 'https://api.groq.com/openai/v1',
+      envVar: 'GROQ_API_KEY', priority: 20,
+      models: [{ id: 'llama-3.3-70b-versatile', tier: 'balanced' }],
+    },
+    cerebras: {
+      name: 'Cerebras', url: 'https://api.cerebras.ai/v1',
+      envVar: 'CEREBRAS_API_KEY', priority: 30,
+      models: [{ id: 'llama3.1-70b', tier: 'balanced' }],
+    },
+    anthropic: {
+      name: 'Anthropic', url: 'https://api.anthropic.com/v1',
+      envVar: 'ANTHROPIC_API_KEY', priority: 40,
+      models: [
+        { id: 'claude-sonnet-4-6', tier: 'balanced' },
+        { id: 'claude-opus-4-8', tier: 'advanced' },
+      ],
+    },
+  };
+
   providers
-    .command('add')
-    .description('Add or update a provider on the pod (upsert by --id)')
-    .requiredOption('--id <providerId>', 'Provider ID (e.g. "openrouter", "qwen-local")')
-    .requiredOption('--name <name>', 'Display name')
-    .requiredOption('--url <baseUrl>', 'OpenAI-compatible base URL')
-    .option('--env-var <apiKeyEnvVar>', 'Env var name for the API key on the IS', 'PROVIDER_API_KEY')
+    .command('add [providerId]')
+    .description('Add or update a provider on the pod. Known providers (openrouter, groq, cerebras, anthropic) have sensible defaults.')
+    .option('--id <providerId>', 'Provider ID (overrides positional arg)')
+    .option('--name <name>', 'Display name (defaults filled for known providers)')
+    .option('--url <baseUrl>', 'OpenAI-compatible base URL (defaults filled for known providers)')
+    .option('--env-var <apiKeyEnvVar>', 'Env var name for the API key on the IS')
+    .option('--key <apiKey>', 'API key (alias for --api-key)')
     .option('--api-key <apiKey>', 'API key (encrypted and stored on pod, sent inline to IS)')
-    .option('--priority <n>', 'Routing priority (lower = higher)', '10')
+    .option('--priority <n>', 'Routing priority (lower = higher)')
     .option('--disable', 'Add in disabled state')
-    .action(async (opts: {
-      id: string;
-      name: string;
-      url: string;
-      envVar: string;
+    .action(async (positionalId: string | undefined, opts: {
+      id?: string;
+      name?: string;
+      url?: string;
+      envVar?: string;
+      key?: string;
       apiKey?: string;
-      priority: string;
+      priority?: string;
       disable?: boolean;
     }) => {
       try {
+        const id = opts.id ?? positionalId;
+        if (!id) {
+          console.error('Error: provider ID required — pass as positional arg or --id');
+          console.error('Example: eve brain providers add openrouter --key <api-key>');
+          process.exit(1);
+        }
+
+        const defaults = KNOWN_PROVIDERS[id];
+        const name = opts.name ?? defaults?.name ?? id;
+        const url = opts.url ?? defaults?.url;
+        if (!url) {
+          console.error(`Error: --url required for unknown provider "${id}"`);
+          process.exit(1);
+        }
+
         const { podUrl, apiKey } = await resolveAuth(process.env.EVE_HOME ?? process.cwd());
 
-        const result = await trpcMutation<ProviderRow>(podUrl, apiKey, 'aiProviders.upsert', {
-          providerId: opts.id,
-          name: opts.name,
-          baseUrl: opts.url,
-          apiKeyEnvVar: opts.envVar,
-          ...(opts.apiKey ? { apiKey: opts.apiKey } : {}),
-          priority: parseInt(opts.priority, 10),
+        const result = await hubPost<ProviderRow>(podUrl, apiKey, 'ai-providers', {
+          providerId: id,
+          name,
+          baseUrl: url,
+          apiKeyEnvVar: opts.envVar ?? defaults?.envVar ?? 'PROVIDER_API_KEY',
+          ...(opts.key || opts.apiKey ? { apiKey: opts.key ?? opts.apiKey } : {}),
+          priority: opts.priority ? parseInt(opts.priority, 10) : (defaults?.priority ?? 10),
           enabled: !opts.disable,
+          ...(defaults?.models ? { models: defaults.models } : {}),
         });
 
         console.log(`✓ Provider "${result.providerId}" saved and synced to IS.`);
@@ -210,7 +241,7 @@ export function providersCommand(brain: Command): void {
     .action(async (providerId: string) => {
       try {
         const { podUrl, apiKey } = await resolveAuth(process.env.EVE_HOME ?? process.cwd());
-        await trpcMutation(podUrl, apiKey, 'aiProviders.enable', { providerId });
+        await hubPost(podUrl, apiKey, `ai-providers/${providerId}/enable`);
         console.log(`✓ Provider "${providerId}" enabled.`);
       } catch (err) {
         console.error('Error:', String(err));
@@ -224,7 +255,7 @@ export function providersCommand(brain: Command): void {
     .action(async (providerId: string) => {
       try {
         const { podUrl, apiKey } = await resolveAuth(process.env.EVE_HOME ?? process.cwd());
-        await trpcMutation(podUrl, apiKey, 'aiProviders.disable', { providerId });
+        await hubPost(podUrl, apiKey, `ai-providers/${providerId}/disable`);
         console.log(`✓ Provider "${providerId}" disabled.`);
       } catch (err) {
         console.error('Error:', String(err));
@@ -253,7 +284,7 @@ export function providersCommand(brain: Command): void {
         }
 
         const { podUrl, apiKey } = await resolveAuth(process.env.EVE_HOME ?? process.cwd());
-        await trpcMutation(podUrl, apiKey, 'aiProviders.remove', { providerId });
+        await hubDelete(podUrl, apiKey, `ai-providers/${providerId}`);
         console.log(`✓ Provider "${providerId}" removed.`);
       } catch (err) {
         console.error('Error:', String(err));
@@ -271,12 +302,12 @@ export function providersCommand(brain: Command): void {
         const { podUrl, apiKey } = await resolveAuth(process.env.EVE_HOME ?? process.cwd());
         console.log(`Probing "${providerId}" via IS…`);
 
-        const result = await trpcMutation<{
+        const result = await hubPost<{
           ok: boolean;
           models: string[];
           latencyMs: number;
           error?: string;
-        }>(podUrl, apiKey, 'aiProviders.probe', { providerId });
+        }>(podUrl, apiKey, `ai-providers/${providerId}/probe`);
 
         if (result.ok) {
           console.log(`✓ Reachable (${result.latencyMs}ms) — ${result.models.length} models`);
@@ -302,9 +333,7 @@ export function providersCommand(brain: Command): void {
     .action(async () => {
       try {
         const { podUrl, apiKey } = await resolveAuth(process.env.EVE_HOME ?? process.cwd());
-        const result = await trpcMutation<{ ok: boolean; count: number }>(
-          podUrl, apiKey, 'aiProviders.sync',
-        );
+        const result = await hubPost<{ ok: boolean; count: number }>(podUrl, apiKey, 'ai-providers/sync');
         console.log(`✓ Synced ${result.count} provider(s) to IS.`);
       } catch (err) {
         console.error('Error:', String(err));
