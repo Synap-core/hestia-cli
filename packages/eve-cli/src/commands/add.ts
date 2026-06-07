@@ -350,7 +350,9 @@ async function addNango(): Promise<void> {
       '-e', 'FLAG_SERVE_CONNECT_UI=true',
       '-e', 'NANGO_CONNECT_UI_PORT=3009',
       ...(nangoHost ? ['-e', `NANGO_SERVER_URL=${nangoHost}`] : []),
-      ...(connectUrl ? ['-e', `NANGO_CONNECT_URL=${connectUrl}`] : []),
+      // NANGO_PUBLIC_CONNECT_URL: read by Nango server to populate env.js connectUrl field
+      // NANGO_CONNECT_URL: read by our NangoConnector to build redirect URLs for the pod backend
+      ...(connectUrl ? ['-e', `NANGO_PUBLIC_CONNECT_URL=${connectUrl}`, '-e', `NANGO_CONNECT_URL=${connectUrl}`] : []),
       ...(podPublicUrl ? ['-e', `NANGO_WEBHOOK_URL=${podPublicUrl}/api/connectors/nango-webhook`] : []),
       '-v', 'eve-arms-nango-data:/var/lib/nango',
       'nangohq/nango-server:hosted',
