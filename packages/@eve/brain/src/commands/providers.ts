@@ -58,11 +58,12 @@ async function hubDelete<T>(podUrl: string, apiKey: string, path: string): Promi
 
 async function resolveAuth(cwd: string): Promise<{ podUrl: string; apiKey: string }> {
   const secrets = await readEveSecrets(cwd);
-  const podUrl = resolveSynapUrl(secrets);
+  const podUrl = resolveSynapUrl(secrets) ?? process.env.SYNAP_POD_URL;
   if (!podUrl) throw new Error('Pod URL not configured. Run `eve setup` first.');
 
-  const apiKey = await readAgentKeyOrLegacy('eve', cwd);
-  if (!apiKey) throw new Error('Eve agent API key not configured. Run `eve setup` or `eve auth` first.');
+  // Resolution order: per-agent key → legacy synap.apiKey → SYNAP_HUB_API_KEY env var
+  const apiKey = (await readAgentKeyOrLegacy('eve', cwd)) || process.env.SYNAP_HUB_API_KEY || '';
+  if (!apiKey) throw new Error('Eve agent API key not configured. Run `eve setup` or `eve auth` first, or set SYNAP_HUB_API_KEY.');
 
   return { podUrl, apiKey };
 }
