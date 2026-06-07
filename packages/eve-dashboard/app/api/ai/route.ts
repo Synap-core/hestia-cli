@@ -22,19 +22,14 @@ const VALID_PROVIDERS: ProviderId[] = ["ollama", "openrouter", "anthropic", "ope
 
 // ── Pod tRPC helper ───────────────────────────────────────────────────────────
 
-interface TrpcBatchResult<T> {
-  result: { data: { json: T } };
-}
-
 async function podQuery<T>(podUrl: string, apiKey: string, path: string): Promise<T> {
-  const url = `${podUrl.replace(/\/$/, "")}/trpc/${path}?batch=1&input=${encodeURIComponent(JSON.stringify({ "0": { json: null } }))}`;
+  const url = `${podUrl.replace(/\/$/, "")}/api/hub/${path}`;
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${apiKey}` },
     signal: AbortSignal.timeout(8_000),
   });
-  if (!res.ok) throw new Error(`Pod tRPC ${path} → ${res.status}`);
-  const data: TrpcBatchResult<T>[] = await res.json();
-  return data[0].result.data.json;
+  if (!res.ok) throw new Error(`Pod REST ${path} → ${res.status}`);
+  return res.json() as Promise<T>;
 }
 
 interface PodProviderRow {
@@ -69,7 +64,7 @@ export async function GET() {
     if (podUrl) {
       const apiKey = await readAgentKeyOrLegacy("eve", process.env.EVE_HOME ?? process.cwd()).catch(() => null);
       if (apiKey) {
-        const rows = await podQuery<PodProviderRow[]>(podUrl, apiKey, "aiProviders.list");
+        const { providers: rows } = await podQuery<{ providers: PodProviderRow[] }>(podUrl, apiKey, "ai-providers");
         providers = rows.map(p => ({
           id: p.providerId,
           enabled: p.enabled,
