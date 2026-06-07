@@ -303,6 +303,15 @@ async function addNango(): Promise<void> {
   ).catch(() => ({ stdout: '' }));
   const alreadyRunning = runningOut.trim().split('\n').includes('eve-arms-nango');
 
+  // Derive nangoHost early — needed both for NANGO_SERVER_URL in docker run
+  // and for writing NANGO_HOST to deploy/.env. Uses secrets read at startup;
+  // domain config won't change during this function.
+  const _nangoDomain = secrets?.domain?.primary;
+  const _nangoSsl = secrets?.domain?.ssl !== false;
+  const nangoHost = _nangoDomain
+    ? `${_nangoSsl ? 'https' : 'http'}://nango.${_nangoDomain}`
+    : 'http://eve-arms-nango:3003';
+
   if (!alreadyRunning) {
     // Remove stopped/exited container if it exists so docker run can reuse the name
     await execFileAsync('docker', ['rm', '-f', 'eve-arms-nango'], { timeout: 10_000 }).catch(() => {/* not found — fine */});
@@ -364,15 +373,6 @@ async function addNango(): Promise<void> {
 
     // Prefer the public subdomain URL so the pod backend can reach Nango via
     // the same hostname that OAuth providers redirect to.
-    const refreshedSecrets = await readEveSecrets(process.cwd()).catch(() => null);
-    const domain = refreshedSecrets?.domain?.primary;
-    // Default to https for any public domain — Traefik always terminates SSL.
-    // Only fall back to http when ssl is explicitly false.
-    const ssl = refreshedSecrets?.domain?.ssl !== false;
-    const nangoHost = domain
-      ? `${ssl ? 'https' : 'http'}://nango.${domain}`
-      : 'http://eve-arms-nango:3003';
-
     envContent = setEnvVar(envContent, 'NANGO_HOST', nangoHost);
     envContent = setEnvVar(envContent, 'NANGO_SECRET_KEY', secretKey);
     await writeFile(envPath, envContent.trimStart(), 'utf8');
