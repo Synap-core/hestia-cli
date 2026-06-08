@@ -346,10 +346,27 @@ async function addNango(): Promise<void> {
     }
   }
 
-  // Resolve deploy/.env early so we can read PUBLIC_URL and postgres credentials
-  const deployDir =
+  // Resolve deploy/.env early so we can read PUBLIC_URL and postgres credentials.
+  // Detection order:
+  //   1. SYNAP_DEPLOY_DIR env var (explicit override)
+  //   2. Well-known path /opt/synap-backend/deploy
+  //   3. Auto-detect from running backend container's compose project.working_dir label
+  const _autoDetectDeployDir = async (): Promise<string | null> => {
+    const container = await findSynapBackendContainer();
+    if (!container) return null;
+    try {
+      const { stdout } = await execFileAsync('docker', [
+        'inspect', container,
+        '--format', '{{index .Config.Labels "com.docker.compose.project.working_dir"}}',
+      ], { timeout: 4000 });
+      const dir = stdout.trim();
+      return dir || null;
+    } catch { return null; }
+  };
+  const deployDir: string | null =
     process.env.SYNAP_DEPLOY_DIR ||
-    (existsSync('/opt/synap-backend/deploy') ? '/opt/synap-backend/deploy' : null);
+    (existsSync('/opt/synap-backend/deploy') ? '/opt/synap-backend/deploy' : null) ||
+    await _autoDetectDeployDir();
 
   let podPublicUrl = '';
   let pgUser = 'synap';
