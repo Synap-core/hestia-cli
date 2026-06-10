@@ -385,7 +385,7 @@ async function runConnectorsSetup(providerKey?: string): Promise<void> {
 // Subcommand: admin
 // ---------------------------------------------------------------------------
 
-async function runConnectorsAdmin(opts: { resetPassword?: boolean; setEmail?: string }): Promise<void> {
+async function runConnectorsAdmin(opts: { resetPassword?: boolean; setEmail?: string; force?: boolean }): Promise<void> {
   console.log();
   printHeader('Eve — Nango Admin', '👤');
   console.log();
@@ -448,11 +448,14 @@ async function runConnectorsAdmin(opts: { resetPassword?: boolean; setEmail?: st
     });
     if (isCancel(email)) { cancel('Cancelled.'); process.exit(0); }
 
-    const oldPassword = await password({
-      message: 'Current password',
-      validate: (v) => (v && v.length > 0 ? undefined : 'Required'),
-    });
-    if (isCancel(oldPassword)) { cancel('Cancelled.'); process.exit(0); }
+    let oldPassword = '';
+    if (!opts.force) {
+      oldPassword = await password({
+        message: 'Current password',
+        validate: (v) => (v && v.length > 0 ? undefined : 'Required'),
+      }) as string;
+      if (isCancel(oldPassword)) { cancel('Cancelled.'); process.exit(0); }
+    }
 
     const newPassword = await password({
       message: 'New password (min 8 chars, 1 upper, 1 lower, 1 number, 1 special)',
@@ -464,59 +467,79 @@ async function runConnectorsAdmin(opts: { resetPassword?: boolean; setEmail?: st
         if (!/[^A-Za-z0-9]/.test(v)) return 'Needs a special character';
         return undefined;
       },
-    });
+    }) as string;
     if (isCancel(newPassword)) { cancel('Cancelled.'); process.exit(0); }
 
-    // Verify old password via signin, then compute new PBKDF2 hash
-    // (same params Nango uses) and update the DB directly.
-    // Nango's session-cookie auth doesn't work over internal HTTP
-    // (secure cookie flag), so we bypass the PUT /user/password endpoint.
-    const script = `
-      import crypto from 'node:crypto';
-      import util from 'node:util';
-      const pbkdf2Async = util.promisify(crypto.pbkdf2);
-      const base = 'http://127.0.0.1:3003';
-      const email = ${JSON.stringify(String(email).trim())};
-      const oldPw = ${JSON.stringify(String(oldPassword))};
-      const newPw = ${JSON.stringify(String(newPassword))};
-      const signin = await fetch(base + '/api/v1/account/signin', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password: oldPw }),
-      });
-      const body = await signin.json().catch(() => ({}));
-      if (signin.status !== 200 || !body.user) {
-        process.stdout.write('SIGNIN_FAIL ' + signin.status + ' ' + JSON.stringify(body).slice(0, 200));
-        process.exit(1);
-      }
-      const newSalt = crypto.randomBytes(16).toString('base64');
-      const newHash = (await pbkdf2Async(newPw, newSalt, 310000, 32, 'sha256')).toString('base64');
-      process.stdout.write('OK:' + newSalt + ':' + newHash);
-    `;
-
-    printInfo('Verifying current password...');
+    const safeEmail = String(email).trim().replace(/'/g, "''");
     let newSalt: string, newHash: string;
-    try {
-      const { stdout } = await execFileAsync(
-        'docker', ['exec', NANGO_CONTAINER, 'node', '--input-type=module', '-e', script],
-        { timeout: 20_000 },
-      );
-      const out = stdout.trim();
-      if (out.startsWith('OK:')) {
-        [, newSalt, newHash] = out.split(':');
-      } else if (out.startsWith('SIGNIN_FAIL')) {
-        printError('Current password is incorrect. Check with: eve connectors admin');
-        process.exit(1);
-      } else {
-        printError(`Unexpected: ${out}`);
+
+    if (opts.force) {
+      printInfo('Skipping old-password check (--force)...');
+      const hashScript = `
+        import crypto from 'node:crypto';
+        import util from 'node:util';
+        const pbkdf2Async = util.promisify(crypto.pbkdf2);
+        const newPw = ${JSON.stringify(String(newPassword))};
+        const newSalt = crypto.randomBytes(16).toString('base64');
+        const newHash = (await pbkdf2Async(newPw, newSalt, 310000, 32, 'sha256')).toString('base64');
+        process.stdout.write(newSalt + ':' + newHash);
+      `;
+      try {
+        const { stdout } = await execFileAsync(
+          'docker', ['exec', NANGO_CONTAINER, 'node', '--input-type=module', '-e', hashScript],
+          { timeout: 15_000 },
+        );
+        [newSalt, newHash] = stdout.trim().split(':');
+      } catch (err) {
+        printError(`Failed to compute password hash: ${(err as Error).message}`);
         process.exit(1);
       }
-    } catch (err) {
-      printError(`Password change failed: ${(err as Error).message}`);
-      process.exit(1);
+    } else {
+      const verifyScript = `
+        import crypto from 'node:crypto';
+        import util from 'node:util';
+        const pbkdf2Async = util.promisify(crypto.pbkdf2);
+        const base = 'http://127.0.0.1:3003';
+        const signin = await fetch(base + '/api/v1/account/signin', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: ${JSON.stringify(String(email).trim())}, password: ${JSON.stringify(String(oldPassword))} }),
+        });
+        const body = await signin.json().catch(() => ({}));
+        if (signin.status !== 200 || !body.user) {
+          process.stdout.write('SIGNIN_FAIL ' + signin.status + ' ' + JSON.stringify(body).slice(0, 200));
+          process.exit(1);
+        }
+        const newPw = ${JSON.stringify(String(newPassword))};
+        const newSalt = crypto.randomBytes(16).toString('base64');
+        const newHash = (await pbkdf2Async(newPw, newSalt, 310000, 32, 'sha256')).toString('base64');
+        process.stdout.write(newSalt + ':' + newHash);
+      `;
+
+      printInfo('Verifying current password...');
+      try {
+        const { stdout } = await execFileAsync(
+          'docker', ['exec', NANGO_CONTAINER, 'node', '--input-type=module', '-e', verifyScript],
+          { timeout: 20_000 },
+        );
+        const out = stdout.trim();
+        if (out.startsWith('SIGNIN_FAIL')) {
+          printError('Current password is incorrect.');
+          printInfo('  The password shown by `eve connectors admin` is derived from the secret');
+          printInfo('  key — if the account was set up manually, use the password you chose.');
+          printInfo('  Or force-reset without knowing the old password:');
+          printInfo('    eve connectors admin --reset-password --force');
+          process.exit(1);
+        }
+        [newSalt, newHash] = out.split(':');
+      } catch (err) {
+        printError(`Could not verify password: ${(err as Error).message}`);
+        printInfo('  Try with --force to skip verification:');
+        printInfo('    eve connectors admin --reset-password --force');
+        process.exit(1);
+      }
     }
 
-    const safeEmail = String(email).trim().replace(/'/g, "''");
     await execFileAsync('docker', [
       'exec', pgContainer, 'psql', '-U', 'synap', '-d', 'nango',
       '-c', `UPDATE nango._nango_users SET salt = '${newSalt}', hashed_password = '${newHash}' WHERE email = '${safeEmail}';`,
@@ -527,14 +550,13 @@ async function runConnectorsAdmin(opts: { resetPassword?: boolean; setEmail?: st
     console.log();
     return;
   }
-
   // ── Show credentials (default) ───────────────────────────────────────────
   const email = await readNangoAdminEmail();
   const adminPw = deriveAdminPassword(secretKey);
   const nangoHost = await readNangoHost();
 
   printInfo(`  Admin email:    ${colors.primary.bold(email)}`);
-  printInfo(`  Admin password: ${colors.primary.bold(adminPw)}`);
+  printInfo(`  Admin password: ${colors.primary.bold(adminPw)} (derived from secret key)`);
   if (email === 'admin@eve.local') {
     printWarning('  Still using the stub email — update it:');
     printInfo('    eve connectors admin --set-email you@example.com');
@@ -546,6 +568,7 @@ async function runConnectorsAdmin(opts: { resetPassword?: boolean; setEmail?: st
   console.log();
   printInfo('  Change email:     eve connectors admin --set-email <email>');
   printInfo('  Change password:  eve connectors admin --reset-password');
+  printInfo('  Force-reset pw:   eve connectors admin --reset-password --force');
   printInfo('  Set up providers: eve connectors setup <provider>');
   console.log();
 }
@@ -603,9 +626,10 @@ export function connectorsCommand(program: Command): void {
     .command('admin')
     .description('Show Nango admin credentials (email + password)')
     .option('--reset-password', 'Change the admin password')
+    .option('--force', 'Skip old-password verification (for --reset-password)')
     .option('--set-email <email>', 'Update the admin email')
-    .action(async (opts: { resetPassword?: boolean; setEmail?: string }) => {
-      await runConnectorsAdmin({ resetPassword: opts.resetPassword, setEmail: opts.setEmail });
+    .action(async (opts: { resetPassword?: boolean; setEmail?: string; force?: boolean }) => {
+      await runConnectorsAdmin({ resetPassword: opts.resetPassword, setEmail: opts.setEmail, force: opts.force });
     });
 
   // `eve connectors dashboard`
