@@ -99,6 +99,39 @@ async function readNangoHost(): Promise<string | null> {
   }
 }
 
+/**
+ * Check whether the given email's password hash matches the derived password.
+ * Returns true if it's the default, false if it was changed, null on error.
+ */
+async function checkIsDefaultPassword(email: string, derivedPw: string, pgContainer: string): Promise<boolean | null> {
+  try {
+    const safeEmail = email.replace(/'/g, "''");
+    const { stdout: dbOut } = await execFileAsync('docker', [
+      'exec', pgContainer, 'psql', '-U', 'synap', '-d', 'nango',
+      '-t', '-c',
+      `SELECT salt, hashed_password FROM nango._nango_users WHERE email = '${safeEmail}';`,
+    ], { timeout: 10_000 });
+    const parts = dbOut.trim().split('|').map(s => s.trim());
+    if (parts.length < 2) return null;
+    const [dbSalt, dbHash] = parts;
+
+    const hashScript = `
+      import crypto from 'node:crypto';
+      import util from 'node:util';
+      const pbkdf2Async = util.promisify(crypto.pbkdf2);
+      const hash = (await pbkdf2Async(${JSON.stringify(derivedPw)}, ${JSON.stringify(dbSalt)}, 310000, 32, 'sha256')).toString('base64');
+      process.stdout.write(hash);
+    `;
+    const { stdout: computedHash } = await execFileAsync(
+      'docker', ['exec', NANGO_CONTAINER, 'node', '--input-type=module', '-e', hashScript],
+      { timeout: 10_000 },
+    );
+    return computedHash.trim() === dbHash;
+  } catch {
+    return null;
+  }
+}
+
 /** Find the synap-backend postgres container for direct DB operations. */
 async function findSynapPostgresContainer(): Promise<string | null> {
   try {
@@ -556,7 +589,16 @@ async function runConnectorsAdmin(opts: { resetPassword?: boolean; setEmail?: st
   const nangoHost = await readNangoHost();
 
   printInfo(`  Admin email:    ${colors.primary.bold(email)}`);
-  printInfo(`  Admin password: ${colors.primary.bold(adminPw)} (derived from secret key)`);
+
+  // Check whether the password is still the default derived one.
+  const pwStatus = await checkIsDefaultPassword(email, adminPw, pgContainer);
+  if (pwStatus === true) {
+    printInfo(`  Admin password: ${colors.primary.bold(adminPw)} (default from secret key)`);
+  } else if (pwStatus === false) {
+    printInfo(`  Admin password: ${colors.warning('(custom — was changed via --reset-password)')}`);
+  } else {
+    printInfo(`  Admin password: ${colors.primary.bold(adminPw)} (derived — could not verify)`);
+  }
   if (email === 'admin@eve.local') {
     printWarning('  Still using the stub email — update it:');
     printInfo('    eve connectors admin --set-email you@example.com');

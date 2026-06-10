@@ -560,9 +560,10 @@ async function addNango(): Promise<void> {
       return re.test(content) ? content.replace(re, line) : `${content}\n${line}`;
     };
 
-    // Prefer the public subdomain URL so the pod backend can reach Nango via
-    // the same hostname that OAuth providers redirect to.
-    envContent = setEnvVar(envContent, 'NANGO_HOST', nangoHost);
+    // Write NANGO_HOST as the internal Docker URL — the backend calls Nango's API
+    // directly, not through the reverse proxy (which strips the Authorization header).
+    // The public URLs (NANGO_SERVER_URL, NANGO_CONNECT_URL) are for browser redirects only.
+    envContent = setEnvVar(envContent, 'NANGO_HOST', 'http://eve-arms-nango:3003');
     envContent = setEnvVar(envContent, 'NANGO_SECRET_KEY', effectiveSecretKey);
     if (connectUrl) envContent = setEnvVar(envContent, 'NANGO_CONNECT_URL', connectUrl);
     await writeFile(envPath, envContent.trimStart(), 'utf8');
