@@ -492,28 +492,42 @@ async function addNango(): Promise<void> {
     // `'type' in handle` which throws TypeError on primitives → infinite spinner.
     await applyNangoConnectUiPolyfill(dockerRunArgs);
   } else {
-    printInfo('Nango container already running — will retry account signup if needed.');
+    printInfo('Nango container already running.');
+    // Show current admin info — no re-signup needed.
+    // The admin account already exists (signup is idempotent but the email
+    // prompt would be misleading on re-run).  Use `eve connectors admin`
+    // to view or update credentials.
+    printInfo('  View admin credentials:  eve connectors admin');
+    printInfo('  Update admin email:      eve connectors admin --set-email <email>');
+    printInfo('  Change admin password:   eve connectors admin --reset-password');
+    // Still write env vars to deploy/.env (may not have been done on first run)
   }
 
-  // Always attempt signup — idempotent, safe to retry if rate-limited on first install.
-  let ownerEmail = secrets?.synap?.userSession?.email ?? secrets?.builder?.openwebui?.adminEmail;
-  if (!ownerEmail) {
-    console.log();
-    ownerEmail = await text({
-      message: 'Nango admin email (used to sign in to the dashboard)',
-      placeholder: 'you@example.com',
-      validate: (v) => (v && v.includes('@') ? undefined : 'Enter a valid email address'),
-    }) as string;
-    if (isCancel(ownerEmail)) { cancel('Setup cancelled.'); process.exit(0); }
+  // Only attempt signup on fresh installs — on re-runs the account exists.
+  let ownerEmail: string | undefined;
+  if (!alreadyRunning) {
+    ownerEmail = secrets?.synap?.userSession?.email ?? secrets?.builder?.openwebui?.adminEmail;
+    if (!ownerEmail) {
+      console.log();
+      ownerEmail = await text({
+        message: 'Nango admin email (used to sign in to the dashboard)',
+        placeholder: 'you@example.com',
+        validate: (v) => (v && v.includes('@') ? undefined : 'Enter a valid email address'),
+      }) as string;
+      if (isCancel(ownerEmail)) { cancel('Setup cancelled.'); process.exit(0); }
+    }
   }
   // nangoAutoSignup returns the actual environment secret key from Nango's DB.
   // Nango generates its own key on first account creation — our generated UUID
   // is only used as NANGO_SECRET_KEY (container env identifier) but the API
   // Bearer token must match the environment key Nango stores internally.
-  const nangoEnvKey = await nangoAutoSignup(secretKey, ownerEmail);
-  const effectiveSecretKey = nangoEnvKey ?? secretKey;
-  if (nangoEnvKey && nangoEnvKey !== secretKey) {
-    printInfo(`  Using Nango environment key for backend API calls: ${nangoEnvKey.slice(0, 8)}...`);
+  let effectiveSecretKey = secretKey;
+  if (!alreadyRunning) {
+    const nangoEnvKey = await nangoAutoSignup(secretKey, ownerEmail);
+    if (nangoEnvKey) effectiveSecretKey = nangoEnvKey;
+    if (nangoEnvKey && nangoEnvKey !== secretKey) {
+      printInfo(`  Using Nango environment key for backend API calls: ${nangoEnvKey.slice(0, 8)}...`);
+    }
   }
 
   if (!podPublicUrl) {
@@ -582,12 +596,18 @@ async function addNango(): Promise<void> {
   // Wire nango.{domain} subdomain via Traefik (no-op if no domain configured yet)
   await materializeTargets(null, ['traefik-routes']);
 
-  const adminPw = `Nango_${secretKey.slice(0, 12)}`;
-  printSuccess('Nango installed.');
-  printInfo(`  Dashboard: ${nangoHost}`);
-  printInfo(`  Admin email: ${ownerEmail ?? 'admin@eve.local'}`);
-  printInfo(`  Admin password: ${adminPw}`);
-  printInfo('  Email verification is bypassed — sign in directly, do not use the "sign up" link.');
+  if (!alreadyRunning) {
+    const adminPw = `Nango_${secretKey.slice(0, 12)}`;
+    printSuccess('Nango installed.');
+    printInfo(`  Dashboard: ${nangoHost}`);
+    printInfo(`  Admin email: ${ownerEmail ?? 'admin@eve.local'}`);
+    printInfo(`  Admin password: ${adminPw}`);
+    printInfo('  Email verification is bypassed — sign in directly, do not use the "sign up" link.');
+  } else {
+    printSuccess('Nango is running.');
+    printInfo(`  Dashboard: ${nangoHost}`);
+    printInfo('  Manage your account:  eve connectors admin');
+  }
   console.log();
   printInfo('  Next: register an OAuth app so users can connect their accounts:');
   printInfo('    eve connectors setup google     # or github, notion, slack, linear');

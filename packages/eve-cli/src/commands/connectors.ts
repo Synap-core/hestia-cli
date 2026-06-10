@@ -40,8 +40,24 @@ function deriveAdminPassword(secretKey: string): string {
   return `Nango_${secretKey.slice(0, 12)}`;
 }
 
-/** Derive the admin email the same way addNango() does. */
-async function deriveAdminEmail(): Promise<string> {
+/**
+ * Read the actual Nango admin email from the `_nango_users` table.
+ * Falls back to the legacy derivation from secrets if the DB is unreachable.
+ */
+async function readNangoAdminEmail(): Promise<string> {
+  const pg = await findSynapPostgresContainer();
+  if (pg) {
+    try {
+      const { stdout } = await execFileAsync('docker', [
+        'exec', pg, 'psql', '-U', 'synap', '-d', 'nango',
+        '-t', '-c',
+        "SELECT email FROM nango._nango_users WHERE role = 'administrator' AND email NOT LIKE 'unknown@%' ORDER BY id LIMIT 1;",
+      ], { timeout: 10_000 });
+      const email = stdout.trim();
+      if (email && email.includes('@')) return email;
+    } catch { /* DB query failed — fall through to fallback */ }
+  }
+  // Legacy fallback: derive from unrelated secrets (fragile, but better than nothing)
   const secrets = await readEveSecrets(process.cwd()).catch(() => null);
   return secrets?.synap?.userSession?.email
     ?? secrets?.builder?.openwebui?.adminEmail
@@ -369,7 +385,7 @@ async function runConnectorsSetup(providerKey?: string): Promise<void> {
 // Subcommand: admin
 // ---------------------------------------------------------------------------
 
-async function runConnectorsAdmin(resetPassword: boolean): Promise<void> {
+async function runConnectorsAdmin(opts: { resetPassword?: boolean; setEmail?: string }): Promise<void> {
   console.log();
   printHeader('Eve — Nango Admin', '👤');
   console.log();
@@ -386,11 +402,48 @@ async function runConnectorsAdmin(resetPassword: boolean): Promise<void> {
     process.exit(1);
   }
 
-  if (resetPassword) {
-    // ── Password reset ──────────────────────────────────────────────────────
+  const pgContainer = await findSynapPostgresContainer();
+  if (!pgContainer) {
+    printError('Could not find the synap-backend postgres container.');
+    printInfo('  Make sure synap-backend is running on this host.');
+    process.exit(1);
+  }
+
+  // ── --set-email ──────────────────────────────────────────────────────────
+  if (opts.setEmail) {
+    const newEmail = opts.setEmail.trim();
+    if (!newEmail.includes('@')) {
+      printError(`Invalid email: ${newEmail}`);
+      process.exit(1);
+    }
+
+    // Verify there's an admin user to update
+    const { stdout: current } = await execFileAsync('docker', [
+      'exec', pgContainer, 'psql', '-U', 'synap', '-d', 'nango',
+      '-t', '-c',
+      "SELECT email FROM nango._nango_users WHERE role = 'administrator' AND email NOT LIKE 'unknown@%' ORDER BY id LIMIT 1;",
+    ], { timeout: 10_000 }).catch(() => ({ stdout: '' }));
+    const currentEmail = current.trim();
+
+    const safeNew = newEmail.replace(/'/g, "''");
+    await execFileAsync('docker', [
+      'exec', pgContainer, 'psql', '-U', 'synap', '-d', 'nango',
+      '-c', `UPDATE nango._nango_users SET email = '${safeNew}' WHERE email = '${currentEmail.replace(/'/g, "''")}';`,
+    ], { timeout: 10_000 });
+
+    console.log();
+    printSuccess(`Admin email updated: ${currentEmail} → ${colors.primary.bold(newEmail)}`);
+    printInfo('  Use this email to sign in at the Nango dashboard.');
+    console.log();
+    return;
+  }
+
+  // ── --reset-password ─────────────────────────────────────────────────────
+  if (opts.resetPassword) {
+    const currentEmail = await readNangoAdminEmail();
     const email = await text({
       message: 'Admin email',
-      initialValue: await deriveAdminEmail(),
+      initialValue: currentEmail,
       validate: (v) => (v && v.includes('@') ? undefined : 'Enter a valid email'),
     });
     if (isCancel(email)) { cancel('Cancelled.'); process.exit(0); }
@@ -414,24 +467,18 @@ async function runConnectorsAdmin(resetPassword: boolean): Promise<void> {
     });
     if (isCancel(newPassword)) { cancel('Cancelled.'); process.exit(0); }
 
-    // Nango's PUT /user/password requires a session cookie, but Nango sets
-    // it with `secure: true` when NANGO_SERVER_URL starts with https, so
-    // internal HTTP calls inside the container can never capture it.
-    //
-    // Instead, we verify the old password by calling signin (200 = correct),
-    // then compute the new PBKDF2 hash inside the container (same params
-    // Nango uses) and update the _nango_users table directly via psql.
+    // Verify old password via signin, then compute new PBKDF2 hash
+    // (same params Nango uses) and update the DB directly.
+    // Nango's session-cookie auth doesn't work over internal HTTP
+    // (secure cookie flag), so we bypass the PUT /user/password endpoint.
     const script = `
       import crypto from 'node:crypto';
       import util from 'node:util';
       const pbkdf2Async = util.promisify(crypto.pbkdf2);
-
       const base = 'http://127.0.0.1:3003';
       const email = ${JSON.stringify(String(email).trim())};
       const oldPw = ${JSON.stringify(String(oldPassword))};
       const newPw = ${JSON.stringify(String(newPassword))};
-
-      // Step 1: verify old password by attempting signin
       const signin = await fetch(base + '/api/v1/account/signin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -442,14 +489,12 @@ async function runConnectorsAdmin(resetPassword: boolean): Promise<void> {
         process.stdout.write('SIGNIN_FAIL ' + signin.status + ' ' + JSON.stringify(body).slice(0, 200));
         process.exit(1);
       }
-
-      // Step 2: compute new salt + hash (same params Nango uses)
       const newSalt = crypto.randomBytes(16).toString('base64');
       const newHash = (await pbkdf2Async(newPw, newSalt, 310000, 32, 'sha256')).toString('base64');
       process.stdout.write('OK:' + newSalt + ':' + newHash);
     `;
 
-    printInfo('Verifying current password and computing new credentials...');
+    printInfo('Verifying current password...');
     let newSalt: string, newHash: string;
     try {
       const { stdout } = await execFileAsync(
@@ -460,8 +505,7 @@ async function runConnectorsAdmin(resetPassword: boolean): Promise<void> {
       if (out.startsWith('OK:')) {
         [, newSalt, newHash] = out.split(':');
       } else if (out.startsWith('SIGNIN_FAIL')) {
-        printError(`Current password is incorrect.`);
-        printInfo('  Check with: eve connectors admin');
+        printError('Current password is incorrect. Check with: eve connectors admin');
         process.exit(1);
       } else {
         printError(`Unexpected: ${out}`);
@@ -472,50 +516,38 @@ async function runConnectorsAdmin(resetPassword: boolean): Promise<void> {
       process.exit(1);
     }
 
-    // Step 3: update the DB directly
-    const pgContainer = await findSynapPostgresContainer();
-    if (!pgContainer) {
-      printError('Could not find postgres container to update password.');
-      printInfo('  Make sure synap-backend is running on this host.');
-      process.exit(1);
-    }
-
     const safeEmail = String(email).trim().replace(/'/g, "''");
-    try {
-      await execFileAsync('docker', [
-        'exec', pgContainer,
-        'psql', '-U', 'synap', '-d', 'nango',
-        '-c', `UPDATE nango._nango_users SET salt = '${newSalt}', hashed_password = '${newHash}' WHERE email = '${safeEmail}';`,
-      ], { timeout: 10_000 });
-    } catch (err) {
-      printError(`Database update failed: ${(err as Error).message}`);
-      process.exit(1);
-    }
+    await execFileAsync('docker', [
+      'exec', pgContainer, 'psql', '-U', 'synap', '-d', 'nango',
+      '-c', `UPDATE nango._nango_users SET salt = '${newSalt}', hashed_password = '${newHash}' WHERE email = '${safeEmail}';`,
+    ], { timeout: 10_000 });
 
     console.log();
     printSuccess('Password changed successfully.');
-    printInfo('  Use the new password to sign in at the Nango dashboard.');
-  } else {
-    // ── Show credentials ────────────────────────────────────────────────────
-    const email = await deriveAdminEmail();
-    const password = deriveAdminPassword(secretKey);
-    const nangoHost = await readNangoHost();
-
-    printInfo(`  Admin email:    ${colors.primary.bold(email)}`);
-    printInfo(`  Admin password: ${colors.primary.bold(password)}`);
-    if (email === 'admin@eve.local') {
-      printWarning('  Using default stub email — set a real one and re-run `eve add nango`.');
-    }
     console.log();
-    if (nangoHost) {
-      printInfo(`  Dashboard: ${colors.info(nangoHost)}`);
-      printInfo('  Open it:   eve connectors dashboard');
-    }
-    console.log();
-    printInfo('  Change password:  eve connectors admin --reset-password');
-    printInfo('  Set up a provider: eve connectors setup <provider>');
-    console.log();
+    return;
   }
+
+  // ── Show credentials (default) ───────────────────────────────────────────
+  const email = await readNangoAdminEmail();
+  const password = deriveAdminPassword(secretKey);
+  const nangoHost = await readNangoHost();
+
+  printInfo(`  Admin email:    ${colors.primary.bold(email)}`);
+  printInfo(`  Admin password: ${colors.primary.bold(password)}`);
+  if (email === 'admin@eve.local') {
+    printWarning('  Still using the stub email — update it:');
+    printInfo('    eve connectors admin --set-email you@example.com');
+  }
+  console.log();
+  if (nangoHost) {
+    printInfo(`  Dashboard: ${colors.info(nangoHost)}`);
+  }
+  console.log();
+  printInfo('  Change email:     eve connectors admin --set-email <email>');
+  printInfo('  Change password:  eve connectors admin --reset-password');
+  printInfo('  Set up providers: eve connectors setup <provider>');
+  console.log();
 }
 
 // ---------------------------------------------------------------------------
@@ -571,8 +603,9 @@ export function connectorsCommand(program: Command): void {
     .command('admin')
     .description('Show Nango admin credentials (email + password)')
     .option('--reset-password', 'Change the admin password')
-    .action(async (opts: { resetPassword?: boolean }) => {
-      await runConnectorsAdmin(opts.resetPassword ?? false);
+    .option('--set-email <email>', 'Update the admin email')
+    .action(async (opts: { resetPassword?: boolean; setEmail?: string }) => {
+      await runConnectorsAdmin({ resetPassword: opts.resetPassword, setEmail: opts.setEmail });
     });
 
   // `eve connectors dashboard`
