@@ -530,11 +530,11 @@ async function runConnectorsAdmin(opts: { resetPassword?: boolean; setEmail?: st
 
   // ── Show credentials (default) ───────────────────────────────────────────
   const email = await readNangoAdminEmail();
-  const password = deriveAdminPassword(secretKey);
+  const adminPw = deriveAdminPassword(secretKey);
   const nangoHost = await readNangoHost();
 
   printInfo(`  Admin email:    ${colors.primary.bold(email)}`);
-  printInfo(`  Admin password: ${colors.primary.bold(password)}`);
+  printInfo(`  Admin password: ${colors.primary.bold(adminPw)}`);
   if (email === 'admin@eve.local') {
     printWarning('  Still using the stub email — update it:');
     printInfo('    eve connectors admin --set-email you@example.com');
