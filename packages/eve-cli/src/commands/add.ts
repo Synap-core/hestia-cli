@@ -267,7 +267,15 @@ console.log('patched ok');
 }
 
 /** Wait for Nango to accept requests then create the initial admin account (idempotent). */
-async function nangoAutoSignup(secretKey: string, ownerEmail?: string): Promise<void> {
+/**
+ * Create/verify the Nango admin account and return the environment's actual
+ * secret key (the one stored in _nango_environments, NOT the UUID we generated).
+ *
+ * Nango's signup creates its own environment secret key — our generated UUID
+ * is only used as NANGO_SECRET_KEY (server-level identifier) during container
+ * startup, but API calls must use the environment key from the Nango DB.
+ */
+async function nangoAutoSignup(secretKey: string, ownerEmail?: string): Promise<string | null> {
   const email = ownerEmail ?? 'admin@eve.local';
   // Derived password satisfies Nango's complexity rules: uppercase + lowercase + number + special
   const pw = `Nango_${secretKey.slice(0, 12)}`;
@@ -296,6 +304,32 @@ async function nangoAutoSignup(secretKey: string, ownerEmail?: string): Promise<
       '-c', `UPDATE nango._nango_users SET email_verified = true WHERE email = '${email}';`,
     ], { timeout: 10_000 }).catch(() => {/* non-fatal — table may not exist yet */});
   }
+
+  // Fetch the actual environment secret key from Nango via signin + /api/v1/environment.
+  // This is the key that must be used as Bearer token for all subsequent API calls.
+  const fetchEnvKey = `
+    const signin = await fetch('http://127.0.0.1:3003/api/v1/account/signin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: ${JSON.stringify(email)}, password: ${JSON.stringify(pw)} }),
+    }).then(r => r.json()).catch(() => null);
+    const token = signin?.data?.token;
+    if (!token) { process.stdout.write(''); process.exit(0); }
+    const env = await fetch('http://127.0.0.1:3003/api/v1/environment', {
+      headers: { Authorization: 'Bearer ' + token },
+    }).then(r => r.json()).catch(() => null);
+    const key = env?.data?.secret_key ?? env?.secret_key ?? '';
+    process.stdout.write(key);
+  `;
+  try {
+    const { stdout } = await execFileAsync('docker', ['exec', 'eve-arms-nango', 'node', '--input-type=module', '-e', fetchEnvKey], { timeout: 15_000 });
+    const envKey = stdout.trim();
+    if (envKey && envKey.length > 10) {
+      printInfo(`  Nango environment secret key retrieved: ${envKey.slice(0, 8)}...`);
+      return envKey;
+    }
+  } catch { /* non-fatal — caller falls back to generated key */ }
+  return null;
 }
 
 async function addNango(): Promise<void> {
@@ -415,6 +449,11 @@ async function addNango(): Promise<void> {
     // Remove stopped/exited container if it exists so docker run can reuse the name
     await execFileAsync('docker', ['rm', '-f', 'eve-arms-nango'], { timeout: 10_000 }).catch(() => {/* not found — fine */});
 
+    // Derive a stable AES encryption key for the keystore (PBKDF2 for session tokens).
+    // The keystore module always requires NANGO_ENCRYPTION_KEY — it throws at startup without it.
+    const { createHash } = await import('node:crypto');
+    const nangoEncryptionKey = createHash('sha256').update(secretKey).digest('base64');
+
     // Build docker run args — include webhook URL if pod public URL is known
     const dockerRunArgs = [
       'run', '-d',
@@ -422,6 +461,13 @@ async function addNango(): Promise<void> {
       '--network', 'eve-network',
       '--restart', 'unless-stopped',
       '-e', `NANGO_SECRET_KEY=${secretKey}`,
+      // Self-hosted Nango authenticates Bearer tokens via NANGO_SECRET_KEY_<envname> env vars,
+      // NOT via the api_secrets DB table. Setting these makes our secretKey the API key for
+      // both the prod and dev environments created during account signup.
+      '-e', `NANGO_SECRET_KEY_PROD=${secretKey}`,
+      '-e', `NANGO_SECRET_KEY_DEV=${secretKey}`,
+      // Required by @nangohq/keystore for AES encryption of session tokens — throws without it.
+      '-e', `NANGO_ENCRYPTION_KEY=${nangoEncryptionKey}`,
       '-e', 'SERVER_PORT=3003',
       '-e', `NANGO_DATABASE_URL=postgresql://${pgUser}:${pgPassword}@eve-brain-postgres:5432/nango`,
       '-e', 'NODE_ENV=production',
@@ -451,7 +497,15 @@ async function addNango(): Promise<void> {
 
   // Always attempt signup — idempotent, safe to retry if rate-limited on first install.
   const ownerEmail = secrets?.synap?.userSession?.email ?? secrets?.builder?.openwebui?.adminEmail;
-  await nangoAutoSignup(secretKey, ownerEmail);
+  // nangoAutoSignup returns the actual environment secret key from Nango's DB.
+  // Nango generates its own key on first account creation — our generated UUID
+  // is only used as NANGO_SECRET_KEY (container env identifier) but the API
+  // Bearer token must match the environment key Nango stores internally.
+  const nangoEnvKey = await nangoAutoSignup(secretKey, ownerEmail);
+  const effectiveSecretKey = nangoEnvKey ?? secretKey;
+  if (nangoEnvKey && nangoEnvKey !== secretKey) {
+    printInfo(`  Using Nango environment key for backend API calls: ${nangoEnvKey.slice(0, 8)}...`);
+  }
 
   if (!podPublicUrl) {
     printWarning('  PUBLIC_URL not found in deploy/.env — NANGO_WEBHOOK_URL not set.');
@@ -464,7 +518,7 @@ async function addNango(): Promise<void> {
     connectors: {
       ...(secrets?.connectors ?? {}),
       nango: {
-        secretKey,
+        secretKey: effectiveSecretKey,
         installedAt: new Date().toISOString(),
         oauthApps: secrets?.connectors?.nango?.oauthApps ?? {},
       },
@@ -486,7 +540,7 @@ async function addNango(): Promise<void> {
     // Prefer the public subdomain URL so the pod backend can reach Nango via
     // the same hostname that OAuth providers redirect to.
     envContent = setEnvVar(envContent, 'NANGO_HOST', nangoHost);
-    envContent = setEnvVar(envContent, 'NANGO_SECRET_KEY', secretKey);
+    envContent = setEnvVar(envContent, 'NANGO_SECRET_KEY', effectiveSecretKey);
     if (connectUrl) envContent = setEnvVar(envContent, 'NANGO_CONNECT_URL', connectUrl);
     await writeFile(envPath, envContent.trimStart(), 'utf8');
     printInfo(`  Wrote NANGO_HOST=${nangoHost} + NANGO_SECRET_KEY${connectUrl ? ` + NANGO_CONNECT_URL=${connectUrl}` : ''} to ${envPath}`);
@@ -524,7 +578,11 @@ async function addNango(): Promise<void> {
   printInfo(`  Dashboard: ${nangoHost}`);
   printInfo(`  Admin email: ${ownerEmail ?? 'admin@eve.local'}`);
   printInfo(`  Admin password: ${adminPw}`);
-  printInfo('  Email verification is bypassed — sign in directly, do not use the "sign up" link.');;
+  printInfo('  Email verification is bypassed — sign in directly, do not use the "sign up" link.');
+  console.log();
+  printInfo('  Next: register an OAuth app so users can connect their accounts:');
+  printInfo('    eve connectors setup google     # or github, notion, slack, linear');
+  printInfo('  Until a provider is set up, `synap connect <provider>` returns "Integration does not exist".');
 }
 
 async function addRsshub(): Promise<void> {

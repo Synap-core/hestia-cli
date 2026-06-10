@@ -36,6 +36,7 @@ import { deployCommand } from './commands/deploy.js';
 import { loginCommand } from './commands/login.js';
 import { lsCommand } from './commands/ls.js';
 import { synapCommand } from './commands/synap.js';
+import { connectorsCommand } from './commands/connectors.js';
 import { colors, emojis } from './lib/ui.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -100,6 +101,7 @@ addCommand(program);
 removeCommand(program);
 deployCommand(program);
 synapCommand(program);
+connectorsCommand(program);
 loginCommand(program);
 lsCommand(program);
 
