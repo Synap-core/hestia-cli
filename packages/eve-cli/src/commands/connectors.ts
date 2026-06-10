@@ -1,22 +1,21 @@
 /**
- * `eve connectors setup [provider]` — guide the user through registering REAL
- * OAuth apps for Nango integrations (their own Google/GitHub/Notion/… client
- * credentials), not stubs.
+ * `eve connectors` — manage the Nango integration platform.
  *
- * Why this exists: a fresh `eve add nango` brings up the Nango server and creates
- * the admin account, but Nango ships with NO integrations configured. Until a
- * provider has a real OAuth client_id/secret, `synap connect <provider>` fails
- * with "Integration does not exist". This command closes that gap with a
- * copy-paste-friendly walkthrough and writes the integration straight into Nango
- * via its REST API (reached through `docker exec`, same transport as signup).
+ * Subcommands:
+ *   setup  [provider]           Register a real OAuth app (already built).
+ *   admin                       Show admin email + password (re-derived from secrets).
+ *   admin  --reset-password     Change the admin password via the Nango API.
+ *   dashboard                   Open the Nango dashboard in the browser.
  *
- * The integration is created in the same Nango environment the pod backend
- * queries, because we authenticate with the stored `connectors.nango.secretKey`
- * (the NANGO_SECRET_KEY the pod also uses).
+ * Why this exists: a fresh `eve add nango` brings up the server and creates an
+ * admin account, but until a provider has real OAuth credentials `synap connect`
+ * fails with "Integration does not exist".  And once credentials scroll past,
+ * the user has no way to recover them or change the password.  This command
+ * fills both gaps.
  */
 
 import type { Command } from 'commander';
-import { execFile } from 'node:child_process';
+import { execFile, exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { text, password, select, isCancel, cancel } from '@clack/prompts';
 import { readEveSecrets, writeEveSecrets } from '@eve/dna';
@@ -32,23 +31,94 @@ import {
 const execFileAsync = promisify(execFile);
 const NANGO_CONTAINER = 'eve-arms-nango';
 
-/**
- * A provider the user can set up. A single OAuth app may back several Nango
- * integrations (e.g. one Google Cloud project powers Calendar, Gmail, Drive,
- * and Contacts), so `uniqueKeys` is a list — we create/patch one integration
- * per key with the same credentials.
- */
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+/** Derive the admin password from the secret key (deterministic, recoverable). */
+function deriveAdminPassword(secretKey: string): string {
+  return `Nango_${secretKey.slice(0, 12)}`;
+}
+
+/** Derive the admin email the same way addNango() does. */
+async function deriveAdminEmail(): Promise<string> {
+  const secrets = await readEveSecrets(process.cwd()).catch(() => null);
+  return secrets?.synap?.userSession?.email
+    ?? secrets?.builder?.openwebui?.adminEmail
+    ?? 'admin@eve.local';
+}
+
+/** Read the Nango bearer secret the pod backend uses. */
+async function readNangoSecretKey(): Promise<string | null> {
+  const secrets = await readEveSecrets(process.cwd()).catch(() => null);
+  return secrets?.connectors?.nango?.secretKey ?? null;
+}
+
+/** True if the Nango container is running on this host. */
+async function isNangoRunning(): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync(
+      'docker', ['ps', '--filter', `name=^${NANGO_CONTAINER}$`, '--format', '{{.Names}}'],
+      { timeout: 4000 },
+    );
+    return stdout.trim() === NANGO_CONTAINER;
+  } catch {
+    return false;
+  }
+}
+
+/** The Nango server URL the admin should open (NANGO_SERVER_URL from container). */
+async function readNangoHost(): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync(
+      'docker',
+      ['inspect', NANGO_CONTAINER, '--format',
+        '{{range .Config.Env}}{{println .}}{{end}}'],
+      { timeout: 4000 },
+    );
+    const line = stdout.split('\n').find((l) => l.startsWith('NANGO_SERVER_URL='));
+    return line?.slice('NANGO_SERVER_URL='.length).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Find the synap-backend postgres container for direct DB operations. */
+async function findSynapPostgresContainer(): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync(
+      'docker',
+      ['ps', '--filter', 'label=com.docker.compose.project=synap-backend',
+        '--filter', 'label=com.docker.compose.service=postgres',
+        '--format', '{{.Names}}'],
+      { timeout: 4000 },
+    );
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Open a URL in the default browser (platform-aware). */
+function openBrowser(url: string): void {
+  const platform = process.platform;
+  let cmd: string;
+  if (platform === 'darwin') cmd = `open "${url}"`;
+  else if (platform === 'win32') cmd = `start "" "${url}"`;
+  else cmd = `xdg-open "${url}"`;
+  exec(cmd, () => {/* fire-and-forget */});
+}
+
+// ---------------------------------------------------------------------------
+// Provider catalog (for `setup`)
+// ---------------------------------------------------------------------------
+
 interface ProviderSpec {
-  /** Menu key the user types: `eve connectors setup google`. */
   key: string;
   label: string;
-  /** Nango integration unique_keys this OAuth app should back. */
   uniqueKeys: string[];
-  /** Nango auth mode — all current providers are OAUTH2. */
   authMode: 'OAUTH2';
-  /** Where the user creates the OAuth app. */
   consoleUrl: string;
-  /** Human steps to register the app (printed verbatim). */
   steps: string[];
 }
 
@@ -117,26 +187,6 @@ const PROVIDERS: ProviderSpec[] = [
   },
 ];
 
-/** Read the Nango bearer secret the pod backend uses (NANGO_SECRET_KEY). */
-async function readNangoSecretKey(): Promise<string | null> {
-  const secrets = await readEveSecrets(process.cwd()).catch(() => null);
-  return secrets?.connectors?.nango?.secretKey ?? null;
-}
-
-/** True if the Nango container is running locally (this host). */
-async function isNangoRunning(): Promise<boolean> {
-  try {
-    const { stdout } = await execFileAsync(
-      'docker', ['ps', '--filter', `name=^${NANGO_CONTAINER}$`, '--format', '{{.Names}}'],
-      { timeout: 4000 },
-    );
-    return stdout.trim() === NANGO_CONTAINER;
-  } catch {
-    return false;
-  }
-}
-
-/** The OAuth redirect URI providers must whitelist — Nango's callback. */
 async function readNangoCallbackUrl(): Promise<string> {
   try {
     const { stdout } = await execFileAsync(
@@ -152,13 +202,6 @@ async function readNangoCallbackUrl(): Promise<string> {
   return 'https://nango.<your-domain>/oauth/callback';
 }
 
-/**
- * Create or update a single Nango integration with real OAuth credentials.
- * Runs inside the container against 127.0.0.1:3003 (IPv4 — Nango doesn't bind
- * ::1), the same transport `eve add nango` uses for signup.
- *
- * Returns { ok, action } where action is 'created' | 'updated', or an error msg.
- */
 async function upsertIntegration(
   secretKey: string,
   uniqueKey: string,
@@ -176,14 +219,12 @@ async function upsertIntegration(
     credentials: { type: authMode, client_id: clientId, client_secret: clientSecret },
   });
 
-  // Try POST (create); on "already exists" fall back to PATCH (update).
   const script = `
     const base = 'http://127.0.0.1:3003';
     const headers = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + ${JSON.stringify(secretKey)} };
     const post = await fetch(base + '/integrations', { method: 'POST', headers, body: ${JSON.stringify(payload)} })
       .then(async r => ({ status: r.status, body: await r.text() })).catch(e => ({ status: 0, body: String(e) }));
     if (post.status >= 200 && post.status < 300) { process.stdout.write('created'); process.exit(0); }
-    // Already exists (or other 400) → try updating credentials in place.
     const patch = await fetch(base + '/integrations/' + encodeURIComponent(${JSON.stringify(uniqueKey)}), { method: 'PATCH', headers, body: ${JSON.stringify(patchPayload)} })
       .then(async r => ({ status: r.status, body: await r.text() })).catch(e => ({ status: 0, body: String(e) }));
     if (patch.status >= 200 && patch.status < 300) { process.stdout.write('updated'); process.exit(0); }
@@ -196,13 +237,17 @@ async function upsertIntegration(
       { timeout: 20_000 },
     );
     const out = stdout.trim();
-    if (out === 'created' || out === 'updated') return { ok: true, action: out };
+    if (out === 'created' || out === 'updated') return { ok: true, action: out as 'created' | 'updated' };
     return { ok: false, error: out || 'unknown error' };
   } catch (err) {
     const e = err as { stdout?: string; message?: string };
     return { ok: false, error: (e.stdout?.trim() || e.message || 'exec failed') };
   }
 }
+
+// ---------------------------------------------------------------------------
+// Subcommand: setup [provider]
+// ---------------------------------------------------------------------------
 
 async function runConnectorsSetup(providerKey?: string): Promise<void> {
   console.log();
@@ -218,12 +263,10 @@ async function runConnectorsSetup(providerKey?: string): Promise<void> {
 
   const secretKey = await readNangoSecretKey();
   if (!secretKey) {
-    printError('No Nango secret key found in secrets.json (connectors.nango.secretKey).');
-    printInfo('  Run `eve add nango` first — it generates and stores the key.');
+    printError('No Nango secret key found — run `eve add nango` first.');
     process.exit(1);
   }
 
-  // Resolve which provider to configure.
   let spec = providerKey
     ? PROVIDERS.find((p) => p.key === providerKey.toLowerCase())
     : undefined;
@@ -244,8 +287,6 @@ async function runConnectorsSetup(providerKey?: string): Promise<void> {
   }
 
   const callbackUrl = await readNangoCallbackUrl();
-
-  // Walkthrough.
   console.log();
   printInfo(colors.primary.bold(`Set up ${spec.label}`));
   console.log();
@@ -259,11 +300,10 @@ async function runConnectorsSetup(providerKey?: string): Promise<void> {
   printInfo('  Authorized redirect URI (whitelist this exact value):');
   printInfo(`    ${colors.info(callbackUrl)}`);
   if (callbackUrl.includes('<your-domain>')) {
-    printWarning('    Could not read NANGO_SERVER_URL — set a domain (`eve domain ...`) and re-run `eve add nango`.');
+    printWarning('    Could not read NANGO_SERVER_URL — set a domain and re-run `eve add nango`.');
   }
   console.log();
 
-  // Collect credentials.
   const clientId = await text({
     message: `${spec.label} — OAuth Client ID`,
     validate: (v) => (v && v.trim().length > 0 ? undefined : 'Required'),
@@ -276,7 +316,6 @@ async function runConnectorsSetup(providerKey?: string): Promise<void> {
   });
   if (isCancel(clientSecret)) { cancel('Cancelled.'); process.exit(0); }
 
-  // Create/update one integration per unique_key backed by this OAuth app.
   console.log();
   const results: Array<{ uniqueKey: string; ok: boolean; action?: string; error?: string }> = [];
   for (const uniqueKey of spec.uniqueKeys) {
@@ -299,7 +338,6 @@ async function runConnectorsSetup(providerKey?: string): Promise<void> {
     process.exit(1);
   }
 
-  // Persist a record of which OAuth apps are configured (no secret stored).
   const secrets = await readEveSecrets(process.cwd()).catch(() => null);
   const oauthApps = { ...(secrets?.connectors?.nango?.oauthApps ?? {}) };
   oauthApps[spec.key] = {
@@ -327,11 +365,199 @@ async function runConnectorsSetup(providerKey?: string): Promise<void> {
   console.log();
 }
 
+// ---------------------------------------------------------------------------
+// Subcommand: admin
+// ---------------------------------------------------------------------------
+
+async function runConnectorsAdmin(resetPassword: boolean): Promise<void> {
+  console.log();
+  printHeader('Eve — Nango Admin', '👤');
+  console.log();
+
+  if (!await isNangoRunning()) {
+    printError(`Nango container (${NANGO_CONTAINER}) is not running on this host.`);
+    printInfo('  Run this command on the pod host (where Docker runs).');
+    process.exit(1);
+  }
+
+  const secretKey = await readNangoSecretKey();
+  if (!secretKey) {
+    printError('No Nango secret key found — run `eve add nango` first.');
+    process.exit(1);
+  }
+
+  if (resetPassword) {
+    // ── Password reset ──────────────────────────────────────────────────────
+    const email = await text({
+      message: 'Admin email',
+      initialValue: await deriveAdminEmail(),
+      validate: (v) => (v && v.includes('@') ? undefined : 'Enter a valid email'),
+    });
+    if (isCancel(email)) { cancel('Cancelled.'); process.exit(0); }
+
+    const oldPassword = await password({
+      message: 'Current password',
+      validate: (v) => (v && v.length > 0 ? undefined : 'Required'),
+    });
+    if (isCancel(oldPassword)) { cancel('Cancelled.'); process.exit(0); }
+
+    const newPassword = await password({
+      message: 'New password (min 8 chars, 1 upper, 1 lower, 1 number, 1 special)',
+      validate: (v) => {
+        if (!v || v.length < 8) return 'At least 8 characters';
+        if (!/[A-Z]/.test(v)) return 'Needs an uppercase letter';
+        if (!/[a-z]/.test(v)) return 'Needs a lowercase letter';
+        if (!/[0-9]/.test(v)) return 'Needs a number';
+        if (!/[^A-Za-z0-9]/.test(v)) return 'Needs a special character';
+        return undefined;
+      },
+    });
+    if (isCancel(newPassword)) { cancel('Cancelled.'); process.exit(0); }
+
+    // Nango's PUT /user/password requires a session cookie, but Nango sets
+    // it with `secure: true` when NANGO_SERVER_URL starts with https, so
+    // internal HTTP calls inside the container can never capture it.
+    //
+    // Instead, we verify the old password by calling signin (200 = correct),
+    // then compute the new PBKDF2 hash inside the container (same params
+    // Nango uses) and update the _nango_users table directly via psql.
+    const script = `
+      import crypto from 'node:crypto';
+      import util from 'node:util';
+      const pbkdf2Async = util.promisify(crypto.pbkdf2);
+
+      const base = 'http://127.0.0.1:3003';
+      const email = ${JSON.stringify(String(email).trim())};
+      const oldPw = ${JSON.stringify(String(oldPassword))};
+      const newPw = ${JSON.stringify(String(newPassword))};
+
+      // Step 1: verify old password by attempting signin
+      const signin = await fetch(base + '/api/v1/account/signin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password: oldPw }),
+      });
+      const body = await signin.json().catch(() => ({}));
+      if (signin.status !== 200 || !body.user) {
+        process.stdout.write('SIGNIN_FAIL ' + signin.status + ' ' + JSON.stringify(body).slice(0, 200));
+        process.exit(1);
+      }
+
+      // Step 2: compute new salt + hash (same params Nango uses)
+      const newSalt = crypto.randomBytes(16).toString('base64');
+      const newHash = (await pbkdf2Async(newPw, newSalt, 310000, 32, 'sha256')).toString('base64');
+      process.stdout.write('OK:' + newSalt + ':' + newHash);
+    `;
+
+    printInfo('Verifying current password and computing new credentials...');
+    let newSalt: string, newHash: string;
+    try {
+      const { stdout } = await execFileAsync(
+        'docker', ['exec', NANGO_CONTAINER, 'node', '--input-type=module', '-e', script],
+        { timeout: 20_000 },
+      );
+      const out = stdout.trim();
+      if (out.startsWith('OK:')) {
+        [, newSalt, newHash] = out.split(':');
+      } else if (out.startsWith('SIGNIN_FAIL')) {
+        printError(`Current password is incorrect.`);
+        printInfo('  Check with: eve connectors admin');
+        process.exit(1);
+      } else {
+        printError(`Unexpected: ${out}`);
+        process.exit(1);
+      }
+    } catch (err) {
+      printError(`Password change failed: ${(err as Error).message}`);
+      process.exit(1);
+    }
+
+    // Step 3: update the DB directly
+    const pgContainer = await findSynapPostgresContainer();
+    if (!pgContainer) {
+      printError('Could not find postgres container to update password.');
+      printInfo('  Make sure synap-backend is running on this host.');
+      process.exit(1);
+    }
+
+    const safeEmail = String(email).trim().replace(/'/g, "''");
+    try {
+      await execFileAsync('docker', [
+        'exec', pgContainer,
+        'psql', '-U', 'synap', '-d', 'nango',
+        '-c', `UPDATE nango._nango_users SET salt = '${newSalt}', hashed_password = '${newHash}' WHERE email = '${safeEmail}';`,
+      ], { timeout: 10_000 });
+    } catch (err) {
+      printError(`Database update failed: ${(err as Error).message}`);
+      process.exit(1);
+    }
+
+    console.log();
+    printSuccess('Password changed successfully.');
+    printInfo('  Use the new password to sign in at the Nango dashboard.');
+  } else {
+    // ── Show credentials ────────────────────────────────────────────────────
+    const email = await deriveAdminEmail();
+    const password = deriveAdminPassword(secretKey);
+    const nangoHost = await readNangoHost();
+
+    printInfo(`  Admin email:    ${colors.primary.bold(email)}`);
+    printInfo(`  Admin password: ${colors.primary.bold(password)}`);
+    if (email === 'admin@eve.local') {
+      printWarning('  Using default stub email — set a real one and re-run `eve add nango`.');
+    }
+    console.log();
+    if (nangoHost) {
+      printInfo(`  Dashboard: ${colors.info(nangoHost)}`);
+      printInfo('  Open it:   eve connectors dashboard');
+    }
+    console.log();
+    printInfo('  Change password:  eve connectors admin --reset-password');
+    printInfo('  Set up a provider: eve connectors setup <provider>');
+    console.log();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Subcommand: dashboard
+// ---------------------------------------------------------------------------
+
+async function runDashboard(): Promise<void> {
+  console.log();
+  printHeader('Eve — Nango Dashboard', '🌐');
+  console.log();
+
+  if (!await isNangoRunning()) {
+    printError(`Nango container (${NANGO_CONTAINER}) is not running on this host.`);
+    printInfo('  Run this command on the pod host (where Docker runs).');
+    process.exit(1);
+  }
+
+  const nangoHost = await readNangoHost();
+  if (!nangoHost) {
+    printError('Could not determine Nango dashboard URL.');
+    printInfo('  Check that the container has NANGO_SERVER_URL set.');
+    process.exit(1);
+  }
+
+  printInfo(`  Opening ${colors.info(nangoHost)} ...`);
+  openBrowser(nangoHost);
+  console.log();
+  printInfo('  If the browser didn\'t open, paste this URL:');
+  printInfo(`    ${colors.info(nangoHost)}`);
+  console.log();
+}
+
+// ---------------------------------------------------------------------------
+// Command registration
+// ---------------------------------------------------------------------------
+
 export function connectorsCommand(program: Command): void {
   const connectors = program
     .command('connectors')
-    .description('Configure external service OAuth apps (Nango integrations)');
+    .description('Manage Nango — admin account, OAuth apps, dashboard');
 
+  // `eve connectors setup [provider]`
   connectors
     .command('setup')
     .description('Register a real OAuth app for a provider (Google, GitHub, Notion, Slack, Linear)')
@@ -340,8 +566,40 @@ export function connectorsCommand(program: Command): void {
       await runConnectorsSetup(provider);
     });
 
-  // `eve connectors` with no subcommand → run the interactive setup picker.
-  connectors.action(async () => {
-    await runConnectorsSetup(undefined);
+  // `eve connectors admin`
+  connectors
+    .command('admin')
+    .description('Show Nango admin credentials (email + password)')
+    .option('--reset-password', 'Change the admin password')
+    .action(async (opts: { resetPassword?: boolean }) => {
+      await runConnectorsAdmin(opts.resetPassword ?? false);
+    });
+
+  // `eve connectors dashboard`
+  connectors
+    .command('dashboard')
+    .description('Open the Nango dashboard in your browser')
+    .action(async () => {
+      await runDashboard();
+    });
+
+  // `eve connectors` with no subcommand → show help.
+  connectors.action(() => {
+    console.log();
+    printHeader('Eve — Connectors', '🔌');
+    console.log();
+    printInfo('Usage: eve connectors <command>');
+    console.log();
+    printInfo('  setup [provider]      Register a real OAuth app for a provider');
+    printInfo('  admin                 Show admin email + password');
+    printInfo('  admin --reset-password  Change the admin password');
+    printInfo('  dashboard             Open the Nango dashboard in your browser');
+    console.log();
+    printInfo('Examples:');
+    printInfo('  eve connectors setup google');
+    printInfo('  eve connectors admin');
+    printInfo('  eve connectors admin --reset-password');
+    printInfo('  eve connectors dashboard');
+    console.log();
   });
 }

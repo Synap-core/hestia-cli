@@ -12,7 +12,7 @@ import { promisify } from 'node:util';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { select, isCancel } from '@clack/prompts';
+import { select, text, isCancel, cancel } from '@clack/prompts';
 import {
   entityStateManager,
   readEveSecrets,
@@ -496,7 +496,16 @@ async function addNango(): Promise<void> {
   }
 
   // Always attempt signup — idempotent, safe to retry if rate-limited on first install.
-  const ownerEmail = secrets?.synap?.userSession?.email ?? secrets?.builder?.openwebui?.adminEmail;
+  let ownerEmail = secrets?.synap?.userSession?.email ?? secrets?.builder?.openwebui?.adminEmail;
+  if (!ownerEmail) {
+    console.log();
+    ownerEmail = await text({
+      message: 'Nango admin email (used to sign in to the dashboard)',
+      placeholder: 'you@example.com',
+      validate: (v) => (v && v.includes('@') ? undefined : 'Enter a valid email address'),
+    }) as string;
+    if (isCancel(ownerEmail)) { cancel('Setup cancelled.'); process.exit(0); }
+  }
   // nangoAutoSignup returns the actual environment secret key from Nango's DB.
   // Nango generates its own key on first account creation — our generated UUID
   // is only used as NANGO_SECRET_KEY (container env identifier) but the API
