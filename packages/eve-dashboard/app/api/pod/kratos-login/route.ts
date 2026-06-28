@@ -16,13 +16,23 @@ import { getPodRuntimeContext } from "@/lib/pod-runtime-context";
 export async function GET(req: Request) {
   const context = await getPodRuntimeContext(req);
   if (!context.kratosPublicUrl) {
-    return NextResponse.redirect(new URL("/login?error=no-pod", req.url));
+    // No pod detected — use Host header if available, fall back to req.url.
+    const host = req.headers.get("host");
+    const proto = req.headers.get("x-forwarded-proto") || "https";
+    const fallbackUrl = host ? `${proto}://${host}` : req.url;
+    return NextResponse.redirect(new URL("/login?error=no-pod", fallbackUrl));
   }
 
-  const params = new URL(req.url).searchParams;
+  // Build the origin from Host header — same reason as kratos-callback.
+  // req.url is the internal container address (http://0.0.0.0:3000) behind
+  // a proxy; the Host header carries the external domain.
+  const host = req.headers.get("host");
+  const proto = req.headers.get("x-forwarded-proto") || "https";
+  const baseUrl = host ? `${proto}://${host}` : req.url;
+  const params = new URL(baseUrl).searchParams;
   const next = params.get("next") ?? "/";
 
-  const origin = new URL(req.url).origin;
+  const origin = new URL(baseUrl).origin;
   // Kratos will redirect back to callback; pass `next` through so the
   // callback can send the user to their original destination.
   const callbackUrl = encodeURIComponent(

@@ -23,14 +23,23 @@ import { getPodRuntimeContext } from "@/lib/pod-runtime-context";
 
 export async function GET(req: Request) {
   const context = await getPodRuntimeContext(req);
+  // Build the redirect base from the request's Host header, which the reverse
+  // proxy (Caddy) sets to the external domain (eve.perso.thearchitech.xyz).
+  // req.url is the internal container address (http://0.0.0.0:3000) behind a
+  // proxy — using it as redirect base sends the browser to a dead URL.
+  // context.podUrl is the Synap pod, not the Eve dashboard — using it would
+  // send the user to the wrong place. The Host header is the correct source.
+  const host = req.headers.get("host");
+  const proto = req.headers.get("x-forwarded-proto") || "https";
+  const baseUrl = host ? `${proto}://${host}` : req.url;
   if (!context.kratosPublicUrl) {
-    return NextResponse.redirect(new URL("/login?error=no-pod", req.url));
+    return NextResponse.redirect(new URL("/login?error=no-pod", baseUrl));
   }
 
   const rawCookies = req.headers.get("cookie") ?? "";
   const match = rawCookies.match(/(?:^|;\s*)ory_kratos_session=([^;]+)/);
   if (!match?.[1]) {
-    return NextResponse.redirect(new URL("/login?error=no-session", req.url));
+    return NextResponse.redirect(new URL("/login?error=no-session", baseUrl));
   }
   const sessionCookie = match[1];
 
@@ -50,11 +59,11 @@ export async function GET(req: Request) {
       identity = session?.identity ?? null;
     }
   } catch {
-    return NextResponse.redirect(new URL("/login?error=kratos-unavailable", req.url));
+    return NextResponse.redirect(new URL("/login?error=kratos-unavailable", baseUrl));
   }
 
   if (!identity) {
-    return NextResponse.redirect(new URL("/login?error=invalid-session", req.url));
+    return NextResponse.redirect(new URL("/login?error=invalid-session", baseUrl));
   }
 
   let eveSessionCookie: string | null = null;
@@ -95,23 +104,23 @@ export async function GET(req: Request) {
     if (isSecure) parts.push("Secure");
     eveSessionCookie = parts.join("; ");
   } catch {
-    return NextResponse.redirect(new URL("/login?error=session-issue", req.url));
+    return NextResponse.redirect(new URL("/login?error=session-issue", baseUrl));
   }
 
   // Validate redirect target — must be a same-origin relative path
   // to prevent open-redirect attacks.
-  const nextParam = new URL(req.url).searchParams.get("next") ?? "/";
+  const nextParam = new URL(baseUrl).searchParams.get("next") ?? "/";
   let safeRedirect = "/";
   try {
-    const nextUrl = new URL(nextParam, req.url);
-    if (nextUrl.origin === new URL(req.url).origin && nextUrl.pathname) {
+    const nextUrl = new URL(nextParam, baseUrl);
+    if (nextUrl.origin === new URL(baseUrl).origin && nextUrl.pathname) {
       safeRedirect = nextUrl.pathname + nextUrl.search;
     }
   } catch {
     /* fall through to default "/" */
   }
 
-  const response = NextResponse.redirect(new URL(safeRedirect, req.url));
+  const response = NextResponse.redirect(new URL(safeRedirect, baseUrl));
   response.headers.set("Set-Cookie", eveSessionCookie);
   return response;
 }
