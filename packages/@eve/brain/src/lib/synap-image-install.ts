@@ -270,7 +270,14 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
   if (opts.withOpenclaw) cliArgs.push('--with-openclaw');
   if (opts.withRsshub) cliArgs.push('--with-rsshub');
 
-  const cliResult = runSynapCli('install', cliArgs, { repoRoot });
+  // refreshGit: pull the synap-backend checkout to upstream BEFORE delegating.
+  // The on-disk `synap` script is what generates kratos.yml (incl. CORS
+  // allowed_origins). Without a refresh, a pod installed at an older commit
+  // keeps regenerating stale config on every `eve update synap` — e.g. a
+  // kratos.yml missing `https://pod-admin.<root>` → pod-admin auth CORS
+  // failures that re-appear after every update. Keeping the script in lockstep
+  // with the images is the whole point of "update".
+  const cliResult = runSynapCli('install', cliArgs, { repoRoot, refreshGit: true });
   if (!cliResult.ok) {
     // Caddy-only failure (port 80 collision with eve-legs-traefik) is the
     // signature case: the data plane (postgres / kratos / backend / pod-admin)

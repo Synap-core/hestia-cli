@@ -19,19 +19,17 @@ import { randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
 import { SignJWT } from "jose";
 import { readEveSecrets, writeEveSecrets } from "@eve/dna";
-import { getPodRuntimeContext } from "@/lib/pod-runtime-context";
+import { getPodRuntimeContext, resolveExternalBaseUrl } from "@/lib/pod-runtime-context";
 
 export async function GET(req: Request) {
   const context = await getPodRuntimeContext(req);
-  // Build the redirect base from the request's Host header, which the reverse
-  // proxy (Caddy) sets to the external domain (eve.perso.thearchitech.xyz).
-  // req.url is the internal container address (http://0.0.0.0:3000) behind a
-  // proxy — using it as redirect base sends the browser to a dead URL.
-  // context.podUrl is the Synap pod, not the Eve dashboard — using it would
-  // send the user to the wrong place. The Host header is the correct source.
-  const host = req.headers.get("host");
-  const proto = req.headers.get("x-forwarded-proto") || "https";
-  const baseUrl = host ? `${proto}://${host}` : req.url;
+  // Build the redirect base from a reliable source. The Host header alone is
+  // NOT trustworthy: a reverse proxy that doesn't preserve it (Caddy fronting
+  // the container) leaves us with the internal bind address (0.0.0.0:3000),
+  // which is a dead URL for the browser. resolveExternalBaseUrl prefers a
+  // routable forwarded/Host header, then the dashboard's known external URL
+  // (eve.<domain>) from secrets.
+  const baseUrl = resolveExternalBaseUrl(req, context);
   if (!context.kratosPublicUrl) {
     return NextResponse.redirect(new URL("/login?error=no-pod", baseUrl));
   }
@@ -108,8 +106,9 @@ export async function GET(req: Request) {
   }
 
   // Validate redirect target — must be a same-origin relative path
-  // to prevent open-redirect attacks.
-  const nextParam = new URL(baseUrl).searchParams.get("next") ?? "/";
+  // to prevent open-redirect attacks. Read `next` from the request's own query
+  // (baseUrl carries no query string), so the post-login landing is preserved.
+  const nextParam = new URL(req.url).searchParams.get("next") ?? "/";
   let safeRedirect = "/";
   try {
     const nextUrl = new URL(nextParam, baseUrl);

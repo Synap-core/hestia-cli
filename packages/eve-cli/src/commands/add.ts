@@ -213,46 +213,54 @@ async function applyNangoConnectUiPolyfill(originalDockerRunArgs: string[]): Pro
   const hostPath = '/opt/nango/connect-ui-index.html';
   const containerPath = '/app/nango/packages/connect-ui/dist/index.html';
   const containerName = 'eve-arms-nango';
-
-  // Inline node script — patches index.html in-place (idempotent).
-  const patchScript = `
-const fs = require('fs');
-const p = '${containerPath}';
-let h = fs.readFileSync(p, 'utf8');
-if (h.includes('setImmediate polyfill')) { console.log('already patched'); process.exit(0); }
-const poly = '<script>\\n(function() {\\n' +
-  '  window.setImmediate = function(fn) {\\n' +
-  '    var args = Array.prototype.slice.call(arguments, 1);\\n' +
-  '    var id = setTimeout(function() { fn.apply(null, args); }, 0);\\n' +
-  '    return { _id: id, type: \\'Immediate\\' };\\n' +
-  '  };\\n' +
-  '  window.clearImmediate = function(h) { clearTimeout(h && h._id !== undefined ? h._id : h); };\\n' +
-  '})();\\n' +
-  '<\\/script>';
-h = h.replace('<script type="module"', poly + '\\n    <script type="module"');
-fs.writeFileSync(p, h);
-console.log('patched ok');
-`.trim();
+  const image = 'nangohq/nango-server:hosted';
 
   printInfo('Applying setImmediate polyfill to Nango Connect UI...');
-  try {
-    const { stdout } = await execFileAsync(
-      'docker', ['exec', containerName, 'node', '-e', patchScript],
-      { timeout: 15_000 },
-    );
-    printInfo(`  Polyfill: ${stdout.trim()}`);
-  } catch (err) {
-    printWarning(`  Could not patch Connect UI index.html: ${(err as Error).message}`);
-    return;
-  }
 
-  // Ensure host directory exists, then copy patched file out.
-  await execFileAsync('sh', ['-c', `mkdir -p "$(dirname ${hostPath})"`], { timeout: 5_000 }).catch(() => {});
+  // Extract the ORIGINAL index.html from a FRESH temp container (no volume
+  // mount), NOT from the running container. The running container may have
+  // a stale host file mounted with outdated asset hashes from a previous
+  // Nango version.
+  const extractAndPatch = `
+    const fs = require('fs');
+    const p = '${containerPath}';
+    let h = fs.readFileSync(p, 'utf8');
+    if (h.includes('window.setImmediate = window.setImmediate ||')) {
+      console.log('already patched'); process.exit(0);
+    }
+    const poly = '<script>\\n(function() {\\n' +
+      '  window.setImmediate = window.setImmediate || function(fn) {\\n' +
+      '    var args = Array.prototype.slice.call(arguments, 1);\\n' +
+      '    var id = setTimeout(function() { fn.apply(null, args); }, 0);\\n' +
+      '    return { _id: id, type: \\'Immediate\\' };\\n' +
+      '  };\\n' +
+      '  window.clearImmediate = window.clearImmediate || function(h) { clearTimeout(h && h._id !== undefined ? h._id : h); };\\n' +
+      '})();\\n' +
+      '<\\/script>';
+    // Insert as first element in <head> so it runs before any module scripts
+    h = h.replace('<head>', '<head>\\n' + poly);
+    fs.writeFileSync(p, h);
+    console.log('patched ok');
+  `.trim();
+
+  const tmpContainer = 'eve-nango-polyfill-tmp';
   try {
-    await execFileAsync('docker', ['cp', `${containerName}:${containerPath}`, hostPath], { timeout: 10_000 });
+    await execFileAsync('docker', ['rm', '-f', tmpContainer], { timeout: 10_000 }).catch(() => {});
+    await execFileAsync('docker', ['create', '--name', tmpContainer, image], { timeout: 15_000 });
+    await execFileAsync('docker', ['exec', tmpContainer, 'node', '-e', extractAndPatch], { timeout: 15_000 });
+    await execFileAsync('sh', ['-c', `mkdir -p "$(dirname ${hostPath})"`], { timeout: 5_000 }).catch(() => {});
+    await execFileAsync('docker', ['cp', `${tmpContainer}:${containerPath}`, hostPath], { timeout: 10_000 });
+    await execFileAsync('docker', ['rm', '-f', tmpContainer], { timeout: 10_000 }).catch(() => {});
   } catch (err) {
-    printWarning(`  Could not copy patched index.html to host (${hostPath}): ${(err as Error).message}`);
-    return;
+    printWarning(`  Could not patch via temp container: ${(err as Error).message}`);
+    // Fallback: patch running container (works on first install before volume mount)
+    try {
+      await execFileAsync('docker', ['exec', containerName, 'node', '-e', extractAndPatch], { timeout: 15_000 });
+      await execFileAsync('docker', ['cp', `${containerName}:${containerPath}`, hostPath], { timeout: 10_000 });
+    } catch (err2) {
+      printWarning(`  Fallback also failed: ${(err2 as Error).message}`);
+      return;
+    }
   }
 
   // Recreate container with the patched file mounted read-only.
@@ -349,38 +357,8 @@ async function addNango(): Promise<void> {
   const uuidV4Re = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   const secretKey = (existingKey && uuidV4Re.test(existingKey)) ? existingKey : randomUUID();
 
-  // Find the actual postgres container (name varies by compose project, e.g. synap-backend-postgres-1)
-  const postgresContainer = await findSynapPostgresContainer();
-  if (!postgresContainer) {
-    printWarning('  Could not find synap-backend postgres container — skipping database creation.');
-  } else {
-    // Create the nango database in the shared postgres instance
-    printInfo(`Creating Nango database in ${postgresContainer}...`);
-    try {
-      await execFileAsync('docker', [
-        'exec', postgresContainer,
-        'psql', '-U', pgUser, '-c',
-        'CREATE DATABASE nango;',
-      ], { timeout: 10_000 });
-    } catch {
-      // Ignore "already exists" errors — idempotent
-    }
-
-    // Nango runs on eve-network but postgres is on synap-backend's compose network.
-    // Connect postgres to eve-network with the alias `eve-brain-postgres` so Nango
-    // can resolve it by that hostname.
-    try {
-      await execFileAsync('docker', [
-        'network', 'connect', '--alias', 'eve-brain-postgres',
-        'eve-network', postgresContainer,
-      ], { timeout: 10_000 });
-      printInfo(`  Connected ${postgresContainer} to eve-network as eve-brain-postgres.`);
-    } catch {
-      // Already connected — fine
-    }
-  }
-
-  // Resolve deploy/.env early so we can read PUBLIC_URL and postgres credentials.
+  // Resolve deploy/.env early so we can read PUBLIC_URL and postgres credentials
+  // BEFORE they're needed (the nango DB below is created with pgUser).
   // Detection order:
   //   1. SYNAP_DEPLOY_DIR env var (explicit override)
   //   2. Well-known path /opt/synap-backend/deploy
@@ -417,6 +395,37 @@ async function addNango(): Promise<void> {
       const matchPass = envContent.match(/^POSTGRES_PASSWORD=(.+)$/m);
       if (matchPass?.[1]) pgPassword = matchPass[1].trim();
     } catch { /* .env may not exist yet */ }
+  }
+
+  // Find the actual postgres container (name varies by compose project, e.g. synap-backend-postgres-1)
+  const postgresContainer = await findSynapPostgresContainer();
+  if (!postgresContainer) {
+    printWarning('  Could not find synap-backend postgres container — skipping database creation.');
+  } else {
+    // Create the nango database in the shared postgres instance
+    printInfo(`Creating Nango database in ${postgresContainer}...`);
+    try {
+      await execFileAsync('docker', [
+        'exec', postgresContainer,
+        'psql', '-U', pgUser, '-c',
+        'CREATE DATABASE nango;',
+      ], { timeout: 10_000 });
+    } catch {
+      // Ignore "already exists" errors — idempotent
+    }
+
+    // Nango runs on eve-network but postgres is on synap-backend's compose network.
+    // Connect postgres to eve-network with the alias `eve-brain-postgres` so Nango
+    // can resolve it by that hostname.
+    try {
+      await execFileAsync('docker', [
+        'network', 'connect', '--alias', 'eve-brain-postgres',
+        'eve-network', postgresContainer,
+      ], { timeout: 10_000 });
+      printInfo(`  Connected ${postgresContainer} to eve-network as eve-brain-postgres.`);
+    } catch {
+      // Already connected — fine
+    }
   }
 
   // Pull image
@@ -971,7 +980,7 @@ volumes:
       return {
         label: 'Installing T3 Code server…',
         async fn() {
-          const { select: clackSelect, input, password } = await import('@clack/prompts');
+          const { select: clackSelect, text: clackInput, password } = await import('@clack/prompts');
           const secrets = await readEveSecrets(process.cwd()).catch(() => null);
           const existing = secrets?.builder?.t3code ?? {};
 
@@ -1004,10 +1013,10 @@ volumes:
           } else if (provider === 'openrouter') {
             openaiBaseUrl = 'https://openrouter.ai/api/v1';
           } else if (provider === 'custom') {
-            const url = await input({
+            const url = await clackInput({
               message: 'Base URL (e.g. https://my-proxy.example.com/v1)',
               initialValue: currentBaseUrl,
-              validate: (v) => v.trim() ? undefined : 'URL is required',
+              validate: (v: string) => v.trim() ? undefined : 'URL is required',
             });
             if (typeof url !== 'string') throw new Error('Cancelled');
             openaiBaseUrl = url.trim();

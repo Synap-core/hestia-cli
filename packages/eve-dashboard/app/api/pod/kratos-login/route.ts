@@ -11,26 +11,22 @@
  */
 
 import { NextResponse } from "next/server";
-import { getPodRuntimeContext } from "@/lib/pod-runtime-context";
+import { getPodRuntimeContext, resolveExternalBaseUrl } from "@/lib/pod-runtime-context";
 
 export async function GET(req: Request) {
   const context = await getPodRuntimeContext(req);
+  // Resolve the dashboard's external base from a reliable source (forwarded/Host
+  // header only when routable, else the known eve.<domain> from secrets). The
+  // Host header alone is unsafe: a proxy that doesn't preserve it leaves the
+  // internal bind address (0.0.0.0:3000), which Kratos would then use as the
+  // browser's `return_to` — bouncing the user to a dead URL after login.
+  const baseUrl = resolveExternalBaseUrl(req, context);
   if (!context.kratosPublicUrl) {
-    // No pod detected — use Host header if available, fall back to req.url.
-    const host = req.headers.get("host");
-    const proto = req.headers.get("x-forwarded-proto") || "https";
-    const fallbackUrl = host ? `${proto}://${host}` : req.url;
-    return NextResponse.redirect(new URL("/login?error=no-pod", fallbackUrl));
+    return NextResponse.redirect(new URL("/login?error=no-pod", baseUrl));
   }
 
-  // Build the origin from Host header — same reason as kratos-callback.
-  // req.url is the internal container address (http://0.0.0.0:3000) behind
-  // a proxy; the Host header carries the external domain.
-  const host = req.headers.get("host");
-  const proto = req.headers.get("x-forwarded-proto") || "https";
-  const baseUrl = host ? `${proto}://${host}` : req.url;
-  const params = new URL(baseUrl).searchParams;
-  const next = params.get("next") ?? "/";
+  // Read `next` from the request's own query (baseUrl carries no query string).
+  const next = new URL(req.url).searchParams.get("next") ?? "/";
 
   const origin = new URL(baseUrl).origin;
   // Kratos will redirect back to callback; pass `next` through so the

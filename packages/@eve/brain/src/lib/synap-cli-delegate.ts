@@ -105,15 +105,56 @@ const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 
 function refreshGitCheckout(repoRoot: string): void {
   if (!existsSync(`${repoRoot}/.git`)) return;
-  spawnSync('git', ['-C', repoRoot, 'fetch', '--quiet'], { stdio: 'ignore' });
-  const pull = spawnSync('git', ['-C', repoRoot, 'pull', '--ff-only'], {
-    stdio: ['ignore', 'pipe', 'pipe'],
-    encoding: 'utf-8',
-  });
-  if (pull.status !== 0) {
-    const detail = (pull.stderr ?? '').toString().trim() || 'rejected (likely local edits or non-fast-forward).';
-    console.warn(`  Warning: git pull on ${repoRoot} failed — ${detail}\n  Continuing with the on-disk synap-backend (may be older than upstream).`);
+
+  const git = (args: string[]) =>
+    spawnSync('git', ['-C', repoRoot, ...args], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf-8' });
+
+  git(['fetch', '--quiet']);
+
+  // Happy path: a clean checkout fast-forwards.
+  const ff = git(['pull', '--ff-only']);
+  if (ff.status === 0) return;
+
+  // ff-only failed. The usual cause on a pod is a shallow clone whose upstream
+  // advanced past the merge base — the checkout then silently regenerates
+  // stale config (e.g. a kratos.yml with an outdated CORS list) on every
+  // update. The pod deploy checkout is meant to MIRROR upstream: all pod state
+  // lives in docker volumes + gitignored files (deploy/.env, kratos/kratos.yml,
+  // overrides), none of which `git reset --hard` touches. So we recover by
+  // hard-resetting tracked files to upstream — UNLESS the operator has local
+  // commits, which we refuse to discard.
+  const ref = (git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']).stdout ?? '').toString().trim();
+
+  // A pod checkout is a `--depth 1` snapshot (see ensureSynapBackendCheckout):
+  // it has no local history to preserve by design, so resetting to upstream is
+  // always safe. For a full (dev-style) checkout, only reset when there are no
+  // local commits to discard.
+  const isShallow = (git(['rev-parse', '--is-shallow-repository']).stdout ?? '').toString().trim() === 'true';
+  let hasLocalCommits = false;
+  if (!isShallow) {
+    const aheadOut = ref ? git(['rev-list', '--count', `${ref}..HEAD`]) : null;
+    hasLocalCommits = !aheadOut || aheadOut.status !== 0 || parseInt((aheadOut.stdout ?? '').toString().trim(), 10) > 0;
   }
+
+  if (ref && !hasLocalCommits) {
+    const reset = git(['reset', '--hard', ref]);
+    if (reset.status === 0) {
+      console.warn(
+        `  Note: synap-backend at ${repoRoot} had drifted from ${ref} (couldn't fast-forward); ` +
+        `hard-reset to upstream to keep deploy logic + kratos.yml generation current. ` +
+        `Gitignored .env/kratos.yml/overrides and docker volumes were untouched.`,
+      );
+      return;
+    }
+  }
+
+  const detail = (ff.stderr ?? '').toString().trim() || 'rejected (non-fast-forward).';
+  console.warn(
+    `  Warning: could not refresh synap-backend at ${repoRoot} — ${detail}\n` +
+    (hasLocalCommits
+      ? `  The checkout has local commits; refusing to discard them. To force it to upstream (safe — data lives in volumes + gitignored files):\n      git -C ${repoRoot} fetch && git -C ${repoRoot} reset --hard @{u}\n`
+      : `  Continuing with the on-disk version (may regenerate stale config). Fix: git -C ${repoRoot} fetch && git -C ${repoRoot} reset --hard @{u}\n`),
+  );
 }
 
 function resolveExplicitRepo(repoRoot: string): SynapDelegatePaths | null {

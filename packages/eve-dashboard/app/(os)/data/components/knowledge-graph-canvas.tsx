@@ -10,9 +10,15 @@
  */
 
 import { useMemo, useRef } from "react";
-import { GraphCanvas, darkTheme, lightTheme } from "reagraph";
+import { GraphCanvas } from "reagraph";
 import type { GraphCanvasRef } from "reagraph";
-import { useTheme } from "next-themes";
+
+const graphTheme = {
+  canvas: { background: "transparent" },
+  node: { fill: "var(--synap-primary)", label: { color: "var(--synap-color)" } },
+  edge: { fill: "var(--synap-border-color)", label: { color: "var(--synap-muted)" } },
+  arrow: { fill: "var(--synap-border-color)" },
+} as any;
 
 export type LayoutType = "forceDirected2d" | "radialOut2d" | "treeTd2d";
 
@@ -58,7 +64,6 @@ export default function KnowledgeGraphCanvas({
   layoutType = "forceDirected2d",
 }: KnowledgeGraphProps) {
   const ref = useRef<GraphCanvasRef | null>(null);
-  const { resolvedTheme } = useTheme();
 
   const nodes: ReagraphNode[] = useMemo(
     () =>
@@ -91,7 +96,7 @@ export default function KnowledgeGraphCanvas({
       nodes={nodes}
       edges={edges}
       layoutType={layoutType}
-      theme={resolvedTheme === "dark" ? darkTheme : lightTheme}
+      theme={graphTheme}
       draggable
       labelType="nodes"
       onNodeClick={(node: { id: string }) => onNodeClick?.(node.id)}

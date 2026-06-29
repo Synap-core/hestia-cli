@@ -1,7 +1,7 @@
 {
   "tool_name": "Read",
-  "tool_input_preview": "{\"file_path\":\"/Users/antoine/Documents/Code/synap/hestia-cli/packages/eve-cli/src/commands/update.ts\"}",
+  "tool_input_preview": "{\"file_path\":\"/Users/antoine/Documents/Code/synap/synap-backend/packages/api/src/services/permission-check.ts\",\"offset\":360,\"limit\":60}",
   "error": "File does not exist. Note: your current working directory is /Users/antoine/Documents/Code/synap/hestia-cli/packages/eve-cli.",
-  "timestamp": "2026-05-13T18:40:13.848Z",
+  "timestamp": "2026-06-20T21:29:04.399Z",
   "retry_count": 1
 }

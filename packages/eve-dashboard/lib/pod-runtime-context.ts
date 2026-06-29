@@ -41,6 +41,46 @@ export async function getPodRuntimeContext(req: Request): Promise<PodRuntimeCont
   };
 }
 
+/**
+ * Resolve the dashboard's OWN external base URL for building absolute redirects
+ * (Kratos `return_to`, post-login landing, error pages).
+ *
+ * Resolution order:
+ *   1. `x-forwarded-host` / `Host` — but ONLY when it names a routable external
+ *      domain. A reverse proxy that doesn't preserve Host (e.g. Caddy fronting
+ *      the container) leaves us with the internal bind address — `0.0.0.0:3000`,
+ *      `127.0.0.1:3000`, `localhost:3000` — which is a dead URL for the browser.
+ *   2. `context.eveUrl` — the dashboard's known external URL (`eve.<domain>`)
+ *      derived from secrets. Deterministic; immune to proxy header mangling.
+ *   3. `req.url` — last resort (internal address; only correct in local dev).
+ *
+ * This is the canonical source for self-referential redirects. Never trust the
+ * Host header alone: it depends on every proxy in the chain preserving it.
+ */
+export function resolveExternalBaseUrl(
+  req: Request,
+  context: Pick<PodRuntimeContext, "eveUrl">,
+): string {
+  const proto = req.headers.get("x-forwarded-proto") || "https";
+  const candidate = req.headers.get("x-forwarded-host") || req.headers.get("host");
+  if (candidate && isRoutableHost(candidate)) {
+    return `${proto}://${candidate}`;
+  }
+  if (context.eveUrl) return context.eveUrl.replace(/\/+$/, "");
+  return req.url;
+}
+
+/** True when a Host header names a routable external domain (not a bind address). */
+function isRoutableHost(hostHeader: string): boolean {
+  const hostname = hostHeader
+    .trim()
+    .toLowerCase()
+    .replace(/^\[/, "")
+    .replace(/\]?(:\d+)?$/, "");
+  if (!hostname) return false;
+  return !["0.0.0.0", "127.0.0.1", "localhost", "::1", "::"].includes(hostname);
+}
+
 function resolveEveExternalUrl(
   secrets: EveSecrets | null,
   podUrl?: string,

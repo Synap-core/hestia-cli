@@ -18,7 +18,12 @@ import type { Command } from 'commander';
 import { execFile, exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { text, password, select, isCancel, cancel } from '@clack/prompts';
-import { readEveSecrets, writeEveSecrets } from '@eve/dna';
+import {
+  readEveSecrets,
+  writeEveSecrets,
+  readAgentKeyOrLegacy,
+  resolveSynapUrlOnHost,
+} from '@eve/dna';
 import {
   colors,
   printHeader,
@@ -162,11 +167,27 @@ function openBrowser(url: string): void {
 // Provider catalog (for `setup`)
 // ---------------------------------------------------------------------------
 
+/**
+ * Auth mechanism a connector uses. Generalized from the former `'OAUTH2'`
+ * literal so the catalog can describe non-Nango connector types (api_key,
+ * passkey, mcp, basic) alongside the existing OAuth-via-Nango entries.
+ *
+ * The two paths are complementary, not exclusive. The OAuth *connection* for an
+ * `oauth2` connector is declared through the Nango integration path
+ * (`eve connectors setup`). The tool *row* — including for an `oauth2` catalog
+ * entry such as `nango-gmail` (whose `credentialRef` is `nango://gmail`) — is
+ * seeded headlessly through the backend's `/api/hub/capabilities/apply` door
+ * (`eve capabilities apply`), the same door the non-oauth (`api_key`, `passkey`,
+ * `mcp`, `basic`) types use. So an `oauth2` entry typically needs BOTH: the
+ * connection from `eve connectors setup` and the tool row from `capabilities apply`.
+ */
+export type ConnectorAuthMode = 'oauth2' | 'api_key' | 'passkey' | 'mcp' | 'basic';
+
 interface ProviderSpec {
   key: string;
   label: string;
   uniqueKeys: string[];
-  authMode: 'OAUTH2';
+  authMode: ConnectorAuthMode;
   consoleUrl: string;
   steps: string[];
 }
@@ -176,7 +197,7 @@ const PROVIDERS: ProviderSpec[] = [
     key: 'google',
     label: 'Google (Calendar, Gmail, Drive, Contacts)',
     uniqueKeys: ['google-calendar', 'google-mail', 'google-drive', 'google-contacts'],
-    authMode: 'OAUTH2',
+    authMode: 'oauth2',
     consoleUrl: 'https://console.cloud.google.com/apis/credentials',
     steps: [
       'Create (or select) a project at https://console.cloud.google.com',
@@ -190,7 +211,7 @@ const PROVIDERS: ProviderSpec[] = [
     key: 'github',
     label: 'GitHub (repos, issues)',
     uniqueKeys: ['github'],
-    authMode: 'OAUTH2',
+    authMode: 'oauth2',
     consoleUrl: 'https://github.com/settings/developers',
     steps: [
       'Go to https://github.com/settings/developers → OAuth Apps → New OAuth App',
@@ -202,7 +223,7 @@ const PROVIDERS: ProviderSpec[] = [
     key: 'notion',
     label: 'Notion (pages, databases)',
     uniqueKeys: ['notion'],
-    authMode: 'OAUTH2',
+    authMode: 'oauth2',
     consoleUrl: 'https://www.notion.so/my-integrations',
     steps: [
       'Go to https://www.notion.so/my-integrations → New integration → type "Public"',
@@ -214,7 +235,7 @@ const PROVIDERS: ProviderSpec[] = [
     key: 'slack',
     label: 'Slack (messages, channels)',
     uniqueKeys: ['slack'],
-    authMode: 'OAUTH2',
+    authMode: 'oauth2',
     consoleUrl: 'https://api.slack.com/apps',
     steps: [
       'Go to https://api.slack.com/apps → Create New App → From scratch',
@@ -226,7 +247,7 @@ const PROVIDERS: ProviderSpec[] = [
     key: 'linear',
     label: 'Linear (issues, projects)',
     uniqueKeys: ['linear'],
-    authMode: 'OAUTH2',
+    authMode: 'oauth2',
     consoleUrl: 'https://linear.app/settings/api',
     steps: [
       'Go to https://linear.app/settings/api → OAuth applications → Create new',
@@ -259,13 +280,17 @@ async function upsertIntegration(
   clientId: string,
   clientSecret: string,
 ): Promise<{ ok: true; action: 'created' | 'updated' } | { ok: false; error: string }> {
+  // Nango's REST API expects the credential `type` in its own uppercase wire
+  // form (e.g. "OAUTH2"). The catalog now carries lowercase ConnectorAuthMode
+  // values, so normalise here at the Nango boundary.
+  const nangoType = authMode.toUpperCase();
   const payload = JSON.stringify({
     provider,
     unique_key: uniqueKey,
-    credentials: { type: authMode, client_id: clientId, client_secret: clientSecret },
+    credentials: { type: nangoType, client_id: clientId, client_secret: clientSecret },
   });
   const patchPayload = JSON.stringify({
-    credentials: { type: authMode, client_id: clientId, client_secret: clientSecret },
+    credentials: { type: nangoType, client_id: clientId, client_secret: clientSecret },
   });
 
   const script = `
@@ -291,6 +316,70 @@ async function upsertIntegration(
   } catch (err) {
     const e = err as { stdout?: string; message?: string };
     return { ok: false, error: (e.stdout?.trim() || e.message || 'exec failed') };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Backend tool-row seeding (capability-substrate `tools` table)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve eve's existing pod connection (loopback URL on the host + the `eve`
+ * agent's Hub Protocol key). Reuses the same auth `eve capabilities` uses — no
+ * new credentials are introduced.
+ */
+async function resolvePodToolsConnection(): Promise<{ synapUrl: string; apiKey: string } | null> {
+  const secrets = await readEveSecrets(process.cwd()).catch(() => null);
+  const synapUrl = await resolveSynapUrlOnHost(secrets).catch(() => null);
+  if (!synapUrl) return null;
+  const apiKey = (await readAgentKeyOrLegacy('eve', process.cwd()).catch(() => '')).trim();
+  if (!apiKey) return null;
+  return { synapUrl, apiKey };
+}
+
+/**
+ * Seed a backend `tools` row for a Nango OAuth provider through the Hub door,
+ * so the capability substrate sees the connector immediately after `setup`
+ * (instead of waiting for the frontend's `syncToolRows`). Mirrors how the
+ * `nango-gmail` capability template defines its provider tool:
+ *   { name, kind: 'provider', credentialRef: 'nango://<provider>',
+ *     config: { providerConfigKey: '<provider>' } }.
+ *
+ * Additive and fail-soft: a failure here NEVER fails the OAuth declare flow —
+ * it only warns, since the frontend `syncToolRows` still backfills the row.
+ */
+async function seedToolRow(
+  conn: { synapUrl: string; apiKey: string },
+  provider: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const url = `${conn.synapUrl.replace(/\/$/, '')}/api/hub/tools`;
+  const body = JSON.stringify({
+    name: provider,
+    kind: 'provider',
+    credentialRef: `nango://${provider}`,
+    config: { providerConfigKey: provider },
+  });
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${conn.apiKey}`,
+      },
+      body,
+    });
+    const rawText = await res.text();
+    if (!res.ok) {
+      let detail = rawText;
+      try {
+        const parsed = JSON.parse(rawText) as { error?: string };
+        if (parsed.error) detail = parsed.error;
+      } catch { /* keep raw text */ }
+      return { ok: false, error: `HTTP ${res.status}: ${detail}`.slice(0, 200) };
+    }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: (err as Error).message || 'request failed' };
   }
 }
 
@@ -385,6 +474,24 @@ async function runConnectorsSetup(providerKey?: string): Promise<void> {
   if (okCount === 0) {
     printError('No integrations were configured.');
     process.exit(1);
+  }
+
+  // Seed the backend `tools` row(s) headlessly so the capability substrate sees
+  // each provider immediately — reusing eve's existing pod connection. Additive
+  // and fail-soft: the frontend `syncToolRows` still backfills if this fails.
+  const toolsConn = await resolvePodToolsConnection();
+  if (toolsConn) {
+    for (const r of results) {
+      if (!r.ok) continue;
+      const seed = await seedToolRow(toolsConn, r.uniqueKey);
+      if (seed.ok) {
+        printSuccess(`  Seeded backend tool row: ${r.uniqueKey}`);
+      } else {
+        printWarning(`  Could not seed tool row for ${r.uniqueKey} (${seed.error}) — the frontend will backfill it.`);
+      }
+    }
+  } else {
+    printWarning('  Skipped backend tool-row seeding (no pod connection) — the frontend will backfill it.');
   }
 
   const secrets = await readEveSecrets(process.cwd()).catch(() => null);

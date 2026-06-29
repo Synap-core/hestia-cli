@@ -100,6 +100,30 @@ const SecretsSchema = z.object({
        * release. New code should read `secrets.agents.eve.hubApiKey`.
        */
       apiKey: z.string().optional(),
+      /**
+       * The Hub Protocol key for the pod's IS-facing "eve" agent, used as the
+       * OpenAI-compat key when the local inference provider is `pod`. Mirrors
+       * `agents.eve.hubApiKey`; kept here as the back-compat slot consumers
+       * read directly (`secrets.synap.agentApiKey`).
+       */
+      agentApiKey: z.string().optional(),
+      /**
+       * The owner's CP/pod sign-in session as seen from the synap side. Only
+       * the `email` is read today (to pre-fill the pod owner on first install);
+       * the rest mirror `cp.userSession`'s shape so the slot can carry a full
+       * session if needed. All-optional so partial writes validate.
+       */
+      userSession: z
+        .object({
+          token: z.string().optional(),
+          userId: z.string().optional(),
+          email: z.string().optional(),
+          name: z.string().optional(),
+          avatarUrl: z.string().optional(),
+          expiresAt: z.string().optional(),
+          issuedAt: z.string().optional(),
+        })
+        .optional(),
       /** Full Hub base URL; if unset, Eve derives `${apiUrl}/api/hub` */
       hubBaseUrl: z.string().optional(),
       /**
@@ -329,12 +353,13 @@ const SecretsSchema = z.object({
   channelRouting: z.record(z.string(), z.string()).optional(),
   /**
    * Nango self-hosted integration platform credentials.
-   * Written by `eve nango init` — not set manually.
+   * Written by `eve add nango` — not set manually.
    *
    * `secretKey` is the bearer token for Nango's REST API (NANGO_SECRET_KEY).
-   * Generated once with `randomBytes(32).toString('hex')` and never changes
-   * unless the user explicitly resets Nango. The pod backend reads this via
-   * the NANGO_SECRET_KEY env var (written to deploy/.env on init).
+   * Generated once with `randomUUID()` (UUID v4) and reused on subsequent
+   * runs (the existing key is kept if it is a valid UUID v4), so it never
+   * changes unless the user explicitly resets Nango. The pod backend reads
+   * this via the NANGO_SECRET_KEY env var (written to deploy/.env on init).
    *
    * `oauthApps` stores provider-specific OAuth app credentials so Eve can
    * guide the user through connector setup (`eve connectors setup google`).
