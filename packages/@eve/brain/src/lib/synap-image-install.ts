@@ -226,6 +226,11 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
   const envExisted = existsSync(envPath);
   const existingEnv = envExisted ? readFileSync(envPath, 'utf-8') : '';
   const existingToken = existingEnv.match(/^ADMIN_BOOTSTRAP_TOKEN=(.+)$/m)?.[1];
+  // An existing Pod's TLS contact belongs to its canonical deployment config,
+  // not to Eve's current working directory. Reuse it when a caller needs to
+  // recover/update a Pod from another directory.
+  const existingEmail = existingEnv.match(/^LETSENCRYPT_EMAIL=(.+)$/m)?.[1]?.trim();
+  const email = opts.email?.trim() || existingEmail;
   const bootstrapToken = existingToken?.trim() ?? gen(16);
 
   // 3b. Pre-CLI .env reconciliation when .env exists. Two concerns:
@@ -263,7 +268,7 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
   ];
   if (opts.fromSource === true) cliArgs.push('--from-source');
   else if (opts.fromSource === false) cliArgs.push('--from-image');
-  if (opts.email) cliArgs.push('--email', opts.email);
+  if (email) cliArgs.push('--email', email);
   if (opts.adminEmail) cliArgs.push('--admin-email', opts.adminEmail);
   if (opts.adminPassword) cliArgs.push('--admin-password', opts.adminPassword);
   if (adminBootstrapMode === 'token') cliArgs.push('--admin-bootstrap-token', bootstrapToken);

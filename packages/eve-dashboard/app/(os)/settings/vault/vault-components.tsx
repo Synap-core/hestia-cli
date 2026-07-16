@@ -2,12 +2,17 @@
 
 /**
  * Shared vault UI components — used by both the Settings vault page and
- * the VaultPermissionOverlay. All crypto stays client-side (AES-256-GCM).
+ * the VaultPermissionOverlay.
+ *
+ * The vault is SERVER-SIDE encrypted: there is no client master password, no
+ * unlock ceremony, and no client-side crypto. Secrets are created/updated with
+ * a plaintext `value` (the pod encrypts before storage) and read back via
+ * `reveal` (the pod decrypts, owner-only, and audit-logs each read). The vault
+ * is available as soon as the pod is connected.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
-import { getSessionKey, setSessionKey, clearSessionKey, encryptWithKey, decryptWithKey, generateSetupParams, tryUnlock } from "@eve/vault";
 import {
   Button, Chip, Input, Modal, ModalBody, ModalContent,
   ModalFooter, ModalHeader, Select, SelectItem, Spinner, Textarea,
@@ -37,19 +42,6 @@ export interface SecretListItem {
   isFavorite?: boolean;
   createdAt?: string;
   tags?: string[];
-}
-
-export interface VaultMetadata {
-  salt: string;
-  verificationCipher: string;
-  verificationIv: string;
-  verificationTag: string;
-}
-
-export interface SecretDetail {
-  encryptedData: string;
-  iv: string;
-  authTag: string;
 }
 
 export type DecryptedSecret = Record<string, string>;
@@ -99,113 +91,11 @@ export function SensitiveInput({
   );
 }
 
-// ─── MasterPasswordSetup ──────────────────────────────────────────────────────
-
-export function MasterPasswordSetup({ onSetup }: { onSetup: (key: CryptoKey) => void }) {
-  const [password, setPassword] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const [showPw, setShowPw] = useState(false);
-  const [working, setWorking] = useState(false);
-  const valid = password.length >= 8 && password === confirm;
-
-  const setup = async () => {
-    if (!valid) return;
-    setWorking(true);
-    try {
-      const params = await generateSetupParams(password);
-      await podTrpcFetch("secretsVault.setupVault", {
-        salt: params.salt,
-        keyDerivationAlgorithm: params.keyDerivationAlgorithm,
-        keyDerivationParams: params.keyDerivationParams,
-        verificationCipher: params.verificationCipher,
-        verificationIv: params.verificationIv,
-        verificationTag: params.verificationTag,
-      }, { method: "POST", workspaceId: null });
-      onSetup(params.key);
-    } catch (e) {
-      console.error("Vault setup failed", e);
-    } finally {
-      setWorking(false);
-    }
-  };
-
-  return (
-    <div className="flex flex-col items-center justify-center py-10 gap-6 max-w-sm mx-auto">
-      <div className="flex items-center justify-center h-14 w-14 rounded-2xl bg-primary/10">
-        <Shield className="h-7 w-7 text-primary" />
-      </div>
-      <div className="text-center space-y-1">
-        <h2 className="text-base font-semibold">Create your vault</h2>
-        <p className="text-sm text-foreground/55">Your master password encrypts secrets locally. We never see it.</p>
-      </div>
-      <div className="w-full space-y-3">
-        <Input label="Master password" type={showPw ? "text" : "password"} value={password} onValueChange={setPassword}
-          description="At least 8 characters" size="sm" variant="bordered"
-          endContent={<button type="button" onClick={() => setShowPw((v) => !v)} className="text-foreground/40 hover:text-foreground">{showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>}
-        />
-        <Input label="Confirm password" type={showPw ? "text" : "password"} value={confirm} onValueChange={setConfirm}
-          isInvalid={!!confirm && confirm !== password}
-          errorMessage={confirm && confirm !== password ? "Passwords don't match" : undefined}
-          size="sm" variant="bordered"
-        />
-        <Button color="primary" fullWidth isDisabled={!valid} isLoading={working} onPress={() => void setup()}>
-          Create vault
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-// ─── VaultUnlock ──────────────────────────────────────────────────────────────
-
-export function VaultUnlock({ metadata, onUnlock }: { metadata: VaultMetadata; onUnlock: (key: CryptoKey) => void }) {
-  const [password, setPassword] = useState("");
-  const [showPw, setShowPw] = useState(false);
-  const [working, setWorking] = useState(false);
-  const [invalid, setInvalid] = useState(false);
-
-  const unlock = async () => {
-    if (!password) return;
-    setWorking(true);
-    setInvalid(false);
-    try {
-      const key = await tryUnlock(password, metadata);
-      if (!key) { setInvalid(true); return; }
-      await podTrpcFetch("secretsVault.recordUnlock", undefined, { method: "POST", workspaceId: null });
-      onUnlock(key);
-    } finally {
-      setWorking(false);
-    }
-  };
-
-  return (
-    <div className="flex flex-col items-center justify-center py-10 gap-6 max-w-sm mx-auto">
-      <div className="flex items-center justify-center h-14 w-14 rounded-2xl bg-foreground/5">
-        <Lock className="h-7 w-7 text-foreground/40" />
-      </div>
-      <div className="text-center space-y-1">
-        <h2 className="text-base font-semibold">Unlock vault</h2>
-        <p className="text-sm text-foreground/55">Enter your master password to access secrets.</p>
-      </div>
-      <div className="w-full space-y-3">
-        <Input label="Master password" type={showPw ? "text" : "password"} value={password}
-          onValueChange={(v) => { setPassword(v); setInvalid(false); }}
-          isInvalid={invalid} errorMessage={invalid ? "Incorrect password." : undefined}
-          size="sm" variant="bordered"
-          onKeyDown={(e) => { if (e.key === "Enter") void unlock(); }}
-          endContent={<button type="button" onClick={() => setShowPw((v) => !v)} className="text-foreground/40 hover:text-foreground">{showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>}
-        />
-        <Button color="primary" fullWidth isLoading={working} onPress={() => void unlock()}>Unlock</Button>
-      </div>
-    </div>
-  );
-}
-
 // ─── CreateSecretModal ────────────────────────────────────────────────────────
 
 export function CreateSecretModal({
-  isOpen, onClose, vaultKey, onCreated,
-}: { isOpen: boolean; onClose: () => void; vaultKey: CryptoKey; onCreated: () => void }) {
+  isOpen, onClose, onCreated,
+}: { isOpen: boolean; onClose: () => void; onCreated: () => void }) {
   const [type, setType] = useState<SecretType>("password");
   const [name, setName] = useState("");
   const [category, setCategory] = useState("");
@@ -225,10 +115,10 @@ export function CreateSecretModal({
         const key = cleanFieldKey(rawKey);
         if (fields[key]) secretData[key] = fields[key];
       }
-      const { encryptedData, iv, authTag } = await encryptWithKey(JSON.stringify(secretData), vaultKey);
+      // Plaintext value — the pod server-encrypts it before storage.
       await podTrpcFetch("secretsVault.create", {
         name: name.trim(), type, url: fields.url?.trim() || undefined,
-        category: category.trim() || undefined, encryptedData, iv, authTag,
+        category: category.trim() || undefined, value: secretData,
       }, { method: "POST", workspaceId: null });
       reset(); onCreated(); onClose();
     } catch (e) { console.error("Create secret failed", e); }
@@ -262,7 +152,7 @@ export function CreateSecretModal({
           <Input label="Category (optional)" value={category} onValueChange={setCategory} size="sm" variant="bordered" placeholder="e.g. Work, Personal" />
         </ModalBody>
         <ModalFooter>
-          <p className="flex-1 text-[11px] text-foreground/40 flex items-center gap-1"><Lock className="h-3 w-3" /> Encrypted locally</p>
+          <p className="flex-1 text-[11px] text-foreground/40 flex items-center gap-1"><Lock className="h-3 w-3" /> Encrypted on your pod</p>
           <Button variant="light" onPress={() => { reset(); onClose(); }}>Cancel</Button>
           <Button color="primary" isLoading={working} isDisabled={!name.trim()} onPress={() => void create()}>Save secret</Button>
         </ModalFooter>
@@ -275,13 +165,12 @@ export function CreateSecretModal({
 
 export interface SecretRowProps {
   secret: SecretListItem;
-  vaultKey: CryptoKey;
   onDeleted: () => void;
   /** When set, renders a "Share reference" CTA instead of delete. */
   onSelectRef?: (vaultRef: string) => void;
 }
 
-export function SecretRow({ secret, vaultKey, onDeleted, onSelectRef }: SecretRowProps) {
+export function SecretRow({ secret, onDeleted, onSelectRef }: SecretRowProps) {
   const [expanded, setExpanded] = useState(false);
   const [decrypted, setDecrypted] = useState<DecryptedSecret | null>(null);
   const [revealing, setRevealing] = useState(false);
@@ -300,9 +189,21 @@ export function SecretRow({ secret, vaultKey, onDeleted, onSelectRef }: SecretRo
     if (decrypted) { setDecrypted(null); return; }
     setRevealing(true);
     try {
-      const detail = await podTrpcFetch<SecretDetail>("secretsVault.get", { id: secret.id }, { workspaceId: null });
-      const pt = await decryptWithKey(detail.encryptedData, detail.iv, detail.authTag, vaultKey);
-      setDecrypted(JSON.parse(pt) as DecryptedSecret);
+      // Owner-only server-side reveal (the pod decrypts + audit-logs the read).
+      const detail = await podTrpcFetch<{ value: unknown }>("secretsVault.reveal", { id: secret.id }, { method: "POST", workspaceId: null });
+      const raw = detail?.value;
+      let map: DecryptedSecret = {};
+      if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+        map = raw as DecryptedSecret;
+      } else if (typeof raw === "string") {
+        try {
+          const parsed = JSON.parse(raw) as unknown;
+          map = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+            ? (parsed as DecryptedSecret)
+            : { content: raw };
+        } catch { map = { content: raw }; }
+      }
+      setDecrypted(map);
     } catch { /* silent */ }
     finally { setRevealing(false); }
   };
@@ -399,13 +300,11 @@ export function SecretRow({ secret, vaultKey, onDeleted, onSelectRef }: SecretRo
 // ─── VaultContent ─────────────────────────────────────────────────────────────
 
 export interface VaultContentProps {
-  vaultKey: CryptoKey;
-  onLock: () => void;
   /** When set, renders in "picker" mode — secrets show a "Share ref" CTA. */
   onSelectRef?: (vaultRef: string) => void;
 }
 
-export function VaultContent({ vaultKey, onLock, onSelectRef }: VaultContentProps) {
+export function VaultContent({ onSelectRef }: VaultContentProps) {
   const [secrets, setSecrets] = useState<SecretListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -431,7 +330,6 @@ export function VaultContent({ vaultKey, onLock, onSelectRef }: VaultContentProp
       <div className="flex items-center gap-2">
         <Input size="sm" variant="bordered" placeholder="Search secrets…" value={search} onValueChange={setSearch}
           startContent={<Search className="h-3.5 w-3.5 text-foreground/30" />} className="flex-1" isClearable onClear={() => setSearch("")} />
-        <Button size="sm" variant="flat" onPress={onLock} startContent={<Lock className="h-3.5 w-3.5" />}>Lock</Button>
         {!onSelectRef && (
           <Button size="sm" color="primary" onPress={() => setShowCreate(true)} startContent={<Plus className="h-3.5 w-3.5" />}>Add</Button>
         )}
@@ -459,58 +357,28 @@ export function VaultContent({ vaultKey, onLock, onSelectRef }: VaultContentProp
       ) : (
         <div className="space-y-2">
           {filtered.map((s) => (
-            <SecretRow key={s.id} secret={s} vaultKey={vaultKey} onDeleted={() => void load()} onSelectRef={onSelectRef} />
+            <SecretRow key={s.id} secret={s} onDeleted={() => void load()} onSelectRef={onSelectRef} />
           ))}
         </div>
       )}
 
-      <CreateSecretModal isOpen={showCreate} onClose={() => setShowCreate(false)} vaultKey={vaultKey} onCreated={() => void load()} />
+      <CreateSecretModal isOpen={showCreate} onClose={() => setShowCreate(false)} onCreated={() => void load()} />
     </div>
   );
 }
 
-// ─── VaultApp (state machine) ─────────────────────────────────────────────────
-
-export type VaultState = "checking" | "no-vault" | "locked" | "unlocked";
+// ─── VaultApp ─────────────────────────────────────────────────────────────────
 
 export interface VaultAppProps {
   onSelectRef?: (vaultRef: string) => void;
 }
 
+/**
+ * The vault is server-side encrypted, so there is no setup/unlock/lock state
+ * machine — it is available as soon as the pod is connected. This is now a thin
+ * wrapper over `VaultContent`, preserved as the stable entry point for the
+ * settings page and the permission overlay.
+ */
 export function VaultApp({ onSelectRef }: VaultAppProps = {}) {
-  const [state, setState] = useState<VaultState>("checking");
-  const [metadata, setMetadata] = useState<VaultMetadata | null>(null);
-  const vaultKeyRef = useRef<CryptoKey | null>(null);
-
-  useEffect(() => {
-    void (async () => {
-      try {
-        const hasVault = await podTrpcFetch<boolean>("secretsVault.hasVault", undefined, { workspaceId: null });
-        if (!hasVault) { setState("no-vault"); return; }
-        const meta = await podTrpcFetch<VaultMetadata>("secretsVault.getVaultMetadata", undefined, { workspaceId: null });
-        setMetadata(meta);
-        const cached = getSessionKey();
-        if (cached) { vaultKeyRef.current = cached; setState("unlocked"); }
-        else setState("locked");
-      } catch { setState("no-vault"); }
-    })();
-  }, []);
-
-  const handleSetup = (key: CryptoKey) => {
-    vaultKeyRef.current = key;
-    setSessionKey(key);
-    void podTrpcFetch<VaultMetadata>("secretsVault.getVaultMetadata", undefined, { workspaceId: null }).then(setMetadata).catch(() => null);
-    setState("unlocked");
-  };
-
-  const handleUnlock = (key: CryptoKey) => { vaultKeyRef.current = key; setSessionKey(key); setState("unlocked"); };
-  const handleLock = () => { vaultKeyRef.current = null; clearSessionKey(); setState(metadata ? "locked" : "no-vault"); };
-
-  if (state === "checking") return <div className="flex justify-center py-16"><Spinner size="sm" /></div>;
-  if (state === "no-vault") return <MasterPasswordSetup onSetup={handleSetup} />;
-  if (state === "locked" && metadata) return <VaultUnlock metadata={metadata} onUnlock={handleUnlock} />;
-  if (state === "unlocked" && vaultKeyRef.current) {
-    return <VaultContent vaultKey={vaultKeyRef.current} onLock={handleLock} onSelectRef={onSelectRef} />;
-  }
-  return <div className="flex justify-center py-16"><Spinner size="sm" /></div>;
+  return <VaultContent onSelectRef={onSelectRef} />;
 }

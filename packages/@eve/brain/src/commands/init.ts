@@ -40,11 +40,9 @@ async function cleanupKnownStaleState(deployDir: string): Promise<void> {
     // Best-effort cleanup only; install flow should continue.
   }
 
-  try {
-    await execa('docker', ['rm', '-f', 'eve-brain-synap'], { stdio: 'pipe' });
-  } catch {
-    // Container may not exist.
-  }
+  // `eve-brain-synap` is an Eve network alias, not a canonical Synap
+  // container name. Do not remove a container during a normal install path:
+  // recovery and migration are explicit Synap CLI operations.
 }
 
 export async function runBrainInit(options: BrainInitOptions): Promise<void> {

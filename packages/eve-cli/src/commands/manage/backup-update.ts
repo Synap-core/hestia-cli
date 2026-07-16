@@ -78,6 +78,18 @@ interface UpdateTarget {
 }
 
 /**
+ * Pod Admin is shipped, migrated, and restarted by the canonical Synap CLI.
+ * Keep it as a convenience update alias rather than inventing a second owner
+ * with a partial service lifecycle.
+ */
+export function normalizeSynapManagedUpdateTargets(targets: Set<string> | null): boolean {
+  if (!targets?.has('pod-admin')) return false;
+  targets.delete('pod-admin');
+  targets.add('synap');
+  return true;
+}
+
+/**
  * Wrap `runActionToCompletion(id, "update")` so each top-level update
  * target is a thin shim that delegates to `@eve/lifecycle`. Single source
  * of truth: the lifecycle's UPDATE_PLAN handles compose/imagePull strategy,
@@ -435,8 +447,8 @@ export function backupUpdateCommands(program: Command): void {
     // No args = update all. Args = scope to those components. This is the
     // most natural CLI shape and what the user expects from
     // `eve update openwebui`. `--only` is kept for backwards compat.
-    .argument('[components...]', 'Component ids to update (omit to update all)')
-    .description('Update Eve organs. Pass component ids as args (e.g. `eve update openwebui`) or no args for all. Delegates to @eve/lifecycle so behavior matches the dashboard.')
+    .argument('[components...]', 'Component ids to update (omit to update all; `pod-admin` updates Synap)')
+    .description('Update Eve components. Synap owns its bundled Pod Admin lifecycle, so `eve update pod-admin` updates the Data Pod safely.')
     .option('--only <organs>', 'Comma-separated organs to update (deprecated — use positional args)')
     .option('--skip <organs>', 'Comma-separated organs to skip, e.g. traefik')
     .action(async (components: string[] | undefined, opts: { only?: string; skip?: string }) => {
@@ -456,7 +468,14 @@ export function backupUpdateCommands(program: Command): void {
         : null;
       const only = positionalSet
         ?? (opts.only ? new Set(opts.only.split(',').map(s => s.trim())) : null);
+      const podAdminRequested = normalizeSynapManagedUpdateTargets(only);
+      if (podAdminRequested) {
+        printInfo('Pod Admin is released with Synap; updating the Synap Data Pod.');
+      }
       const skip = opts.skip ? new Set(opts.skip.split(',').map(s => s.trim())) : new Set<string>();
+      if (normalizeSynapManagedUpdateTargets(skip)) {
+        printInfo('Pod Admin cannot be updated separately; skipping it skips the Synap Data Pod.');
+      }
 
       // Validate positional ids — fail fast on typos rather than silently
       // doing nothing when none of the args match a target.

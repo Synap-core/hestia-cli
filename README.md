@@ -396,6 +396,13 @@ pnpm --filter @eve/cli exec eve add ollama
 
 Use **`synap`** inside that repo for pod lifecycle; use **`eve`** for legs/builder/arms/eyes extras.
 
+Pod Admin is part of the Synap Data Pod, not a separately installed Eve
+component. Use `eve update synap` to update and recover the Pod; `eve update
+pod-admin` is a convenience alias for that same safe, full-Pod update. Do not
+use `eve add synap` to recover a stopped Pod — Eve detects the existing Pod
+configuration and directs you to the recovery path without replacing its data
+or identity.
+
 ### 5) USB → bare metal
 
 1. `eve birth usb` (see command help) — may write `~/.eve/usb-profile.json`.

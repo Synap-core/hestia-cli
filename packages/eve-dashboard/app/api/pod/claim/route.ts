@@ -10,9 +10,10 @@
  *      flow first (POST /api/auth/sync).
  *   3. Resolve the local pod's external URL (Traefik / loopback).
  *   4. Call CP `POST /pods/handshake` with the user's CP token; CP
- *      returns an ES256 JWT scoped `aud=podUrl`.
- *   5. Forward that JWT to the pod's `POST /api/handshake`. The pod
- *      verifies via JWKS, mints a Kratos session, and returns
+ *      returns a short-lived issuer assertion scoped `aud=podUrl`.
+ *   5. Forward that assertion to the pod's
+ *      `POST /api/federation/exchange`. The Pod verifies its locally approved
+ *      issuer and local access, mints a Kratos session, and returns
  *      `{ session_token }`.
  *   6. Set the parent-domain `ory_kratos_session` cookie on the response
  *      so subsequent `/api/pod/*` proxy calls (and any sibling Synap
@@ -27,7 +28,7 @@
  *   401 `{ error: "Unauthorized" }`               — eve-session missing.
  *   401 `{ error: "cp-session-required" }`        — no valid CP session on disk.
  *   502 `{ error: "handshake-failed", detail }`   — CP unreachable / rejected.
- *   502 `{ error: "pod-exchange-failed", detail }` — pod handshake rejected.
+ *   502 `{ error: "pod-exchange-failed", detail }` — Pod issuer exchange rejected.
  *
  * See: synap-team-docs/content/team/platform/eve-credentials.mdx
  *      synap-team-docs/content/team/platform/eve-os-vision.mdx
@@ -39,6 +40,8 @@ import { requireAuth } from "@/lib/auth-server";
 import { CP_BASE_URL } from "@/lib/cp-base-url";
 
 interface CpHandshakeResponse {
+  assertion?: string;
+  /** Compatibility field while Control Plane callers migrate to `assertion`. */
   token?: string;
 }
 
@@ -107,7 +110,7 @@ export async function POST(req: Request) {
   }
   const podBase = podUrl.replace(/\/+$/, "");
 
-  // ── Step 1: ask CP to mint a handshake JWT scoped to this pod ────────
+  // ── Step 1: ask CP to mint an issuer assertion scoped to this Pod ─────
   let cpHandshakeRes: Response;
   try {
     cpHandshakeRes = await fetch(`${CP_BASE_URL}/pods/handshake`, {
@@ -145,31 +148,28 @@ export async function POST(req: Request) {
   const cpHandshakeBody = (await cpHandshakeRes
     .json()
     .catch(() => null)) as CpHandshakeResponse | null;
-  const handshakeJwt = cpHandshakeBody?.token;
-  if (!handshakeJwt) {
+  const assertion = cpHandshakeBody?.assertion ?? cpHandshakeBody?.token;
+  if (!assertion) {
     return NextResponse.json(
       {
         error: "handshake-failed",
-        detail: "CP returned 200 but no token field",
+        detail: "CP returned 200 but no issuer assertion",
       },
       { status: 502 },
     );
   }
 
-  // ── Step 2: forward to pod /api/handshake to mint Kratos session ─────
+  // ── Step 2: forward directly to Pod federation to mint a Kratos session ──
   // Traefik routes /api/* so the public pod URL works directly.
   let podHandshakeRes: Response;
   try {
-    podHandshakeRes = await fetch(`${podBase}/api/handshake`, {
+    podHandshakeRes = await fetch(`${podBase}/api/federation/exchange`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body: JSON.stringify({
-        token: handshakeJwt,
-        issuerUrl: CP_BASE_URL,
-      }),
+      body: JSON.stringify({ assertion }),
       cache: "no-store",
     });
   } catch (err) {

@@ -34,28 +34,65 @@ async function containerExists(name: string): Promise<boolean> {
   } catch { return false; }
 }
 
-/** True if a container is running (Up status). */
 /**
- * Find a running synap-backend container by compose labels.
- * `eve-brain-synap` is a Docker *network alias*, not a container name — the
- * real container is named by Docker Compose (e.g. `synap-backend-backend-1`
- * or `synap-backend-canary`). Querying by compose labels is the only reliable
- * way to find it regardless of the explicit `container_name` setting.
+ * Find a running canonical Synap compose service by labels. Eve's
+ * `eve-brain-*` values are Docker network aliases, never container names.
  */
-async function findSynapBackendContainer(): Promise<string | null> {
+async function findSynapComposeContainer(
+  service: 'backend' | 'pod-admin',
+): Promise<string | null> {
   try {
     const { stdout } = await execFileAsync(
       'docker',
       [
         'ps',
         '--filter', 'label=com.docker.compose.project=synap-backend',
-        '--filter', 'label=com.docker.compose.service=backend',
+        '--filter', `label=com.docker.compose.service=${service}`,
         '--format', '{{.Names}}',
       ],
       { timeout: 4000 },
     );
     return stdout.trim().split('\n')[0]?.trim() || null;
   } catch { return null; }
+}
+
+async function findSynapBackendContainer(): Promise<string | null> {
+  return findSynapComposeContainer('backend');
+}
+
+function hasCanonicalSynapDeployment(): boolean {
+  const delegate = resolveSynapDelegate();
+  return Boolean(delegate && existsSync(join(delegate.deployDir, '.env')));
+}
+
+/**
+ * An existing canonical Pod is recovered by its own CLI, never by rerunning
+ * installation. A missing Pod Admin service must not cause Eve to replace the
+ * Pod's bootstrap path or ask the operator for installation details again.
+ */
+async function reportExistingSynapDeployment(): Promise<boolean> {
+  const delegate = resolveSynapDelegate();
+  if (!delegate || !hasCanonicalSynapDeployment()) return false;
+
+  const [backend, podAdmin] = await Promise.all([
+    findSynapComposeContainer('backend'),
+    findSynapComposeContainer('pod-admin'),
+  ]);
+
+  printWarning(`Synap Data Pod is already installed at ${delegate.repoRoot}.`);
+  if (backend && podAdmin) {
+    await entityStateManager.updateComponentEntry('synap', { state: 'ready' });
+    printInfo(`  Backend (${backend}) and Pod Admin (${podAdmin}) are running.`);
+  } else {
+    await entityStateManager.updateComponentEntry('synap', { state: 'error' });
+    const missing = [!backend && 'backend', !podAdmin && 'pod-admin']
+      .filter(Boolean)
+      .join(', ');
+    printWarning(`  Pod service${missing.includes(',') ? 's' : ''} not running: ${missing}.`);
+    printInfo('  Eve will not reinstall the Pod or replace its identity.');
+    printInfo('  Recover it with: eve update synap');
+  }
+  return true;
 }
 
 async function findSynapPostgresContainer(): Promise<string | null> {
@@ -153,7 +190,10 @@ async function addSynap(): Promise<void> {
 
   // Pull domain/email from secrets so an existing pod doesn't get reset to
   // localhost defaults. Mirrors what gatherInstallConfig does for `eve install`.
-  const secrets = await readEveSecrets(process.cwd()).catch(() => null);
+  // `eve` is commonly invoked from the Pod deploy directory during recovery.
+  // Its own domain/contact settings live in EVE_HOME, not in that transient
+  // current directory.
+  const secrets = await readEveSecrets(process.env.EVE_HOME ?? process.cwd()).catch(() => null);
   const flagDomainIdx = flags.indexOf('--domain');
   const flagDomain = flagDomainIdx >= 0 ? flags[flagDomainIdx + 1] : undefined;
   const domain =
@@ -663,6 +703,14 @@ export async function runAdd(
   opts: AddOptions = {},
 ): Promise<void> {
   const comp = resolveComponent(componentId);
+
+  // Synap owns its compose project, persistent volumes and identity. Its
+  // `eve-brain-synap` registry value is a network alias, so the generic
+  // exact-container drift check below is not valid for this component.
+  if (componentId === 'synap' && await reportExistingSynapDeployment()) {
+    return;
+  }
+
   const existing = await entityStateManager.isComponentInstalled(componentId);
   if (existing) {
     printWarning(`${comp.label} is already installed.`);
@@ -1146,10 +1194,24 @@ export function addCommand(program: Command): void {
   program
     .command('add')
     .description('Add a component to an existing entity')
-    .argument('[component]', 'Component ID or category to add (hermes, synap, ollama, openclaw, rsshub, openwebui, builder, opencode, openclaude, dokploy, …)')
+    .argument('[components...]', 'One component ID or category to add (hermes, synap, ollama, openclaw, rsshub, openwebui, builder, opencode, openclaude, dokploy, …)')
     .option('--synap-repo <path>', 'Path to synap-backend checkout (for synap component)')
     .option('--model <model>', 'Ollama model (for ollama component)', 'llama3.1:8b')
-    .action(async (component: string | undefined, opts: { synapRepo?: string; model?: string }) => {
+    .action(async (components: string[] | undefined, opts: { synapRepo?: string; model?: string }) => {
+      const requested = components ?? [];
+      if (requested.length > 1) {
+        if (requested.includes('synap') && requested.includes('pod-admin')) {
+          printInfo('Pod Admin ships with the Synap Data Pod; it is not a separately added component.');
+          printInfo('Use `eve add synap` only for a new Pod, or `eve update synap` to recover an existing one.');
+        } else {
+          printWarning('`eve add` installs one component at a time.');
+          printInfo(`Received: ${requested.join(', ')}`);
+        }
+        process.exitCode = 1;
+        return;
+      }
+
+      let component = requested[0];
       // "eve add builder" — show picker for which builder to install
       if (component === 'builder') {
         const picked = await pickBuilder();

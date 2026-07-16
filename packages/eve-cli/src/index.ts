@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { setGlobalCliFlags } from '@eve/cli-kit';
 import { migrateSetupProfileToSecrets } from '@eve/lifecycle';
 import { registerBrainCommands } from '@eve/brain';
@@ -43,6 +43,18 @@ import { colors, emojis } from './lib/ui.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const pkg = JSON.parse(readFileSync(join(__dirname, '../package.json'), 'utf-8')) as { version: string };
+
+// The globally installed `eve` binary can be invoked from any directory — in
+// particular from a Synap deploy directory during recovery. Keep Eve's own
+// state rooted at its installation unless an operator explicitly overrides it.
+const bundledEveHome = resolve(__dirname, '../../..');
+if (
+  !process.env.EVE_HOME &&
+  existsSync(join(bundledEveHome, 'packages', 'eve-cli', 'package.json'))
+) {
+  process.env.EVE_HOME = bundledEveHome;
+}
+const eveHome = process.env.EVE_HOME ?? process.cwd();
 
 // Warn when invoked via `npx eve` — npx downloads the published npm package,
 // ignoring the locally-installed build at /usr/local/bin/eve. Any fixes or
@@ -87,7 +99,7 @@ program
     // No-op when secrets already has the fields. Failures are non-fatal:
     // we never want a cosmetic migration to block install/update/sync.
     try {
-      await migrateSetupProfileToSecrets(process.cwd());
+      await migrateSetupProfileToSecrets(eveHome);
     } catch {
       // intentional swallow
     }
