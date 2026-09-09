@@ -52,7 +52,10 @@ export async function materializeTargets(
   options: MaterializeOptions = {},
 ): Promise<MaterializeResult[]> {
   const out: MaterializeResult[] = [];
-  const resolvedSecrets = secrets ?? await readEveSecrets(options.cwd ?? process.cwd());
+  // Let readEveSecrets apply its own default (EVE_HOME || cwd) — see the note
+  // in refresh-routes.ts. Hardcoding process.cwd() here made every materializer
+  // silently no-op when eve was invoked from outside the Eve home.
+  const resolvedSecrets = secrets ?? await readEveSecrets(options.cwd);
 
   for (const target of uniqueTargets(targets)) {
     await record('materialize.started', target, { summary: `Materializing ${target}` });
@@ -118,7 +121,12 @@ export async function materializeTargets(
 
         case 'traefik-routes': {
           const refresh = await refreshTraefikRoutes(options.cwd);
-          const ok = refresh.refreshed || refresh.reason === 'no domain configured';
+          // "no domain configured" is NOT a success. It is the single most
+          // likely reason a freshly added component is unreachable by URL, and
+          // reporting ok+unchanged made it invisible: the caller prints nothing
+          // for `!changed && ok`, so the component silently never got a route.
+          // Distinguishing "nothing to do" from "did nothing" is the whole point.
+          const ok = refresh.refreshed;
           result = {
             target,
             ok,

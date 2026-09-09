@@ -18,7 +18,11 @@ export interface RefreshResult {
 }
 
 export async function refreshTraefikRoutes(cwd?: string): Promise<RefreshResult> {
-  const secrets = await readEveSecrets(cwd ?? process.cwd());
+  // `readEveSecrets()` already defaults to `EVE_HOME || process.cwd()`. Passing
+  // `?? process.cwd()` DEFEATED that default: running `eve` from any directory
+  // other than the Eve home (e.g. `cd /opt/freellmapi && eve add ...`) read no
+  // secrets, found no domain, and skipped route generation in SILENCE.
+  const secrets = await readEveSecrets(cwd);
   const domain = secrets?.domain?.primary;
   if (!domain) {
     return { refreshed: false, domain: null, reason: 'no domain configured' };

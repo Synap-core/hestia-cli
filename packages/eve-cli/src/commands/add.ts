@@ -729,6 +729,18 @@ export async function runAdd(
       await entityStateManager.updateComponentEntry(componentId, { state: 'error' });
       // Fall through to reinstall below
     } else {
+      // RECONCILE, don't no-op. Re-running `eve add <installed>` is what a user
+      // reaches for when a component is up but not reachable — which is exactly
+      // the state a first install leaves behind if route generation was skipped
+      // (e.g. secrets not found because eve ran from another directory). A bare
+      // early return made that unrepairable by any obvious command.
+      const [refresh] = await materializeTargets(null, ['traefik-routes']);
+      if (refresh?.changed) {
+        printInfo(`  ${refresh.summary}`);
+      } else if (refresh && !refresh.ok) {
+        printWarning(`  Traefik routes NOT refreshed: ${refresh.error ?? refresh.summary}`);
+        printInfo('  The component is running but may be unreachable by URL.');
+      }
       printInfo(`  Or "eve update ${componentId}" to pull the latest image.`);
       return;
     }
