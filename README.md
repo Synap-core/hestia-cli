@@ -207,7 +207,7 @@ Only these workspaces are built and published from this tree:
 
 | Package           | Role                                                                                    |
 | ----------------- | --------------------------------------------------------------------------------------- |
-| `@eve/cli`        | `eve` binary — all user-facing commands                                                 |
+| `@synap-core/eve`        | `eve` binary — all user-facing commands                                                 |
 | `@eve/dashboard`  | Next.js web dashboard — packaged as a Docker image, joins `eve-network`, routed at `eve.<domain>` |
 | `@eve/dna`        | Component registry + shared schemas: secrets, setup profile, USB manifest, builder/Hub helpers, state manager, AI wiring |
 | `@eve/brain`      | Synap delegation, `runBrainInit`, `runInferenceInit`, Ollama / Postgres / Redis helpers |
@@ -284,7 +284,7 @@ DEBIAN_FRONTEND=noninteractive apt-get update -y && apt-get install -y ca-certif
   && curl -fsSL "https://raw.githubusercontent.com/Synap-core/hestia-cli/main/bootstrap.sh" | bash -s --
 ```
 
-**TTY note:** piping through `curl | bash` can leave **stdin non-interactive**. For a full interactive `eve setup`, SSH into the server and run `cd /opt/eve && pnpm --filter @eve/cli exec eve setup` after a `--no-setup` bootstrap, or use a PTY (`ssh -t`). Non-interactive flows should use `--yes` / `--json` flags after `--` as above.
+**TTY note:** piping through `curl | bash` can leave **stdin non-interactive**. For a full interactive `eve setup`, SSH into the server and run `cd /opt/eve && pnpm --filter @synap-core/eve exec eve setup` after a `--no-setup` bootstrap, or use a PTY (`ssh -t`). Non-interactive flows should use `--yes` / `--json` flags after `--` as above.
 
 If bootstrap detects non-interactive stdin and no setup flags, it exits with a clear message instead of showing a prompt that immediately closes.
 
@@ -297,11 +297,11 @@ After a `git pull`, always rehydrate workspace state before launching Eve:
 ```bash
 cd /opt/eve
 pnpm install
-pnpm --filter @eve/cli... run build
-pnpm --filter @eve/cli exec eve --help
+pnpm --filter @synap-core/eve... run build
+pnpm --filter @synap-core/eve exec eve --help
 ```
 
-This avoids stale workspace/bin state and guarantees the `@eve/cli` binary is resolvable.
+This avoids stale workspace/bin state and guarantees the `@synap-core/eve` binary is resolvable.
 
 ### 0.2) Prebuilt release bundle (no local build)
 
@@ -333,14 +333,14 @@ pnpm run build
 Run the CLI **without** global install:
 
 ```bash
-pnpm --filter @eve/cli exec eve --help
-pnpm --filter @eve/cli exec eve install --dry-run
+pnpm --filter @synap-core/eve exec eve --help
+pnpm --filter @synap-core/eve exec eve install --dry-run
 ```
 
 Optional: link globally from the workspace (pick one workflow your team uses):
 
 ```bash
-pnpm --filter @eve/cli link --global
+pnpm --filter @synap-core/eve link --global
 eve --help
 ```
 
@@ -350,7 +350,7 @@ If you copied **[bootstrap.sh](bootstrap.sh)** onto the machine (or cloned the r
 
 ```bash
 ./bootstrap.sh --repo 'https://github.com/Synap-core/hestia-cli.git'
-# optional: --no-setup then later: cd /opt/eve && pnpm --filter @eve/cli exec eve install
+# optional: --no-setup then later: cd /opt/eve && pnpm --filter @synap-core/eve exec eve install
 ```
 
 Same behavior as the curl one-liner in **§0**; only the script source differs.
@@ -360,23 +360,23 @@ Same behavior as the curl one-liner in **§0**; only the script source differs.
 Use **`--yes`**, **`--json`**, and explicit flags:
 
 ```bash
-pnpm --filter @eve/cli exec eve --json install --dry-run --components traefik,synap,ollama
+pnpm --filter @synap-core/eve exec eve --json install --dry-run --components traefik,synap,ollama
 # Composable install (recommended):
-pnpm --filter @eve/cli exec eve install --yes --components traefik,synap,ollama --ai-mode local
+pnpm --filter @synap-core/eve exec eve install --yes --components traefik,synap,ollama --ai-mode local
 # Legacy profile (backward compat):
-pnpm --filter @eve/cli exec eve setup --yes --profile data_pod
+pnpm --filter @synap-core/eve exec eve setup --yes --profile data_pod
 ```
 
 **Public exposure patterns (Pod + Legs):**
 
 ```bash
 # Pattern A: shared hostname (Pod + Legs on same public host)
-pnpm --filter @eve/cli exec eve install --yes --components traefik,synap \
+pnpm --filter @synap-core/eve exec eve install --yes --components traefik,synap \
   --domain pod.example.com --email ops@example.com \
   --tunnel pangolin --tunnel-domain pod.example.com
 
 # Pattern B: separate hostname for Legs ingress
-pnpm --filter @eve/cli exec eve install --yes --components traefik,synap \
+pnpm --filter @synap-core/eve exec eve install --yes --components traefik,synap \
   --domain pod.example.com --email ops@example.com \
   --tunnel pangolin --tunnel-domain eve.example.com
 ```
@@ -389,9 +389,9 @@ Point Eve at your checkout of **synap-backend**:
 
 ```bash
 export SYNAP_REPO_ROOT=/path/to/synap-backend
-pnpm --filter @eve/cli exec eve add synap --synap-repo "$SYNAP_REPO_ROOT"
+pnpm --filter @synap-core/eve exec eve add synap --synap-repo "$SYNAP_REPO_ROOT"
 # or install Ollama + gateway:
-pnpm --filter @eve/cli exec eve add ollama
+pnpm --filter @synap-core/eve exec eve add ollama
 ```
 
 Use **`synap`** inside that repo for pod lifecycle; use **`eve`** for legs/builder/arms/eyes extras.

@@ -1,11 +1,11 @@
-# @eve/cli
+# @synap-core/eve
 
 The `eve` command — the entry point to every operation on the Eve
 sovereign stack. Installs components, configures the AI fabric, manages
 domains, drives the dashboard, repairs broken setups.
 
 ```bash
-npm install -g @eve/cli
+npm install -g @synap-core/eve
 eve --help
 ```
 
@@ -209,7 +209,7 @@ the top-level commands above; the public API for day-to-day use is
 ## Architecture
 
 ```
-@eve/cli (this package)
+@synap-core/eve (this package)
 └── thin Commander shell — registers commands, parses flags, dispatches
 
 Depends on:
@@ -233,9 +233,9 @@ to wire them together and provide the lifecycle commands
 ## Build
 
 ```bash
-pnpm --filter @eve/cli build         # tsup → dist/index.js
-pnpm --filter @eve/cli typecheck
-pnpm --filter @eve/cli test          # vitest
+pnpm --filter @synap-core/eve build         # tsup → dist/index.js
+pnpm --filter @synap-core/eve typecheck
+pnpm --filter @synap-core/eve test          # vitest
 ```
 
 The `bin` field maps `eve` → `dist/index.js`. After `pnpm build`, the

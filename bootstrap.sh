@@ -114,7 +114,7 @@ fi
 
 cd "$TARGET_DIR"
 pnpm install
-pnpm --filter @eve/cli... run build
+pnpm --filter @synap-core/eve... run build
 
 echo "[bootstrap] Build complete in $TARGET_DIR"
 
@@ -141,10 +141,10 @@ if [[ ! -t 0 ]] && [[ ${#SETUP_ARGS[@]} -eq 0 ]]; then
   echo "  1) Run non-interactive flags now (example):"
   echo "     curl .../bootstrap.sh | bash -s -- --repo '$REPO_URL' -- --yes --profile full"
   echo "  2) Re-run bootstrap with --no-setup, then start setup in a real TTY:"
-  echo "     cd $TARGET_DIR && pnpm --filter @eve/cli exec eve setup"
+  echo "     cd $TARGET_DIR && pnpm --filter @synap-core/eve exec eve setup"
   exit 2
 fi
 
 echo "[bootstrap] Launching eve setup…"
 cd "$TARGET_DIR"
-exec pnpm --filter @eve/cli exec eve setup "${SETUP_ARGS[@]}"
+exec pnpm --filter @synap-core/eve exec eve setup "${SETUP_ARGS[@]}"

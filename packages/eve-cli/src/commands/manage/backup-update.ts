@@ -225,7 +225,7 @@ async function buildUpdateTargets(deployDir: string | undefined): Promise<Update
       if (!script) {
         throw new Error(
           'self-update.sh not found — Eve may have been installed outside of git. ' +
-          'To update manually: cd /opt/eve && git pull && pnpm install && pnpm --filter @eve/cli... run build',
+          'To update manually: cd /opt/eve && git pull && pnpm install && pnpm --filter @synap-core/eve... run build',
         );
       }
       const result = spawnSync('bash', [script], { stdio: 'inherit' });
