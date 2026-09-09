@@ -11,7 +11,14 @@
 
 import type { Command } from 'commander';
 import Table from 'cli-table3';
-import { readEveSecrets, resolveSynapUrl, readAgentKeyOrLegacy } from '@eve/dna';
+import {
+  readEveSecrets,
+  resolveSynapUrl,
+  readAgentKeyOrLegacy,
+  upsertPodProvider,
+  setPodProviderEnabled,
+  describePodProviderResult,
+} from '@eve/dna';
 
 // ── Hub Protocol REST helpers ─────────────────────────────────────────────────
 
@@ -216,7 +223,11 @@ export function providersCommand(brain: Command): void {
 
         const { podUrl, apiKey } = await resolveAuth(process.env.EVE_HOME ?? process.cwd());
 
-        const result = await hubPost<ProviderRow>(podUrl, apiKey, 'ai-providers', {
+        // Via the shared client, NOT a raw hubPost: a governed write returns
+        // 202 `{status:"proposed"}` with nothing written, and the old code
+        // printed "saved and synced to IS" for it — a confident lie about a
+        // provider the pod does not yet have.
+        const result = await upsertPodProvider(podUrl, apiKey, {
           providerId: id,
           name,
           baseUrl: url,
@@ -224,10 +235,10 @@ export function providersCommand(brain: Command): void {
           ...(opts.key || opts.apiKey ? { apiKey: opts.key ?? opts.apiKey } : {}),
           priority: opts.priority ? parseInt(opts.priority, 10) : (defaults?.priority ?? 10),
           enabled: !opts.disable,
-          ...(defaults?.models ? { models: defaults.models } : {}),
+          ...(defaults?.models ? { models: defaults.models as never } : {}),
         });
 
-        console.log(`✓ Provider "${result.providerId}" saved and synced to IS.`);
+        console.log(describePodProviderResult(result));
       } catch (err) {
         console.error('Error:', String(err));
         process.exit(1);
@@ -242,8 +253,11 @@ export function providersCommand(brain: Command): void {
     .action(async (providerId: string) => {
       try {
         const { podUrl, apiKey } = await resolveAuth(process.env.EVE_HOME ?? process.cwd());
-        await hubPost(podUrl, apiKey, `ai-providers/${providerId}/enable`);
-        console.log(`✓ Provider "${providerId}" enabled.`);
+        console.log(
+          describePodProviderResult(
+            await setPodProviderEnabled(podUrl, apiKey, providerId, true)
+          )
+        );
       } catch (err) {
         console.error('Error:', String(err));
         process.exit(1);
@@ -256,8 +270,11 @@ export function providersCommand(brain: Command): void {
     .action(async (providerId: string) => {
       try {
         const { podUrl, apiKey } = await resolveAuth(process.env.EVE_HOME ?? process.cwd());
-        await hubPost(podUrl, apiKey, `ai-providers/${providerId}/disable`);
-        console.log(`✓ Provider "${providerId}" disabled.`);
+        console.log(
+          describePodProviderResult(
+            await setPodProviderEnabled(podUrl, apiKey, providerId, false)
+          )
+        );
       } catch (err) {
         console.error('Error:', String(err));
         process.exit(1);

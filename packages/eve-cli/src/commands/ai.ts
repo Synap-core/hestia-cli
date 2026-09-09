@@ -7,13 +7,32 @@ import {
   writeEveSecrets,
   entityStateManager,
   resolveHubBaseUrl,
+  resolveSynapUrl,
+  readAgentKeyOrLegacy,
+  upsertPodProvider,
+  describePodProviderResult,
+  PodProviderError,
   AI_CONSUMERS_NEEDING_RECREATE,
   type WireAiResult,
 } from '@eve/dna';
 import { materializeTargets, runActionToCompletion } from '@eve/lifecycle';
 import { colors, printError, printInfo, printSuccess, printWarning } from '../lib/ui.js';
 
-type ProviderId = 'ollama' | 'openrouter' | 'anthropic' | 'openai';
+/**
+ * A provider id is a FREE STRING, matching the pod's `ai_providers.providerId`
+ * (`z.string().min(1).max(64)`) and Eve's own `UnifiedProviderSchema`.
+ *
+ * It used to be a closed four-vendor union, enforced by `parseProviderId()`,
+ * so `eve ai providers add` could not register a custom OpenAI-compatible
+ * endpoint at all — while the secrets schema, the eve-dashboard route and the
+ * pod's table were all open. The enum was the only thing in the chain that
+ * disagreed, and it sat on the command an operator is most likely to type.
+ */
+type ProviderId = string;
+
+/** The four ids Eve ships opinionated defaults for. Defaults, never a gate. */
+const PROVIDERS_WITH_DEFAULTS = ['ollama', 'openrouter', 'anthropic', 'openai'] as const;
+type ProviderWithDefaults = (typeof PROVIDERS_WITH_DEFAULTS)[number];
 
 function buildNonSecretProviderRouting(
   secrets: Awaited<ReturnType<typeof readEveSecrets>>,
@@ -51,8 +70,16 @@ function stableJson(value: unknown): string {
 
 function parseProviderId(s: string): ProviderId {
   const v = s.trim().toLowerCase();
-  if (v === 'ollama' || v === 'openrouter' || v === 'anthropic' || v === 'openai') return v;
-  throw new Error('Provider must be one of: ollama, openrouter, anthropic, openai');
+  if (!v) throw new Error('Provider id cannot be empty.');
+  // Mirrors the pod's own constraint. Shape only — ANY id is allowed, because
+  // registering an arbitrary OpenAI-compatible endpoint is the point.
+  if (v.length > 64) throw new Error('Provider id must be 64 characters or fewer.');
+  if (!/^[a-z0-9][a-z0-9._-]*$/.test(v)) {
+    throw new Error(
+      `Invalid provider id "${s}" — use lowercase letters, digits, dot, dash or underscore.`,
+    );
+  }
+  return v;
 }
 
 /**
@@ -180,6 +207,60 @@ export function aiCommandGroup(program: Command): void {
       }
     });
 
+  /**
+   * Mirror a provider into the pod's canonical `ai_providers` table.
+   *
+   * Three outcomes, all reported honestly:
+   *   - no pod configured yet  → local-only notice (bootstrap; NOT an error)
+   *   - pod wrote the row      → applied
+   *   - pod filed a proposal   → NOT active until approved (never "saved")
+   */
+  async function syncProviderToPod(
+    pid: string,
+    entry: { enabled?: boolean; apiKey?: string; baseUrl?: string },
+    model?: string,
+  ): Promise<void> {
+    const secrets = await readEveSecrets(process.cwd());
+    const podUrl = resolveSynapUrl(secrets);
+    const apiKey = await readAgentKeyOrLegacy('eve', process.cwd());
+
+    if (!podUrl || !apiKey) {
+      printInfo('No pod configured yet — provider saved locally only.');
+      printInfo('  Once the pod is up, run `eve ai apply` to register it there.');
+      return;
+    }
+    if (!entry.baseUrl) {
+      printInfo(`Provider "${pid}" has no base URL — not registered on the pod.`);
+      return;
+    }
+
+    try {
+      const result = await upsertPodProvider(podUrl, apiKey, {
+        providerId: pid,
+        name: pid,
+        baseUrl: entry.baseUrl,
+        apiKeyEnvVar: `${pid.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_API_KEY`,
+        ...(entry.apiKey ? { apiKey: entry.apiKey } : {}),
+        enabled: entry.enabled !== false,
+        ...(model ? { models: [{ id: model }] } : {}),
+      });
+      console.log(describePodProviderResult(result));
+    } catch (err) {
+      // Loud, not fatal: the local write already succeeded, and failing the
+      // whole command would leave the operator unsure what landed.
+      if (err instanceof PodProviderError) {
+        printWarning(`Provider saved locally, but the pod refused it:`);
+        printWarning(`  ${err.message}`);
+      } else {
+        printWarning(
+          `Provider saved locally, but the pod could not be reached: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+  }
+
   const providers = ai.command('providers').description('Manage cloud/local provider entries in .eve/secrets/secrets.json');
 
   providers
@@ -202,7 +283,7 @@ export function aiCommandGroup(program: Command): void {
     });
 
   // Sensible model defaults so flag-only `eve ai providers add anthropic --api-key X` still works.
-  const DEFAULT_MODELS: Record<ProviderId, string> = {
+  const DEFAULT_MODELS: Record<ProviderWithDefaults, string> = {
     anthropic: 'claude-sonnet-4-7',
     openai: 'gpt-5',
     openrouter: 'anthropic/claude-sonnet-4-7', // OpenRouter requires a model — this is just a starter
@@ -225,7 +306,19 @@ export function aiCommandGroup(program: Command): void {
         const idx = list.findIndex((p) => p.id === pid);
 
         // Resolve final model: explicit --model wins, then existing, then sensible default
-        const resolvedModel = opts.model ?? list[idx]?.defaultModel ?? DEFAULT_MODELS[pid];
+        const knownDefault = (PROVIDERS_WITH_DEFAULTS as readonly string[]).includes(pid)
+          ? DEFAULT_MODELS[pid as ProviderWithDefaults]
+          : undefined;
+        const resolvedModel = opts.model ?? list[idx]?.defaultModel ?? knownDefault;
+
+        // An unknown provider has no baseUrl Eve could guess. Refuse rather
+        // than storing an entry that can never resolve.
+        const resolvedBaseUrl = opts.baseUrl ?? list[idx]?.baseUrl;
+        if (!knownDefault && !resolvedBaseUrl) {
+          throw new Error(
+            `--base-url is required for "${pid}" (Eve ships defaults only for ${PROVIDERS_WITH_DEFAULTS.join(', ')}).`,
+          );
+        }
 
         // OpenRouter without an explicit model is rarely what the user wants — warn
         if (pid === 'openrouter' && !opts.model && !list[idx]?.defaultModel) {
@@ -237,13 +330,28 @@ export function aiCommandGroup(program: Command): void {
           id: pid,
           enabled: opts.disable ? false : true,
           apiKey: opts.apiKey ?? list[idx]?.apiKey,
-          baseUrl: opts.baseUrl ?? list[idx]?.baseUrl,
+          baseUrl: resolvedBaseUrl,
           defaultModel: resolvedModel,
         };
         if (idx >= 0) list[idx] = next;
         else list.push(next);
         await writeEveSecrets({ ai: { providers: list } }, process.cwd());
-        printSuccess(`Provider ${pid} saved (model: ${resolvedModel}).`);
+        printSuccess(`Provider ${pid} saved locally${resolvedModel ? ` (model: ${resolvedModel})` : ''}.`);
+
+        // ── The pod is the source of truth ────────────────────────────────
+        // `ai_providers` → pushProvidersToIS() is the canonical path by which
+        // the Intelligence Service learns its providers. Writing ONLY local
+        // secrets (what this command used to do) left the pod unaware, while
+        // the `.env` wiring below raced the pod's own push into the same IS
+        // registry — last writer wins, neither able to see the other.
+        //
+        // Best-effort ON PURPOSE, and never silent: `eve ai providers add` runs
+        // during `eve setup`, BEFORE a pod necessarily exists. A hard failure
+        // there would break bootstrap. So a missing pod is reported as
+        // local-only rather than treated as an error — but a pod that IS
+        // configured and REFUSES is surfaced loudly, because that is a real
+        // misconfiguration (usually a key without `providers.write`).
+        await syncProviderToPod(pid, next, resolvedModel);
 
         // Auto-rewire every installed component (default behavior)
         if (opts.rewire !== false) {

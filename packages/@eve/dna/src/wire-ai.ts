@@ -142,8 +142,27 @@ export function pickPrimaryProvider(
  * Synap IS receives the upstream provider keys directly. It exposes a single
  * OpenAI-compat endpoint that other components route through.
  *
- * Writes /opt/synap-backend/deploy/.env (or SYNAP_DEPLOY_DIR) with all
- * provider keys, then restarts the IS container.
+ * Writes /opt/synap-backend/deploy/.env (or SYNAP_DEPLOY_DIR), then restarts
+ * the IS container.
+ *
+ * ⚠️ THIS IS A **BOOTSTRAP** PATH, NOT A SECOND SOURCE OF TRUTH.
+ *
+ * The pod's `ai_providers` table is authoritative: it is what
+ * `pushProvidersToIS()` syncs into the IS's provider registry, and it is what
+ * the eve-dashboard and `eve brain providers` write. This function writes env
+ * vars that the IS ALSO reads (`seed-providers.ts`, and the
+ * `provider.apiKey ?? process.env[provider.apiKeyEnvVar]` fallback in
+ * `client-builder.ts`) — so before this narrowing the two paths wrote the SAME
+ * in-memory registry with no knowledge of each other. `PUT /admin/providers` is
+ * a full replace, so a pod push dropped env-only providers from the running
+ * registry, and a container restart flipped it back. Last writer wins, and
+ * neither surface could see what the other had done.
+ *
+ * So this path is deliberately limited to what the IS needs to COME UP before
+ * a pod exists to be asked: the three built-in vendor keys. Everything
+ * else — and every custom OpenAI-compatible endpoint — belongs in
+ * `ai_providers`, via `upsertPodProvider()` (`pod-providers.ts`). Do not extend
+ * this function to cover a new provider kind; extend the pod write instead.
  */
 function wireSynapIs(secrets: EveSecrets | null): WireAiResult {
   const providers = secrets?.ai?.providers ?? [];
@@ -158,13 +177,22 @@ function wireSynapIs(secrets: EveSecrets | null): WireAiResult {
 
   // Build env additions for each provider that has a key.
   const envLines: string[] = ['# AI provider keys — managed by eve ai apply'];
+  /** Custom providers this BOOTSTRAP path does not carry — the pod owns them. */
+  const skippedCustom: string[] = [];
   for (const p of providers) {
     if (!p.apiKey) continue;
     // Built-in provider keys (by id)
     if (p.id === 'openai') envLines.push(`OPENAI_API_KEY=${p.apiKey}`);
     if (p.id === 'anthropic') envLines.push(`ANTHROPIC_API_KEY=${p.apiKey}`);
     if (p.id === 'openrouter') envLines.push(`OPENROUTER_API_KEY=${p.apiKey}`);
-    // Custom provider keys — write as generic env vars
+    // Custom providers are the POD's job (see the docblock above), and this
+    // branch could never carry them anyway: `indexOf(p)` runs over a list
+    // FILTERED to `custom-*` ids, so any other id — `freellmapi`, say —
+    // yielded -1, made `idx` 0, and fell through the `idx > 0` test writing
+    // NOTHING. A provider the operator had configured was dropped in silence.
+    //
+    // Kept as an explicit, named skip rather than deleted: the operator needs
+    // to know the local wiring did not cover it and where it did land instead.
     if (p.id.startsWith('custom-') || !['ollama', 'openai', 'anthropic', 'openrouter'].includes(p.id)) {
       const idx = providers.filter(x => x.id.startsWith('custom-')).indexOf(p) + 1;
       if (idx > 0) {
@@ -172,6 +200,8 @@ function wireSynapIs(secrets: EveSecrets | null): WireAiResult {
         envLines.push(`CUSTOM_PROVIDER_${idx}_API_KEY=${p.apiKey}`);
         envLines.push(`CUSTOM_PROVIDER_${idx}_NAME=${p.name ?? p.id}`);
         if (p.defaultModel) envLines.push(`CUSTOM_PROVIDER_${idx}_DEFAULT_MODEL=${p.defaultModel}`);
+      } else {
+        skippedCustom.push(p.id);
       }
     }
   }
@@ -230,10 +260,18 @@ function wireSynapIs(secrets: EveSecrets | null): WireAiResult {
     if (isContainer) dockerRestart(isContainer);
   } catch { /* IS may not be running — that's ok */ }
 
+  // Report what was actually WIRED, not how many providers exist. The old
+  // count included providers this bootstrap path had just dropped, so the
+  // summary confirmed work it had not done.
+  const wiredCount = providers.length - skippedCustom.length;
   return {
     id: 'synap',
     outcome: 'ok',
-    summary: `Synap IS env updated (${providers.length} provider(s))`,
+    summary:
+      `Synap IS env updated (${wiredCount} provider(s))` +
+      (skippedCustom.length
+        ? ` — ${skippedCustom.length} custom provider(s) not wired here (${skippedCustom.join(', ')}); they live in the pod's ai_providers table`
+        : ''),
     detail: envPath,
     wiredModel: synapProvider?.defaultModel,
     wiredProvider: synapProvider?.id,

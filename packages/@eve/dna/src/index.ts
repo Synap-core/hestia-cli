@@ -434,3 +434,13 @@ export {
 
 // Version
 export const VERSION = '0.1.0';
+
+export {
+  upsertPodProvider,
+  setPodProviderEnabled,
+  describePodProviderResult,
+  PodProviderError,
+  type PodProviderUpsert,
+  type PodProviderModel,
+  type PodProviderResult,
+} from './pod-providers.js';
