@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import { readEveSecrets } from '@eve/dna';
 import { TraefikService } from '@eve/legs';
 import { colors, printSuccess, printInfo, printWarning, printError, printHeader } from '../lib/ui.js';
+import { syncRepo } from '../lib/git.js';
 
 const SYNAP_DIR = '/opt/synap/synap-app';
 const PM2_APPS = [
@@ -85,13 +86,35 @@ export function synapCommand(program: Command): void {
         process.exit(1);
       }
 
-      // Step 1: Git pull
+      // Step 1: Sync code.
+      //
+      // FAIL CLOSED on anything that means the remote was not reached. The
+      // previous version caught every error as "may be uncommitted changes"
+      // and continued — so an auth or HTTP failure was reported to the
+      // operator as a dirty tree, the build then ran against a STALE
+      // checkout, and the deploy reported success. `syncRepo` distinguishes
+      // the one benign case (local edits, remote reachable) from the rest;
+      // only that one may continue. See lib/git.ts for the full history.
       printInfo('Syncing code...');
-      try {
-        run('git pull --rebase', SYNAP_DIR);
-        printSuccess('Code synced');
-      } catch {
-        printWarning('Git pull failed (may be uncommitted changes) — continuing');
+      const sync = await syncRepo(SYNAP_DIR);
+      if (sync.kind === 'failed') {
+        printError(`Cannot sync ${SYNAP_DIR} (${sync.reason}) — refusing to build stale code`);
+        console.log(colors.muted(sync.message));
+        printInfo(sync.fix);
+        printInfo('Re-run with --no-build to deploy the current checkout as-is.');
+        process.exit(1);
+      }
+      if (sync.note) printWarning(sync.note);
+      if (sync.kind === 'dirty') {
+        printWarning(
+          `Remote reachable and up to date, but ${sync.files.length} tracked file(s) are modified locally — building the working tree as-is:`,
+        );
+        for (const f of sync.files.slice(0, 10)) console.log(colors.muted(`    ${f}`));
+        if (sync.files.length > 10) console.log(colors.muted(`    … and ${sync.files.length - 10} more`));
+      } else {
+        printSuccess(
+          sync.from === sync.to ? `Already current (${sync.to})` : `Code synced ${sync.from} → ${sync.to}`,
+        );
       }
 
       // Step 2: Build

@@ -16,6 +16,7 @@ import { runDoctorChecks, runHubProtocolProbes, type HubProtocolDiagnostic } fro
 import { probeRoutes, probeVerdict, type RouteProbe } from '../lib/probe-routes.js';
 import { diagnoseFailedRoute, type DeepDiagnostic } from '../lib/diagnose-route.js';
 import { buildPodRunner } from '../lib/doctor-runners.js';
+import { probeGitHttps } from '../lib/git.js';
 import {
   waitForHealth,
   getAdminJwtPostHealth,
@@ -141,6 +142,39 @@ async function runDiagnostics(opts: DoctorOptions = { verbose: false, skipProbes
   } catch {
     networkCheck.fail('Cannot check networks');
     checks.push({ name: 'Network', status: 'fail', message: 'Failed to check Docker networks' });
+  }
+
+  // Check 3b: the UPDATE path.
+  //
+  // Asserted against a PUBLIC third-party repo (github.com/git/git.git) on
+  // purpose: that removes credentials and repo permissions from the equation,
+  // so a failure can only be this host's HTTP stack. Without this probe the
+  // symptom — `git pull` prompting for a GitHub username — reads as an expired
+  // token and sends operators hunting for a PAT that was never the problem.
+  const gitCheck = createSpinner('Checking git update path...');
+  gitCheck.start();
+  const gitProbe = await probeGitHttps();
+  if (gitProbe.ok && !gitProbe.http11Needed) {
+    gitCheck.succeed('git over HTTPS works');
+    checks.push({ name: 'Git update path', status: 'pass', message: 'git can fetch over HTTPS' });
+  } else if (gitProbe.ok) {
+    gitCheck.warn('git needs HTTP/1.1');
+    checks.push({
+      name: 'Git update path',
+      status: 'warn',
+      message:
+        'git over HTTP/2 returns a spurious 401 on this host (public repos included) — HTTP/1.1 works. ' +
+        'Known Debian 12 regression in libcurl 7.88.1-10+deb12u15.',
+      fix: 'git config --global http.version HTTP/1.1',
+    });
+  } else {
+    gitCheck.fail('git cannot fetch over HTTPS');
+    checks.push({
+      name: 'Git update path',
+      status: 'fail',
+      message: `git cannot reach github.com over HTTPS: ${gitProbe.message}`,
+      fix: 'Check outbound HTTPS from this host. Updates via `eve synap deploy` will fail until this is fixed.',
+    });
   }
 
   // Check 4: Live Docker containers — driven by registry, only check what's installed

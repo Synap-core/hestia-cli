@@ -3,9 +3,8 @@ import { setupAdminCommand } from './setup-admin.js';
 import { select, confirm, isCancel, text } from '@clack/prompts';
 import { homedir, tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, rm } from 'node:fs/promises';
+import { readdir, rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import { execa } from 'execa';
 import {
   readSetupProfile,
   writeSetupProfile,
@@ -31,6 +30,7 @@ import {
 } from '@eve/lifecycle';
 import { getGlobalCliFlags, outputJson } from '@eve/cli-kit';
 import { colors, emojis } from '../lib/ui.js';
+import { cloneOrFetchTarball, ensureGitHttpFloor } from '../lib/git.js';
 
 export interface SetupCliOptions {
   profile?: string;
@@ -165,6 +165,18 @@ async function ensureSynapRepoForProfile(
   nonInteractive: boolean,
   jsonMode: boolean,
 ): Promise<string> {
+  // Provisioning floor: Debian 12 hosts patched to libcurl 7.88.1-10+deb12u15
+  // (unattended-upgrades, 2026-07-12) get a spurious 401 on every git-over-HTTP/2
+  // fetch, which git reports as "could not read Username" — breaking clone AND
+  // every later update, on public repos included. Pin HTTP/1.1 once, here, so a
+  // freshly-imaged pod is never born with a broken update path. No-op elsewhere.
+  const floor = await ensureGitHttpFloor();
+  if (floor.changed && !jsonMode) {
+    console.log(
+      `${emojis.info} Pinned git http.version=HTTP/1.1 (this host's libcurl breaks git over HTTP/2).`,
+    );
+  }
+
   const explicit = requestedPath?.trim() || process.env.SYNAP_REPO_ROOT?.trim();
   if (explicit) {
     const resolved = resolve(explicit);
@@ -232,50 +244,30 @@ async function ensureSynapRepoForProfile(
       console.log(`${emojis.info} Cloning synap-backend to ${colors.info(targetDir)} …`);
     }
     try {
-      await execa(
-        'git',
-        [
-          '-c',
-          'credential.interactive=never',
-          'clone',
-          '--depth',
-          '1',
-          SYNAP_BACKEND_REPO_URL,
-          targetDir,
-        ],
-        {
-          stdio: 'inherit',
-          env: {
-            ...process.env,
-            GIT_TERMINAL_PROMPT: '0',
-          },
+      const res = await cloneOrFetchTarball({
+        repoUrl: SYNAP_BACKEND_REPO_URL,
+        tarballUrl: SYNAP_BACKEND_TARBALL_URL,
+        targetDir,
+        tmpDir: tmpdir(),
+        log: (msg) => {
+          if (!jsonMode) console.log(`${emojis.info} ${msg}`);
         },
-      );
-    } catch {
-      // Fallback: fetch public tarball directly (bypasses git credential rewrites/prompts).
-      const archivePath = join(tmpdir(), `synap-backend-${Date.now()}.tar.gz`);
-      try {
-        if (!jsonMode) {
-          console.log(
-            `${emojis.info} git clone failed; trying public archive download from codeload.github.com …`,
-          );
-        }
-        await mkdir(targetDir, { recursive: true });
-        await execa('curl', ['-fsSL', SYNAP_BACKEND_TARBALL_URL, '-o', archivePath], {
-          stdio: 'inherit',
-        });
-        await execa('tar', ['-xzf', archivePath, '--strip-components', '1', '-C', targetDir], {
-          stdio: 'inherit',
-        });
-      } catch {
-        throw new Error(
-          `Failed to fetch public synap-backend source into ${targetDir}.\n` +
-            `Ensure outbound HTTPS to github.com/codeload.github.com is allowed and no proxy blocks downloads.\n` +
-            `You can also pass --synap-repo <path> (or set SYNAP_REPO_ROOT) to an existing checkout.`,
+      });
+      // A tarball extraction leaves no remote unless we wire one. Without it
+      // the checkout is permanently un-updatable — `eve synap deploy` would
+      // have nothing to pull from, which is exactly how /opt/synap/* ended
+      // up with 11 checkouts and zero remotes on synap-personal.
+      if (res.via === 'tarball' && !res.gitUsable && !jsonMode) {
+        console.log(
+          `${emojis.warning} ${targetDir} has no git remote — future updates will need a manual re-download.`,
         );
-      } finally {
-        await rm(archivePath, { force: true }).catch(() => undefined);
       }
+    } catch {
+      throw new Error(
+        `Failed to fetch public synap-backend source into ${targetDir}.\n` +
+          `Ensure outbound HTTPS to github.com/codeload.github.com is allowed and no proxy blocks downloads.\n` +
+          `You can also pass --synap-repo <path> (or set SYNAP_REPO_ROOT) to an existing checkout.`,
+      );
     }
   }
 
