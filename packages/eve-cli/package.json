@@ -5,6 +5,9 @@
   "bin": {
     "eve": "./dist/index.js"
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
@@ -14,14 +17,6 @@
   },
   "dependencies": {
     "@clack/prompts": "^0.7.0",
-    "@eve/arms": "workspace:*",
-    "@eve/brain": "workspace:*",
-    "@eve/builder": "workspace:*",
-    "@eve/cli-kit": "workspace:*",
-    "@eve/dna": "workspace:*",
-    "@eve/lifecycle": "workspace:*",
-    "@eve/eyes": "workspace:*",
-    "@eve/legs": "workspace:*",
     "boxen": "^7.1.1",
     "chalk": "^5.3.0",
     "cli-progress": "^3.12.0",
@@ -31,6 +26,14 @@
     "ora": "^8.0.1"
   },
   "devDependencies": {
+    "@eve/arms": "workspace:*",
+    "@eve/brain": "workspace:*",
+    "@eve/builder": "workspace:*",
+    "@eve/cli-kit": "workspace:*",
+    "@eve/dna": "workspace:*",
+    "@eve/eyes": "workspace:*",
+    "@eve/legs": "workspace:*",
+    "@eve/lifecycle": "workspace:*",
     "@types/cli-progress": "^3.11.5",
     "@types/node": "^20.12.0",
     "tsup": "^8.0.0",
