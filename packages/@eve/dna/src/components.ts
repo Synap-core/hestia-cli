@@ -114,6 +114,42 @@ Traefik is always-on infrastructure. It can't be removed; the rest of the stack 
     doctor: { critical: true },
   },
   {
+    id: 'freellmapi',
+    organ: 'brain',
+    label: 'FreeLLMAPI',
+    emoji: '🎰',
+    description: 'Self-hosted gateway pooling free-tier LLM quota behind one OpenAI-compatible endpoint.',
+    longDescription: `FreeLLMAPI is a self-hosted router that sits in front of ~34 providers'
+FREE TIERS and exposes them as a single OpenAI-compatible \`/v1\` endpoint. You supply your own
+free-tier keys through its dashboard; it tracks per-key quota, scores models, and fails over on
+429/5xx.
+
+Inside Eve it is registered as a LOW-PRIORITY provider in your pod's ai_providers table, which
+means the Intelligence Service reaches for it only after your paid providers — a free fallback
+lane for when OpenRouter credits run dry, not the default brain.
+
+Two things worth knowing. It is capability-aware about TOOL CALLING: requests carrying \`tools\`
+are routed only to models that can emit structured tool_calls, and it repairs tool calls a
+failover model emitted in another model's dialect. And its own README is explicit that free tiers
+are "not a stable, supported inference substrate" — your agreement with each upstream provider
+still governs traffic proxied through it, so this is for personal experimentation, not production
+load.`,
+    homepage: 'https://github.com/tashfeenahmed/freellmapi',
+    category: 'add-on',
+    requires: ['traefik'],
+    service: {
+      containerName: 'eve-brain-freellmapi',
+      // ONE port serves both the dashboard and the /v1 API — not a split.
+      internalPort: 3001,
+      hostPort: null,
+      subdomain: 'llm',
+      healthPath: '/api/ping',
+    },
+    health: { kind: 'http', path: '/api/ping' },
+    lifecycle: { restartStrategy: 'restart' },
+    doctor: { critical: false },
+  },
+  {
     id: 'nango',
     organ: 'arms',
     label: 'Nango',

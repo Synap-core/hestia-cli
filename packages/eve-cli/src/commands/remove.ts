@@ -232,6 +232,67 @@ async function removeOpenwebui(): Promise<void> {
   spinner.succeed('Open WebUI removed');
 }
 
+/**
+ * Remove FreeLLMAPI.
+ *
+ * Two deliberate departures from the other remove paths:
+ *
+ * 1. The named volume is KEPT (`down` WITHOUT `--volumes`). It holds every
+ *    upstream free-tier key the user added, encrypted at rest. Those keys were
+ *    collected by hand across dozens of provider signups, and a `remove` that
+ *    silently destroys them is not recoverable by reinstalling. The command
+ *    prints how to purge it deliberately.
+ * 2. The pod's provider row is DISABLED first. Leaving it enabled points the
+ *    Intelligence Service's cascade at a container that no longer exists —
+ *    which surfaces later as slow, confusing failover rather than as
+ *    "the thing you removed is gone".
+ */
+async function removeFreellmapi(): Promise<void> {
+  const spinner = createSpinner('Stopping FreeLLMAPI...');
+  spinner.start();
+  let podNotice: string | null = null;
+
+  // Disable on the pod BEFORE tearing the container down.
+  try {
+    const { readEveSecrets, resolveSynapUrl, readAgentKeyOrLegacy, setPodProviderEnabled, describePodProviderResult } =
+      await import('@eve/dna');
+    const secrets = await readEveSecrets(process.cwd());
+    const podUrl = resolveSynapUrl(secrets);
+    const apiKey = await readAgentKeyOrLegacy('eve', process.cwd());
+    if (podUrl && apiKey) {
+      const result = await setPodProviderEnabled(podUrl, apiKey, 'freellmapi', false);
+      // The spinner has no stop(); report the outcome after it finishes below.
+      podNotice = describePodProviderResult(result);
+    }
+  } catch {
+    // Non-fatal: the container teardown below is the point of this command.
+    printWarning('Could not disable the freellmapi provider on the pod — do it manually.');
+  }
+
+  try {
+    const { existsSync } = await import('node:fs');
+    const deployDir = '/opt/freellmapi';
+    const composePath = join(deployDir, 'docker-compose.yml');
+
+    if (existsSync(composePath)) {
+      // NOTE: no `--volumes` — see the docblock.
+      await execa('docker', ['compose', 'down'], { cwd: deployDir, stdio: 'inherit' });
+    } else {
+      const { stdout } = await execa('docker', ['ps', '-aq', '-f', 'name=eve-brain-freellmapi']);
+      if (stdout.trim()) {
+        const containers = stdout.trim().split('\n').filter(Boolean);
+        await execa('docker', ['rm', '-f', ...containers], { stdio: 'inherit' });
+      }
+    }
+  } catch {
+    printWarning('FreeLLMAPI removal failed — check manually.');
+  }
+  spinner.succeed('FreeLLMAPI removed (provider keys kept)');
+  if (podNotice) console.log('  ' + podNotice);
+  printInfo('  Its stored provider keys were KEPT in the `freellmapi-data` volume.');
+  printInfo('  To destroy them too: docker volume rm freellmapi_freellmapi-data');
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -352,6 +413,8 @@ function buildRemoveStep(componentId: string): () => Promise<void> {
       return removeRsshub;
     case 'openwebui':
       return removeOpenwebui;
+    case 'freellmapi':
+      return removeFreellmapi;
     case 'openwebui-pipelines':
       return removeOpenwebuiPipelines;
     case 'eve-dashboard':

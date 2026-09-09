@@ -997,6 +997,20 @@ volumes:
           });
         },
       };
+    // Thin delegate to the ONE install recipe in @eve/lifecycle — deliberately
+    // NOT a second inline compose string here. `openwebui` has exactly that
+    // (a different YAML in this file from the one lifecycle writes), and the
+    // two have drifted; adding a third copy is how that becomes permanent.
+    case 'freellmapi':
+      return {
+        label: 'Installing FreeLLMAPI gateway…',
+        async fn() {
+          const { runActionToCompletion } = await import('@eve/lifecycle');
+          const result = await runActionToCompletion('freellmapi', 'install');
+          if (!result.ok) throw new Error(result.error ?? 'FreeLLMAPI install failed');
+          for (const line of result.logs) console.log('  ' + line);
+        },
+      };
     case 'hermes':
       return {
         label: 'Installing Hermes AI agent…',
