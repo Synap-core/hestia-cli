@@ -26,6 +26,8 @@ import {
   readAgentKey,
   readEveSecrets,
   readAgentKeyOrLegacy,
+  parseFreellmapiSetupCode,
+  parseFreellmapiUnifiedKey,
   upsertPodProvider,
   describePodProviderResult,
   writeEveSecrets,
@@ -2712,6 +2714,8 @@ async function* installFreellmapi(): AsyncGenerator<LifecycleEvent> {
     return;
   }
 
+  yield* announceFreellmapiDashboard();
+
   const unifiedKey = readFreellmapiUnifiedKey();
   if (!unifiedKey) {
     yield {
@@ -2728,6 +2732,79 @@ async function* installFreellmapi(): AsyncGenerator<LifecycleEvent> {
 }
 
 /**
+ * Read the CURRENT first-run setup code from the container logs.
+ *
+ * Upstream mints this at boot whenever the dashboard is still unclaimed, logs
+ * it as `  First-run setup code: <CODE>`, and CLEARS it the moment an account
+ * exists. Two consequences shape this helper:
+ *
+ *   - Take the LAST match. The code is regenerated on every boot, so an earlier
+ *     line in the same log is stale and would be rejected.
+ *   - Absence is not an error. Once the dashboard has an account there is no
+ *     code, which is the normal steady state — the caller says "already
+ *     claimed" rather than reporting a fault.
+ *
+ * A browser ON the host never needs it (upstream treats a loopback socket as
+ * trusted); the code exists for claiming the dashboard from another device,
+ * which through Traefik is every browser you are likely to use.
+ */
+
+function readFreellmapiSetupCode(): string | null {
+  try {
+    return parseFreellmapiSetupCode(
+      execSync(`docker logs eve-brain-freellmapi 2>&1`, {
+        encoding: "utf-8",
+        maxBuffer: 10 * 1024 * 1024,
+        stdio: ["pipe", "pipe", "pipe"],
+      }),
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Tell the operator the gateway exists, where it is, and how to get in.
+ *
+ * Without this the install ended silently: a container running behind a URL
+ * nobody was told about, whose signup then demands a code printed once, at
+ * boot, in logs the user has no reason to read. Everything needed to act is
+ * known here — so say it here.
+ */
+async function* announceFreellmapiDashboard(): AsyncGenerator<LifecycleEvent> {
+  const secrets = await readEveSecrets();
+  const domain = secrets?.domain?.primary;
+  const ssl = secrets?.domain?.ssl !== false;
+  const url = domain ? `${ssl ? "https" : "http"}://llm.${domain}` : null;
+
+  yield { type: "log", line: "" };
+  yield {
+    type: "log",
+    line: url
+      ? `Dashboard: ${url} — add your free-tier provider keys there.`
+      : "Dashboard: no domain configured; reach it on the host at http://127.0.0.1:3001",
+  };
+
+  const code = readFreellmapiSetupCode();
+  if (code) {
+    yield { type: "log", line: `First-run setup code: ${code}` };
+    yield {
+      type: "log",
+      line: "  Needed to create the first account from any device other than this host.",
+    };
+    yield {
+      type: "log",
+      line: "  It is regenerated on every restart until an account exists: eve brain freellmapi-code",
+    };
+  } else {
+    yield {
+      type: "log",
+      line: "No setup code active — the dashboard already has an account, so sign in normally.",
+    };
+  }
+}
+
+/**
  * Scrape the unified API key from the container's first-boot log line.
  *
  * The format is pinned by upstream's migration:
@@ -2736,10 +2813,6 @@ async function* installFreellmapi(): AsyncGenerator<LifecycleEvent> {
  * yields the key; and we take the LAST match, so a regenerated key wins over the
  * original if both appear.
  */
-export function parseFreellmapiUnifiedKey(logs: string): string | null {
-  const matches = logs.match(/freellmapi-[0-9a-f]{48}/g);
-  return matches?.[matches.length - 1] ?? null;
-}
 
 function readFreellmapiUnifiedKey(): string | null {
   try {

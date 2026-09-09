@@ -31,7 +31,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { COMPONENTS } from '@eve/dna';
-import { parseFreellmapiUnifiedKey } from '@eve/lifecycle';
+import { parseFreellmapiUnifiedKey, parseFreellmapiSetupCode } from '@eve/dna';
 
 const REAL_KEY = 'freellmapi-' + 'a1b2c3d4'.repeat(6); // 48 hex chars
 
@@ -134,5 +134,45 @@ describe('parseFreellmapiUnifiedKey', () => {
 
   it('ignores non-hex noise of the right length', () => {
     expect(parseFreellmapiUnifiedKey('freellmapi-' + 'z'.repeat(48))).toBeNull();
+  });
+});
+
+describe('parseFreellmapiSetupCode', () => {
+  // Upstream logs `  First-run setup code: <10 chars>` at every boot while the
+  // dashboard is unclaimed, and clears it once an account exists.
+  const CODE = 'ABCDEFGHJK';
+
+  it('reads the code from the real log line', () => {
+    const logs = [
+      '',
+      `  First-run setup code: ${CODE}`,
+      '  A browser on this machine can finish setup without it. From any',
+      '  other device, enter this code to create the first account.',
+      '',
+    ].join('\n');
+    expect(parseFreellmapiSetupCode(logs)).toBe(CODE);
+  });
+
+  it('takes the LAST code — it is regenerated on every restart', () => {
+    // The decisive case: an earlier code in the same log is stale and the
+    // server would reject it, so returning the first match is a real defect.
+    const logs = `First-run setup code: MNPQRSTUVW\nrestart\nFirst-run setup code: ${CODE}`;
+    expect(parseFreellmapiSetupCode(logs)).toBe(CODE);
+  });
+
+  it('returns null once the dashboard is claimed (no code logged)', () => {
+    // Not a fault — the normal steady state.
+    expect(parseFreellmapiSetupCode('server listening\nready\n')).toBeNull();
+  });
+
+  it('rejects letters upstream excludes from its alphabet', () => {
+    // The alphabet omits I, O, 0 and 1 to avoid ambiguity. A regex that
+    // accepted them would happily return a code the server cannot match.
+    expect(parseFreellmapiSetupCode('First-run setup code: ABCDEFGHIO')).toBeNull();
+    expect(parseFreellmapiSetupCode('First-run setup code: ABCDEFGH01')).toBeNull();
+  });
+
+  it('rejects a wrong-length code', () => {
+    expect(parseFreellmapiSetupCode('First-run setup code: ABCDEFGH')).toBeNull();
   });
 });

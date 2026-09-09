@@ -444,3 +444,8 @@ export {
   type PodProviderModel,
   type PodProviderResult,
 } from './pod-providers.js';
+
+export {
+  parseFreellmapiSetupCode,
+  parseFreellmapiUnifiedKey,
+} from './freellmapi-logs.js';

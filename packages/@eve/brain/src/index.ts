@@ -4,6 +4,7 @@ import { statusCommand } from './commands/status.js';
 import { startCommand } from './commands/start.js';
 import { stopCommand } from './commands/stop.js';
 import { providersCommand } from './commands/providers.js';
+import { freellmapiCodeCommand } from './commands/freellmapi-code.js';
 
 // Services
 export { SynapService, type SynapHealth } from './lib/synap.js';
@@ -35,6 +36,8 @@ export function registerBrainCommands(brain: Command): void {
   startCommand(brain);
   stopCommand(brain);
   providersCommand(brain);
+  freellmapiCodeCommand(brain);
 }
 
 export { providersCommand } from './commands/providers.js';
+export { freellmapiCodeCommand } from './commands/freellmapi-code.js';
