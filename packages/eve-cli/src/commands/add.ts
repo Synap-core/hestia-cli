@@ -1007,8 +1007,13 @@ volumes:
         async fn() {
           const { runActionToCompletion } = await import('@eve/lifecycle');
           const result = await runActionToCompletion('freellmapi', 'install');
-          if (!result.ok) throw new Error(result.error ?? 'FreeLLMAPI install failed');
+          // Print the transcript on FAILURE too. `runCommand` captures both
+          // stdout and stderr as log events, so docker's actual complaint —
+          // the only thing that makes this debuggable — is already in
+          // `result.logs`. Throwing first discarded it and left the user with
+          // a bare "docker compose up exited 1".
           for (const line of result.logs) console.log('  ' + line);
+          if (!result.ok) throw new Error(result.error ?? 'FreeLLMAPI install failed');
         },
       };
     case 'hermes':
