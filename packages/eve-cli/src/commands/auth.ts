@@ -355,6 +355,29 @@ interface RenewOptions {
   linkedUserId?: string;
 }
 
+/**
+ * Pull the human candidates out of the pod's 409 body.
+ *
+ * The reason string carries the raw JSON the pod returned, so this digs the
+ * `humans` array out of it. Deliberately total: a pod that predates the
+ * candidate list, or any parse failure, yields an empty array and the caller
+ * falls back to a generic hint — it must never turn a useful error into a crash.
+ */
+function parsePodHumans(reason: string): Array<{ email: string; name?: string }> {
+  const start = reason.indexOf('{');
+  if (start === -1) return [];
+  try {
+    const body = JSON.parse(reason.slice(start)) as {
+      humans?: Array<{ email?: string; name?: string | null }>;
+    };
+    return (body.humans ?? [])
+      .filter((h): h is { email: string; name?: string | null } => !!h.email)
+      .map((h) => ({ email: h.email, ...(h.name ? { name: h.name } : {}) }));
+  } catch {
+    return [];
+  }
+}
+
 async function runRenew(opts: RenewOptions): Promise<void> {
   console.log();
   printHeader('Synap auth renew');
@@ -400,15 +423,25 @@ async function runRenew(opts: RenewOptions): Promise<void> {
     printError(result.reason);
     // The pod names this case precisely; translate it into the flag that fixes
     // it rather than leaving the operator to map a 409 onto a CLI option.
-    if (/LINKED_USER_REQUIRED|Multiple humans/i.test(result.reason ?? '')) {
+    if (/LINKED_USER_REQUIRED|LINKED_USER_UNRESOLVED|Multiple humans/i.test(result.reason ?? '')) {
       console.log();
       printInfo('This pod has more than one human, so it will not guess who this agent acts for.');
-      printInfo('  Re-run with the human\'s user id:');
-      printInfo(`    eve auth renew --agent ${agentType} --linked-user <userId>`);
+
+      // The pod returns the candidates in its 409 body. Show them rather than
+      // sending the operator to psql for a uuid — that lookup is the reason
+      // this door was unusable in practice.
+      const humans = parsePodHumans(result.reason ?? '');
+      if (humans.length > 0) {
+        printInfo('  Humans on this pod:');
+        for (const h of humans) {
+          printInfo(`    ${h.email}${h.name ? ` (${h.name})` : ''}`);
+        }
+      }
+      printInfo('  Re-run naming the human — email works, no id needed:');
+      printInfo(
+        `    eve auth renew --agent ${agentType} --linked-user ${humans[0]?.email ?? '<email>'}`,
+      );
       printInfo('  It is stored afterwards, so you only pass it once.');
-      printInfo('  Find the id in pod-admin (Users), or on the pod host:');
-      printInfo('    docker exec -i $(docker ps -qf name=postgres) \\');
-      printInfo("      psql -U synap -d synap -c \"select id, email from users order by created_at;\"");
     }
     console.log();
     printInfo(
@@ -734,9 +767,10 @@ export function authCommand(program: Command): void {
     .option('--agent <slug>', 'Which agent to renew. Defaults to "eve".')
     .option('--all', 'Renew every registered agent key in registry order.')
     .option(
-      '--linked-user <id>',
-      'The human this agent acts for. REQUIRED once the pod has more than one human — ' +
-        'it refuses to guess. Stored after a successful renew, so pass it once.',
+      '--linked-user <idOrEmail>',
+      'The human this agent acts for — id, EMAIL, or name. REQUIRED once the pod has ' +
+        'more than one human, since it refuses to guess. Stored after a successful ' +
+        'renew, so pass it once.',
     )
     .option(
       '--no-pipelines-restart',
