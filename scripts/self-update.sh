@@ -27,7 +27,7 @@ echo "[eve self-update] Installing dependencies…"
 pnpm --dir "$TARGET_DIR" install
 
 echo "[eve self-update] Building…"
-pnpm --dir "$TARGET_DIR" --filter @eve/cli... run build
+pnpm --dir "$TARGET_DIR" --filter @synap-core/eve... run build
 
 # Re-link the binary so the global `eve` command picks up the new build
 EVE_BIN="$TARGET_DIR/packages/eve-cli/dist/index.js"

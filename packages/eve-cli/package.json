@@ -1,5 +1,5 @@
 {
-  "name": "@eve/cli",
+  "name": "@synap-core/eve",
   "version": "0.1.0",
   "type": "module",
   "bin": {

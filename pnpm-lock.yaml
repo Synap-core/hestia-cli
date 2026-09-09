@@ -8,7 +8,7 @@ importers:
 
   .:
     devDependencies:
-      '@eve/cli':
+      '@synap-core/eve':
         specifier: workspace:*
         version: link:packages/eve-cli
       '@typescript-eslint/eslint-plugin':
@@ -345,6 +345,28 @@ importers:
       '@clack/prompts':
         specifier: ^0.7.0
         version: 0.7.0
+      boxen:
+        specifier: ^7.1.1
+        version: 7.1.1
+      chalk:
+        specifier: ^5.3.0
+        version: 5.6.2
+      cli-progress:
+        specifier: ^3.12.0
+        version: 3.12.0
+      cli-table3:
+        specifier: ^0.6.3
+        version: 0.6.5
+      commander:
+        specifier: ^11.0.0
+        version: 11.1.0
+      execa:
+        specifier: ^9.0.0
+        version: 9.6.1
+      ora:
+        specifier: ^8.0.1
+        version: 8.2.0
+    devDependencies:
       '@eve/arms':
         specifier: workspace:*
         version: link:../@eve/arms
@@ -369,28 +391,6 @@ importers:
       '@eve/lifecycle':
         specifier: workspace:*
         version: link:../@eve/lifecycle
-      boxen:
-        specifier: ^7.1.1
-        version: 7.1.1
-      chalk:
-        specifier: ^5.3.0
-        version: 5.6.2
-      cli-progress:
-        specifier: ^3.12.0
-        version: 3.12.0
-      cli-table3:
-        specifier: ^0.6.3
-        version: 0.6.5
-      commander:
-        specifier: ^11.0.0
-        version: 11.1.0
-      execa:
-        specifier: ^9.0.0
-        version: 9.6.1
-      ora:
-        specifier: ^8.0.1
-        version: 8.2.0
-    devDependencies:
       '@types/cli-progress':
         specifier: ^3.11.5
         version: 3.11.6

@@ -21,8 +21,8 @@ mkdir -p .release
 # Build all workspace packages first so runtime dist files are present.
 pnpm -r run build
 
-# Create a portable runtime folder for @eve/cli with production deps only.
-pnpm --filter @eve/cli --prod deploy ./.release/eve
+# Create a portable runtime folder for @synap-core/eve with production deps only.
+pnpm --filter @synap-core/eve --prod deploy ./.release/eve
 
 # Keep the provenance metadata next to the runtime bundle.
 cp package.json pnpm-lock.yaml ./.release/eve/

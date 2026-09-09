@@ -14,27 +14,27 @@
   ],
   "scripts": {
     "build": "pnpm -r run build",
-    "build:new": "pnpm --filter \"@eve/*\" --filter @eve/cli build",
-    "eve": "pnpm --filter @eve/cli exec eve",
-    "setup": "pnpm --filter @eve/cli exec eve setup",
+    "build:new": "pnpm --filter \"@eve/*\" --filter @synap-core/eve build",
+    "eve": "pnpm --filter @synap-core/eve exec eve",
+    "setup": "pnpm --filter @synap-core/eve exec eve setup",
     "prepush": "pnpm -r run build && pnpm run check:manifest",
     "setup:hooks": "git config core.hooksPath .githooks",
     "typecheck": "pnpm -r run typecheck",
     "lint": "eslint packages/@eve packages/eve-cli packages/cli-kit",
     "test": "pnpm -r run test",
-    "cli": "pnpm --filter @eve/cli",
-    "validate": "pnpm --filter @eve/cli run validate",
+    "cli": "pnpm --filter @synap-core/eve",
+    "validate": "pnpm --filter @synap-core/eve run validate",
     "verify": "bash verify.sh",
     "check:manifest": "node scripts/check-manifest.mjs",
     "release:bundle": "bash scripts/create-release-bundle.sh",
-    "release:npm": "npm publish -w @eve/cli --access public"
+    "release:npm": "npm publish -w @synap-core/eve --access public"
   },
   "type": "module",
   "engines": {
     "node": ">=18.0.0"
   },
   "devDependencies": {
-    "@eve/cli": "workspace:*",
+    "@synap-core/eve": "workspace:*",
     "@typescript-eslint/eslint-plugin": "^8.59.2",
     "@typescript-eslint/parser": "^8.59.2",
     "eslint": "^10.3.0",

@@ -32,7 +32,7 @@ jobs:
         run: |
           pnpm -r run build
           pnpm run check:manifest
-          pnpm --filter @eve/cli test
+          pnpm --filter @synap-core/eve test
           node packages/eve-cli/dist/index.js --help
 
       - name: Build release bundle
