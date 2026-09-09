@@ -72,7 +72,7 @@ function hubUrl(podUrl: string, path: string): string {
  * bundle. A bare "Pod responded 403" would send someone hunting for a broken
  * key when the actual answer is "this key was never granted that scope".
  */
-async function raise(res: Response, providerId: string): Promise<never> {
+async function raise(res: Response, providerId: string, url: string): Promise<never> {
   const text = await res.text().catch(() => "");
   if (res.status === 403 && text.includes("providers.write")) {
     throw new PodProviderError(
@@ -84,13 +84,21 @@ async function raise(res: Response, providerId: string): Promise<never> {
     );
   }
   if (res.status === 404) {
+    // Do NOT assert a cause here. A 404 means "nothing at that URL", which is
+    // most often the WRONG URL — an off-host public URL used on-host, a stale
+    // `synap.apiUrl`, or a proxy that does not route this path — and only
+    // sometimes an old pod. Naming the URL that was tried is what makes the
+    // difference visible; guessing "old build" sent one debugging session
+    // down the wrong path entirely.
     throw new PodProviderError(
-      `Pod has no /api/hub/ai-providers route (HTTP 404) — it is running a build older than the provider door. Update the pod.`,
+      `No /ai-providers route at ${url} (HTTP 404).\n` +
+        `  The pod may be reachable at a different address than the one Eve resolved,\n` +
+        `  or it predates the provider door. Check: curl -s -o /dev/null -w '%{http_code}' ${url}`,
       404
     );
   }
   throw new PodProviderError(
-    `Pod responded ${res.status} for provider "${providerId}": ${text}`,
+    `Pod responded ${res.status} for provider "${providerId}" at ${url}: ${text}`,
     res.status
   );
 }
@@ -117,7 +125,7 @@ export async function upsertPodProvider(
     signal: AbortSignal.timeout(15_000),
   });
 
-  if (!res.ok && res.status !== 202) await raise(res, body.providerId);
+  if (!res.ok && res.status !== 202) await raise(res, body.providerId, hubUrl(podUrl, "ai-providers"));
 
   const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
 
@@ -154,7 +162,7 @@ export async function setPodProviderEnabled(
       signal: AbortSignal.timeout(15_000),
     }
   );
-  if (!res.ok && res.status !== 202) await raise(res, providerId);
+  if (!res.ok && res.status !== 202) await raise(res, providerId, hubUrl(podUrl, `ai-providers/${providerId}/${enabled ? "enable" : "disable"}`));
 
   const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (res.status === 202 || json.status === "proposed") {

@@ -2372,6 +2372,33 @@ volumes:
   freellmapi-data:
 `;
 
+/** The image the compose file pulls. One definition, used by the self-heal probe. */
+const FREELLMAPI_IMAGE = "ghcr.io/tashfeenahmed/freellmapi:latest";
+
+/**
+ * Was the failure a REGISTRY DENIAL, as opposed to anything else?
+ *
+ * Deliberately re-probes with `docker pull` rather than scraping the compose
+ * transcript: compose wraps the cause ("Error response from daemon: error from
+ * registry: denied") and its phrasing changes between versions, whereas a bare
+ * pull states it plainly. Narrow ON PURPOSE — this gates a `docker logout`, so
+ * matching loosely would drop a WORKING credential on an unrelated failure
+ * (disk full, network down, image genuinely absent).
+ */
+async function* dockerRegistryDenied(image: string): AsyncGenerator<LifecycleEvent, boolean, void> {
+  try {
+    const out = execSync(`docker pull ${image} 2>&1 || true`, {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    // `denied` / `unauthorized` only. NOT "not found" (a real absence) and not
+    // "no such host" (DNS) — neither is fixed by dropping a credential.
+    return /\b(denied|unauthorized)\b/i.test(out);
+  } catch {
+    return false;
+  }
+}
+
 /** Write the FreeLLMAPI compose file (always overwrites — same contract as OpenWebUI). */
 function writeFreellmapiCompose(deployDir: string): void {
   mkdirSync(deployDir, { recursive: true });
@@ -2634,8 +2661,35 @@ async function* installFreellmapi(): AsyncGenerator<LifecycleEvent> {
 
   yield* ensureEveNetwork();
 
-  const code = yield* runCommand("docker", ["compose", "up", "-d"], { cwd: deployDir });
-  if (code !== 0) throw new Error(`docker compose up exited ${code}`);
+  let code = yield* runCommand("docker", ["compose", "up", "-d"], { cwd: deployDir });
+
+  // SELF-HEAL a stale registry credential.
+  //
+  // The image is public, but docker does NOT fall back to anonymous when a
+  // stored credential is rejected — it sends the bad token and takes the
+  // denial. A host that once logged into ghcr.io with a since-expired PAT
+  // therefore fails to pull a PUBLIC image, reporting only "denied". Dropping
+  // the credential for this registry restores the anonymous pull, and is safe:
+  // `docker logout` removes a credential that is, by construction, not working.
+  if (code !== 0) {
+    const denied = yield* dockerRegistryDenied(FREELLMAPI_IMAGE);
+    if (denied) {
+      yield {
+        type: "log",
+        line:
+          "Registry refused the pull of a PUBLIC image — the host is sending a stale ghcr.io credential. " +
+          "Dropping it and retrying anonymously.",
+      };
+      yield* runCommand("docker", ["logout", "ghcr.io"]);
+      code = yield* runCommand("docker", ["compose", "up", "-d"], { cwd: deployDir });
+    }
+  }
+
+  if (code !== 0) {
+    throw new Error(
+      `docker compose up exited ${code} — see the transcript above for docker's own error.`,
+    );
+  }
 
   // Wait for the container to answer its own healthcheck before reading logs —
   // the key is written during the first migration, which happens at boot.
@@ -2704,7 +2758,13 @@ function readFreellmapiUnifiedKey(): string | null {
 /** Register (or re-register) FreeLLMAPI in the pod's ai_providers table. */
 async function* registerFreellmapiProvider(unifiedKey: string): AsyncGenerator<LifecycleEvent> {
   const secrets = await readEveSecrets();
-  const podUrl = resolveSynapUrl(secrets);
+  // ON-HOST resolver. `resolveSynapUrl` is the pure/off-host derivation meant
+  // for baking URLs into other containers' env files — it returns the public
+  // `https://pod.<domain>` route through Traefik. This installer runs ON the
+  // pod host, where Eve publishes a loopback for exactly this purpose, and
+  // `resolveSynapUrlOnHost` probes it first and falls back to the public URL.
+  // Using the wrong one is what produced a 404 against a reachable pod.
+  const podUrl = await resolveSynapUrlOnHost(secrets);
   const apiKey = await readAgentKeyOrLegacy("eve");
 
   if (!podUrl || !apiKey) {

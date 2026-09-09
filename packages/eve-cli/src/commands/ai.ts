@@ -7,7 +7,7 @@ import {
   writeEveSecrets,
   entityStateManager,
   resolveHubBaseUrl,
-  resolveSynapUrl,
+  resolveSynapUrlOnHost,
   readAgentKeyOrLegacy,
   upsertPodProvider,
   describePodProviderResult,
@@ -221,7 +221,10 @@ export function aiCommandGroup(program: Command): void {
     model?: string,
   ): Promise<void> {
     const secrets = await readEveSecrets(process.cwd());
-    const podUrl = resolveSynapUrl(secrets);
+    // On-host resolver — probes the loopback Eve publishes before falling back
+    // to the public Traefik URL. `resolveSynapUrl` is the off-host derivation
+    // and produced a 404 against a perfectly reachable pod.
+    const podUrl = await resolveSynapUrlOnHost(secrets);
     const apiKey = await readAgentKeyOrLegacy('eve', process.cwd());
 
     if (!podUrl || !apiKey) {

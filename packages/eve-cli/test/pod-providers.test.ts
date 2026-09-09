@@ -107,9 +107,18 @@ describe('upsertPodProvider', () => {
     await expect(upsertPodProvider(POD, KEY, BODY)).rejects.toThrow(/scope/i);
   });
 
-  it('names an outdated pod on 404 rather than reporting a generic failure', async () => {
+  it('names the URL it actually tried on a 404, and does NOT assert a cause', async () => {
+    // This test previously pinned the message "running a build older than the
+    // provider door" — i.e. it pinned a WRONG CLAIM. A 404 means "nothing at
+    // that URL", which is most often the wrong URL, and that misdiagnosis sent
+    // a real debugging session after a pod version when the actual fault was
+    // an off-host resolver used on-host. The URL is the fact; the cause is not.
     vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })));
-    await expect(upsertPodProvider(POD, KEY, BODY)).rejects.toThrow(/older than the provider door/);
+    const err = await upsertPodProvider(POD, KEY, BODY).catch((e) => e as Error);
+
+    expect(err.message).toContain(POD);
+    expect(err.message).toContain('/ai-providers');
+    expect(err.message).not.toMatch(/older than the provider door/);
   });
 
   it('sends the key in the body and the bearer in the header', async () => {
