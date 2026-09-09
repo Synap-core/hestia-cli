@@ -2828,6 +2828,33 @@ function readFreellmapiUnifiedKey(): string | null {
   }
 }
 
+/**
+ * Re-run FreeLLMAPI's pod registration against a container that is ALREADY
+ * running. Exported so `eve add freellmapi` can reconcile instead of no-op.
+ *
+ * The first install can leave the container healthy but the provider
+ * unregistered — the pod was unreachable, the key scrape came up empty, or the
+ * write was refused. None of those are fixed by reinstalling, and until this
+ * existed there was no command that retried them: the install path was the only
+ * caller, and it is skipped once the component is marked installed.
+ *
+ * Idempotent: the pod door is an upsert, so re-running is safe.
+ */
+export async function* reconcileFreellmapiRegistration(): AsyncGenerator<LifecycleEvent> {
+  const unifiedKey = readFreellmapiUnifiedKey();
+  if (!unifiedKey) {
+    yield {
+      type: "log",
+      line:
+        "Could not read FreeLLMAPI's unified API key from the container logs " +
+        "(it is printed only on FIRST boot). Read it from the dashboard, then: " +
+        "eve brain providers add freellmapi --url http://eve-brain-freellmapi:3001/v1 --key <key> --priority 90",
+    };
+    return;
+  }
+  yield* registerFreellmapiProvider(unifiedKey);
+}
+
 /** Register (or re-register) FreeLLMAPI in the pod's ai_providers table. */
 async function* registerFreellmapiProvider(unifiedKey: string): AsyncGenerator<LifecycleEvent> {
   const secrets = await readEveSecrets();
@@ -3199,6 +3226,29 @@ async function* recreateContainer(
 }
 
 /** Drain the generator into a single result — for callers that don't stream. */
+/**
+ * Drain a component's reconcile generator into a flat result, mirroring
+ * `runActionToCompletion` so callers handle one shape.
+ */
+export async function runReconcileToCompletion(
+  componentId: string,
+): Promise<{ ok: boolean; logs: string[]; error?: string }> {
+  const logs: string[] = [];
+  let error: string | undefined;
+  if (componentId !== "freellmapi") {
+    return { ok: true, logs: [] };
+  }
+  try {
+    for await (const ev of reconcileFreellmapiRegistration()) {
+      if (ev.type === "log") logs.push(ev.line);
+      else if (ev.type === "error") error = ev.message;
+    }
+  } catch (err) {
+    error = err instanceof Error ? err.message : String(err);
+  }
+  return { ok: !error, logs, error };
+}
+
 export async function runActionToCompletion(
   componentId: string,
   action: LifecycleAction,

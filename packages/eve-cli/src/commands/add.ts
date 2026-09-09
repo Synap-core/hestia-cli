@@ -741,6 +741,16 @@ export async function runAdd(
         printWarning(`  Traefik routes NOT refreshed: ${refresh.error ?? refresh.summary}`);
         printInfo('  The component is running but may be unreachable by URL.');
       }
+      // Component-specific wiring that the install performs but the skip path
+      // never retried. Routes are only half of "installed but not working":
+      // freellmapi can be running and reachable while the pod still has no
+      // provider row, which is exactly the state a first install left behind.
+      if (componentId === 'freellmapi') {
+        const { runReconcileToCompletion } = await import('@eve/lifecycle');
+        const res = await runReconcileToCompletion('freellmapi');
+        for (const line of res.logs) printInfo(`  ${line}`);
+      }
+
       printInfo(`  Or "eve update ${componentId}" to pull the latest image.`);
       return;
     }
