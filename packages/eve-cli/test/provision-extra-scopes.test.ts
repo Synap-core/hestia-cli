@@ -35,7 +35,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { provisionAgent } from '@eve/lifecycle';
+import { provisionAgent, renewAgentKey } from '@eve/lifecycle';
 
 /** Captures the request `provisionAgent` actually makes. */
 function makeRunner() {
@@ -107,4 +107,45 @@ describe('no other agent asks', () => {
       expect(calls[0]?.body).not.toHaveProperty('extraScopes');
     },
   );
+});
+
+describe('linkedUserId reaches the wire', () => {
+  /**
+   * THE BUG THIS PINS. `--linked-user` was accepted by the CLI, plumbed into
+   * `RenewAgentKeyOptions`, and then DROPPED: `renewAgentKey` forwards to
+   * `provisionAgent` through a hand-listed field projection that did not
+   * include it. Nothing failed — the pod simply kept answering "pass an
+   * explicit linkedUserId" to an operator who had passed exactly that.
+   *
+   * So this asserts on the REQUEST BODY, not on the option being declared.
+   * Declaration is not reachability, and a hand-maintained forwarding list is
+   * precisely where reachability goes to die.
+   */
+  it('forwards linkedUserId from renewAgentKey through to the POST body', async () => {
+    const { calls, runner } = makeRunner();
+    await withSecretsDir(async (dir) => {
+      await renewAgentKey({
+        agentType: 'eve',
+        deployDir: dir,
+        provisioningToken: 'test-token',
+        runner,
+        linkedUserId: 'e418d146-e495-4b8a-8e8b-985f9f885431',
+      });
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.body.linkedUserId).toBe('e418d146-e495-4b8a-8e8b-985f9f885431');
+  });
+
+  it('omits linkedUserId entirely when not supplied', async () => {
+    // A single-human pod must keep working with no flag, and an explicit
+    // `undefined` on the wire is not the same as an absent key.
+    const { calls, runner } = makeRunner();
+    await withSecretsDir(async (dir) => {
+      await renewAgentKey({ agentType: 'eve', deployDir: dir, provisioningToken: 't', runner });
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.body).not.toHaveProperty('linkedUserId');
+  });
 });

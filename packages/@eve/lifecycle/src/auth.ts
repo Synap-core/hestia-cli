@@ -354,6 +354,12 @@ export async function renewAgentKey(opts: RenewAgentKeyOptions = {}): Promise<Re
     timeoutMs: opts.timeoutMs,
     provisioningToken: opts.provisioningToken,
     idempotent: opts.idempotent,
+    // MUST be forwarded. This hand-listed projection silently dropped it once
+    // already: `--linked-user` was accepted by the CLI, never reached the wire,
+    // and the pod kept answering "pass an explicit linkedUserId" to a caller
+    // who had passed exactly that. A field added to RenewAgentKeyOptions that
+    // is not forwarded here is invisible — nothing fails, it just does nothing.
+    linkedUserId: opts.linkedUserId,
   });
   if (result.provisioned) {
     return {
@@ -782,6 +788,8 @@ export async function provisionAllAgents(opts: {
   provisioningToken?: string;
   /** Skip an agent if its key already exists. Defaults to true. */
   skipIfPresent?: boolean;
+  /** The human every minted key acts for — required on a multi-human pod. */
+  linkedUserId?: string;
 }): Promise<ProvisionResult[]> {
   const cwd = opts.deployDir ?? process.env.EVE_HOME ?? process.cwd();
   const skipIfPresent = opts.skipIfPresent ?? true;
@@ -809,6 +817,10 @@ export async function provisionAllAgents(opts: {
       runner: opts.runner,
       synapUrl: opts.synapUrl,
       provisioningToken: opts.provisioningToken,
+      // Same reason as in renewAgentKey — and it matters more here, since
+      // provisioning EVERY agent on a multi-human pod would otherwise fail
+      // agent by agent with an error the caller cannot act on.
+      linkedUserId: opts.linkedUserId,
     });
     results.push(result);
   }
