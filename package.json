@@ -27,7 +27,7 @@
     "verify": "bash verify.sh",
     "check:manifest": "node scripts/check-manifest.mjs",
     "release:bundle": "bash scripts/create-release-bundle.sh",
-    "release:npm": "npm publish -w @eve/cli"
+    "release:npm": "npm publish -w @eve/cli --access public"
   },
   "type": "module",
   "engines": {
