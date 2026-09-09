@@ -13,7 +13,7 @@ import type { Command } from 'commander';
 import Table from 'cli-table3';
 import {
   readEveSecrets,
-  resolveSynapUrl,
+  resolveSynapUrlOnHost,
   readAgentKeyOrLegacy,
   upsertPodProvider,
   setPodProviderEnabled,
@@ -65,7 +65,15 @@ async function hubDelete<T>(podUrl: string, apiKey: string, path: string): Promi
 
 async function resolveAuth(cwd: string): Promise<{ podUrl: string; apiKey: string }> {
   const secrets = await readEveSecrets(cwd);
-  const podUrl = resolveSynapUrl(secrets) ?? process.env.SYNAP_POD_URL;
+  // ON-HOST resolver. `resolveSynapUrl` is the pure/off-host derivation whose
+  // own docblock directs CLI runtime here: it returns the public
+  // `https://pod.<domain>` (or a STALE stored `synap.apiUrl`, which is how this
+  // command ended up POSTing to a host from a previous deployment and getting a
+  // 404). `resolveSynapUrlOnHost` probes the loopback Eve publishes first.
+  //
+  // `||`, not `??`: resolveSynapUrl returns '' — not null — when nothing is
+  // configured, and `'' ?? x` is `''`, so the env fallback could never fire.
+  const podUrl = (await resolveSynapUrlOnHost(secrets)) || process.env.SYNAP_POD_URL;
   if (!podUrl) throw new Error('Pod URL not configured. Run `eve setup` first.');
 
   // Resolution order: per-agent key → legacy synap.apiKey → SYNAP_HUB_API_KEY env var
