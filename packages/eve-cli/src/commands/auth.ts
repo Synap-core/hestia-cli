@@ -351,6 +351,8 @@ interface RenewOptions {
   all?: boolean;
   /** Skip the auto-restart of openwebui-pipelines after a successful eve renew. */
   skipPipelinesRestart?: boolean;
+  /** The human this agent acts for — required on a multi-human pod. */
+  linkedUserId?: string;
 }
 
 async function runRenew(opts: RenewOptions): Promise<void> {
@@ -391,10 +393,23 @@ async function runRenew(opts: RenewOptions): Promise<void> {
     agentType,
     reason: 'manual',
     runner: buildRunner(),
+    linkedUserId: opts.linkedUserId,
   });
   if (!result.renewed) {
     spinner.fail('Renew failed');
     printError(result.reason);
+    // The pod names this case precisely; translate it into the flag that fixes
+    // it rather than leaving the operator to map a 409 onto a CLI option.
+    if (/LINKED_USER_REQUIRED|Multiple humans/i.test(result.reason ?? '')) {
+      console.log();
+      printInfo('This pod has more than one human, so it will not guess who this agent acts for.');
+      printInfo('  Re-run with the human\'s user id:');
+      printInfo(`    eve auth renew --agent ${agentType} --linked-user <userId>`);
+      printInfo('  It is stored afterwards, so you only pass it once.');
+      printInfo('  Find the id in pod-admin (Users), or on the pod host:');
+      printInfo('    docker exec -i $(docker ps -qf name=postgres) \\');
+      printInfo("      psql -U synap -d synap -c \"select id, email from users order by created_at;\"");
+    }
     console.log();
     printInfo(
       'Common causes:\n' +
@@ -719,14 +734,24 @@ export function authCommand(program: Command): void {
     .option('--agent <slug>', 'Which agent to renew. Defaults to "eve".')
     .option('--all', 'Renew every registered agent key in registry order.')
     .option(
+      '--linked-user <id>',
+      'The human this agent acts for. REQUIRED once the pod has more than one human — ' +
+        'it refuses to guess. Stored after a successful renew, so pass it once.',
+    )
+    .option(
       '--no-pipelines-restart',
       'Skip the auto-restart of openwebui-pipelines after a successful eve renew.',
     )
-    .action(async (opts: { agent?: string; all?: boolean; pipelinesRestart?: boolean }) => {
+    .action(async (opts: { agent?: string; all?: boolean; pipelinesRestart?: boolean; linkedUser?: string }) => {
       // Commander turns `--no-pipelines-restart` into `pipelinesRestart: false`.
       const skipPipelinesRestart = opts.pipelinesRestart === false;
       try {
-        await runRenew({ agent: opts.agent, all: opts.all, skipPipelinesRestart });
+        await runRenew({
+          agent: opts.agent,
+          all: opts.all,
+          skipPipelinesRestart,
+          linkedUserId: opts.linkedUser,
+        });
       } catch (err) {
         printError(err instanceof Error ? err.message : String(err));
         process.exitCode = 1;

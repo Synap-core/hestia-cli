@@ -94,6 +94,15 @@ const SecretsSchema = z.object({
     .object({
       apiUrl: z.string().optional(),
       /**
+       * The human agent keys on this pod act on behalf of.
+       *
+       * The pod REFUSES to guess once more than one human exists — binding to
+       * the oldest would mis-attribute memory writes and the creator×agentType
+       * singleton. Stored on the first successful mint that supplied it, so
+       * `--linked-user` is needed once rather than on every renew.
+       */
+      linkedUserId: z.string().optional(),
+      /**
        * Legacy single-key field. Kept as the back-compat alias for the
        * "eve" agent's key (mirrored on every renew) so older consumers
        * that read `secrets.synap.apiKey` keep working through one

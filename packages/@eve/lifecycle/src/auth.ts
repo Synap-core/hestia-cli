@@ -291,6 +291,15 @@ export async function isKeyValid(opts: {
 // ---------------------------------------------------------------------------
 
 export interface RenewAgentKeyOptions {
+  /**
+   * The HUMAN this agent key acts on behalf of.
+   *
+   * REQUIRED by the pod when more than one human exists: it refuses to guess,
+   * because silently binding to the oldest human mis-attributes memory writes
+   * and the creator×agentType singleton. Single-human pods may omit it.
+   * Falls back to `secrets.synap.linkedUserId` when previously supplied.
+   */
+  linkedUserId?: string;
   /** Where `.eve/secrets/secrets.json` lives. Defaults to the @eve/dna default. */
   deployDir?: string;
   /**
@@ -366,6 +375,15 @@ export async function renewAgentKey(opts: RenewAgentKeyOptions = {}): Promise<Re
 // ---------------------------------------------------------------------------
 
 export interface ProvisionAgentOptions {
+  /**
+   * The HUMAN this agent key acts on behalf of.
+   *
+   * REQUIRED by the pod when more than one human exists: it refuses to guess,
+   * because silently binding to the oldest human mis-attributes memory writes
+   * and the creator×agentType singleton. Single-human pods may omit it.
+   * Falls back to `secrets.synap.linkedUserId` when previously supplied.
+   */
+  linkedUserId?: string;
   /** Required — the agentType slug to mint a key for. */
   agentType: string;
   /** Where `.eve/secrets/secrets.json` lives. Defaults to EVE_HOME / cwd. */
@@ -507,6 +525,12 @@ export async function provisionAgent(opts: ProvisionAgentOptions): Promise<Provi
 
   const runner = opts.runner ?? new FetchRunner();
   const url = `${synapUrl.replace(/\/+$/, "")}/api/hub/setup/agent`;
+
+  // Explicit flag wins; otherwise reuse whatever a previous successful mint
+  // stored, so a multi-human pod needs `--linked-user` ONCE rather than on
+  // every renew for every agent.
+  const linkedUserId =
+    opts.linkedUserId ?? (secrets?.synap as { linkedUserId?: string } | undefined)?.linkedUserId;
   const previousPrefix = (secrets?.agents?.[agentType]?.hubApiKey ?? secrets?.synap?.apiKey ?? "").slice(0, 8);
 
   const body = JSON.stringify({
@@ -535,6 +559,8 @@ export async function provisionAgent(opts: ProvisionAgentOptions): Promise<Provi
     parentKeyIdPrefix: previousPrefix || undefined,
     reason: opts.reason ?? "provision",
     idempotent: opts.idempotent ?? false,
+    // Only sent when known — a single-human pod must keep working without it.
+    ...(linkedUserId ? { linkedUserId } : {}),
   });
   const headers: Record<string, string> = {
     Authorization: `Bearer ${provisioningToken}`,
@@ -707,6 +733,12 @@ export async function provisionAgent(opts: ProvisionAgentOptions): Promise<Provi
 
   try {
     await writeAgentKey(agentType, record, cwd);
+    // Remember the human ONLY once the pod has accepted it. Persisting a value
+    // the pod rejected would make every later renew fail the same way, from
+    // stored state the user never typed.
+    if (linkedUserId) {
+      await writeEveSecrets({ synap: { linkedUserId } }, cwd);
+    }
   } catch (err) {
     return {
       provisioned: false,
