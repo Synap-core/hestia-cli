@@ -69,6 +69,18 @@ const execAsync = promisify(execCallback);
 // Public types
 // ---------------------------------------------------------------------------
 
+/** The operator agent that administers the pod on the user's behalf. */
+const EVE_AGENT_TYPE = "eve";
+
+/**
+ * Extra Hub scopes requested for the `eve` agent ONLY.
+ *
+ * Deliberately a one-element list rather than a spread of "whatever eve might
+ * need": each entry widens a key that already acts for the human, so adding one
+ * should be a visible decision, not a convenience.
+ */
+const EVE_EXTRA_SCOPES = ["providers.write"] as const;
+
 export interface AuthStatus {
   keyId: string;
   keyIdPrefix: string;
@@ -499,6 +511,22 @@ export async function provisionAgent(opts: ProvisionAgentOptions): Promise<Provi
 
   const body = JSON.stringify({
     agentType,
+    // Scopes BEYOND the pod's shared agent bundle, granted per-agent.
+    //
+    // Only `eve` asks, and only for `providers.write`. Writing an ai_providers
+    // row sets the URL the pod sends every prompt to, which is why the pod keeps
+    // that scope out of the default bundle — so requesting it for every agent
+    // here would undo the narrowing rather than satisfy it. `eve` needs it
+    // because it is the operator tool that registers providers (e.g. the
+    // FreeLLMAPI gateway) on the user's behalf.
+    //
+    // The pod refuses this from a weak surface key; we authenticate with the
+    // PROVISIONING_TOKEN, which is operator-grade. An older pod without the
+    // scope ignores the unknown field — the key simply lacks it, and
+    // `upsertPodProvider` then reports the 403 in plain words.
+    ...(agentType === EVE_AGENT_TYPE
+      ? { extraScopes: EVE_EXTRA_SCOPES }
+      : {}),
     // Diagnostic hints — backend ignores unknown fields. Useful in pod
     // logs to attribute key churn ("renew", "migrate", "install") and
     // to chain new keys back to the previous one if the backend tracks
