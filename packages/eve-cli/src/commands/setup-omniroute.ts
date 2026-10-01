@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { execa } from 'execa';
+import { confirm, isCancel } from '@clack/prompts';
 import { readEveSecrets, upsertPodProvider } from '@eve/dna';
 
 interface SetupOmniRouteOptions {
@@ -8,9 +9,16 @@ interface SetupOmniRouteOptions {
 
 async function runSetupOmniRoute(options: SetupOmniRouteOptions) {
   const secrets = await readEveSecrets();
-  const apiKey = secrets?.ai?.providers?.find(p => p.id === 'synap')?.apiKey;
+  // Try multiple locations where the Synapse API key might be stored
+  const apiKey =
+    secrets?.synap?.apiKey ??
+    secrets?.arms?.openclaw?.synapApiKey ??
+    secrets?.ai?.providers?.find(p => p.id === 'synap')?.apiKey ??
+    process.env.SYNAP_API_KEY ??
+    process.env.OPENCLAW_SYNAP_API_KEY;
+
   if (!apiKey) {
-    throw new Error('Synapse API key not found. Please ensure you have authenticated to the pod.');
+    throw new Error('Synapse API key not found. Please ensure you have authenticated to the pod (run `eve setup` or `eve auth login`).');
   }
 
   const containerName = 'eve-omniroute';
@@ -21,16 +29,37 @@ async function runSetupOmniRoute(options: SetupOmniRouteOptions) {
     await waitForPort(3000);
   }
 
+  const setAsDefault = await confirm({
+    message: 'Use OmniRoute as the default AI provider for the Intelligence Service?',
+    initialValue: true,
+  });
+
+  if (isCancel(setAsDefault)) {
+    console.log('Cancelled.');
+    return;
+  }
+
   const providerBody = {
     providerId: 'omniroute',
     name: 'OmniRoute',
     baseUrl: 'http://localhost:3000',
-    enabled: true,
-    priority: 100,
+    enabled: setAsDefault,
+    // Routing uses ascending priority: 1 is preferred over existing providers.
+    priority: setAsDefault ? 1 : 100,
   };
 
   const result = await upsertPodProvider('http://localhost:4000', apiKey, providerBody);
-  console.log(`OmniRoute setup result: ${result.status} - ${result.summary}`);
+  if (result.status === 'proposed') {
+    console.log(
+      `OmniRoute setup is awaiting approval (${result.proposalId}). It is not active until the proposal is approved.`,
+    );
+  } else {
+    console.log(
+      setAsDefault
+        ? 'OmniRoute is enabled as the default IS provider (priority 1).'
+        : 'OmniRoute is registered but disabled for the IS.',
+    );
+  }
 }
 
 function checkContainerRunning(name: string): Promise<boolean> {
@@ -55,7 +84,7 @@ async function waitForPort(port: number): Promise<void> {
   throw new Error('OmniRoute did not become healthy in time');
 }
 
-export function setupOmniRouteCommand(program: any) {
+export function setupOmniRouteCommand(program: Command) {
   program
     .command('setup-omniroute')
     .description('Set up OmniRoute as an AI provider for the pod')
