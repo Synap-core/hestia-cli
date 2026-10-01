@@ -84,6 +84,12 @@ export interface ComponentInfo {
   deprecationNotice?: string;
   /** Recommended replacement component id, if any. */
   replacedBy?: string;
+  /**
+   * Short self-hosting hint rendered alongside the component description when
+   * the component is available through the Eve CLI as well as the upstream.
+   * Optional — absent means the component is Eve-only.
+   */
+  selfHostedHint?: string;
 }
 
 export const COMPONENTS: ComponentInfo[] = [
@@ -119,6 +125,7 @@ Traefik is always-on infrastructure. It can't be removed; the rest of the stack 
     label: 'FreeLLMAPI',
     emoji: '🎰',
     description: 'Self-hosted gateway pooling free-tier LLM quota behind one OpenAI-compatible endpoint.',
+    selfHostedHint: 'Self-hosted via Eve — `eve add freellmapi`. Upstream docs below.',
     longDescription: `FreeLLMAPI is a self-hosted router that sits in front of ~34 providers'
 FREE TIERS and exposes them as a single OpenAI-compatible \`/v1\` endpoint. You supply your own
 free-tier keys through its dashboard; it tracks per-key quota, scores models, and fails over on
@@ -155,6 +162,7 @@ load.`,
     label: 'OmniRoute',
     emoji: '🧭',
     description: 'Self-hosted LLM gateway exposing an OpenAI-compatible /v1 endpoint with its own dashboard.',
+    selfHostedHint: 'Self-hosted via Eve — `eve add omniroute`. Upstream docs below.',
     longDescription: `OmniRoute is a self-hosted inference gateway: it fronts upstream LLM providers behind one
 OpenAI-compatible \`/v1\` endpoint and serves its own web dashboard for keys, models and usage.
 
@@ -194,6 +202,7 @@ is no CLI path to the key, not as a design choice.`,
     label: 'Remotion',
     emoji: '🎬',
     description: 'Self-hosted programmatic video renderer. Turns React compositions into MP4s on your own hardware — no per-render fees, no cloud video API.',
+    selfHostedHint: 'Self-hosted via Eve — `eve add remotion`. Upstream docs below.',
     longDescription: `Remotion renders video the way you render anything else: as code. A composition is a React component that takes data — titles, images, colors, captions, timestamps — and produces a finished video. Change the data and you re-render; change the component and you change the look.
 
 Inside Eve it is a service on \`eve-network\`, reachable by container name exactly like FreeLLMAPI and OmniRoute. The Synap \`remotion\` capability calls it to list compositions, start a render, and poll its progress — so an agent can produce a video without a cloud account.

@@ -1060,6 +1060,14 @@ volumes:
       return {
         label: 'Installing OmniRoute gateway…',
         async fn() {
+          // The self-hosted hint lives on the component definition in @eve/dna,
+          // so it is printed from there rather than reworded here — one wording,
+          // everywhere the component is described.
+          const comp = COMPONENTS.find(c => c.id === 'omniroute');
+          if (comp?.selfHostedHint) {
+            console.log(`  ${colors.info(comp.selfHostedHint)}`);
+          }
+
           const { runActionToCompletion, omniRouteKeyInstructions } = await import('@eve/lifecycle');
 
           // The key is collected HERE, at the CLI layer, and handed down —
@@ -1118,6 +1126,12 @@ volumes:
       return {
         label: 'Installing Remotion video renderer…',
         async fn() {
+          // One wording, from the component definition — see the OmniRoute block.
+          const comp = COMPONENTS.find(c => c.id === 'remotion');
+          if (comp?.selfHostedHint) {
+            console.log(`  ${colors.info(comp.selfHostedHint)}`);
+          }
+
           const { runActionToCompletion } = await import('@eve/lifecycle');
 
           // The MODE is asked here, at the CLI layer, and passed down — the same
@@ -1177,6 +1191,12 @@ volumes:
       return {
         label: 'Installing FreeLLMAPI gateway…',
         async fn() {
+          // One wording, from the component definition — see the OmniRoute block.
+          const comp = COMPONENTS.find(c => c.id === 'freellmapi');
+          if (comp?.selfHostedHint) {
+            console.log(`  ${colors.info(comp.selfHostedHint)}`);
+          }
+
           const { runActionToCompletion } = await import('@eve/lifecycle');
           const result = await runActionToCompletion('freellmapi', 'install');
           // Print the transcript on FAILURE too. `runCommand` captures both

@@ -293,6 +293,15 @@ async function showComponentOverview(): Promise<void> {
         suffix = '';
       }
       console.log(`    ${dot} ${comp.emoji} ${comp.label.padEnd(20)} ${colors.muted(comp.description.split('.')[0])}${suffix}`);
+      if (comp.selfHostedHint) {
+        console.log(`      ${colors.info(comp.selfHostedHint)}`);
+      }
+      // The hint says "Upstream docs below" — so print them. `homepage` is the
+      // real, verified upstream URL already carried by every component; the
+      // alternative was inventing a docs domain that does not exist.
+      if (comp.selfHostedHint && comp.homepage) {
+        console.log(`      ${colors.muted(`↗ ${comp.homepage}`)}`);
+      }
     }
     // Stale-state hint
     const stale = installedComps.filter(c => componentLiveState.get(c.id) === 'missing');
@@ -312,6 +321,12 @@ async function showComponentOverview(): Promise<void> {
       const comp = COMPONENTS.find(c => c.id === rec.id)!;
       console.log(`    ${colors.warning('○')} ${comp.emoji} ${comp.label.padEnd(20)} ${colors.muted(rec.reason)}`);
       console.log(`      ${colors.muted('→')} ${colors.info(`eve add ${comp.id}`)}`);
+      if (comp.selfHostedHint) {
+        console.log(`      ${colors.info(comp.selfHostedHint)}`);
+      }
+      if (comp.selfHostedHint && comp.homepage) {
+        console.log(`      ${colors.muted(`↗ ${comp.homepage}`)}`);
+      }
     }
   }
 
