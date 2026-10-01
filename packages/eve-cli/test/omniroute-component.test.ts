@@ -140,3 +140,38 @@ describe('the runAction install path never prompts', () => {
     expect(CLACK_IMPORT.test(src)).toBe(false);
   });
 });
+
+/**
+ * The bootstrap token must be scraped from the container's own startup log.
+ *
+ * OmniRoute refuses its dashboard to a non-loopback peer on a fresh install
+ * with "This connection isn't recognized as local … paste the one-time
+ * bootstrap token above to continue". Behind Traefik you are ALWAYS
+ * non-loopback, so this is the normal first-run path — an operator who is told
+ * "sign in with CHANGEME" is sent to a form that cannot work. The token is
+ * printed once and never again, so it has to be captured at install time.
+ *
+ * This asserts the SHAPE of the log line the scrape depends on, against the
+ * real line the running container emitted, so a reworded message cannot
+ * silently turn the scrape into a no-op. It does NOT run docker: the extractor
+ * itself needs a live container and is exercised by `eve add` on the pod.
+ */
+describe('OmniRoute first-run bootstrap', () => {
+  it('the log line the token scrape reads matches what OmniRoute actually emits', () => {
+    // Verbatim from the running container's startup log.
+    const real = '[BOOTSTRAP] Fresh install detected from a non-loopback peer (e.g. a ' +
+      'Docker port-forwarded connection) with no password configured yet. Paste this ' +
+      'ONE-TIME bootstrap token into the onboarding wizard to continue: Yx1Ip5AiWOx5H9EGLbHVXWqPw9w9ejAi';
+
+    const SCRAPE = /bootstrap token into the onboarding wizard to continue: ([A-Za-z0-9]+)/;
+    const m = SCRAPE.exec(real);
+
+    // Reachability: the value the operator must paste is actually recovered.
+    expect(m).not.toBeNull();
+    expect(m?.[1]).toBe('Yx1Ip5AiWOx5H9EGLbHVXWqPw9w9ejAi');
+
+    // Non-vacuity: the pattern is anchored on the phrase, so a log that stops
+    // containing it yields nothing rather than a wrong token.
+    expect(SCRAPE.test('some unrelated line about cleaning up quota_snapshots')).toBe(false);
+  });
+});

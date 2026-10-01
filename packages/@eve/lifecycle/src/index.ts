@@ -3052,26 +3052,73 @@ async function* resolveOmniRouteKey(
  * the terminal. With no prompt left in this layer that hack is unnecessary —
  * `add.ts` prints the transcript before it prompts.
  */
-export async function omniRouteKeyInstructions(): Promise<string> {
+/**
+ * The dashboard URL an operator should actually open.
+ *
+ * Prefers the public routed URL (`https://omniroute.<domain>/dashboard`) and
+ * falls back to the pod host's loopback. Returns null when no domain is
+ * configured, so callers can say so rather than printing a URL that 404s.
+ */
+export async function omniRouteDashboardUrl(): Promise<string | null> {
   const secrets = await readEveSecrets().catch(() => null);
   const domain = secrets?.domain?.primary;
   const ssl = secrets?.domain?.ssl !== false;
-  const dashboard = domain ? `${ssl ? "https" : "http"}://omniroute.${domain}/dashboard` : null;
+  return domain ? `${ssl ? "https" : "http"}://omniroute.${domain}/dashboard` : null;
+}
 
-  return [
+/**
+ * OmniRoute's ONE-TIME bootstrap token, scraped from its own startup log.
+ *
+ * OmniRoute treats a first request from a non-loopback peer as a fresh install
+ * and refuses the dashboard with "This connection isn't recognized as local …
+ * paste the one-time bootstrap token above to continue". Behind Traefik you are
+ * ALWAYS a non-loopback peer, so this is the normal path here — not an edge
+ * case, and not something the operator should have to go find in a log.
+ *
+ * It is printed once, on the first boot with no password configured, and the
+ * container refuses to print it again. So it is scraped ONCE at install time
+ * and surfaced in the instructions; a later `eve add` that finds no token
+ * reports that the dashboard has already been bootstrapped (the operator is
+ * simply signed in by then).
+ */
+export function readOmniRouteBootstrapToken(): string | null {
+  try {
+    const out = execSync(
+      `docker logs ${OMNIROUTE_CONTAINER} 2>&1 | grep -oE 'bootstrap token into the onboarding wizard to continue: [A-Za-z0-9]+' | tail -1`,
+      { encoding: "utf-8", maxBuffer: 4 * 1024 * 1024, stdio: ["pipe", "pipe", "ignore"] },
+    );
+    const token = String(out).trim().split(/\s+/).pop();
+    return token && token.length > 0 ? token : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function omniRouteKeyInstructions(): Promise<string> {
+  const dashboard = await omniRouteDashboardUrl();
+  const token = readOmniRouteBootstrapToken();
+
+  const steps = [
     "",
-    dashboard
-      ? `  Dashboard: ${dashboard}`
-      : `  Dashboard: no domain configured yet, so open it on the pod host at\n` +
-        `    http://127.0.0.1:${OMNIROUTE_PORT}/dashboard\n` +
-        `    (set a domain with \`eve domain set\` and re-run \`eve add omniroute\` for a routed URL)`,
+    `  Dashboard: ${dashboard ?? `http://127.0.0.1:${OMNIROUTE_PORT}/dashboard  (no domain configured — run \`eve domain set <domain>\` for a routed URL)`}`,
     "",
-    "  1. Open that URL.",
-    "  2. Sign in. The first-run password is CHANGEME unless you changed it.",
-    "  3. Go to API Keys and create a key.",
-    "  4. Copy it and paste it below.",
+    // Behind Traefik the request is non-loopback, so OmniRoute demands the
+    // bootstrap token and NOT the CHANGEME password. Getting this wrong sends
+    // the operator to a login form that cannot work.
+    token
+      ? `  1. Open that URL. It will ask for a ONE-TIME BOOTSTRAP TOKEN (you are behind a\n` +
+        `     proxy, so OmniRoute treats this as a first-time connection).\n` +
+        `  2. Paste this token when asked:\n\n` +
+        `       ${token}\n\n` +
+        `     It is also in the container log: docker logs ${OMNIROUTE_CONTAINER} | grep -i bootstrap\n`
+      : `  1. Open that URL and sign in.\n` +
+        `     (No bootstrap token pending — the dashboard has been initialised already.)\n`,
+    `  3. Go to API Keys and create a key.`,
+    `  4. Copy it and paste it below.`,
     "",
-  ].join("\n");
+  ];
+
+  return steps.join("\n");
 }
 
 /**
@@ -3087,11 +3134,13 @@ async function* registerOmniRouteProvider(apiKey: string): AsyncGenerator<Lifecy
   const hubApiKey = await readAgentKeyOrLegacy("eve");
 
   if (!podUrl || !hubApiKey) {
+    const dashboard = await omniRouteDashboardUrl();
     yield {
       type: "log",
       line:
-        "No pod configured — OmniRoute is running but not registered yet. " +
-        "Once the pod is up: eve brain providers add omniroute " +
+        "No pod configured — OmniRoute is running but not registered yet.\n" +
+        (dashboard ? `  Dashboard: ${dashboard}\n` : "") +
+        "  Once the pod is up, register it: eve brain providers add omniroute " +
         `--url http://${OMNIROUTE_CONTAINER}:${OMNIROUTE_PORT}/v1 --key <key> --priority 1`,
     };
     return;
@@ -3273,11 +3322,24 @@ async function* installOmniRoute(opts: InstallOptions): AsyncGenerator<Lifecycle
 
   const key = yield* resolveOmniRouteKey(opts.omnirouteApiKey);
   if (!key) {
+    // Repeat the DASHBOARD URL and the bootstrap token here, not just the raw
+    // provider command. This branch is what an operator sees when the install
+    // succeeded but registration did not — the exact moment they need to know
+    // where to go, and pointing at a container-local URL they cannot open from
+    // their laptop helps nobody.
+    const dashboard = await omniRouteDashboardUrl();
+    const token = readOmniRouteBootstrapToken();
     yield {
       type: "log",
       line:
-        "No API key supplied — OmniRoute is installed and reachable, but NOT registered as a " +
-        "provider. Add it once you have a key: eve brain providers add omniroute " +
+        "No API key supplied — OmniRoute is installed, reachable and routed, but NOT " +
+        "registered as a provider.\n" +
+        (dashboard ? `  Dashboard: ${dashboard}\n` : "") +
+        (token
+          ? `  One-time bootstrap token (you are behind a proxy): ${token}\n`
+          : "") +
+        `  Create a key under API Keys, then re-run: eve add omniroute\n` +
+        "  Or register it directly: eve brain providers add omniroute " +
         `--url http://${OMNIROUTE_CONTAINER}:${OMNIROUTE_PORT}/v1 --key <key> --priority 1`,
     };
     return;
@@ -3309,11 +3371,23 @@ export async function* reconcileOmniRouteRegistration(): AsyncGenerator<Lifecycl
     .catch(() => null);
 
   if (!stored) {
+    // This is the message a re-run actually shows (`eve add omniroute` on an
+    // already-installed component), so it has to be self-sufficient: where the
+    // dashboard is, and the bootstrap token if one is still pending. Printing
+    // only the raw provider command left the operator to hunt for both.
+    const dashboard = await omniRouteDashboardUrl();
+    const token = readOmniRouteBootstrapToken();
     yield {
       type: "log",
       line:
-        "No OmniRoute API key stored — read one from the dashboard, then: " +
-        `eve brain providers add omniroute --url http://${OMNIROUTE_CONTAINER}:${OMNIROUTE_PORT}/v1 --key <key> --priority 1`,
+        "No OmniRoute API key stored — create one to finish registering the provider.\n" +
+        (dashboard ? `  Dashboard: ${dashboard}\n` : "") +
+        (token
+          ? `  One-time bootstrap token (you are behind a proxy): ${token}\n`
+          : "") +
+        "  Then re-run: eve add omniroute\n" +
+        "  Or register it directly: eve brain providers add omniroute " +
+        `--url http://${OMNIROUTE_CONTAINER}:${OMNIROUTE_PORT}/v1 --key <key> --priority 1`,
     };
     return;
   }
