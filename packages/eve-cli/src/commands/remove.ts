@@ -343,6 +343,53 @@ async function removeOmniRoute(): Promise<void> {
   printInfo('  Its keys and SQLite store were KEPT in the `omniroute-data` volume.');
 }
 
+async function removeRemotion(): Promise<void> {
+  const spinner = createSpinner('Stopping Remotion renderer...');
+  spinner.start();
+
+  // Clear the mode first. In external mode there is nothing to stop, and leaving
+  // `mode: 'external'` behind would make a later `eve add remotion` skip the
+  // container install and quietly point at a URL the operator just removed.
+  try {
+    const { readEveSecrets, writeEveSecrets } = await import('@eve/dna');
+    const secrets = await readEveSecrets(process.cwd());
+    const current = secrets?.builder?.remotion;
+    if (current?.mode === 'external') {
+      await writeEveSecrets({ builder: { remotion: { mode: undefined, url: undefined, apiToken: undefined } } });
+      spinner.succeed('Remotion configuration cleared');
+      printInfo('  You were pointed at an external renderer; that setting is now unset.');
+      printInfo('  That renderer was NOT touched — Eve never installed it.');
+      return;
+    }
+  } catch {
+    printWarning('Could not clear the remotion configuration — check manually.');
+  }
+
+  try {
+    const { existsSync } = await import('node:fs');
+    // The compose file lives in the eve workspace (it builds the image from
+    // source), NOT in /opt/remotion — that directory is the operator's project.
+    const deployDir = '/opt/hestia-cli';
+    const composePath = join(deployDir, 'docker-compose.yml');
+
+    if (existsSync(composePath)) {
+      // Only the renderer's own service — `docker compose down` in the workspace
+      // root would also take down anything else composed from that directory.
+      await execa('docker', ['compose', 'rm', '-sf', 'remotion'], { cwd: deployDir, stdio: 'inherit' });
+    }
+    const { stdout } = await execa('docker', ['ps', '-aq', '-f', 'name=eve-builder-remotion']);
+    if (stdout.trim()) {
+      const containers = stdout.trim().split('\n').filter(Boolean);
+      await execa('docker', ['rm', '-f', ...containers], { stdio: 'inherit' });
+    }
+  } catch {
+    printWarning('Remotion removal failed — check manually.');
+  }
+  spinner.succeed('Remotion removed');
+  printInfo('  Your compositions in /opt/remotion were KEPT.');
+  printInfo('  Re-add any time with: eve add remotion');
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -465,6 +512,8 @@ function buildRemoveStep(componentId: string): () => Promise<void> {
       return removeOpenwebui;
     case 'omniroute':
       return removeOmniRoute;
+    case 'remotion':
+      return removeRemotion;
     case 'freellmapi':
       return removeFreellmapi;
     case 'openwebui-pipelines':

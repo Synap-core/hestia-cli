@@ -21,7 +21,10 @@ const UnifiedProviderSchema = z.object({
   models: z.array(z.string()).optional(),
 });
 
-const SecretsSchema = z.object({
+// Exported so consumers can assert a payload is ACCEPTED (reachability)
+// rather than regex the source for a key name — a text match cannot tell a
+// nested key from a comment or a sibling section.
+export const SecretsSchema = z.object({
   version: z.literal('1'),
   updatedAt: z.string(),
   ai: z
@@ -284,6 +287,30 @@ const SecretsSchema = z.object({
           openaiApiKey: z.string().optional(),
           /** Optional base URL override — e.g. https://openrouter.ai/api/v1 for OpenRouter */
           openaiBaseUrl: z.string().optional(),
+        })
+        .optional(),
+      /**
+       * Remotion — self-hosted programmatic video renderer.
+       *
+       * TWO MODES, because the renderer is the one component that may already
+       * exist outside Eve:
+       *   `container` — Eve runs the renderer on this pod (the default).
+       *   `external`  — the operator's own renderer, addressed by URL. Nothing is
+       *                  installed, no container is created, no route is made.
+       *
+       * Stored HERE, under `builder`, deliberately: `writeEveSecrets` deep-merges
+       * only a FIXED list of sections (see the mergeNested calls in that function).
+       * A new top-level section would be replaced wholesale on a partial write
+       * and silently eat its siblings. `builder` is already merged.
+       */
+      remotion: z
+        .object({
+          /** Which renderer this pod should use. Absent = `container`. */
+          mode: z.enum(["container", "external"]).optional(),
+          /** Base URL of an EXTERNAL renderer, e.g. https://render.example.com. */
+          url: z.string().optional(),
+          /** Optional token an external renderer requires (`X-Remotion-Token`). */
+          apiToken: z.string().optional(),
         })
         .optional(),
     })

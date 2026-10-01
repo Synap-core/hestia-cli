@@ -1,0 +1,16 @@
+{
+  "name": "remotion-studio-project",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Seeded by `eve add remotion`. Replace with your own compositions, or point the renderer at another project.",
+  "scripts": {
+    "studio": "remotion studio",
+    "render": "remotion render"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.409",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "remotion": "4.0.409"
+  }
+}

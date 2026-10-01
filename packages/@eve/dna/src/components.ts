@@ -189,6 +189,39 @@ is no CLI path to the key, not as a design choice.`,
     doctor: { critical: false },
   },
   {
+    id: 'remotion',
+    organ: 'builder',
+    label: 'Remotion',
+    emoji: '🎬',
+    description: 'Self-hosted programmatic video renderer. Turns React compositions into MP4s on your own hardware — no per-render fees, no cloud video API.',
+    longDescription: `Remotion renders video the way you render anything else: as code. A composition is a React component that takes data — titles, images, colors, captions, timestamps — and produces a finished video. Change the data and you re-render; change the component and you change the look.
+
+Inside Eve it is a service on \`eve-network\`, reachable by container name exactly like FreeLLMAPI and OmniRoute. The Synap \`remotion\` capability calls it to list compositions, start a render, and poll its progress — so an agent can produce a video without a cloud account.
+
+Two things worth knowing before you rely on it. RENDERING IS SLOW: a composition is CPU/GPU-bound and a 60-second video can take minutes, so renders are asynchronous — you get a job id back immediately and poll it. And it RENDERS compositions, it does not AUTHOR them: the compositions are React components in the project directory, which the installer seeds with one working example you can replace with your own.
+
+If you already run a Remotion renderer somewhere, you do not need this one: \`eve add remotion\` can be pointed at an existing renderer URL instead, and \`eve config set-remotion-url\` switches between the two later.`,
+    homepage: 'https://www.remotion.dev',
+    category: 'add-on',
+    requires: ['traefik'],
+    service: {
+      containerName: 'eve-builder-remotion',
+      internalPort: 8080,
+      // No published host port and no subdomain. This is an API, not a UI, and a
+      // render service reachable from the public internet is a footgun — it is
+      // reached by container name over eve-network, which is also the address the
+      // Synap capability uses (`http://eve-builder-remotion:8080`). Note that
+      // address passes the pod's SSRF guard: docker service names match none of
+      // its blocked patterns, whereas `localhost` and RFC1918 literals do.
+      hostPort: null,
+      subdomain: null,
+      healthPath: '/health',
+    },
+    health: { kind: 'http', path: '/health' },
+    lifecycle: { restartStrategy: 'restart' },
+    doctor: { critical: false },
+  },
+  {
     id: 'nango',
     organ: 'arms',
     label: 'Nango',

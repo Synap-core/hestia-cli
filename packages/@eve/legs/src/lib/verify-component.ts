@@ -37,6 +37,69 @@ function sleep(ms: number): Promise<void> {
  */
 const DOCKER_CALL_TIMEOUT_MS = 4000;
 
+/** Hard cap on an external HTTP probe, same rationale as the docker cap. */
+const EXTERNAL_CALL_TIMEOUT_MS = 6000;
+
+/**
+ * The external URL a component is configured to use, or null for container mode.
+ *
+ * DERIVED from a small explicit table rather than read generically: today exactly
+ * one component can run in external mode, and a generic "any component with a
+ * `secrets.*.url`" rule would silently change health semantics for components
+ * that happen to store a URL for a different purpose. Adding a second external
+ * component means adding a row HERE, which is the point — it is a decision, not a
+ * coincidence.
+ */
+const EXTERNAL_SERVICES: Record<string, { section: 'builder'; key: string }> = {
+  remotion: { section: 'builder', key: 'remotion' },
+};
+
+async function resolveExternalServiceUrl(componentId: string): Promise<string | null> {
+  const spec = EXTERNAL_SERVICES[componentId];
+  if (!spec) return null;
+  try {
+    const { readEveSecrets } = await import('@eve/dna');
+    const secrets = await readEveSecrets();
+    const entry = (secrets?.[spec.section] as Record<string, { mode?: string; url?: string }> | undefined)?.[spec.key];
+    // Absent mode = container (the default), so ONLY an explicit `external` with
+    // a URL switches the health path. A half-written config falls back to the
+    // container checks rather than reporting a renderer that was never configured.
+    if (entry?.mode === 'external' && typeof entry.url === 'string' && entry.url.length > 0) {
+      return entry.url.replace(/\/$/, '');
+    }
+    return null;
+  } catch {
+    // A secrets read failure is NOT "external mode" — falling through to the
+    // container checks reports a real problem instead of a confident wrong one.
+    return null;
+  }
+}
+
+/**
+ * Probe an external service.
+ *
+ * `reachable` is true for ANY HTTP response, whatever the status. Only a
+ * transport failure (refused, DNS, TLS) is unreachable. See the call site for
+ * why a 401 must not read as down.
+ */
+async function probeExternalUrl(
+  baseUrl: string,
+  healthPath: string,
+): Promise<{ reachable: boolean; detail: string }> {
+  const url = `${baseUrl}${healthPath.startsWith('/') ? healthPath : `/${healthPath}`}`;
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      signal: AbortSignal.timeout(EXTERNAL_CALL_TIMEOUT_MS),
+      redirect: 'manual',
+    });
+    return { reachable: true, detail: `HTTP ${res.status}` };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { reachable: false, detail: message };
+  }
+}
+
 /**
  * True if `docker ps` shows the container running, OR a running container is
  * registered on eve-network under that name as an alias.
@@ -155,6 +218,42 @@ export async function verifyComponent(
       ok: true,
       checks: [{ name: 'service', ok: true, detail: 'no network service to verify' }],
       summary: `${comp.label} install complete (no network service)`,
+    };
+  }
+
+  // ── EXTERNAL MODE ─────────────────────────────────────────────────────────
+  // A component configured to use an EXTERNAL service has no container here, so
+  // the docker checks below would report "container not running" forever. Probe
+  // the configured URL instead.
+  //
+  // ANY HTTP response counts as reachable, including 401/403/404. A renderer that
+  // answers "unauthorized" is UP and asking for a token; only a refused
+  // connection, DNS failure, or TLS error is DOWN. This is the same trap the
+  // omniroute registry entry documents (AUTH_002 read as unhealthy) — a naive
+  // status check would report a correctly-authenticated endpoint as broken.
+  const externalUrl = await resolveExternalServiceUrl(componentId);
+  if (externalUrl) {
+    const attempts = opts.quick ? 1 : 3;
+    let reachable = false;
+    let detail = '';
+    for (let i = 0; i < attempts; i++) {
+      const probe = await probeExternalUrl(externalUrl, comp.service.healthPath ?? '/');
+      if (probe.reachable) { reachable = true; detail = probe.detail; break; }
+      detail = probe.detail;
+      if (i < attempts - 1) await sleep(2000);
+    }
+    return {
+      ok: reachable,
+      checks: [{
+        name: 'external',
+        ok: reachable,
+        detail: reachable
+          ? `${externalUrl} responded (${detail})`
+          : `${externalUrl} did not respond — ${detail}`,
+      }],
+      summary: reachable
+        ? `${comp.label}: external service reachable at ${externalUrl}`
+        : `${comp.label}: external service at ${externalUrl} is not answering`,
     };
   }
 

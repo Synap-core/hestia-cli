@@ -1114,6 +1114,65 @@ volumes:
         },
       };
 
+    case 'remotion':
+      return {
+        label: 'Installing Remotion video renderer…',
+        async fn() {
+          const { runActionToCompletion } = await import('@eve/lifecycle');
+
+          // The MODE is asked here, at the CLI layer, and passed down — the same
+          // layering rule as the OmniRoute key: `runAction` is a generator three
+          // layers below the CLI with no terminal, so a prompt there cannot
+          // resolve (measured: EINVAL without a tty, an unresolvable hang with
+          // one). The recipe only CONSUMES the choice.
+          //
+          // Remotion is the one component that may legitimately already exist
+          // outside Eve, so "point at yours" is a real first-class answer rather
+          // than a config escape hatch. A stored `external` URL short-circuits
+          // the question, making a re-run non-interactive.
+          const stored = await readEveSecrets(process.cwd())
+            .then((s) => s?.builder?.remotion)
+            .catch(() => null);
+
+          let mode: 'container' | 'external' = 'container';
+          let url: string | undefined;
+
+          if (stored?.mode === 'external' && stored.url) {
+            mode = 'external';
+            url = stored.url;
+            console.log(`  Using the external Remotion renderer already configured: ${url}`);
+          } else if (getGlobalCliFlags().nonInteractive || !process.stdin.isTTY) {
+            // Default to the pod-local renderer and say so. Installing nothing
+            // because nobody could answer a question would be the wrong default:
+            // the container mode is the self-contained one.
+            console.log('  Non-interactive: installing the renderer on this pod.');
+            console.log('  Already run a renderer elsewhere? Re-run with a URL:');
+            console.log('    eve config set-remotion-url <url>');
+          } else {
+            const answer = await promptLine(
+              'Where should Remotion render? [Enter = on this pod, or paste a renderer URL]:',
+            );
+            const trimmed = answer.trim();
+            if (trimmed.length > 0 && !trimmed.startsWith('http')) {
+              console.log(`  Not a URL — installing the renderer on this pod instead.`);
+            } else if (trimmed.length > 0) {
+              mode = 'external';
+              url = trimmed;
+              console.log(`  Using your existing renderer at ${url}.`);
+            } else {
+              console.log('  Installing the renderer on this pod.');
+            }
+          }
+
+          const result = await runActionToCompletion('remotion', 'install', {
+            remotionMode: mode,
+            remotionUrl: url,
+          });
+          for (const line of result.logs) console.log('  ' + line);
+          if (!result.ok) throw new Error(result.error ?? 'Remotion install failed');
+        },
+      };
+
     case 'freellmapi':
       return {
         label: 'Installing FreeLLMAPI gateway…',

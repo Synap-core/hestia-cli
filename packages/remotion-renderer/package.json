@@ -1,0 +1,19 @@
+{
+  "name": "remotion-renderer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-hosted Remotion renderer HTTP service. Implements the exact contract the Synap `remotion` capability calls.",
+  "type": "module",
+  "main": "./src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test \"test/**/*.test.js\""
+  },
+  "dependencies": {
+    "@remotion/bundler": "4.0.409",
+    "@remotion/renderer": "4.0.409",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "remotion": "4.0.409"
+  }
+}
