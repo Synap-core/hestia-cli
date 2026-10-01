@@ -1,360 +1,78 @@
-#!/usr/bin/env node
 import { Command } from 'commander';
-import { existsSync, readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join, resolve } from 'node:path';
-import { setGlobalCliFlags } from '@eve/cli-kit';
-import { migrateSetupProfileToSecrets } from '@eve/lifecycle';
-import { registerBrainCommands } from '@eve/brain';
-import { registerArmsCommands } from '@eve/arms';
-import { registerLegsCommands } from '@eve/legs';
-import { registerEyesCommands } from '@eve/eyes';
-import { registerBuilderCommands } from '@eve/builder';
-import { statusCommand } from './commands/status.js';
-import { doctorCommand } from './commands/doctor.js';
-import { growCommand } from './commands/grow.js';
-import { birthCommand } from './commands/lifecycle/birth.js';
-import { installCommand } from './commands/lifecycle/install.js';
 import { setupCommand } from './commands/setup.js';
-import { runInstall } from './commands/lifecycle/install.js';
-import { addCommand } from './commands/add.js';
-import { removeCommand } from './commands/remove.js';
-import { logsCommand } from './commands/debug/logs.js';
-import { inspectCommand } from './commands/debug/inspect.js';
-import { debugCommand } from './commands/debug/operational.js';
-import { configCommands } from './commands/manage/config-cmd.js';
-import { backupUpdateCommands } from './commands/manage/backup-update.js';
-import { purgeCommand } from './commands/manage/purge.js';
-import { modeCommands } from './commands/mode.js';
+import { setupAdminCommand } from './commands/setup-admin.js';
+import { setupOmniRouteCommand } from './commands/setup-omniroute.js';
+import { doctorCommand } from './commands/doctor.js';
 import { authCommand } from './commands/auth.js';
-import { aiCommandGroup } from './commands/ai.js';
-import { openwebuiCommand } from './commands/openwebui.js';
-import { uiCommand } from './commands/ui.js';
-import { domainCommand } from './commands/domain.js';
-import { intentCommand } from './commands/intent.js';
-import { deployCommand } from './commands/deploy.js';
 import { loginCommand } from './commands/login.js';
+import { growCommand } from './commands/grow.js';
+import { uiCommand } from './commands/ui.js';
+import { statusCommand } from './commands/status.js';
 import { lsCommand } from './commands/ls.js';
 import { synapCommand } from './commands/synap.js';
-import { connectorsCommand } from './commands/connectors.js';
+import { deployCommand } from './commands/deploy.js';
+import { removeCommand } from './commands/remove.js';
+import { aiCommandGroup } from './commands/ai.js';
 import { capabilitiesCommand } from './commands/capabilities.js';
-import { colors, emojis } from './lib/ui.js';
+import { connectorsCommand } from './commands/connectors.js';
+import { openwebuiCommand } from './commands/openwebui.js';
+import { domainCommand } from './commands/domain.js';
+import { addCommand } from './commands/add.js';
+import { installCommand } from './commands/lifecycle/install.js';
+import { birthCommand } from './commands/lifecycle/birth.js';
+import { purgeCommand } from './commands/manage/purge.js';
+import { readEveSecrets } from '@eve/dna';
+import { printHeader, printInfo, printSuccess, printWarning, printError } from './lib/ui.js';
+const version = "0.1.0";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const pkg = JSON.parse(readFileSync(join(__dirname, '../package.json'), 'utf-8')) as { version: string };
-
-// The globally installed `eve` binary can be invoked from any directory — in
-// particular from a Synap deploy directory during recovery. Keep Eve's own
-// state rooted at its installation unless an operator explicitly overrides it.
-const bundledEveHome = resolve(__dirname, '../../..');
-if (
-  !process.env.EVE_HOME &&
-  existsSync(join(bundledEveHome, 'packages', 'eve-cli', 'package.json'))
-) {
-  process.env.EVE_HOME = bundledEveHome;
-}
-const eveHome = process.env.EVE_HOME ?? process.cwd();
-
-// Warn when invoked via `npx eve` — npx downloads the published npm package,
-// ignoring the locally-installed build at /usr/local/bin/eve. Any fixes or
-// updates shipped via `eve update eve` / `git pull + build` won't be visible
-// until the user switches to the installed binary.
-if (process.env.npm_execpath?.includes('npx') || process.env.npm_lifecycle_script?.startsWith('npx')) {
-  process.stderr.write(
-    '\n⚠️  You are running Eve via `npx eve` which downloads the published npm package.\n' +
-    '   This bypasses any local updates. Use the installed binary instead:\n' +
-    '     eve <command>\n' +
-    '   If `eve` is not found, run: bash /opt/eve/scripts/self-update.sh\n\n',
-  );
-}
-
-const program = new Command();
-
-program.configureHelp({
-  sortSubcommands: true,
-  sortOptions: true,
-});
-
-program
+const program = new Command()
   .name('eve')
-  .description(`${emojis.entity} Eve — Entity Creation System`)
-  .version(pkg.version, '-v, --version')
-  .option('--json', 'Machine-readable output where supported')
-  .option('-y, --yes', 'Non-interactive / assume confirm')
-  .option('--verbose', 'Verbose logs')
-  .hook('preAction', async () => {
-    const o = program.opts() as { json?: boolean; yes?: boolean; verbose?: boolean };
-    setGlobalCliFlags({
-      json: Boolean(o.json),
-      nonInteractive: Boolean(o.yes),
-      verbose: Boolean(o.verbose),
-    });
-    // Idempotent: catch up `.eve/secrets.json` from `.eve/setup-profile.json`
-    // (the wizard's user-friendly answers) before any command reads secrets.
-    // Without this, `domainHint` from the wizard stays trapped in setup-profile
-    // and `secrets.domain.primary` stays null — making every downstream
-    // resolver (`resolveSynapUrl`, `resolveHubBaseUrl`) silently return empty
-    // and skipping skill/knowledge/tools pushes into OpenWebUI.
-    // No-op when secrets already has the fields. Failures are non-fatal:
-    // we never want a cosmetic migration to block install/update/sync.
-    try {
-      await migrateSetupProfileToSecrets(eveHome);
-    } catch {
-      // intentional swallow
+  .description('Eve - Entity Creation System. AI-powered sovereign infrastructure.')
+  .version(version)
+  .option('-j, --json', 'Output as JSON')
+  .option('-v, --verbose', 'Verbose output')
+  .hook('preAction', async (thisCommand, actionCommand) => {
+    // Load secrets for commands that need pod access
+    const secrets = await readEveSecrets();
+    if (secrets) {
+      (actionCommand as any).eveSecrets = secrets;
     }
   });
 
-// Header/banner is rendered inside the custom helpInformation() override below.
-
-// --- Lifecycle ---
+// Register all commands
 setupCommand(program);
-installCommand(program);
-addCommand(program);
-removeCommand(program);
-deployCommand(program);
-synapCommand(program);
-connectorsCommand(program);
-capabilitiesCommand(program);
-loginCommand(program);
-lsCommand(program);
-
-program
-  .command('init')
-  .description('Alias for `eve install` — composable installer')
-  .option('--components <list>', 'Comma-separated component IDs')
-  .option('--domain <host>', 'Public hostname', 'localhost')
-  .option('--email <email>', "Let's Encrypt email")
-  .option('--model <model>', 'Ollama model', 'llama3.1:8b')
-  .option('--synap-repo <path>', 'Path to synap-backend checkout')
-  .option('--from-image', 'Install Synap from Docker image')
-  .option('--admin-email <email>', 'Admin bootstrap email')
-  .option('--admin-password <secret>', 'Admin password (preseed mode)')
-  .option('--admin-bootstrap-mode <mode>', 'token | preseed')
-  .option('--dry-run', 'Print plan without executing')
-  .action(async (opts: {
-    components?: string;
-    domain?: string;
-    email?: string;
-    model?: string;
-    synapRepo?: string;
-    fromImage?: boolean;
-    adminEmail?: string;
-    adminPassword?: string;
-    adminBootstrapMode?: 'token' | 'preseed';
-    dryRun?: boolean;
-  }) => {
-    try {
-      await runInstall({
-        components: opts.components ? opts.components.split(',').map(s => s.trim()) : undefined,
-        domain: opts.domain,
-        email: opts.email,
-        model: opts.model,
-        synapRepo: opts.synapRepo,
-        fromImage: opts.fromImage,
-        adminEmail: opts.adminEmail,
-        adminPassword: opts.adminPassword,
-        adminBootstrapMode: opts.adminBootstrapMode,
-        dryRun: opts.dryRun,
-      });
-    } catch (err) {
-      console.error(String(err));
-      process.exit(1);
-    }
-  });
-
-birthCommand(program);
-statusCommand(program);
-growCommand(program);
-
-// --- Debug ---
+setupAdminCommand(program);
+setupOmniRouteCommand(program);
 doctorCommand(program);
-logsCommand(program);
-inspectCommand(program);
-debugCommand(program);
-
-// --- Management ---
-configCommands(program);
-backupUpdateCommands(program);
-modeCommands(program);
 authCommand(program);
+loginCommand(program);
+growCommand(program);
+uiCommand(program);
+statusCommand(program);
+lsCommand(program);
+synapCommand(program);
+deployCommand(program);
+removeCommand(program);
+aiCommandGroup(program);
+capabilitiesCommand(program);
+connectorsCommand(program);
+openwebuiCommand(program);
+domainCommand(program);
+addCommand(program);
+installCommand(program);
+birthCommand(program);
 purgeCommand(program);
 
-// --- AI ---
-aiCommandGroup(program);
-
-// --- OpenWebUI ---
-openwebuiCommand(program);
-
-// --- UI ---
-uiCommand(program);
-
-// --- Domain ---
-domainCommand(program);
-
-// --- Intent (background_tasks) ---
-intentCommand(program);
-
-// --- Organs ---
-const brain = program.command('brain').description('Intelligence & memory (Synap, Ollama)');
-registerBrainCommands(brain);
-
-const arms = program.command('arms').description('Action — OpenClaw (agent messaging layer)');
-registerArmsCommands(arms);
-
-const eyes = program.command('eyes').description('Perception — RSSHub');
-registerEyesCommands(eyes);
-
-const legs = program.command('legs').description('Exposure — Traefik & domains');
-registerLegsCommands(legs);
-
-const builder = program.command('builder').description('Creation — OpenCode / OpenClaude / Dokploy');
-registerBuilderCommands(builder);
-
-// ---------------------------------------------------------------------------
-// Help visibility: hide redundant/niche commands from default `eve --help`
-// while keeping them fully runnable. They reappear via `eve help-all`.
-// ---------------------------------------------------------------------------
-
-const HIDDEN_FROM_DEFAULT_HELP = new Set([
-  'init',     // alias for `install` — hide the duplicate entry
-  'setup',    // niche guided 3-path wizard
-  'birth',    // bare-metal provisioning (placeholder)
-  'grow',     // semantic overlap with `add`
-  'purge',    // destructive — keep out of default help
-  'inspect',  // power-user debug
-  'brain',    // organ wrapper (delegates to install/status)
-  'arms',
-  'eyes',
-  'legs',
-  'builder',
-]);
-
-for (const cmd of program.commands) {
-  if (HIDDEN_FROM_DEFAULT_HELP.has(cmd.name())) {
-    (cmd as Command & { hidden?: boolean }).hidden = true;
+// Global error handler
+program.exitOverride((err) => {
+  if (err.code === 'commander.helpDisplayed' || err.code === 'commander.versionDisplayed') {
+    process.exit(0);
   }
-}
-
-// Categorized help renderer — used by both default `--help` and `help-all`.
-// `showHidden=true` includes hidden commands grouped under their categories.
-type HelpCategory = { title: string; commands: string[] };
-
-const DEFAULT_CATEGORIES: HelpCategory[] = [
-  { title: 'Lifecycle',     commands: ['install', 'update', 'add', 'remove'] },
-  { title: 'Status',        commands: ['status', 'doctor'] },
-  { title: 'Operations',    commands: ['logs', 'restart', 'recreate', 'backup'] },
-  { title: 'Configuration', commands: ['config', 'domain', 'mode', 'auth', 'ai'] },
-  { title: 'UI',            commands: ['ui'] },
-];
-
-const HIDDEN_CATEGORIES: HelpCategory[] = [
-  { title: 'Lifecycle (hidden)', commands: ['init', 'setup', 'birth', 'grow'] },
-  { title: 'Debug (hidden)',     commands: ['inspect', 'purge'] },
-  { title: 'Organs (hidden)',    commands: ['brain', 'arms', 'eyes', 'legs', 'builder'] },
-];
-
-function shortDesc(s: string): string {
-  // First sentence only; clamp to 70 chars to keep the help screen tight.
-  const firstSentence = s.split(/(?<=\.)\s|\.\s/)[0].trim();
-  const base = firstSentence.length > 0 ? firstSentence : s;
-  return base.length > 70 ? base.slice(0, 67).trimEnd() + '…' : base;
-}
-
-function describeCommand(name: string): { label: string; desc: string } | null {
-  const cmd = program.commands.find((c) => c.name() === name);
-  if (!cmd) return null;
-  const aliases = cmd.aliases();
-  const label = aliases.length > 0 ? `${cmd.name()} (${aliases.join(', ')})` : cmd.name();
-  return { label, desc: shortDesc(cmd.description()) };
-}
-
-function renderCategories(categories: HelpCategory[]): string {
-  const labelWidth = 16;
-  const lines: string[] = [];
-  for (const cat of categories) {
-    const rows: string[] = [];
-    for (const name of cat.commands) {
-      const info = describeCommand(name);
-      if (!info) continue;
-      const label = info.label.padEnd(labelWidth);
-      rows.push(`  ${colors.primary(label)} ${colors.muted(info.desc)}`);
-    }
-    if (rows.length === 0) continue;
-    lines.push('');
-    lines.push(colors.primary.bold(`${cat.title}:`));
-    lines.push(...rows);
-  }
-  return lines.join('\n');
-}
-
-function buildHelpString(showHidden: boolean): string {
-  // Header (banner + organ symbology) — branding stays
-  const header =
-    `\n${colors.primary.bold('Eve — sovereign stack installer & operator')}\n\n` +
-    `${emojis.brain} Brain   Synap + data stores + optional Ollama\n` +
-    `${emojis.arms} Arms    OpenClaw (agent messaging layer)\n` +
-    `${emojis.builder} Builder OpenCode / OpenClaude / Dokploy\n` +
-    `${emojis.eyes} Eyes    RSSHub\n` +
-    `${emojis.legs} Legs    Traefik / domains\n`;
-
-  const usage =
-    `\n${colors.muted('Usage:')} eve [options] [command]\n` +
-    `${colors.muted('Flags:')} ${colors.primary('--help-all')} ${colors.muted('(full list)')}  ` +
-    `${colors.primary('-v')} ${colors.muted('version')}  ` +
-    `${colors.primary('--json -y --verbose')} ${colors.muted('(see <command> --help)')}\n`;
-  const globalOpts = '';
-
-  const main = renderCategories(DEFAULT_CATEGORIES);
-  const hidden = showHidden ? '\n\n' + renderCategories(HIDDEN_CATEGORIES) : '';
-
-  const footer = showHidden
-    ? `\n\n${colors.muted('These commands are hidden from default help but remain runnable.')}\n` +
-      `${colors.muted('Run')} ${colors.primary('eve <command> --help')} ${colors.muted('for command-specific help.')}\n`
-    : `\n\n${colors.muted('Run')} ${colors.primary('eve --help-all')} ${colors.muted('to see all commands including legacy and niche options.')}\n` +
-      `${colors.muted('Run')} ${colors.primary('eve <command> --help')} ${colors.muted('for command-specific help.')}\n`;
-
-  return header + usage + globalOpts + main + hidden + footer;
-}
-
-// Override top-level help output with our categorized layout. Subcommands
-// keep commander's default help renderer (helpInformation is per-command).
-program.helpInformation = function (): string {
-  const argvHasHelpAll = process.argv.slice(2).includes('--help-all');
-  let optsHelpAll = false;
-  try {
-    optsHelpAll = Boolean((program.opts() as { helpAll?: boolean }).helpAll);
-  } catch {
-    // opts() may throw before parse — fall back to argv inspection
-  }
-  return buildHelpString(argvHasHelpAll || optsHelpAll);
-};
-
-// `--help-all` flag — toggles the hidden categories in the help output.
-program.option('--help-all', 'Show all commands including legacy/niche');
-
-// Also expose `eve help-all` as a top-level command for discoverability.
-program
-  .command('help-all')
-  .description('Show all commands including legacy/niche')
-  .action(() => {
-    process.stdout.write(buildHelpString(true));
-  });
-
-// If user passed --help-all without --help, still show the full help and exit.
-const argv = process.argv.slice(2);
-if (argv.includes('--help-all') && !argv.includes('--help') && !argv.includes('-h') && !argv.includes('help-all')) {
-  process.stdout.write(buildHelpString(true));
-  process.exit(0);
-}
-
-process.on('unhandledRejection', (reason: unknown) => {
-  console.error('Unhandled:', reason);
+  printError(err.message);
   process.exit(1);
 });
 
-program.parse();
-
-if (!process.argv.slice(2).length) {
-  program.outputHelp();
-}
+program.parseAsync(process.argv).catch((err) => {
+  printError(err.message);
+  process.exit(1);
+});
