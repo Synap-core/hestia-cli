@@ -3091,6 +3091,50 @@ async function* registerOmniRouteProvider(apiKey: string): AsyncGenerator<Lifecy
   }
 }
 
+/**
+ * Remove a non-compose container squatting `OMNIROUTE_CONTAINER`'s name.
+ *
+ * Only acts when the container's image IS OmniRoute's. Anything else with our
+ * name is reported and left in place: this is a recovery for our own leftovers,
+ * not a licence to delete containers we do not own.
+ *
+ * The leftover's anonymous volume is intentionally NOT removed — it holds the
+ * gateway's SQLite store and its auto-generated secrets, so destroying it would
+ * invalidate every key ever issued against that instance.
+ */
+async function* clearStaleOmniRouteContainer(): AsyncGenerator<LifecycleEvent, void, void> {
+  const image = (() => {
+    try {
+      return execSync(
+        `docker inspect -f '{{.Config.Image}}' ${OMNIROUTE_CONTAINER} 2>/dev/null || true`,
+        { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] },
+      ).trim();
+    } catch {
+      return "";
+    }
+  })();
+
+  if (!image) return; // nothing squatting — the common case
+
+  if (!image.includes("omniroute")) {
+    yield {
+      type: "log",
+      line:
+        `A container named ${OMNIROUTE_CONTAINER} exists but runs "${image}", not OmniRoute. ` +
+        `Leaving it alone — rename or remove it yourself, then re-run: eve add omniroute`,
+    };
+    return;
+  }
+
+  yield {
+    type: "log",
+    line:
+      `Removing a leftover ${OMNIROUTE_CONTAINER} container from an earlier manual install ` +
+      `(same image, but not managed by compose). Its data volume is kept.`,
+  };
+  yield* runCommand("docker", ["rm", "-f", OMNIROUTE_CONTAINER]);
+}
+
 function inspectOmniRouteState(): string {
   try {
     return execSync(
@@ -3111,6 +3155,23 @@ async function* installOmniRoute(): AsyncGenerator<LifecycleEvent> {
 
   writeOmniRouteCompose(deployDir);
   yield* ensureEveNetwork();
+
+  // Self-heal a container squatting the name.
+  //
+  // `docker compose up` refuses when the container name is taken by a
+  // container compose does not own — the error is a bare "Conflict … already
+  // in use", naming no remedy, so the install just fails. That is reachable
+  // here in a way it never was for FreeLLMAPI: this gateway shipped first as a
+  // standalone `eve setup-omniroute` script whose inline `docker run` used no
+  // compose project, so every early install left exactly such a container
+  // behind. Those hold the SAME gateway image and the same `/app/data` — but
+  // on a DIFFERENT volume and with no host port, so compose cannot adopt them.
+  //
+  // Narrow ON PURPOSE: this removes only a container that is (a) named ours and
+  // (b) built from the OmniRoute image. A container with our name but another
+  // image is reported and left alone — silently deleting something we did not
+  // create is not a recovery.
+  yield* clearStaleOmniRouteContainer();
 
   let code = yield* runCommand("docker", ["compose", "up", "-d"], { cwd: deployDir });
 
