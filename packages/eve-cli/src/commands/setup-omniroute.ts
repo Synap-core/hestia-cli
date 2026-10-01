@@ -99,17 +99,32 @@ async function runSetupOmniRoute(_options: SetupOmniRouteOptions) {
     return;
   }
 
+  // Discover the models OmniRoute actually serves. Without this the provider
+  // row lands with `models: []`, and `resolveModelId` falls through to
+  // "the provider's first model" → undefined → "" — a priority-1 provider
+  // that can serve nothing. The list comes from the gateway's own
+  // OpenAI-compatible /v1/models, so it can never drift from what runs.
+  const models = await listModels(CONTAINER_NAME, resolvedPort ?? OMNIROUTE_PORT);
+  if (models.length === 0) {
+    console.warn(
+      `Warning: OmniRoute reported no models. The provider will register with an empty model list ` +
+      `and cannot serve requests until models are declared.`,
+    );
+  }
+
   const providerBody = {
     providerId: 'omniroute',
     name: 'OmniRoute',
-    // Container-name addressing on eve-network, with the image's real port.
-    // The IS runs inside a container, so `localhost` here would point at the
-    // IS itself, not at OmniRoute — same reason FreeLLMAPI uses
-    // `http://eve-brain-freellmapi:3001/v1`.
+    // Container-name addressing on eve-network, with the port we PROVED
+    // answers. The IS runs inside a container, so `localhost` here would
+    // point at the IS itself — same reason FreeLLMAPI uses
+    // `http://eve-brain-freellmapi:3001/v1`. A public URL would only add
+    // DNS/TLS/routing failure modes for an IS already on this network.
     baseUrl: `http://${CONTAINER_NAME}:${resolvedPort ?? OMNIROUTE_PORT}/v1`,
     enabled: setAsDefault,
     // Routing uses ascending priority: 1 is preferred over existing providers.
     priority: setAsDefault ? 1 : 100,
+    ...(models.length > 0 ? { models } : {}),
   };
 
   const result = await upsertPodProvider(podUrl, apiKey, providerBody);
@@ -123,6 +138,29 @@ async function runSetupOmniRoute(_options: SetupOmniRouteOptions) {
         ? 'OmniRoute is enabled as the default IS provider (priority 1).'
         : 'OmniRoute is registered but disabled for the IS.',
     );
+  }
+}
+
+/**
+ * Ask the gateway which models it serves, via its OpenAI-compatible
+ * `/v1/models`. Returns `[]` when the endpoint refuses — the caller must
+ * treat empty as "unknown", never as "has none".
+ */
+async function listModels(name: string, port: number): Promise<Array<{ id: string }>> {
+  try {
+    const { stdout } = await execa('docker', [
+      'run', '--rm', '--network', 'eve-network',
+      'curlimages/curl:latest',
+      '-s', '--max-time', '10',
+      // Some gateways accept a key on the models probe even when they serve
+      // inference unauthenticated; an empty header is harmless either way.
+      '-H', `Authorization: Bearer ${process.env.OMNIROUTE_API_KEY ?? ''}`,
+      `http://${name}:${port}/v1/models`,
+    ], { timeout: 20_000 });
+    const parsed = JSON.parse(stdout) as { data?: Array<{ id?: string }> };
+    return (parsed.data ?? []).map(m => ({ id: String(m.id) })).filter(m => m.id);
+  } catch {
+    return [];
   }
 }
 
