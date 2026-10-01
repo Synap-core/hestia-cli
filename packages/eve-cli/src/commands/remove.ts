@@ -293,6 +293,56 @@ async function removeFreellmapi(): Promise<void> {
   printInfo('  To destroy them too: docker volume rm freellmapi_freellmapi-data');
 }
 
+/**
+ * Remove OmniRoute. Mirrors `removeFreellmapi`: disable the pod provider FIRST
+ * (a running container with a disabled row beats a torn-down one still
+ * routed), then tear down the container — and never the volume, because that
+ * holds the gateway's SQLite store AND the auto-generated JWT /
+ * storage-encryption / API secrets. Regenerating those invalidates every key
+ * issued against the instance.
+ */
+async function removeOmniRoute(): Promise<void> {
+  const spinner = createSpinner('Stopping OmniRoute...');
+  spinner.start();
+  let podNotice: string | null = null;
+
+  try {
+    const { readEveSecrets, resolveSynapUrl, readAgentKeyOrLegacy, setPodProviderEnabled, describePodProviderResult } =
+      await import('@eve/dna');
+    const secrets = await readEveSecrets(process.cwd());
+    const podUrl = resolveSynapUrl(secrets);
+    const apiKey = await readAgentKeyOrLegacy('eve', process.cwd());
+    if (podUrl && apiKey) {
+      const result = await setPodProviderEnabled(podUrl, apiKey, 'omniroute', false);
+      podNotice = describePodProviderResult(result);
+    }
+  } catch {
+    printWarning('Could not disable the omniroute provider on the pod — do it manually.');
+  }
+
+  try {
+    const { existsSync } = await import('node:fs');
+    const deployDir = '/opt/omniroute';
+    const composePath = join(deployDir, 'docker-compose.yml');
+
+    if (existsSync(composePath)) {
+      // NOTE: no `--volumes` — the volume holds every registered key.
+      await execa('docker', ['compose', 'down'], { cwd: deployDir, stdio: 'inherit' });
+    } else {
+      const { stdout } = await execa('docker', ['ps', '-aq', '-f', 'name=eve-brain-omniroute']);
+      if (stdout.trim()) {
+        const containers = stdout.trim().split('\n').filter(Boolean);
+        await execa('docker', ['rm', '-f', ...containers], { stdio: 'inherit' });
+      }
+    }
+  } catch {
+    printWarning('OmniRoute removal failed — check manually.');
+  }
+  spinner.succeed('OmniRoute removed (keys kept)');
+  if (podNotice) console.log('  ' + podNotice);
+  printInfo('  Its keys and SQLite store were KEPT in the `omniroute-data` volume.');
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -413,6 +463,8 @@ function buildRemoveStep(componentId: string): () => Promise<void> {
       return removeRsshub;
     case 'openwebui':
       return removeOpenwebui;
+    case 'omniroute':
+      return removeOmniRoute;
     case 'freellmapi':
       return removeFreellmapi;
     case 'openwebui-pipelines':

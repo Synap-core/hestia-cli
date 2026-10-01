@@ -150,6 +150,45 @@ load.`,
     doctor: { critical: false },
   },
   {
+    id: 'omniroute',
+    organ: 'brain',
+    label: 'OmniRoute',
+    emoji: '🧭',
+    description: 'Self-hosted LLM gateway exposing an OpenAI-compatible /v1 endpoint with its own dashboard.',
+    longDescription: `OmniRoute is a self-hosted inference gateway: it fronts upstream LLM providers behind one
+OpenAI-compatible \`/v1\` endpoint and serves its own web dashboard for keys, models and usage.
+
+Inside Eve it is registered in your pod's ai_providers table and reached by container name over
+\`eve-network\` — the same lane FreeLLMAPI uses — so the Intelligence Service can call it directly
+with no host port published.
+
+One thing to know before you rely on it: unlike FreeLLMAPI, whose unified key it PRINTS on first
+boot (Eve scrapes that automatically), OmniRoute keeps its keys in a \`registered_keys\` table behind
+its dashboard. So \`eve add omniroute\` brings the container up, waits for it to answer, and then asks
+you to paste a key from the dashboard. That prompt is the only manual step — it exists because there
+is no CLI path to the key, not as a design choice.`,
+    homepage: 'https://hub.docker.com/r/diegosouzapw/omniroute',
+    category: 'add-on',
+    requires: ['traefik'],
+    service: {
+      containerName: 'eve-brain-omniroute',
+      // Next.js server: one port serves BOTH the dashboard and /v1 — not a split.
+      internalPort: 20128,
+      // No published host port. The IS reaches it by container name on
+      // eve-network, and the dashboard through Traefik at omniroute.<domain>.
+      hostPort: null,
+      subdomain: 'omniroute',
+      // OmniRoute authenticates even its models probe (AUTH_002), so a probe
+      // without a key is NOT a health signal — it reads as "up" for a gateway
+      // that would then reject every real request. The installer waits with a
+      // key in hand; eve doctor treats docker-level liveness as the check.
+      healthPath: '/v1/models',
+    },
+    health: { kind: 'docker' },
+    lifecycle: { restartStrategy: 'restart' },
+    doctor: { critical: false },
+  },
+  {
     id: 'nango',
     organ: 'arms',
     label: 'Nango',

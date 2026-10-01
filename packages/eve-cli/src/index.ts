@@ -38,7 +38,6 @@ import { lsCommand } from './commands/ls.js';
 import { synapCommand } from './commands/synap.js';
 import { connectorsCommand } from './commands/connectors.js';
 import { capabilitiesCommand } from './commands/capabilities.js';
-import { setupOmniRouteCommand } from './commands/setup-omniroute.js';
 import { colors, emojis } from './lib/ui.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -196,13 +195,6 @@ domainCommand(program);
 // --- Intent (background_tasks) ---
 intentCommand(program);
 
-// --- AI providers (BYOI) ---
-// Registers `eve setup-omniroute`. `eve setup admin` is NOT registered here —
-// it is a sub-command of `eve setup` (see commands/setup.ts), which already
-// calls setupAdminCommand(setupCmd). Registering it at top level too would
-// shadow `eve setup admin` with a bare `eve admin`.
-setupOmniRouteCommand(program);
-
 // --- Organs ---
 const brain = program.command('brain').description('Intelligence & memory (Synap, Ollama)');
 registerBrainCommands(brain);
@@ -252,7 +244,7 @@ const DEFAULT_CATEGORIES: HelpCategory[] = [
   { title: 'Lifecycle',     commands: ['install', 'update', 'add', 'remove'] },
   { title: 'Status',        commands: ['status', 'doctor'] },
   { title: 'Operations',    commands: ['logs', 'restart', 'recreate', 'backup'] },
-  { title: 'Configuration', commands: ['config', 'domain', 'mode', 'auth', 'ai', 'setup-omniroute'] },
+  { title: 'Configuration', commands: ['config', 'domain', 'mode', 'auth', 'ai'] },
   { title: 'UI',            commands: ['ui'] },
 ];
 

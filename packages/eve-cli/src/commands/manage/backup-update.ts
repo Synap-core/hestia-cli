@@ -275,6 +275,7 @@ async function buildUpdateTargets(deployDir: string | undefined): Promise<Update
   // never attempt to update a service that was never installed.
   if (has('ollama'))              targets.push(lifecycleUpdate('ollama', '🤖 Ollama'));
   if (has('freellmapi'))          targets.push(lifecycleUpdate('freellmapi', '🎰 FreeLLMAPI'));
+  if (has('omniroute'))            targets.push(lifecycleUpdate('omniroute', '🧭 OmniRoute'));
   if (has('openclaw'))            targets.push(lifecycleUpdate('openclaw', '🦾 OpenClaw'));
   if (has('nango'))               targets.push({
     id: 'nango',

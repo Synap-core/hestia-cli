@@ -745,9 +745,9 @@ export async function runAdd(
       // never retried. Routes are only half of "installed but not working":
       // freellmapi can be running and reachable while the pod still has no
       // provider row, which is exactly the state a first install left behind.
-      if (componentId === 'freellmapi') {
+      if (componentId === 'freellmapi' || componentId === 'omniroute') {
         const { runReconcileToCompletion } = await import('@eve/lifecycle');
-        const res = await runReconcileToCompletion('freellmapi');
+        const res = await runReconcileToCompletion(componentId);
         for (const line of res.logs) printInfo(`  ${line}`);
       }
 
@@ -1023,6 +1023,20 @@ volumes:
     // NOT a second inline compose string here. `openwebui` has exactly that
     // (a different YAML in this file from the one lifecycle writes), and the
     // two have drifted; adding a third copy is how that becomes permanent.
+    case 'omniroute':
+      return {
+        label: 'Installing OmniRoute gateway…',
+        async fn() {
+          const { runActionToCompletion } = await import('@eve/lifecycle');
+          const result = await runActionToCompletion('omniroute', 'install');
+          // Print the transcript on FAILURE too — docker's actual complaint is
+          // the only thing that makes this debuggable, and runCommand captures
+          // it in result.logs. Same contract as freellmapi below.
+          for (const line of result.logs) console.log('  ' + line);
+          if (!result.ok) throw new Error(result.error ?? 'OmniRoute install failed');
+        },
+      };
+
     case 'freellmapi':
       return {
         label: 'Installing FreeLLMAPI gateway…',
