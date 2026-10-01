@@ -2944,18 +2944,32 @@ function writeOmniRouteCompose(deployDir: string): void {
  *    still broken.
  */
 async function* waitForOmniRoute(): AsyncGenerator<LifecycleEvent, boolean, void> {
-  const url = `http://${OMNIROUTE_CONTAINER}:${OMNIROUTE_PORT}/`;
+  // Probe the OpenAI-compatible path, NOT `/`. OmniRoute is a Next.js app: an
+  // unauthenticated `/` is not guaranteed to answer 2xx, and probing a path we
+  // have never observed made the whole install hinge on it — when it missed,
+  // the wait timed out and the caller returned early, silently skipping the
+  // state write and the Traefik refresh that follow, so the dashboard URL 404'd
+  // with no route ever created.
+  //
+  // `-f` makes curl FAIL on a 4xx, so AUTH_002 (no key yet) would read as
+  // down. Dropping `-f` and accepting any HTTP status is deliberate: we are
+  // asking "is the server up and routing?", not "is it authenticated?".
+  const url = `http://${OMNIROUTE_CONTAINER}:${OMNIROUTE_PORT}/v1/models`;
   for (let i = 0; i < 30; i++) {
     try {
-      execSync(
+      const status = execSync(
         `docker run --rm --network eve-network curlimages/curl:latest ` +
-          `-sf -o /dev/null --max-time 5 ${url}`,
+          `-s -o /dev/null -w '%{http_code}' --max-time 5 ${url}`,
         { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] },
       );
-      return true;
+      // Any HTTP response proves the server is listening and routing. 000
+      // means connection refused / DNS failure — genuinely not up yet.
+      const code = String(status).trim();
+      if (code && code !== "000") return true;
     } catch {
-      await new Promise((r) => setTimeout(r, 2000));
+      /* sidecar failed to start — fall through and retry */
     }
+    await new Promise((r) => setTimeout(r, 2000));
   }
   return false;
 }
@@ -3211,15 +3225,28 @@ async function* installOmniRoute(): AsyncGenerator<LifecycleEvent> {
 
   const healthy = yield* waitForOmniRoute();
   if (!healthy) {
+    // Neither throw nor silently return.
+    //
+    // Throwing would be worse than it looks: `eve add` catches, prints and
+    // calls `process.exit(1)` — which skips the state write AND the Traefik
+    // refresh, so the subdomain never gets a router and the dashboard 404s.
+    // Silently returning is how the failure stayed invisible in the first
+    // place. So: report loudly, then CONTINUE. The container is up, the
+    // component genuinely is installed, and letting the caller finish is what
+    // gets the route created. The key prompt and registration follow either
+    // way — if the gateway is merely slow to answer, the model listing (which
+    // is a separate call) is the thing that will fail, and it says so.
     yield {
       type: "log",
       line:
-        `OmniRoute did not answer on ${OMNIROUTE_CONTAINER}:${OMNIROUTE_PORT} within 60s. ` +
-        `Container state: ${inspectOmniRouteState()}`,
+        `⚠ OmniRoute has not answered on ${OMNIROUTE_CONTAINER}:${OMNIROUTE_PORT}/v1/models after 60s. ` +
+        `Container state: ${inspectOmniRouteState()}. Continuing so the dashboard route is still created — ` +
+        `if it stays unreachable, check: docker logs ${OMNIROUTE_CONTAINER}`,
     };
-    return;
   }
-  yield { type: "log", line: `OmniRoute is answering on ${OMNIROUTE_CONTAINER}:${OMNIROUTE_PORT}.` };
+  if (healthy) {
+    yield { type: "log", line: `OmniRoute is answering on ${OMNIROUTE_CONTAINER}:${OMNIROUTE_PORT}.` };
+  }
 
   const key = yield* resolveOmniRouteKey();
   if (!key) {
