@@ -2992,6 +2992,18 @@ function readFreellmapiUnifiedKey(): string | null {
 }
 
 /**
+ * Does the running FreeLLMAPI container still expose its unified key?
+ *
+ * Exported so the CLI can tell "installed and connected" from "container is up
+ * but the key is gone". FreeLLMAPI prints that key ONCE on first boot, so this
+ * is genuinely false for any container started before it was captured — which
+ * is exactly the state the re-run needs to report rather than paper over.
+ */
+export async function freellmapiHasUnifiedKey(): Promise<boolean> {
+  return readFreellmapiUnifiedKey() !== null;
+}
+
+/**
  * Re-run FreeLLMAPI's pod registration against a container that is ALREADY
  * running. Exported so `eve add freellmapi` can reconcile instead of no-op.
  *

@@ -56,8 +56,83 @@ async function promptLine(question: string, timeoutMs = 5 * 60_000): Promise<str
   }
 }
 
+/**
+ * Is this gateway installed but never actually CONNECTED?
+ *
+ * The recurring shape across the AI gateways: the container is up and routed,
+ * but no credential was ever supplied, so the pod has no working provider row.
+ * Re-running `eve add <id>` used to print the raw command and stop, which left
+ * the operator to discover that command. This is the check that lets the CLI
+ * ASK instead.
+ *
+ * The two gateways read their credentials from DIFFERENT places, and assuming
+ * one shape for both is how this check would have been wrong: FreeLLMAPI's key
+ * is scraped from its container log (printed once on first boot — see
+ * `readFreellmapiUnifiedKey`), while OmniRoute's comes from Eve's secrets
+ * because the operator pastes it. So each is asked at its own source, which is
+ * also exactly the source the reconcile will consult.
+ */
+async function missingGatewayConnection(componentId: string): Promise<boolean> {
+  if (componentId === 'freellmapi') {
+    // Read the same way the reconcile reads, so the two cannot disagree.
+    const { freellmapiHasUnifiedKey } = await import('@eve/lifecycle');
+    return !(await freellmapiHasUnifiedKey());
+  }
+  const secrets = await readEveSecrets(process.cwd()).catch(() => null);
+  const ai = (secrets as { ai?: { providers?: Array<{ id?: string; apiKey?: string }> } } | null)?.ai;
+  const entry = ai?.providers?.find((p) => p.id === componentId);
+  return !entry?.apiKey;
+}
+
+/**
+ * Ask for the missing credential on the already-installed path.
+ *
+ * Returns true when a key was supplied and the caller should re-run the
+ * reconcile. Never prompts without a tty: `eve add -y` in a script must stay
+ * non-interactive, and a prompt that cannot be answered is a hang — which is
+ * the defect that 404'd the OmniRoute dashboard in the first place.
+ */
+async function promptForMissingConnection(componentId: string): Promise<boolean> {
+  if (getGlobalCliFlags().nonInteractive || !process.stdin.isTTY) return false;
+  if (!(await missingGatewayConnection(componentId))) return false;
+
+  const isOmni = componentId === 'omniroute';
+  const label = isOmni ? 'OmniRoute' : 'FreeLLMAPI';
+  if (isOmni) {
+    const { omniRouteKeyInstructions } = await import('@eve/lifecycle');
+    console.log(await omniRouteKeyInstructions());
+  }
+
+  // `node:readline`, never `@clack` — measured on this pod: clack's `text()`
+  // renders and then NEVER resolves, with a pty and with a pipe both.
+  const answer = await promptLine(
+    `Paste the ${label} API key (blank to skip — it stays unregistered):`,
+  );
+  const key = answer.trim();
+  if (key.length === 0) return false;
+
+  // Persist where THAT gateway's install path reads from. FreeLLMAPI's key is
+  // re-scraped from its log and cannot be stored, so only OmniRoute is written
+  // back — writing a secrets entry for it would be a value nothing ever reads,
+  // which is the kind of "looks configured" state this whole path exists to fix.
+  //
+  // `writeEveSecrets(partial, cwd)` takes the PARTIAL FIRST and merges it over
+  // what is already on disk, so there is no read-modify-write here (and no
+  // window where a concurrent write is clobbered).
+  if (isOmni) {
+    const { writeEveSecrets } = await import('@eve/dna');
+    await writeEveSecrets(
+      { ai: { providers: [{ id: componentId, apiKey: key }] } },
+      process.cwd(),
+    );
+  }
+  printInfo(`  Using the ${label} API key you just pasted.`);
+  return true;
+}
+
 /** True if a container with that name exists (any state). */
 async function containerExists(name: string): Promise<boolean> {
+
   try {
     const { stdout } = await execFileAsync(
       'docker', ['ps', '-a', '--filter', `name=^${name}$`, '--format', '{{.Names}}'],
@@ -782,6 +857,18 @@ export async function runAdd(
         const { runReconcileToCompletion } = await import('@eve/lifecycle');
         const res = await runReconcileToCompletion(componentId);
         for (const line of res.logs) printInfo(`  ${line}`);
+
+        // RECONCILE printed the instructions; it could not ASK. On a tty that is
+        // the whole difference between a user who ends up connected and a user
+        // who has to work out the command themselves. This is the common
+        // "installed but never finished" state, so the ask belongs here.
+        //
+        // Only after the reconcile has reported: if it found a key and
+        // registered the provider, there is nothing to ask about.
+        if (await promptForMissingConnection(componentId)) {
+          const again = await runReconcileToCompletion(componentId);
+          for (const line of again.logs) printInfo(`  ${line}`);
+        }
       }
 
       printInfo(`  Or "eve update ${componentId}" to pull the latest image.`);
