@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { execa } from 'execa';
 import { confirm, isCancel } from '@clack/prompts';
-import { readEveSecrets, upsertPodProvider, resolveSynapUrlOnHost } from '@eve/dna';
+import { readEveSecrets, upsertPodProvider, resolveSynapUrlOnHost, readAgentKeyOrLegacySync } from '@eve/dna';
 
 interface SetupOmniRouteOptions {
   // No options needed for now - can be extended later
@@ -42,13 +42,10 @@ async function resolvePodUrl(secrets: Awaited<ReturnType<typeof readEveSecrets>>
 
 async function runSetupOmniRoute(_options: SetupOmniRouteOptions) {
   const secrets = await readEveSecrets();
-  // Try multiple locations where the Synapse API key might be stored
-  const apiKey =
-    secrets?.synap?.apiKey ??
-    secrets?.arms?.openclaw?.synapApiKey ??
-    secrets?.ai?.providers?.find(p => p.id === 'synap')?.apiKey ??
-    process.env.SYNAP_API_KEY ??
-    process.env.OPENCLAW_SYNAP_API_KEY;
+  // Use the canonical resolver: per-agent key first (agents.eve.hubApiKey),
+  // then legacy synap.apiKey fallback. This is the same order every other
+  // Synap consumer uses (readAgentKeyOrLegacySync in @eve/dna).
+  const apiKey = readAgentKeyOrLegacySync('eve', secrets);
 
   if (!apiKey) {
     throw new Error('Synapse API key not found. Please ensure you have authenticated to the pod (run `eve setup` or `eve auth login`).');
