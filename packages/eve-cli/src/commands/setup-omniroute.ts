@@ -119,67 +119,64 @@ function checkContainerRunning(name: string): Promise<boolean> {
 }
 
 /**
- * Poll the container's own health endpoint until it answers.
+ * Probe OmniRoute from a THROWAWAY SIDECAR on `eve-network`, not with
+ * `docker exec`.
  *
- * We do NOT assume which interpreter the image ships. FreeLLMAPI's own
- * healthcheck uses Node's `fetch`, but this image may be Go or Python —
- * probing with a single tool that isn't installed fails every time and
- * looks exactly like a dead container. So we try the tools in order, and
- * we stop at the first that answers. The image serves an OpenAI-compatible
- * `/v1/models` endpoint, so any HTTP client works.
+ * `docker exec <name> curl/node/python` requires an HTTP client to exist
+ * INSIDE the target image. OmniRoute ships none of the three (the pod proved
+ * it: `exec: "curl": executable file not found`), so every in-container
+ * probe fails identically and looks exactly like a dead container — while
+ * the container is in fact running and healthy.
+ *
+ * A sidecar needs nothing from the target image, and it tests the path that
+ * actually matters: container-name DNS resolution over `eve-network` — the
+ * exact route the Synap IS will use to reach OmniRoute. Probing
+ * `127.0.0.1` inside the container could pass while that route was still
+ * broken (wrong network, no DNS), so this is strictly more informative than
+ * the in-container probe it replaces.
  */
 async function waitForHealthy(name: string): Promise<void> {
-  const timeout = 60000;
-  const interval = 1000;
+  const timeout = 90000;
+  const interval = 2000;
+  const url = `http://${name}:${OMNIROUTE_PORT}/v1/models`;
   let elapsed = 0;
-  let lastErr: string = '';
+  const errors: string[] = [];
+
   while (elapsed < timeout) {
-    // Node's global fetch — the same primitive FreeLLMAPI's healthcheck uses.
+    // `--rm` so the probe container never accumulates. `curlimages/curl` is
+    // purpose-built for exactly this and needs no host port.
     try {
       await execa('docker', [
-        'exec', name, 'node', '-e',
-        `fetch('http://127.0.0.1:${OMNIROUTE_PORT}/v1/models').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))`,
-      ], { timeout: 5000 });
+        'run', '--rm', '--network', 'eve-network',
+        'curlimages/curl:latest',
+        '-sf', '--max-time', '5', url,
+      ], { timeout: 20_000 });
       return;
     } catch (err) {
-      lastErr = err instanceof Error ? err.message : String(err);
-    }
-    // Python's urllib — many gateway images are Python.
-    try {
-      await execa('docker', [
-        'exec', name, 'python3', '-c',
-        `import urllib.request, sys; r = urllib.request.urlopen('http://127.0.0.1:${OMNIROUTE_PORT}/v1/models', timeout=5); sys.exit(0 if r.status == 200 else 1)`,
-      ], { timeout: 5000 });
-      return;
-    } catch (err) {
-      lastErr = err instanceof Error ? err.message : String(err);
-    }
-    // curl — last resort.
-    try {
-      await execa('docker', [
-        'exec', name, 'curl', '-sf', `http://127.0.0.1:${OMNIROUTE_PORT}/v1/models`,
-      ], { timeout: 5000 });
-      return;
-    } catch (err) {
-      lastErr = err instanceof Error ? err.message : String(err);
+      errors.push(err instanceof Error ? err.message : String(err));
     }
     elapsed += interval;
     await new Promise(resolve => setTimeout(resolve, interval));
   }
-  // Include the container's own state and last log lines. Without them the
-  // message is indistinguishable across the three real causes: the image
-  // exited at boot, it never bound the port, or the probe tool is missing.
-  const state = await execa('docker', ['inspect', '-f', '{{.State.Status}} {{.State.ExitCode}}', name], { stdio: 'pipe' })
-    .then(({ stdout }) => stdout.trim())
-    .catch(() => 'unknown');
-  const logs = await execa('docker', ['logs', '--tail', '15', name], { stdio: 'pipe' })
-    .then(({ stdout }) => stdout.trim())
-    .catch(() => '(no logs)');
+
+  // Evidence, because the generic timeout is indistinguishable across the
+  // real causes: wrong port, wrong network, container not serving.
+  const [state, ports, logs] = await Promise.all([
+    execa('docker', ['inspect', '-f', '{{.State.Status}} exit={{.State.ExitCode}}', name], { stdio: 'pipe' })
+      .then(({ stdout }) => stdout.trim()).catch(() => 'unknown'),
+    execa('docker', ['port', name], { stdio: 'pipe' })
+      .then(({ stdout }) => stdout.trim() || '(no published ports)').catch(() => '(unknown)'),
+    execa('docker', ['logs', '--tail', '20', name], { stdio: 'pipe' })
+      .then(({ stdout }) => stdout.trim()).catch(() => '(no logs)'),
+  ]);
 
   throw new Error(
-    `OmniRoute did not become healthy in time (probed http://127.0.0.1:${OMNIROUTE_PORT}/v1/models every ${interval}ms for ${timeout}ms; last error: ${lastErr.slice(0, 200)}).\n` +
+    `OmniRoute never answered ${url} over eve-network (${Math.round(timeout / 1000)}s).\n` +
     `Container state: ${state}\n` +
-    `Last log lines:\n${logs.slice(0, 800)}`,
+    `Published ports: ${ports}\n` +
+    `Last probe error: ${(errors.at(-1) ?? '').slice(0, 300)}\n` +
+    `Last log lines:\n${logs.slice(0, 800)}\n` +
+    `If the container is running but logs look like Synap cleanup output, the image is not OmniRoute — check: docker inspect -f '{{.Config.Image}}' ${name}`,
   );
 }
 
