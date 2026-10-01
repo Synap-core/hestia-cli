@@ -90,6 +90,24 @@ export interface InstallOptions {
   synapRepo?: string;
   /** Ollama model to pull (only used by `ollama`). */
   model?: string;
+  /**
+   * OmniRoute API key, supplied by the CALLER.
+   *
+   * This option exists because a lifecycle recipe must never open a prompt of
+   * its own. `runAction` is driven from generators that run three layers below
+   * the CLI, under a buffered spinner, and a `@clack` prompt at that depth
+   * cannot read the terminal: it raised `TTY initialization failed:
+   * uv_tty_init returned EINVAL` when stdin was a pipe, and hung forever when it
+   * was a pty — which meant `runAction` never returned, so `eve add` never
+   * reached its state write and no Traefik route was ever created (the
+   * subdomain 404'd on a perfectly healthy container).
+   *
+   * `add.ts` owns the interaction and passes the key down; this package only
+   * consumes it. Omit it and OmniRoute installs and routes WITHOUT being
+   * registered — see `installOmniRoute`, which reports that instead of
+   * pretending the provider exists.
+   */
+  omnirouteApiKey?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -2220,7 +2238,7 @@ async function* runInstallRecipe(
     }
 
     case "omniroute": {
-      yield* installOmniRoute();
+      yield* installOmniRoute(opts);
       return;
     }
 
@@ -2991,19 +3009,27 @@ async function listOmniRouteModels(apiKey: string | null): Promise<string[]> {
 }
 
 /**
- * Ask the operator for the OmniRoute API key, reusing a stored one when we
- * already have it.
+ * Resolve the OmniRoute API key WITHOUT ever opening a prompt.
  *
- * This prompt is the whole reason OmniRoute is not as fluid as FreeLLMAPI, and
- * it is not a shortcut: FreeLLMAPI PRINTS its unified key on first boot and Eve
- * scrapes it, while OmniRoute keeps keys in a `registered_keys` table behind
- * its dashboard with no CLI path out. So a human has to read it once. What we
- * CAN do is make that the ONLY manual step, and never register a provider that
- * cannot serve — the earlier version did exactly that and left a priority-1
- * provider with no key and no models.
+ * Precedence: an explicit key from `opts` (the caller — `add.ts` — owns the
+ * interaction), else one already stored in secrets, else nothing.
+ *
+ * This function deliberately does NOT prompt. It used to, and that was a real
+ * defect: a lifecycle recipe runs three layers below the CLI, so the prompt
+ * could not reach the terminal (EINVAL without a tty, an unresolvable hang
+ * with one) and `eve add omniroute` never returned — leaving a healthy
+ * container, no state entry, and a 404. A human still has to read the key once
+ * because OmniRoute keeps keys in a `registered_keys` table with no CLI path
+ * out; that step belongs to the CLI, not here.
  */
-async function* resolveOmniRouteKey(): AsyncGenerator<LifecycleEvent, string | null, void> {
-  const { text, isCancel } = await import("@clack/prompts");
+async function* resolveOmniRouteKey(
+  supplied: string | undefined,
+): AsyncGenerator<LifecycleEvent, string | null, void> {
+  const given = supplied?.trim();
+  if (given) {
+    yield { type: "log", line: "Using the OmniRoute API key supplied by the caller." };
+    return given;
+  }
 
   const existing = await readEveSecrets()
     .then((s) => s?.ai?.providers?.find((p) => p.id === "omniroute")?.apiKey ?? null)
@@ -3014,20 +3040,25 @@ async function* resolveOmniRouteKey(): AsyncGenerator<LifecycleEvent, string | n
     return existing;
   }
 
-  const secrets = await readEveSecrets();
+  return null;
+}
+
+/**
+ * Tell the operator where to get an OmniRoute key.
+ *
+ * A PURE formatter, yielded as a log event: the caller decides when and how to
+ * print it. The previous version wrote these lines to stderr from inside the
+ * generator *and* yielded them, because the prompt had to beat buffered logs to
+ * the terminal. With no prompt left in this layer that hack is unnecessary —
+ * `add.ts` prints the transcript before it prompts.
+ */
+export async function omniRouteKeyInstructions(): Promise<string> {
+  const secrets = await readEveSecrets().catch(() => null);
   const domain = secrets?.domain?.primary;
   const ssl = secrets?.domain?.ssl !== false;
   const dashboard = domain ? `${ssl ? "https" : "http"}://omniroute.${domain}/dashboard` : null;
 
-  // These instructions MUST reach the terminal NOW, not as buffered log events.
-  //
-  // `runActionToCompletion` COLLECTS every `log` event into an array and returns
-  // it — the caller prints them after the action finishes. A `@clack` prompt
-  // writes straight to the tty, so a prompt placed after buffered `yield`s
-  // appears BEFORE them: the operator was asked to paste a key before being
-  // told where to get one. Writing here is deliberate, and the same lines are
-  // still yielded so a non-interactive caller sees them in its transcript.
-  const instructions = [
+  return [
     "",
     dashboard
       ? `  Dashboard: ${dashboard}`
@@ -3041,19 +3072,6 @@ async function* resolveOmniRouteKey(): AsyncGenerator<LifecycleEvent, string | n
     "  4. Copy it and paste it below.",
     "",
   ].join("\n");
-  process.stderr.write(`${instructions}\n`);
-
-  yield { type: "log", line: instructions };
-
-  const answer = await text({
-    message: "Paste the OmniRoute API key (blank to skip — the provider will NOT be registered):",
-    placeholder: "sk-…",
-    defaultValue: "",
-  });
-
-  if (isCancel(answer)) return null;
-  const key = String(answer ?? "").trim();
-  return key.length > 0 ? key : null;
 }
 
 /**
@@ -3173,10 +3191,15 @@ function inspectOmniRouteState(): string {
 }
 
 /**
- * `eve add omniroute` — bring the gateway up, wait for it to answer, obtain a
- * key, and register it with the pod.
+ * `eve add omniroute` — bring the gateway up, wait for it to answer, and
+ * register it with the pod using a key the CALLER supplied.
+ *
+ * Takes the key as a parameter and never prompts: see `InstallOptions.
+ * omnirouteApiKey`. Installing and registering are deliberately separable — a
+ * missing key must never stop the container from coming up and the route from
+ * being written, because that is what left the dashboard 404ing.
  */
-async function* installOmniRoute(): AsyncGenerator<LifecycleEvent> {
+async function* installOmniRoute(opts: InstallOptions): AsyncGenerator<LifecycleEvent> {
   const deployDir = "/opt/omniroute";
 
   writeOmniRouteCompose(deployDir);
@@ -3248,12 +3271,12 @@ async function* installOmniRoute(): AsyncGenerator<LifecycleEvent> {
     yield { type: "log", line: `OmniRoute is answering on ${OMNIROUTE_CONTAINER}:${OMNIROUTE_PORT}.` };
   }
 
-  const key = yield* resolveOmniRouteKey();
+  const key = yield* resolveOmniRouteKey(opts.omnirouteApiKey);
   if (!key) {
     yield {
       type: "log",
       line:
-        "No API key given — OmniRoute is installed and reachable, but NOT registered as a " +
+        "No API key supplied — OmniRoute is installed and reachable, but NOT registered as a " +
         "provider. Add it once you have a key: eve brain providers add omniroute " +
         `--url http://${OMNIROUTE_CONTAINER}:${OMNIROUTE_PORT}/v1 --key <key> --priority 1`,
     };

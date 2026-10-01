@@ -13,6 +13,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { select, text, isCancel, cancel } from '@clack/prompts';
+import { getGlobalCliFlags } from '@eve/cli-kit';
 import {
   entityStateManager,
   readEveSecrets,
@@ -22,6 +23,38 @@ import {
 } from '@eve/dna';
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * Ask for one line on the TTY, with a hard ceiling.
+ *
+ * `@clack`'s `text()` is unusable in an install path: measured on the pod it
+ * renders and then never resolves, with a pty AND with a plain pipe, so an
+ * `eve add` that asked through it simply stopped. `node:readline` answers
+ * correctly under the same conditions.
+ *
+ * The timeout is the belt to that braces: an install must not be able to wedge
+ * on a human, so an unanswered prompt returns `''` (meaning "skip") and the
+ * install continues instead of hanging. Callers must treat the empty result as
+ * "no key", never as an error.
+ */
+async function promptLine(question: string, timeoutMs = 5 * 60_000): Promise<string> {
+  const readline = await import('node:readline');
+  const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+  try {
+    process.stderr.write(`${question}\n`);
+    const answer = new Promise<string>((resolve) => rl.question('', resolve));
+    const expiry = new Promise<string>((resolve) => {
+      const t = setTimeout(() => {
+        process.stderr.write('\n  (no answer — continuing without a key)\n');
+        resolve('');
+      }, timeoutMs);
+      t.unref?.();
+    });
+    return await Promise.race([answer, expiry]);
+  } finally {
+    rl.close();
+  }
+}
 
 /** True if a container with that name exists (any state). */
 async function containerExists(name: string): Promise<boolean> {
@@ -1027,8 +1060,52 @@ volumes:
       return {
         label: 'Installing OmniRoute gateway…',
         async fn() {
-          const { runActionToCompletion } = await import('@eve/lifecycle');
-          const result = await runActionToCompletion('omniroute', 'install');
+          const { runActionToCompletion, omniRouteKeyInstructions } = await import('@eve/lifecycle');
+
+          // The key is collected HERE, at the CLI layer, and handed down —
+          // deliberately. The prompt used to live inside the lifecycle recipe,
+          // three layers below this one, where it could not reach the terminal:
+          // EINVAL without a tty, an unresolvable hang with one. The hang meant
+          // `runActionToCompletion` never returned, so this function never
+          // resolved, so the state write and the Traefik refresh further down
+          // never ran — a healthy container with no route, and a 404 on the
+          // dashboard. The CLI is the only layer with a terminal, so the only
+          // layer that may ask.
+          //
+          // Collected BEFORE the install rather than after, so the operator is
+          // not asked mid-spinner — and skipped entirely when a key is already
+          // stored, so a re-run is non-interactive.
+          let apiKey: string | undefined;
+          const stored = await readEveSecrets(process.cwd())
+            .then((s) => s?.ai?.providers?.find((p) => p.id === 'omniroute')?.apiKey ?? null)
+            .catch(() => null);
+
+          if (stored) {
+            console.log('  Reusing the OmniRoute API key already stored in secrets.');
+          } else if (getGlobalCliFlags().nonInteractive || !process.stdin.isTTY) {
+            // No terminal, or `-y`. Installing and routing must still happen —
+            // that is the part that was silently broken — so say plainly that
+            // the provider is NOT registered and how to finish later.
+            console.log(
+              '  Non-interactive: skipping the API key. OmniRoute will be installed and routed, ' +
+              'but NOT registered as a provider until you re-run: eve add omniroute',
+            );
+          } else {
+            console.log(await omniRouteKeyInstructions());
+            // `node:readline`, NOT `@clack`. Measured on this pod: clack's
+            // `text()` renders and then NEVER resolves — with a pty and with a
+            // plain pipe both, `Promise.race` against an 8s timer returned the
+            // timeout every time, and the t3code prompt on the same pod has the
+            // same exposure. readline resolves correctly under the same pty
+            // (verified: "TESTKEY" back in ~1.2s). A prompt that can hang is not
+            // usable in an install path, because a hung prompt is what left the
+            // dashboard 404ing in the first place.
+            const answer = await promptLine('Paste the OmniRoute API key (blank to skip — the provider will NOT be registered):');
+            const trimmed = answer.trim();
+            apiKey = trimmed.length > 0 ? trimmed : undefined;
+          }
+
+          const result = await runActionToCompletion('omniroute', 'install', { omnirouteApiKey: apiKey });
           // Print the transcript on FAILURE too — docker's actual complaint is
           // the only thing that makes this debuggable, and runCommand captures
           // it in result.logs. Same contract as freellmapi below.

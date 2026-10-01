@@ -20,13 +20,20 @@
  * authenticates (AUTH_002). Both were wrong assumptions that cost a debugging
  * cycle each, so both are pinned here rather than left to a comment.
  *
- * NOT COVERED, measured: `docker compose up`, the health poll, the key prompt,
- * and the pod registration. Those are I/O against a live daemon and a live pod;
- * this file covers the pure decisions in front of them.
+ * NOT COVERED, measured: `docker compose up`, the health poll, and the pod
+ * registration. Those are I/O against a live daemon and a live pod; this file
+ * covers the pure decisions in front of them.
  */
 
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { COMPONENTS } from '@eve/dna';
+
+const LIFECYCLE_SRC_DIR = join(
+  import.meta.dirname,
+  '..', '..', '@eve', 'lifecycle', 'src',
+);
 
 describe('registry entry', () => {
   const comp = COMPONENTS.find((c) => c.id === 'omniroute');
@@ -90,5 +97,46 @@ describe('traefik routing is DERIVED from the registry', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+/**
+ * The `runAction` install path must never open an interactive prompt.
+ *
+ * This is the regression guard for the actual cause of the 404. `runAction`
+ * is a GENERATOR driven from three layers below the CLI, so a `@clack` prompt
+ * inside it cannot reach the terminal: with a pipe it raised
+ * `TTY initialization failed: uv_tty_init returned EINVAL`, and with a real pty
+ * it never settled at all. An unsettled `runActionToCompletion` means `eve add`
+ * never returned — so its state write and its Traefik refresh never ran, and
+ * the subdomain had no router even though the container was healthy.
+ *
+ * SCOPE, deliberately narrow: this asserts on `runAction`'s OWN module
+ * (index.ts), NOT on every file in the package. `install-config-prompts.ts` is
+ * a legitimate clack wrapper — `gatherInstallConfig` is IO-pure and takes
+ * injected `PromptFns`, so that module is the default implementation for
+ * `eve setup`'s wizard, which owns a terminal and should prompt. A blanket
+ * package-wide ban (the first version of this guard, which failed on that file)
+ * would forbid correct dependency injection and push the next author to
+ * re-inline a prompt in the recipe.
+ *
+ * Does NOT cover: a prompt reached through a helper this module imports, or a
+ * hand-rolled blocking stdin read. This matches a clack import in this one
+ * module, which is where the defect actually was.
+ */
+describe('the runAction install path never prompts', () => {
+  it('index.ts — the generator dispatcher — imports no interactive prompt', () => {
+    const src = readFileSync(join(LIFECYCLE_SRC_DIR, 'index.ts'), 'utf-8');
+
+    // Non-vacuity: prove the scan can still SEE the shape it hunts, so a
+    // renamed or reformatted import cannot silently disarm this guard.
+    expect(src.length).toBeGreaterThan(1000);
+
+    const CLACK_IMPORT = /from\s+['"]@clack\/prompts['"]|import\(\s*['"]@clack\/prompts['"]\s*\)/;
+    // Self-check on a literal sample: if the regex ever stops matching a real
+    // clack import, it is blind and every assertion below is worthless.
+    expect(CLACK_IMPORT.test(`import { text } from "@clack/prompts";`)).toBe(true);
+    expect(CLACK_IMPORT.test(`const p = await import('@clack/prompts');`)).toBe(true);
+
+    expect(CLACK_IMPORT.test(src)).toBe(false);
   });
 });
