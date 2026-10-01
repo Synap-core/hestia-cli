@@ -3005,19 +3005,31 @@ async function* resolveOmniRouteKey(): AsyncGenerator<LifecycleEvent, string | n
   const ssl = secrets?.domain?.ssl !== false;
   const dashboard = domain ? `${ssl ? "https" : "http"}://omniroute.${domain}/dashboard` : null;
 
-  yield { type: "log", line: "" };
-  yield {
-    type: "log",
-    line: dashboard
-      ? `Dashboard: ${dashboard} — sign in and create a key under API Keys.`
-      : `Dashboard: no domain configured, so reach it on the host at ` +
-        `http://127.0.0.1:${OMNIROUTE_PORT}/dashboard (set a domain and run "eve add omniroute" again for a routed URL).`,
-  };
-  yield {
-    type: "log",
-    line: "The first-run dashboard password is CHANGEME unless you changed it.",
-  };
-  yield { type: "log", line: "" };
+  // These instructions MUST reach the terminal NOW, not as buffered log events.
+  //
+  // `runActionToCompletion` COLLECTS every `log` event into an array and returns
+  // it — the caller prints them after the action finishes. A `@clack` prompt
+  // writes straight to the tty, so a prompt placed after buffered `yield`s
+  // appears BEFORE them: the operator was asked to paste a key before being
+  // told where to get one. Writing here is deliberate, and the same lines are
+  // still yielded so a non-interactive caller sees them in its transcript.
+  const instructions = [
+    "",
+    dashboard
+      ? `  Dashboard: ${dashboard}`
+      : `  Dashboard: no domain configured yet, so open it on the pod host at\n` +
+        `    http://127.0.0.1:${OMNIROUTE_PORT}/dashboard\n` +
+        `    (set a domain with \`eve domain set\` and re-run \`eve add omniroute\` for a routed URL)`,
+    "",
+    "  1. Open that URL.",
+    "  2. Sign in. The first-run password is CHANGEME unless you changed it.",
+    "  3. Go to API Keys and create a key.",
+    "  4. Copy it and paste it below.",
+    "",
+  ].join("\n");
+  process.stderr.write(`${instructions}\n`);
+
+  yield { type: "log", line: instructions };
 
   const answer = await text({
     message: "Paste the OmniRoute API key (blank to skip — the provider will NOT be registered):",
