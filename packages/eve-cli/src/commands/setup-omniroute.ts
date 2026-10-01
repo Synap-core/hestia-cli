@@ -63,8 +63,11 @@ async function runSetupOmniRoute(options: SetupOmniRouteOptions) {
 }
 
 function checkContainerRunning(name: string): Promise<boolean> {
-  return execa('docker', ['ps', '-f', `name=${name}`], { encoding: 'utf-8', stdio: 'pipe' })
-    .then(out => out.includes(name))
+  // `execa` resolves to a Result: the captured stdout is `.stdout`, not the
+  // result object itself. `encoding: 'utf-8'` is also not a valid execa option —
+  // it was making the whole call a type error that `tsup` never surfaced.
+  return execa('docker', ['ps', '-f', `name=${name}`], { stdio: 'pipe' })
+    .then(({ stdout }) => stdout.includes(name))
     .catch(() => false);
 }
 
