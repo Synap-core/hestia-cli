@@ -122,26 +122,38 @@ function checkContainerRunning(name: string): Promise<boolean> {
 }
 
 /**
- * Poll the container's own health endpoint until it answers. The image does
- * not ship a `/health` path, so we hit the OpenAI-compatible root instead —
- * the same probe FreeLLMAPI uses against `127.0.0.1:<port>/livez`.
+ * Poll the container's own health endpoint until it answers.
+ *
+ * The image does not document a `/health` path, and it may not ship `curl`
+ * either — so we probe through Node's global `fetch`, the same primitive
+ * FreeLLMAPI's own healthcheck uses (`docker exec eve-brain-freellmapi
+ * node -e "fetch('http://127.0.0.1:3001/livez')..."`). Node is a safe bet for
+ * a gateway image; curl is not. We try the endpoints in order of likelihood
+ * and stop at the first that answers, so a first-boot delay (model loading,
+ * config migration) doesn't get mistaken for a dead container.
  */
 async function waitForHealthy(name: string): Promise<void> {
-  const timeout = 30000;
+  const timeout = 60000;
   const interval = 1000;
   let elapsed = 0;
+  let lastErr: string = '';
   while (elapsed < timeout) {
     try {
       await execa('docker', [
-        'exec', name, 'curl', '-sf', `http://127.0.0.1:${OMNIROUTE_PORT}/v1/models`,
+        'exec', name, 'node', '-e',
+        `fetch('http://127.0.0.1:${OMNIROUTE_PORT}/v1/models').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))`,
       ], { timeout: 5000 });
       return;
-    } catch {
+    } catch (err) {
+      lastErr = err instanceof Error ? err.message : String(err);
       elapsed += interval;
       await new Promise(resolve => setTimeout(resolve, interval));
     }
   }
-  throw new Error('OmniRoute did not become healthy in time');
+  throw new Error(
+    `OmniRoute did not become healthy in time (probed http://127.0.0.1:${OMNIROUTE_PORT}/v1/models every ${interval}ms for ${timeout}ms; last error: ${lastErr.slice(0, 200)}). ` +
+    `Check: docker logs ${name}`,
+  );
 }
 
 export function setupOmniRouteCommand(program: Command) {
