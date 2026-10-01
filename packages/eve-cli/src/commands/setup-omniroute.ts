@@ -121,13 +121,12 @@ function checkContainerRunning(name: string): Promise<boolean> {
 /**
  * Poll the container's own health endpoint until it answers.
  *
- * The image does not document a `/health` path, and it may not ship `curl`
- * either — so we probe through Node's global `fetch`, the same primitive
- * FreeLLMAPI's own healthcheck uses (`docker exec eve-brain-freellmapi
- * node -e "fetch('http://127.0.0.1:3001/livez')..."`). Node is a safe bet for
- * a gateway image; curl is not. We try the endpoints in order of likelihood
- * and stop at the first that answers, so a first-boot delay (model loading,
- * config migration) doesn't get mistaken for a dead container.
+ * We do NOT assume which interpreter the image ships. FreeLLMAPI's own
+ * healthcheck uses Node's `fetch`, but this image may be Go or Python —
+ * probing with a single tool that isn't installed fails every time and
+ * looks exactly like a dead container. So we try the tools in order, and
+ * we stop at the first that answers. The image serves an OpenAI-compatible
+ * `/v1/models` endpoint, so any HTTP client works.
  */
 async function waitForHealthy(name: string): Promise<void> {
   const timeout = 60000;
@@ -135,6 +134,7 @@ async function waitForHealthy(name: string): Promise<void> {
   let elapsed = 0;
   let lastErr: string = '';
   while (elapsed < timeout) {
+    // Node's global fetch — the same primitive FreeLLMAPI's healthcheck uses.
     try {
       await execa('docker', [
         'exec', name, 'node', '-e',
@@ -143,13 +143,43 @@ async function waitForHealthy(name: string): Promise<void> {
       return;
     } catch (err) {
       lastErr = err instanceof Error ? err.message : String(err);
-      elapsed += interval;
-      await new Promise(resolve => setTimeout(resolve, interval));
     }
+    // Python's urllib — many gateway images are Python.
+    try {
+      await execa('docker', [
+        'exec', name, 'python3', '-c',
+        `import urllib.request, sys; r = urllib.request.urlopen('http://127.0.0.1:${OMNIROUTE_PORT}/v1/models', timeout=5); sys.exit(0 if r.status == 200 else 1)`,
+      ], { timeout: 5000 });
+      return;
+    } catch (err) {
+      lastErr = err instanceof Error ? err.message : String(err);
+    }
+    // curl — last resort.
+    try {
+      await execa('docker', [
+        'exec', name, 'curl', '-sf', `http://127.0.0.1:${OMNIROUTE_PORT}/v1/models`,
+      ], { timeout: 5000 });
+      return;
+    } catch (err) {
+      lastErr = err instanceof Error ? err.message : String(err);
+    }
+    elapsed += interval;
+    await new Promise(resolve => setTimeout(resolve, interval));
   }
+  // Include the container's own state and last log lines. Without them the
+  // message is indistinguishable across the three real causes: the image
+  // exited at boot, it never bound the port, or the probe tool is missing.
+  const state = await execa('docker', ['inspect', '-f', '{{.State.Status}} {{.State.ExitCode}}', name], { stdio: 'pipe' })
+    .then(({ stdout }) => stdout.trim())
+    .catch(() => 'unknown');
+  const logs = await execa('docker', ['logs', '--tail', '15', name], { stdio: 'pipe' })
+    .then(({ stdout }) => stdout.trim())
+    .catch(() => '(no logs)');
+
   throw new Error(
-    `OmniRoute did not become healthy in time (probed http://127.0.0.1:${OMNIROUTE_PORT}/v1/models every ${interval}ms for ${timeout}ms; last error: ${lastErr.slice(0, 200)}). ` +
-    `Check: docker logs ${name}`,
+    `OmniRoute did not become healthy in time (probed http://127.0.0.1:${OMNIROUTE_PORT}/v1/models every ${interval}ms for ${timeout}ms; last error: ${lastErr.slice(0, 200)}).\n` +
+    `Container state: ${state}\n` +
+    `Last log lines:\n${logs.slice(0, 800)}`,
   );
 }
 
