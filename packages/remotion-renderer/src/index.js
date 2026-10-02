@@ -18,7 +18,13 @@ const log = (msg) => process.stderr.write(`[remotion-renderer] ${msg}\n`);
 const { server } = createRendererServer({
   projectPath: PROJECT_PATH,
   apiToken: API_TOKEN,
-  loadCompositions,
+  // BOUND, not passed bare: the server calls `loadCompositions()` with no
+  // argument on every /health and /compositions, so passing the function
+  // directly gave it `projectPath === undefined` and it tried to bundle
+  // "/app/undefined/src/index.ts". The boot call below passed PROJECT_PATH
+  // explicitly and worked, which is exactly why the failure looked like it
+  // came and went between requests.
+  loadCompositions: () => loadCompositions(PROJECT_PATH),
   renderComposition,
   log,
 });

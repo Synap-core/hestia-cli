@@ -165,6 +165,12 @@ export function createRendererServer(deps) {
         const composition = String(body.composition ?? "").trim();
         const output = String(body.output ?? "").trim();
         const codec = typeof body.codec === "string" ? body.codec : undefined;
+        // Forwarded to the renderer. Omitting it made `remotion_render`'s
+        // documented `props` argument a no-op — accepted, then discarded.
+        const inputProps =
+          body.props && typeof body.props === "object" && !Array.isArray(body.props)
+            ? body.props
+            : {};
 
         if (!composition) {
           return send(res, 400, { error: "composition is required" });
@@ -191,7 +197,7 @@ export function createRendererServer(deps) {
         // Respond FIRST, render in the background. The capability declares the
         // render async and tells the caller to poll; blocking here would hold the
         // connection for minutes and blow its 300s timeout.
-        send(res, 200, { jobId, status: "queued", composition, output });
+        send(res, 200, { jobId, status: "queued", composition, output, props: inputProps });
 
         void (async () => {
           jobs.update(jobId, { status: "rendering", progress: 0 });
@@ -201,6 +207,7 @@ export function createRendererServer(deps) {
               composition,
               output,
               codec,
+              inputProps,
               onProgress: (pct) => jobs.update(jobId, { progress: pct }),
             });
             jobs.update(jobId, {

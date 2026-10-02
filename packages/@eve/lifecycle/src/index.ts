@@ -3477,20 +3477,59 @@ function writeRemotionCompose(deployDir: string): void {
 function seedRemotionProject(projectDir: string): boolean {
   const entry = join(projectDir, "src", "index.ts");
   if (existsSync(entry)) return false;
+  if (!REMOTION_PROJECT_TEMPLATE_DIR) {
+    // Never silently succeed. The original version skipped every copy (because
+    // the source did not exist) and still returned true, so `eve add remotion`
+    // printed "Seeded a starter Remotion project" over an EMPTY directory and
+    // the renderer then failed to bundle. An empty result and a failed read must
+    // be different facts.
+    throw new Error(
+      "Remotion project template not found — cannot seed a starter project. " +
+      "The renderer would start but fail to bundle every render. " +
+      "Check that packages/remotion-renderer/project-template/ was deployed.",
+    );
+  }
   mkdirSync(join(projectDir, "src"), { recursive: true });
   mkdirSync(join(projectDir, "out"), { recursive: true });
-  for (const file of ["src/index.ts", "src/Root.tsx", "package.json"]) {
+  const files = ["src/index.ts", "src/Root.tsx", "package.json"];
+  for (const file of files) {
     const source = join(REMOTION_PROJECT_TEMPLATE_DIR, file);
-    if (existsSync(source)) copyFileSync(source, join(projectDir, file));
+    // Assert the SOURCE, not just the destination: a missing template file is a
+    // broken deployment, and copying the two files that do exist would produce a
+    // project that still cannot bundle.
+    if (!existsSync(source)) {
+      throw new Error(
+        `Remotion project template is missing ${file} — refusing to seed a project that cannot bundle.`,
+      );
+    }
+    copyFileSync(source, join(projectDir, file));
   }
   return true;
 }
 
-/** Where the seeded project template ships, relative to this file. */
-const REMOTION_PROJECT_TEMPLATE_DIR = join(
-  dirname(fileURLToPath(import.meta.url)),
-  "..", "..", "..", "remotion-renderer", "project-template",
-);
+/**
+ * Where the seeded project template ships.
+ *
+ * Resolved by SEARCHING, not by counting `..` segments: eve-cli's tsup INLINES
+ * `@eve/lifecycle` rather than externalising it, so at runtime `import.meta.url`
+ * is `eve-cli/dist/index.js` — three levels up is the REPO ROOT, not
+ * `packages/`. The fixed-segment version of this resolved to
+ * `/opt/hestia-cli/remotion-renderer/project-template`, which does not exist, so
+ * `seedRemotionProject` copied nothing while still returning true and the
+ * install reported success over an empty project. Walking up to the first
+ * directory that actually holds the template is bundler-independent.
+ */
+function resolveRemotionTemplateDir(): string | null {
+  let dir = dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 8; i++) {
+    const candidate = join(dir, "remotion-renderer", "project-template");
+    if (existsSync(join(candidate, "src", "index.ts"))) return candidate;
+    dir = dirname(dir);
+  }
+  return null;
+}
+
+const REMOTION_PROJECT_TEMPLATE_DIR = resolveRemotionTemplateDir();
 
 /**
  * Wait for the renderer's `/health` to answer.

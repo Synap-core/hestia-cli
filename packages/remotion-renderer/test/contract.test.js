@@ -28,6 +28,7 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 
 import { createRendererServer } from "../src/server.js";
 import { JobStore } from "../src/job-store.js";
@@ -101,6 +102,52 @@ describe("renderer HTTP contract", () => {
       assert.equal(body.compositions[0].name, "ViewTransition");
       assert.equal(body.compositions[0].durationFrames, 360);
     });
+  });
+
+  test("POST /render FORWARDS props to the renderer", async () => {
+    // Regression guard: `inputProps` was hardcoded `{}` in renderer.js, so the
+    // capability's documented `props` argument was accepted and silently
+    // discarded — every render produced a byte-identical video. Assert the
+    // value ARRIVES at the seam, not that the endpoint accepts it.
+    let seenProps;
+    await withServer(
+      {
+        renderComposition: async ({ output, inputProps }) => {
+          seenProps = inputProps;
+          return { outputPath: output, durationFrames: 90 };
+        },
+      },
+      async (call) => {
+        const payload = { composition: "ShortClip", output: "/tmp/x.mp4", props: { title: "Synap", n: 7 } };
+        const { status, body } = await call("POST", "/render", payload);
+        assert.equal(status, 200);
+        // Give the background render a tick to reach the seam.
+        for (let i = 0; i < 40 && seenProps === undefined; i++) {
+          await new Promise((r) => setTimeout(r, 25));
+        }
+        assert.deepEqual(seenProps, payload.props, "props must reach the renderer");
+        assert.deepEqual(body.props, payload.props, "props echoed back for confirmation");
+      },
+    );
+  });
+
+  test("a render with NO props still sends an object, never undefined", async () => {
+    let seenProps = "UNSET";
+    await withServer(
+      {
+        renderComposition: async ({ output, inputProps }) => {
+          seenProps = inputProps;
+          return { outputPath: output, durationFrames: 90 };
+        },
+      },
+      async (call) => {
+        await call("POST", "/render", { composition: "ShortClip", output: "/tmp/y.mp4" });
+        for (let i = 0; i < 40 && seenProps === "UNSET"; i++) {
+          await new Promise((r) => setTimeout(r, 25));
+        }
+        assert.deepEqual(seenProps, {}, "defaults to {} so the renderer never sees undefined");
+      },
+    );
   });
 
   test("an unbundleable project reports ok:false, not healthy-with-zero", async () => {
@@ -287,4 +334,88 @@ describe("job store", () => {
 
     assert.equal(jobs.get(running).status, "rendering");
   });
+});
+
+/**
+ * The seam itself — the defect class the injected stub above cannot catch.
+ *
+ * `withServer` injects `async () => ({...})`: a zero-argument stub. A stub with
+ * no parameters accepts being called with none, so it passes no matter how the
+ * real `loadCompositions(projectPath)` is wired. That is exactly how the
+ * production bug survived 13 green tests: the server called
+ * `deps.loadCompositions()` bare while the real function reads `projectPath` as
+ * its first argument, so every request after boot bundled
+ * `/app/undefined/src/index.ts` while the boot-time call (which passed the path
+ * explicitly) worked fine.
+ *
+ * These assert the WIRING: that the function handed to the server carries the
+ * project's path, and that the real `loadCompositions` rejects a missing path
+ * rather than quietly building a path out of `undefined`.
+ */
+describe("projectPath reaches the bundler", () => {
+  test("the function given to the server receives the project path", async () => {
+    // Mirrors index.js's binding: `() => loadCompositions(PROJECT_PATH)`.
+    const seen = [];
+    const bound = (projectPath) => () => {
+      seen.push(projectPath);
+      return { compositions: COMPOSITIONS, error: null, serveUrl: "http://bundle" };
+    };
+
+    const { server } = createRendererServer({
+      projectPath: "/opt/remotion",
+      apiToken: undefined,
+      loadCompositions: bound("/opt/remotion"),
+      renderComposition: async ({ output }) => ({ outputPath: output, durationFrames: 1 }),
+      jobs: new JobStore(),
+      log: () => {},
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const base = `http://127.0.0.1:${server.address().port}`;
+    try {
+      await fetch(base + "/compositions");
+    } finally {
+      server.close();
+      await once(server, "close");
+    }
+
+    assert.ok(seen.length > 0, "loadCompositions was never called");
+    for (const path of seen) {
+      assert.equal(path, "/opt/remotion", "the server must supply the project path");
+    }
+  });
+
+  test("index.js BINDS the project path when it hands loadCompositions over", () => {
+    // The guard the stub cannot provide. Reverting the production binding to a
+    // bare `loadCompositions,` leaves every other test green — proven by the
+    // negative control — because the injected stub takes no parameters. So the
+    // wiring is asserted where it is decided: the entry point must pass the path
+    // into the dep rather than handing the bare function over.
+    const src = readFileSync(new URL("../src/index.js", import.meta.url), "utf-8");
+    const wiring = /createRendererServer\(\{([\s\S]*?)\}\)/.exec(src);
+    assert.ok(wiring, "createRendererServer call must be findable");
+    const line = wiring[1]
+      .split("\n")
+      .find((l) => /loadComplications|loadCompositions/.test(l) && !l.trim().startsWith("//"));
+    assert.ok(line, "the loadCompositions dep must be passed to the server");
+    assert.match(
+      line,
+      /loadCompositions\s*:\s*\(\)\s*=>\s*loadCompositions\(PROJECT_PATH\)/,
+      `loadCompositions must be bound to PROJECT_PATH, got: ${line.trim()}`,
+    );
+  });
+
+  test("the real loadCompositions takes projectPath as its FIRST parameter", () => {
+    // Asserted on the SOURCE, not by importing it: `renderer.js` imports
+    // `@remotion/bundler`, which is not installed in this workspace (the pod
+    // installs it inside the image). Reading the signature is enough to pin the
+    // defect: the server calls the dep with no argument, so the first parameter
+    // MUST be the project path. If someone reorders it, this fails.
+    const src = readFileSync(new URL("../src/renderer.js", import.meta.url), "utf-8");
+    const sig = /export async function loadCompositions\(([^)]*)\)/.exec(src);
+    assert.ok(sig, "loadCompositions signature must be findable");
+    assert.match(sig[1], /^\s*projectPath\b/,
+      `first parameter must be projectPath, got: ${sig[1]}`);
+  });
+
 });

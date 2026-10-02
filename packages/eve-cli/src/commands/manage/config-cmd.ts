@@ -138,7 +138,13 @@ export function configCommands(program: Command): void {
         }
 
         const normalized = parsed.toString().replace(/\/$/, '');
-        const previous = await readEveSecrets(process.cwd());
+        // Default cwd, NOT `process.cwd()`. The secrets path is cwd-relative and
+        // `EVE_HOME`-aware; passing `process.cwd()` explicitly here resolved to a
+        // DIFFERENT file than the one `eve add` writes (which uses the default) —
+        // so `set-remotion-url` reported success while `remotion-status`, run from
+        // another directory, still read `container`. One resolution for read and
+        // write, both from the same door.
+        const previous = await readEveSecrets();
         await writeEveSecrets({
           builder: { remotion: { mode: 'external', url: normalized, apiToken: opts.token } },
         });
@@ -159,7 +165,8 @@ export function configCommands(program: Command): void {
     .action(async () => {
       try {
         const { readEveSecrets } = await import('@eve/dna');
-        const remotion = (await readEveSecrets(process.cwd()))?.builder?.remotion;
+        // Same resolution as the writer above — see the note there.
+        const remotion = (await readEveSecrets())?.builder?.remotion;
         const mode = remotion?.mode ?? 'container';
         const payload = {
           mode,

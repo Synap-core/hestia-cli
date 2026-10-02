@@ -48,6 +48,10 @@ COPY package.json ./
 RUN npm install --omit=dev --no-audit --no-fund
 
 COPY src ./src
+# The Remotion project template that gets seeded by the Eve installer (seedRemotionProject).
+# This is the source of truth for the initial seeding operation, and contains the
+# default starter composition (src/index.ts) and scaffolding.
+COPY project-template ./project-template
 
 # A writable place for the project + rendered output when the operator does not
 # bind-mount their own. The installer bind-mounts over it by default.

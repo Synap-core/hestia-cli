@@ -79,12 +79,22 @@ export async function renderComposition({
   composition,
   output,
   codec,
+  inputProps,
   onProgress,
 }) {
+  // `inputProps` is the WHOLE POINT of a composition: a composition takes data
+  // (titles, images, colors, captions) and produces a video. Hardcoding `{}` here
+  // — as this did — made every render byte-identical regardless of the props the
+  // caller sent, so `remotion_render`'s documented `props` argument was accepted
+  // and silently discarded. Both calls must carry the SAME props: Remotion derives
+  // the composition's dimensions/duration from `selectComposition`, so a mismatch
+  // between the two makes the rendered result disagree with what was selected.
+  const props = inputProps && typeof inputProps === "object" ? inputProps : {};
+
   const selected = await selectComposition({
     serveUrl,
     id: composition,
-    inputProps: {},
+    inputProps: props,
   });
 
   // `output` is a path on the pod; Remotion infers the codec from the extension,
@@ -94,7 +104,7 @@ export async function renderComposition({
     serveUrl,
     codec: codec ?? "h264",
     outputLocation: output,
-    inputProps: {},
+    inputProps: props,
     onProgress: ({ progress }) => {
       onProgress?.(Math.round(progress * 100));
     },
