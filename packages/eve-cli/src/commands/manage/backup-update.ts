@@ -206,7 +206,7 @@ async function tryPostUpdateProvision(_deployDir: string): Promise<{ subLines: s
   return { subLines };
 }
 
-async function buildUpdateTargets(deployDir: string | undefined, synapRelease?: string): Promise<UpdateTarget[]> {
+async function buildUpdateTargets(deployDir: string | undefined, synapRelease?: string, synapFromSource = false): Promise<UpdateTarget[]> {
   const targets: UpdateTarget[] = [];
 
   // Read installed component set once — guards all optional targets below.
@@ -252,7 +252,7 @@ async function buildUpdateTargets(deployDir: string | undefined, synapRelease?: 
         // `synap update [--release <ref>]` — the one engine: release
         // manifest, verified backup, canary, automatic rollback. No git
         // refresh of the pod checkout (update-door plan P4).
-        const result = runSynapCli('update', synapUpdateArgs(synapRelease), {
+        const result = runSynapCli('update', synapUpdateArgs(synapRelease, synapFromSource), {
           domain: bareDomain,
         });
         if (!result.ok) {
@@ -550,7 +550,11 @@ export function backupUpdateCommands(program: Command): void {
     .option('--only <organs>', 'Comma-separated organs to update (deprecated — use positional args)')
     .option('--skip <organs>', 'Comma-separated organs to skip, e.g. traefik')
     .option('--release <ref>', 'Synap release to apply: a release id (v1.2.3, main-<sha7>) or a channel (fast|stable). Default: the pod\'s SYNAP_UPDATE_CHANNEL, else stable')
-    .action(async (components: string[] | undefined, opts: { only?: string; skip?: string; release?: string }) => {
+    .option('--from-source', 'Synap: pull and build this pod\'s git checkout instead of a published release (same backup + rollback)')
+    .action(async (components: string[] | undefined, opts: { only?: string; skip?: string; release?: string; fromSource?: boolean }) => {
+      if (opts.fromSource && opts.release) {
+        throw new Error('Pass either --release or --from-source, not both.');
+      }
       // Use findPodDeployDir() — the canonical resolver used everywhere else
       // (preflight, doctor, lifecycle). It checks SYNAP_DEPLOY_DIR env var
       // first, then walks candidate paths including /opt/synap-backend/deploy
@@ -558,7 +562,7 @@ export function backupUpdateCommands(program: Command): void {
       // subdirectory layout and couldn't be overridden without changing code.
       const deployDir = findPodDeployDir() ?? undefined;
 
-      const targets = await buildUpdateTargets(deployDir, opts.release);
+      const targets = await buildUpdateTargets(deployDir, opts.release, opts.fromSource === true);
 
       // Positional args take precedence over `--only`. If the user passes
       // both, positional wins (more specific intent).

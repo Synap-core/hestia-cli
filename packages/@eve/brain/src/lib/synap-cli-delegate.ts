@@ -105,8 +105,13 @@ const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
  * the pod's own SYNAP_UPDATE_CHANNEL (default stable) — eve never re-derives
  * the channel rule itself.
  */
-export function synapUpdateArgs(release?: string): string[] {
+export function synapUpdateArgs(release?: string, fromSource = false): string[] {
   const ref = release?.trim();
+  if (fromSource) {
+    if (ref) throw new Error('Pass either --release or --from-source, not both.');
+    // Pull + build THIS checkout (U6): tagged synap-dev/*:<sha>, same backup/rollback.
+    return ['--from-source'];
+  }
   return ref ? ['--release', ref] : [];
 }
 

@@ -17,13 +17,19 @@ describe('synapUpdateArgs', () => {
     expect(synapUpdateArgs('fast')).toEqual(['--release', 'fast']);
     expect(synapUpdateArgs('v1.2.3')).toEqual(['--release', 'v1.2.3']);
   });
+  it('builds the pod checkout with --from-source (U6), never alongside --release', () => {
+    expect(synapUpdateArgs(undefined, true)).toEqual(['--from-source']);
+    expect(() => synapUpdateArgs('stable', true)).toThrow(/either --release or --from-source/);
+  });
 });
 
 describe('both update doors delegate the same way', () => {
   const cli = src('../src/commands/manage/backup-update.ts');
   const lifecycle = src('../../@eve/lifecycle/src/index.ts');
   it('eve update synap calls synap update with synapUpdateArgs and no git refresh', () => {
-    expect(cli).toMatch(/runSynapCli\('update', synapUpdateArgs\(synapRelease\)/);
+    expect(cli).toMatch(/runSynapCli\('update', synapUpdateArgs\(synapRelease, synapFromSource\)/);
+    expect(cli).toMatch(/\.option\('--from-source'/);
+    expect(cli).toMatch(/buildUpdateTargets\(deployDir, opts\.release, opts\.fromSource === true\)/);
     expect(cli).not.toMatch(/refreshGit/);
     expect(cli).not.toMatch(/'--from-image'/);
   });
