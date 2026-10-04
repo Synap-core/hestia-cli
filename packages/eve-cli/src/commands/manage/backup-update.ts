@@ -572,6 +572,16 @@ export function backupUpdateCommands(program: Command): void {
           return;
         }
 
+        // A Synap pod deploy dir ships its own verified dumper. Take a backup of
+        // every database to deploy/backups/postgres (a host dir that neither
+        // `down --volumes` nor `prune --volumes` can reach) BEFORE destroying
+        // anything, and refuse to continue if it fails.
+        const { existsSync } = await import('node:fs');
+        if (existsSync('pgdata-safety.sh')) {
+          printInfo('Backing up every Synap database before the reset...');
+          await execa('bash', ['pgdata-safety.sh', 'backup', 'pre-recreate'], { stdio: 'inherit' });
+        }
+
         printInfo('Stopping stack and removing compose resources...');
         await execa('docker', ['compose', 'down', '--volumes', '--remove-orphans'], { stdio: 'inherit' });
 

@@ -2042,11 +2042,20 @@ async function* removeOne(comp: ComponentInfo): AsyncGenerator<LifecycleEvent> {
   const plan = removePlanFor(comp);
 
   if (plan.composeDir && existsSync(plan.composeDir)) {
+    // The Synap pod's volumes ARE the user's data (database, files, search).
+    // "Remove the component" must never mean "delete the pod" — the
+    // 2026-10-02 incident wiped a pod through a routine recreate, and
+    // `--volumes` here is the same loss behind a softer verb. Volumes stay;
+    // deleting them is `eve purge`, which says so and asks first.
+    const keepVolumes = comp.id === "synap";
     const code = yield* runCommand(
       "docker",
-      ["compose", "down", "--volumes"],
+      keepVolumes ? ["compose", "down"] : ["compose", "down", "--volumes"],
       { cwd: plan.composeDir },
     );
+    if (keepVolumes) {
+      yield { type: "log", line: "Synap data volumes kept (database, files, search). `eve purge` deletes them." };
+    }
     if (code !== 0) {
       yield { type: "log", line: `compose down exited ${code} — falling back to docker rm` };
     }
