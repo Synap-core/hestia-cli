@@ -22,6 +22,7 @@ import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { execa } from 'execa';
 import { getGlobalCliFlags } from '@eve/cli-kit';
+import { readSynapEnvValue } from '@eve/dna';
 import {
   colors,
   printInfo,
@@ -255,14 +256,22 @@ export async function runPurge(opts: PurgeOptions = {}): Promise<void> {
   if (synapDeployDir) {
     const s = createSpinner('Tearing down Synap backend compose stack...');
     s.start();
-    try {
-      await execa('docker', ['compose', 'down', '--volumes', '--remove-orphans'], {
-        cwd: synapDeployDir,
-        stdio: 'pipe',
-      });
-      s.succeed('Synap compose stack removed');
-    } catch {
-      s.warn('Synap compose down failed (stack may already be down)');
+    // The pod's PINNED project only. Compose's default here is the directory
+    // name ("deploy") — on an unpinned pod `down --volumes` would hit a
+    // different stack than the one the user confirmed to purge.
+    const project = readSynapEnvValue(join(synapDeployDir as string, '.env'), 'COMPOSE_PROJECT_NAME');
+    if (!project) {
+      s.warn('Synap stack NOT removed: no COMPOSE_PROJECT_NAME pin in its .env — inspect with `synap doctor`, then remove it by hand.');
+    } else {
+      try {
+        await execa('docker', ['compose', '-p', project, 'down', '--volumes', '--remove-orphans'], {
+          cwd: synapDeployDir,
+          stdio: 'pipe',
+        });
+        s.succeed(`Synap compose stack ${project} removed`);
+      } catch {
+        s.warn('Synap compose down failed (stack may already be down)');
+      }
     }
   }
 
