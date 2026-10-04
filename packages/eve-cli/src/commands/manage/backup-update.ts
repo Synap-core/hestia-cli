@@ -418,6 +418,107 @@ async function confirmDestructiveReset(): Promise<boolean> {
   }
 }
 
+/**
+ * A Synap pod deploy dir: it ships the pgdata guard, or its compose file runs
+ * the Synap backend image.
+ */
+export function isSynapDeployDir(dir: string): boolean {
+  if (existsSync(join(dir, 'pgdata-safety.sh'))) return true;
+  const compose = join(dir, 'docker-compose.yml');
+  if (!existsSync(compose)) return false;
+  try {
+    return readFileSync(compose, 'utf-8').includes('synap-core/backend');
+  } catch {
+    return false;
+  }
+}
+
+export interface RecreateDeps {
+  exec: (cmd: string, args: string[]) => Promise<unknown>;
+  runSynap: typeof runSynapCli;
+  confirm: () => Promise<boolean>;
+  log: (line: string) => void;
+}
+
+const defaultRecreateDeps: RecreateDeps = {
+  exec: (cmd, args) => execa(cmd, args, { stdio: 'inherit' }),
+  runSynap: runSynapCli,
+  confirm: confirmDestructiveReset,
+  log: printInfo,
+};
+
+/**
+ * `eve recreate` — down + up of the compose stack in `cwd`.
+ *
+ * It NEVER removes volumes (update-door plan P0, 2026-10-04): it used to run
+ * `compose down --volumes` and `docker system prune -a -f --volumes` by
+ * default, which together are the 2026-10-02 pod-wipe chain. In a Synap
+ * deploy dir it does not touch compose at all: a bare `docker compose` there
+ * bypasses the synap CLI's pgdata guard and has no pinned project name, so it
+ * delegates to `synap reset --full` (verified backup, typed domain, volumes
+ * kept, reinstall). Returns the exit code.
+ */
+export async function runRecreate(
+  opts: { cwd: string; prune: boolean },
+  deps: RecreateDeps = defaultRecreateDeps,
+): Promise<number> {
+  const synap = isSynapDeployDir(opts.cwd);
+  console.log(colors.error.bold('\n⚠️  Recreate: stop and rebuild the stack\n'));
+  console.log('This command will:');
+  if (synap) {
+    console.log('  - back up every Synap database, then run `synap reset --full` (it asks for the pod domain)');
+    console.log('  - recreate the pod\'s containers and networks — volumes (your data) are KEPT');
+  } else {
+    console.log('  - stop and remove the compose containers and networks in the current directory');
+    console.log('  - keep every volume');
+    if (opts.prune) console.log('  - prune unused Docker images');
+  }
+  console.log('');
+
+  if (!(await deps.confirm())) {
+    deps.log('Cancelled.');
+    return 0;
+  }
+
+  if (synap) {
+    // A Synap pod deploy dir ships its own verified dumper. Take a backup of
+    // every database to deploy/backups/postgres (a host dir outside Docker's
+    // volume store) BEFORE anything else, and refuse to continue if it fails.
+    if (existsSync(join(opts.cwd, 'pgdata-safety.sh'))) {
+      deps.log('Backing up every Synap database before the reset...');
+      await deps.exec('bash', [join(opts.cwd, 'pgdata-safety.sh'), 'backup', 'pre-recreate']);
+    }
+    const repoRoot = dirname(opts.cwd);
+    if (!existsSync(join(repoRoot, 'synap'))) {
+      printError(
+        `No synap CLI at ${join(repoRoot, 'synap')}. Refusing to run bare docker compose on a Synap pod ` +
+          '(it bypasses the data-placement guard). Use the synap CLI or deploy/update-pod.sh.',
+      );
+      return 1;
+    }
+    deps.log('Delegating to `synap reset --full`...');
+    const result = deps.runSynap('reset', ['--full'], { repoRoot });
+    if (!result.ok) {
+      printError(result.stderr || `synap reset --full exited ${result.exitCode}`);
+      return result.exitCode > 0 ? result.exitCode : 1;
+    }
+    return 0;
+  }
+
+  deps.log('Stopping stack and removing containers (volumes kept)...');
+  await deps.exec('docker', ['compose', 'down', '--remove-orphans']);
+
+  if (opts.prune) {
+    deps.log('Pruning unused Docker images...');
+    await deps.exec('docker', ['image', 'prune', '-a', '-f']);
+  }
+
+  deps.log('Recreating stack...');
+  await deps.exec('docker', ['compose', 'up', '-d']);
+  deps.log('Done. Stack recreated; volumes untouched.');
+  return 0;
+}
+
 export function backupUpdateCommands(program: Command): void {
   program
     .command('backup')
@@ -553,46 +654,12 @@ export function backupUpdateCommands(program: Command): void {
 
   program
     .command('recreate')
-    .description('Full cleanup + full recreation (remove stale Docker data and rebuild stack)')
-    .option('--no-prune', 'Skip docker system prune')
+    .description('Recreate the stack in the current directory (volumes are kept). In a Synap deploy dir this delegates to the guarded `synap reset --full`.')
+    .option('--no-prune', 'Skip pruning unused Docker images')
     .action(async (opts: { prune?: boolean }) => {
       try {
-        console.log(colors.error.bold('\n⚠️  Dangerous operation: full cleanup + recreation\n'));
-        console.log('This command will:');
-        console.log('  - stop and remove all compose resources in the current directory');
-        console.log('  - remove project volumes (data loss)');
-        if (opts.prune !== false) {
-          console.log('  - prune stale Docker containers/images/volumes/networks');
-        }
-        console.log('');
-
-        const confirmed = await confirmDestructiveReset();
-        if (!confirmed) {
-          printInfo('Cancelled.');
-          return;
-        }
-
-        // A Synap pod deploy dir ships its own verified dumper. Take a backup of
-        // every database to deploy/backups/postgres (a host dir that neither
-        // `down --volumes` nor `prune --volumes` can reach) BEFORE destroying
-        // anything, and refuse to continue if it fails.
-        const { existsSync } = await import('node:fs');
-        if (existsSync('pgdata-safety.sh')) {
-          printInfo('Backing up every Synap database before the reset...');
-          await execa('bash', ['pgdata-safety.sh', 'backup', 'pre-recreate'], { stdio: 'inherit' });
-        }
-
-        printInfo('Stopping stack and removing compose resources...');
-        await execa('docker', ['compose', 'down', '--volumes', '--remove-orphans'], { stdio: 'inherit' });
-
-        if (opts.prune !== false) {
-          printInfo('Pruning stale Docker resources...');
-          await execa('docker', ['system', 'prune', '-a', '-f', '--volumes'], { stdio: 'inherit' });
-        }
-
-        printInfo('Recreating stack...');
-        await execa('docker', ['compose', 'up', '-d'], { stdio: 'inherit' });
-        printInfo('Done. Stack recreated from clean state.');
+        const code = await runRecreate({ cwd: process.cwd(), prune: opts.prune !== false });
+        if (code !== 0) process.exit(code);
       } catch (e) {
         printError(e instanceof Error ? e.message : String(e));
         process.exit(1);

@@ -356,7 +356,9 @@ export async function runPurge(opts: PurgeOptions = {}): Promise<void> {
     const s = createSpinner('Pruning all unused Docker images...');
     s.start();
     try {
-      await execa('docker', ['system', 'prune', '-a', '-f', '--volumes'], { stdio: 'pipe' });
+      // Images only — `--images` never meant volumes, and a global volume
+      // prune reaches every stopped project's data, not just Eve's.
+      await execa('docker', ['system', 'prune', '-a', '-f'], { stdio: 'pipe' });
       s.succeed('Docker system pruned (all unused images removed)');
     } catch (err) {
       s.warn(`docker system prune failed: ${err instanceof Error ? err.message.split('\n')[0] : String(err)}`);

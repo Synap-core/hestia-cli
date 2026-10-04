@@ -49,6 +49,14 @@ function rewriteEnvDomain(envPath: string, fqdn: string): boolean {
   return true;
 }
 
+/** `COMPOSE_PROJECT_NAME=` from a deploy .env, or undefined. */
+export function readEnvPin(envPath: string): string | undefined {
+  if (!existsSync(envPath)) return undefined;
+  const raw = readFileSync(envPath, 'utf-8').match(/^COMPOSE_PROJECT_NAME=(.*)$/m)?.[1];
+  const value = raw?.trim().replace(/^["']|["']$/g, '');
+  return value || undefined;
+}
+
 export type SynapCliSubcommand =
   | 'install'
   | 'update'
@@ -69,6 +77,7 @@ export type SynapCliSubcommand =
   | 'clean'
   | 'errors'
   | 'diagnose'
+  | 'reset'
   | 'setup';
 
 export interface RunSynapCliOptions {
@@ -217,14 +226,17 @@ export function runSynapCli(
     // Tell the synap CLI to skip its built-in Caddy so it doesn't fight
     // Traefik for port 80 and abort updates with "port already allocated".
     SYNAP_SKIP_EDGE: '1',
-    // Belt-and-suspenders: pin the compose project name explicitly so eve
-    // never accidentally creates `deploy_*` volumes (the cwd-basename
-    // fallback). Pre-Phase-3 synap-backend installs don't have
-    // `_resolve_compose_project_name`, so without this override they'd
-    // silently use cwd basename → orphan volumes → postgres detonation.
-    // Exception: honour an existing pin (operator chose differently).
-    COMPOSE_PROJECT_NAME: process.env.COMPOSE_PROJECT_NAME ?? 'synap-backend',
   };
+  // Compose project name: an operator's env override, else the pod's own pin
+  // in deploy/.env. Never a hard-coded default: forcing `synap-backend` here
+  // overrode a pod pinned to another name (→ an empty parallel stack) and hid
+  // the synap CLI's refusal when two projects own a postgres for one deploy
+  // dir (update-door plan P0, 2026-10-04). Unpinned → the CLI resolves it,
+  // refuses when ambiguous, and writes the pin.
+  const projectName =
+    process.env.COMPOSE_PROJECT_NAME?.trim() || readEnvPin(join(paths.deployDir, '.env'));
+  if (projectName) env.COMPOSE_PROJECT_NAME = projectName;
+  else delete env.COMPOSE_PROJECT_NAME;
   if (options.domain) {
     env.DOMAIN = toPodFqdn(options.domain);
   }

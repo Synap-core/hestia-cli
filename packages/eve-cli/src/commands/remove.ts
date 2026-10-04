@@ -65,8 +65,10 @@ async function removeSynap(): Promise<void> {
     const deployDir = process.env.SYNAP_DEPLOY_DIR;
     if (deployDir) {
       const composePath = join(deployDir, 'docker-compose.yml');
-      // Use array args — no shell string interpolation
-      await execa('docker', ['compose', '-f', composePath, 'down', '--volumes'], {
+      // Use array args — no shell string interpolation. Volumes are KEPT:
+      // they are the pod's database and files (same rule as @eve/lifecycle's
+      // removeOne; deleting them is `eve purge`, which asks first).
+      await execa('docker', ['compose', '-f', composePath, 'down'], {
         env: { ...process.env, SYNAP_ASSUME_YES: '1' },
         stdio: 'inherit',
       });
