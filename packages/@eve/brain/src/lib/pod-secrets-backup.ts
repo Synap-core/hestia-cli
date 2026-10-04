@@ -10,29 +10,14 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { readEveSecrets, writeEveSecrets, type EveSecrets } from '@eve/dna';
+import { readEveSecrets, writeEveSecrets, POD_SECRET_KEY_NAMES, type EveSecrets, type PodSecretKey } from '@eve/dna';
 
 /**
  * Critical pod secrets eve mirrors. If postgres/typesense/minio/kratos/hydra
  * volumes already exist on disk, regenerating any of these is a one-way
  * data-loss event — they're how the volumes encrypt/authenticate data.
  */
-export const POD_SECRET_KEYS = [
-  'POSTGRES_PASSWORD',
-  'JWT_SECRET',
-  'KRATOS_SECRETS_COOKIE',
-  'KRATOS_SECRETS_CIPHER',
-  'KRATOS_WEBHOOK_SECRET',
-  'MINIO_ACCESS_KEY',
-  'MINIO_SECRET_KEY',
-  'TYPESENSE_API_KEY',
-  'TYPESENSE_ADMIN_API_KEY',
-  'ORY_HYDRA_SECRETS_SYSTEM',
-  'SYNAP_SERVICE_ENCRYPTION_KEY',
-  'PROVISIONING_TOKEN',
-] as const;
-
-type PodSecretKey = typeof POD_SECRET_KEYS[number];
+export const POD_SECRET_KEYS: readonly PodSecretKey[] = POD_SECRET_KEY_NAMES;
 
 function readEnvLine(content: string, key: string): string | undefined {
   const m = content.match(new RegExp(`^${key}=(.*)$`, 'm'));

@@ -132,6 +132,8 @@ export {
   writeCpUserSession,
   clearCpUserSession,
   isCpSessionStale,
+  POD_SECRET_KEY_NAMES,
+  type PodSecretKey,
 } from './secrets-contract.js';
 
 // Centralized config store

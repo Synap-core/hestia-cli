@@ -24,6 +24,33 @@ const UnifiedProviderSchema = z.object({
 // Exported so consumers can assert a payload is ACCEPTED (reachability)
 // rather than regex the source for a key name — a text match cannot tell a
 // nested key from a comment or a sibling section.
+/**
+ * The pod `.env` secrets Eve mirrors — THE single list. `@eve/brain`'s
+ * POD_SECRET_KEYS is derived from it, so the mirror and its stored shape can
+ * never disagree again (they did: a key added to one list only would have been
+ * silently STRIPPED by this zod object on write). Each entry indexes data that
+ * already exists on disk; regenerating it is one-way data loss.
+ */
+const POD_SECRET_FIELDS = {
+  POSTGRES_PASSWORD: z.string().optional(),
+  JWT_SECRET: z.string().optional(),
+  KRATOS_SECRETS_COOKIE: z.string().optional(),
+  KRATOS_SECRETS_CIPHER: z.string().optional(),
+  KRATOS_WEBHOOK_SECRET: z.string().optional(),
+  MINIO_ACCESS_KEY: z.string().optional(),
+  MINIO_SECRET_KEY: z.string().optional(),
+  TYPESENSE_API_KEY: z.string().optional(),
+  TYPESENSE_ADMIN_API_KEY: z.string().optional(),
+  ORY_HYDRA_SECRETS_SYSTEM: z.string().optional(),
+  SYNAP_SERVICE_ENCRYPTION_KEY: z.string().optional(),
+  // Encrypts every vault secret at rest; missing until 2026-10-04, so a
+  // regenerated .env would have made all stored credentials unreadable.
+  VAULT_SERVER_KEY: z.string().optional(),
+  PROVISIONING_TOKEN: z.string().optional(),
+};
+export type PodSecretKey = keyof typeof POD_SECRET_FIELDS;
+export const POD_SECRET_KEY_NAMES = Object.keys(POD_SECRET_FIELDS) as PodSecretKey[];
+
 export const SecretsSchema = z.object({
   version: z.literal('1'),
   updatedAt: z.string(),
@@ -152,18 +179,7 @@ export const SecretsSchema = z.object({
        */
       podSecrets: z
         .object({
-          POSTGRES_PASSWORD: z.string().optional(),
-          JWT_SECRET: z.string().optional(),
-          KRATOS_SECRETS_COOKIE: z.string().optional(),
-          KRATOS_SECRETS_CIPHER: z.string().optional(),
-          KRATOS_WEBHOOK_SECRET: z.string().optional(),
-          MINIO_ACCESS_KEY: z.string().optional(),
-          MINIO_SECRET_KEY: z.string().optional(),
-          TYPESENSE_API_KEY: z.string().optional(),
-          TYPESENSE_ADMIN_API_KEY: z.string().optional(),
-          ORY_HYDRA_SECRETS_SYSTEM: z.string().optional(),
-          SYNAP_SERVICE_ENCRYPTION_KEY: z.string().optional(),
-          PROVISIONING_TOKEN: z.string().optional(),
+          ...POD_SECRET_FIELDS,
           backedUpAt: z.string().optional(),
         })
         .optional(),
