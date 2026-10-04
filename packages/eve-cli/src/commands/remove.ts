@@ -12,6 +12,7 @@ import { confirm, isCancel } from '@clack/prompts';
 import { getGlobalCliFlags, } from '@eve/cli-kit';
 import {
   entityStateManager,
+  readSynapEnvValue,
 } from '@eve/dna';
 import { uninstallDashboardContainer } from '@eve/legs';
 import { materializeTargets } from '@eve/lifecycle';
@@ -65,10 +66,19 @@ async function removeSynap(): Promise<void> {
     const deployDir = process.env.SYNAP_DEPLOY_DIR;
     if (deployDir) {
       const composePath = join(deployDir, 'docker-compose.yml');
+      // The pod's PINNED compose project — never compose's directory-name
+      // default ("deploy"), which would act on a different, empty stack.
+      const project = readSynapEnvValue(join(deployDir, '.env'), 'COMPOSE_PROJECT_NAME');
+      if (!project) {
+        throw new Error(
+          `No COMPOSE_PROJECT_NAME pin in ${deployDir}/.env — refusing to guess which stack to stop. ` +
+          'Run `synap doctor` on the host (one `synap update` pins it).',
+        );
+      }
       // Use array args — no shell string interpolation. Volumes are KEPT:
       // they are the pod's database and files (same rule as @eve/lifecycle's
       // removeOne; deleting them is `eve purge`, which asks first).
-      await execa('docker', ['compose', '-f', composePath, 'down'], {
+      await execa('docker', ['compose', '-p', project, '-f', composePath, 'down'], {
         env: { ...process.env, SYNAP_ASSUME_YES: '1' },
         stdio: 'inherit',
       });

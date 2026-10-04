@@ -451,3 +451,14 @@ export {
   parseFreellmapiSetupCode,
   parseFreellmapiUnifiedKey,
 } from './freellmapi-logs.js';
+
+// The Synap pod's ONE .env writer (`synap config` / `synap apply`) — update-door P4.
+export {
+  readSynapEnvValue,
+  hasSynapConfigDoor,
+  synapConfigSetAt,
+  synapConfigUnsetAt,
+  synapApplyAt,
+  type SynapConfigDoorOptions,
+  type SynapConfigResult,
+} from './synap-config-door.js';

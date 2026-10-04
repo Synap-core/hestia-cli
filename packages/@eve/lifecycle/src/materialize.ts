@@ -10,7 +10,7 @@ import {
   type MaterializerTarget,
 } from '@eve/dna';
 import { refreshTraefikRoutes } from '@eve/legs';
-import { writeEnvVar } from './env-files.js';
+import { synapConfigSet, toPodFqdn } from '@eve/brain';
 
 export interface MaterializeOptions {
   cwd?: string;
@@ -78,44 +78,39 @@ export async function materializeTargets(
           }
           const domain = resolvedSecrets?.domain?.primary?.trim();
           const publicUrl = resolveSynapUrl(resolvedSecrets);
-          const domainResult = domain ? writeEnvVar(deployDir, 'DOMAIN', domain) : { changed: false, previous: null };
-          const publicUrlResult = publicUrl ? writeEnvVar(deployDir, 'PUBLIC_URL', publicUrl) : { changed: false, previous: null };
-          // Hermes trigger: inject URL + key so the backend cron worker activates automatically.
-          const hermesApiKey = resolvedSecrets?.builder?.hermes?.apiServerKey;
-          const hermesTriggerUrlResult = hermesApiKey
-            ? writeEnvVar(deployDir, 'HERMES_TRIGGER_URL', 'http://eve-builder-hermes:8642')
-            : { changed: false, previous: null };
-          const hermesTriggerKeyResult = hermesApiKey
-            ? writeEnvVar(deployDir, 'HERMES_TRIGGER_KEY', hermesApiKey)
-            : { changed: false, previous: null };
+          const entries: Record<string, string> = {};
+          // DOMAIN is the pod FQDN (pod.<root>) — the same value the synap
+          // delegate heals to. Writing the bare root here made the two eve
+          // writers overwrite each other on every run.
+          if (domain) entries.DOMAIN = toPodFqdn(domain);
+          if (publicUrl) entries.PUBLIC_URL = publicUrl;
+          // HERMES_TRIGGER_URL / HERMES_TRIGGER_KEY are no longer written: no
+          // container sees them (synap-backend's docker-compose.yml does not
+          // pass them, and compose passes only the keys it names) and no
+          // backend code reads them. The pod's validated config door refuses
+          // keys nothing consumes.
           // T3 Code executor — used by the DevPlane pipeline for code phases.
           const t3codeUrl = resolvedSecrets?.builder?.t3code?.url;
           const t3codeApiKey = resolvedSecrets?.builder?.t3code?.apiKey;
-          const t3codeUrlResult = t3codeUrl
-            ? writeEnvVar(deployDir, 'T3CODE_URL', t3codeUrl)
-            : { changed: false, previous: null };
-          const t3codeKeyResult = t3codeApiKey
-            ? writeEnvVar(deployDir, 'T3CODE_API_KEY', t3codeApiKey)
-            : { changed: false, previous: null };
-          result = {
-            target,
-            ok: true,
-            changed:
-              domainResult.changed ||
-              publicUrlResult.changed ||
-              hermesTriggerUrlResult.changed ||
-              hermesTriggerKeyResult.changed ||
-              t3codeUrlResult.changed ||
-              t3codeKeyResult.changed,
-            summary: 'Backend env synchronized',
-            details: {
-              deployDir,
-              domainChanged: domainResult.changed,
-              publicUrlChanged: publicUrlResult.changed,
-              hermesTriggerChanged: hermesTriggerUrlResult.changed,
-              t3codeChanged: t3codeUrlResult.changed,
-            },
-          };
+          if (t3codeUrl) entries.T3CODE_URL = t3codeUrl;
+          if (t3codeApiKey) entries.T3CODE_API_KEY = t3codeApiKey;
+          // Through the pod's ONE .env writer (validated, atomic, backed up).
+          const written = synapConfigSet(entries, { deployDir });
+          result = written.ok
+            ? {
+                target,
+                ok: true,
+                changed: written.changed.length > 0,
+                summary: 'Backend env synchronized',
+                details: { deployDir, changedKeys: written.changed },
+              }
+            : {
+                target,
+                ok: false,
+                changed: false,
+                summary: 'synap config refused the backend env',
+                error: (written.stderr || written.stdout).trim(),
+              };
           break;
         }
 

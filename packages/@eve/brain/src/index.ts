@@ -11,10 +11,17 @@ export { SynapService, type SynapHealth } from './lib/synap.js';
 export { resolveSynapDelegate, type SynapDelegatePaths } from './lib/synap-delegate.js';
 export {
   runSynapCli,
+  synapUpdateArgs,
   toPodFqdn,
+  readEnvValue,
+  synapConfigSet,
+  synapConfigUnset,
+  synapApply,
   type SynapCliSubcommand,
   type RunSynapCliOptions,
   type SynapCliResult,
+  type SynapConfigOptions,
+  type SynapConfigResult,
 } from './lib/synap-cli-delegate.js';
 export { execa, ensureNetwork } from './lib/exec.js';
 export { OllamaService, type AIModelStatus } from './lib/ollama.js';

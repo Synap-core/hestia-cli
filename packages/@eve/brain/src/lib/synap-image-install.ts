@@ -1,13 +1,12 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, writeFileSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { execSync, spawnSync } from 'node:child_process';
 import {
   ensureSynapLoopbackOverride,
-  pruneOldImagesForRepo,
   discoverAndBackfillPodConfig,
 } from '@eve/dna';
-import { runSynapCli, toPodFqdn } from './synap-cli-delegate.js';
+import { readEnvValue, runSynapCli, synapConfigUnset, toPodFqdn } from './synap-cli-delegate.js';
 import { backupPodSecrets, restorePodSecrets } from './pod-secrets-backup.js';
 
 const SYNAP_BACKEND_REPO = 'https://github.com/synap-core/backend.git';
@@ -275,14 +274,11 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
   if (opts.withOpenclaw) cliArgs.push('--with-openclaw');
   if (opts.withRsshub) cliArgs.push('--with-rsshub');
 
-  // refreshGit: pull the synap-backend checkout to upstream BEFORE delegating.
-  // The on-disk `synap` script is what generates kratos.yml (incl. CORS
-  // allowed_origins). Without a refresh, a pod installed at an older commit
-  // keeps regenerating stale config on every `eve update synap` — e.g. a
-  // kratos.yml missing `https://pod-admin.<root>` → pod-admin auth CORS
-  // failures that re-appear after every update. Keeping the script in lockstep
-  // with the images is the whole point of "update".
-  const cliResult = runSynapCli('install', cliArgs, { repoRoot, refreshGit: true });
+  // No git refresh: the checkout ensureSynapBackendCheckout just made is the
+  // install's starting point, and every later `synap update` replaces the
+  // deploy files with the RELEASE's bundle (update-door plan P4) — the script
+  // stays in lockstep with the images without `git reset --hard` on a pod.
+  const cliResult = runSynapCli('install', cliArgs, { repoRoot });
   if (!cliResult.ok) {
     // Caddy-only failure (port 80 collision with eve-legs-traefik) is the
     // signature case: the data plane (postgres / kratos / backend / pod-admin)
@@ -338,15 +334,10 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
     console.log(`  Connected ${podAdminContainer} → eve-network (alias: eve-brain-pod-admin)`);
   }
 
-  // 7. Reclaim disk by pruning old image versions. Failures are non-fatal.
-  for (const repo of ['ghcr.io/synap-core/backend', 'ghcr.io/synap-core/pod-agent']) {
-    try {
-      const r = pruneOldImagesForRepo(repo, 3);
-      if (r.removed.length > 0) {
-        console.log(`  Pruned ${r.removed.length} old ${repo} image(s) (kept latest 3).`);
-      }
-    } catch { /* sandbox without docker images access */ }
-  }
+  // 7. No image pruning here: `synap update` keeps the images of the current
+  //    and previous release (its rollback cache) and prunes the rest itself.
+  //    Eve's old "keep the newest 3" prune could delete exactly the image a
+  //    rollback needs.
 
   // Re-read the bootstrap token in case the CLI generated a different one
   // (e.g. mode=preseed where eve doesn't pass --admin-bootstrap-token).
@@ -367,14 +358,13 @@ export async function installSynapFromImage(opts: SynapImageInstallOptions = {})
  * Returns `true` when the file was modified.
  */
 export function reconcileEveEnv(envPath: string): boolean {
-  if (!existsSync(envPath)) return false;
-  let content = readFileSync(envPath, 'utf-8');
-
-  const legacy = content.match(/^KRATOS_CONFIG_DIR=\.\/config\/kratos\s*$/m);
-  if (!legacy) return false;
-
-  content = content.replace(/^KRATOS_CONFIG_DIR=\.\/config\/kratos\s*\n?/m, '');
-  writeFileSync(envPath, content, { encoding: 'utf-8', mode: 0o600 });
+  if (readEnvValue(envPath, 'KRATOS_CONFIG_DIR') !== './config/kratos') return false;
+  // Through the pod's validated door — never a direct .env write.
+  const r = synapConfigUnset(['KRATOS_CONFIG_DIR'], { deployDir: dirname(envPath) });
+  if (!r.ok) {
+    console.warn(`  reconcile-env: could not remove legacy KRATOS_CONFIG_DIR: ${r.stderr.trim() || r.stdout.trim()}`);
+    return false;
+  }
   console.log('  reconcile-env: removed legacy KRATOS_CONFIG_DIR=./config/kratos (canonical layout uses ../kratos)');
-  return true;
+  return r.changed.length > 0;
 }

@@ -9,7 +9,9 @@
  * mirrored. Those are decisions or self-healing on the synap CLI side.
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { synapConfigSet } from './synap-cli-delegate.js';
 import { readEveSecrets, writeEveSecrets, POD_SECRET_KEY_NAMES, type EveSecrets, type PodSecretKey } from '@eve/dna';
 
 /**
@@ -66,6 +68,11 @@ export async function backupPodSecrets(envPath: string): Promise<{ captured: Pod
  * doesn't exist (caller is expected to ensure `.env` exists first — fresh
  * `synap install` creates it).
  *
+ * Written through the pod's ONE validated writer (`synap config set`, values
+ * on stdin) — never a direct file write. Filling an EMPTY immutable secret is
+ * allowed by the door; changing a set one is not, which is exactly this
+ * function's contract.
+ *
  * Call this BEFORE `synap update` so the synap CLI's `compose up` reads
  * a complete `.env`. Operator-set values (DOMAIN, ADMIN_*) are unaffected.
  */
@@ -76,29 +83,19 @@ export async function restorePodSecrets(envPath: string): Promise<{ restored: Po
   const backup = secrets?.synap?.podSecrets;
   if (!backup) return { restored: [], reason: 'no eve backup available' };
 
-  let content = readFileSync(envPath, 'utf-8');
-  const restored: PodSecretKey[] = [];
-
+  const content = readFileSync(envPath, 'utf-8');
+  const missing: Partial<Record<PodSecretKey, string>> = {};
   for (const key of POD_SECRET_KEYS) {
     const backupValue = backup[key];
     if (!backupValue) continue;
-
-    const currentValue = readEnvLine(content, key);
-    if (currentValue) continue;
-
-    const lineExists = new RegExp(`^${key}=.*$`, 'm').test(content);
-    if (lineExists) {
-      content = content.replace(new RegExp(`^${key}=.*$`, 'm'), `${key}=${backupValue}`);
-    } else {
-      const sep = content.endsWith('\n') ? '' : '\n';
-      content = `${content}${sep}${key}=${backupValue}\n`;
-    }
-    restored.push(key);
+    if (readEnvLine(content, key)) continue;
+    missing[key] = backupValue;
   }
+  if (Object.keys(missing).length === 0) return { restored: [] };
 
-  if (restored.length > 0) {
-    writeFileSync(envPath, content, { encoding: 'utf-8', mode: 0o600 });
+  const r = synapConfigSet(missing as Record<string, string>, { deployDir: dirname(envPath) });
+  if (!r.ok) {
+    return { restored: [], reason: `synap config set refused the restore: ${(r.stderr || r.stdout).trim()}` };
   }
-
-  return { restored };
+  return { restored: r.changed.filter((k): k is PodSecretKey => (POD_SECRET_KEYS as readonly string[]).includes(k)) };
 }

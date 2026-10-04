@@ -65,7 +65,7 @@ import {
   installDashboardContainer,
   uninstallDashboardContainer,
 } from "@eve/legs";
-import { runSynapCli, reconcileEveEnv, backupPodSecrets, restorePodSecrets } from "@eve/brain";
+import { runSynapCli, synapUpdateArgs, reconcileEveEnv, backupPodSecrets, restorePodSecrets } from "@eve/brain";
 import {
   reconcileOpenclawConfig,
   type OpenclawReconcileResult,
@@ -248,16 +248,12 @@ interface UpdatePlan {
     args?: string[];
     /** Optional pre-CLI loopback override hook (same shape as compose.ensureOverride). */
     ensureOverride?: () => EnsureOverrideResult;
-    /** Pull the synap-backend git checkout before invoking the CLI. */
-    refreshGit?: boolean;
     /**
      * Resolve the bare root domain from eve state at runtime. When set,
      * `runDelegatePlan` derives the pod FQDN (`pod.<root>`) and passes it
      * to the synap CLI — heals .env files written before the FQDN fix.
      */
     resolveDomain?: () => Promise<string | undefined>;
-    /** Same prune policy as the compose branch — applied AFTER the CLI returns. */
-    pruneImages?: { repositories: string[]; keep?: number };
   };
 }
 
@@ -305,35 +301,26 @@ const UPDATE_PLAN: Record<string, UpdatePlan> = {
       // `/opt/synap-backend/`, so the compose dir is `/opt/synap-backend/deploy/`.
       cwd: "/opt/synap-backend/deploy",
       subcommand: "update",
-      // Don't pass `--from-image` or `--from-source` — let the synap CLI's
-      // smart default decide. Its rules (synap line ~1838): if `.env` has
-      // `BACKEND_VERSION=local` → build from source (skip the doomed pull
-      // of the `:local` sentinel that never existed upstream); if we're in
-      // a git checkout → build from source; otherwise → pull. Forcing
-      // `--from-image` here meant every update tried to pull `:local`, hit
-      // 404, and fell back to a build that — without `refreshGit` having
-      // already run — was using whatever stale code happened to be on disk.
-      args: [],
+      // `synap update` applies a published RELEASE (manifest pinned by
+      // digest + deploy bundle), backs up, canaries and rolls back itself.
+      // Same argv as `eve update synap` (synapUpdateArgs) — no git refresh,
+      // no host build, no channel rule re-derived here (update-door P4).
+      args: synapUpdateArgs(),
       // Idempotently write the loopback host-port override so the on-host
       // CLI can reach the backend at 127.0.0.1:4000 without going through
       // Traefik. Runs before the synap CLI so the recreated container
       // starts with the binding already in place.
       ensureOverride: () => ensureSynapLoopbackOverride("/opt/synap-backend/deploy"),
-      refreshGit: true,
       // Heal `.env` if it was written with the bare root domain instead of
       // the pod FQDN. Reads from the centralised configStore at runtime.
       resolveDomain: async () => {
         const secrets = await configStore.get();
         return secrets?.domain?.primary;
       },
-      // synap-backend, backend-canary, backend-migrate, realtime — all
-      // share the same `ghcr.io/synap-core/backend` image. pod-agent
-      // ships separately. Keep three so the user can still roll back
-      // one or two versions if a deploy regresses.
-      pruneImages: {
-        repositories: ["ghcr.io/synap-core/backend", "ghcr.io/synap-core/pod-agent"],
-        keep: 3,
-      },
+      // No pruneImages: `synap update` keeps the current + previous release's
+      // images (its rollback cache) and prunes the rest. Eve's "keep the
+      // newest 3 so the user can roll back" could delete the very image a
+      // rollback needs, and a `:local` build never had 3 versions anyway.
     },
   },
 };
@@ -752,7 +739,6 @@ async function* runDelegatePlan(
   };
 
   const result = runSynapCli(plan.subcommand, plan.args ?? [], {
-    refreshGit: plan.refreshGit,
     domain: bareDomain,
   });
 
@@ -781,32 +767,6 @@ async function* runDelegatePlan(
         type: "log",
         line: `Pod-secrets backup failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
       };
-    }
-  }
-
-  if (plan.pruneImages) {
-    const keep = plan.pruneImages.keep ?? 3;
-    for (const repo of plan.pruneImages.repositories) {
-      try {
-        const pruneResult = pruneOldImagesForRepo(repo, keep);
-        if (pruneResult.removed.length > 0) {
-          yield {
-            type: "log",
-            line: `Pruned ${pruneResult.removed.length} old ${repo} image(s) — kept latest ${keep} (${pruneResult.kept.length} remain).`,
-          };
-        }
-        if (pruneResult.skipped.length > 0) {
-          yield {
-            type: "log",
-            line: `Skipped ${pruneResult.skipped.length} ${repo} image(s) still in use by other containers.`,
-          };
-        }
-      } catch (err) {
-        yield {
-          type: "log",
-          line: `Image prune for ${repo} skipped: ${err instanceof Error ? err.message : String(err)}`,
-        };
-      }
     }
   }
 

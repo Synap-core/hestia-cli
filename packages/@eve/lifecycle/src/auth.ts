@@ -39,7 +39,7 @@ import { join } from "node:path";
 import { exec as execCallback } from "node:child_process";
 import { promisify } from "node:util";
 import { randomBytes } from "node:crypto";
-import { writeEnvVar } from "./env-files.js";
+import { synapConfigSet } from "@eve/brain";
 import {
   LEGACY_CODER_ENGINE_SLUGS,
   POD_DEPLOY_DIR_CANDIDATES,
@@ -1081,13 +1081,20 @@ export async function ensurePodProvisioningToken(): Promise<EnsureProvisioningTo
   }
 
   const token = randomBytes(32).toString("hex");
-  const result = writeEnvVar(deployDir, "PROVISIONING_TOKEN", token);
+  // Through the pod's ONE validated .env writer (values on stdin, atomic,
+  // backed up). PROVISIONING_TOKEN is immutable there: filling an empty one
+  // is allowed, overwriting a set one is refused — the probe above found none.
+  const written = synapConfigSet({ PROVISIONING_TOKEN: token }, { deployDir });
+  if (!written.ok) {
+    throw new Error(
+      `Could not write PROVISIONING_TOKEN through synap config: ${(written.stderr || written.stdout).trim()}`,
+    );
+  }
   const envFilePath = join(deployDir, ".env");
 
-  // Best-effort restart so the running backend reloads its env.
+  // Best-effort recreate so the running backend reloads its env.
   // Non-fatal: the token is on disk; the next manual restart picks it up.
   const backendRestarted = restartBackendContainer(deployDir);
-  void result; // WriteEnvVarResult.changed logged by caller if needed
 
   return {
     token,

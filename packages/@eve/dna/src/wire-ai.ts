@@ -19,6 +19,7 @@
 
 import { execSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { synapApplyAt, synapConfigSetAt } from './synap-config-door.js';
 import { homedir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import type { EveSecrets } from './secrets-contract.js';
@@ -142,8 +143,8 @@ export function pickPrimaryProvider(
  * Synap IS receives the upstream provider keys directly. It exposes a single
  * OpenAI-compat endpoint that other components route through.
  *
- * Writes /opt/synap-backend/deploy/.env (or SYNAP_DEPLOY_DIR), then restarts
- * the IS container.
+ * Sets the keys in /opt/synap-backend/deploy/.env (or SYNAP_DEPLOY_DIR) through
+ * the pod's validated door (`synap config set`), then `synap apply`.
  *
  * ⚠️ THIS IS A **BOOTSTRAP** PATH, NOT A SECOND SOURCE OF TRUTH.
  *
@@ -175,34 +176,26 @@ function wireSynapIs(secrets: EveSecrets | null): WireAiResult {
     return { id: 'synap', outcome: 'skipped', summary: `deploy dir not found: ${deployDir}` };
   }
 
-  // Build env additions for each provider that has a key.
-  const envLines: string[] = ['# AI provider keys — managed by eve ai apply'];
+  // Keys for each provider that has one. Written through the pod's ONE
+  // validated .env writer (`synap config set`) — this used to rewrite the file
+  // itself, replacing "everything after the eve marker", which also deleted
+  // whatever was appended after it later: the release block, the
+  // COMPOSE_PROJECT_NAME pin, SYNAP_EDGE (update-door plan P4).
+  const entries: Record<string, string> = {};
   /** Custom providers this BOOTSTRAP path does not carry — the pod owns them. */
   const skippedCustom: string[] = [];
   for (const p of providers) {
     if (!p.apiKey) continue;
     // Built-in provider keys (by id)
-    if (p.id === 'openai') envLines.push(`OPENAI_API_KEY=${p.apiKey}`);
-    if (p.id === 'anthropic') envLines.push(`ANTHROPIC_API_KEY=${p.apiKey}`);
-    if (p.id === 'openrouter') envLines.push(`OPENROUTER_API_KEY=${p.apiKey}`);
-    // Custom providers are the POD's job (see the docblock above), and this
-    // branch could never carry them anyway: `indexOf(p)` runs over a list
-    // FILTERED to `custom-*` ids, so any other id — `freellmapi`, say —
-    // yielded -1, made `idx` 0, and fell through the `idx > 0` test writing
-    // NOTHING. A provider the operator had configured was dropped in silence.
-    //
-    // Kept as an explicit, named skip rather than deleted: the operator needs
-    // to know the local wiring did not cover it and where it did land instead.
+    if (p.id === 'openai') entries.OPENAI_API_KEY = p.apiKey;
+    if (p.id === 'anthropic') entries.ANTHROPIC_API_KEY = p.apiKey;
+    if (p.id === 'openrouter') entries.OPENROUTER_API_KEY = p.apiKey;
+    // Custom providers are the POD's job (see the docblock above): the
+    // CUSTOM_PROVIDER_<n>_* env vars were never passed to the backend
+    // container by synap-backend's compose file, so writing them reached
+    // nothing. Named skip, so the operator knows where they belong.
     if (p.id.startsWith('custom-') || !['ollama', 'openai', 'anthropic', 'openrouter'].includes(p.id)) {
-      const idx = providers.filter(x => x.id.startsWith('custom-')).indexOf(p) + 1;
-      if (idx > 0) {
-        envLines.push(`CUSTOM_PROVIDER_${idx}_BASE_URL=${p.baseUrl ?? ''}`);
-        envLines.push(`CUSTOM_PROVIDER_${idx}_API_KEY=${p.apiKey}`);
-        envLines.push(`CUSTOM_PROVIDER_${idx}_NAME=${p.name ?? p.id}`);
-        if (p.defaultModel) envLines.push(`CUSTOM_PROVIDER_${idx}_DEFAULT_MODEL=${p.defaultModel}`);
-      } else {
-        skippedCustom.push(p.id);
-      }
+      skippedCustom.push(p.id);
     }
   }
   // Honor per-service override for synap itself: when the user has
@@ -211,54 +204,32 @@ function wireSynapIs(secrets: EveSecrets | null): WireAiResult {
   // wire* functions (they all call pickPrimaryProvider with their id).
   const synapProvider = pickPrimaryProvider(secrets, 'synap');
   if (synapProvider) {
-    envLines.push(`DEFAULT_AI_PROVIDER=${synapProvider.id}`);
-    if (synapProvider.defaultModel) {
-      envLines.push(`DEFAULT_AI_MODEL=${synapProvider.defaultModel}`);
-    }
+    entries.DEFAULT_AI_PROVIDER = synapProvider.id;
+    if (synapProvider.defaultModel) entries.DEFAULT_AI_MODEL = synapProvider.defaultModel;
   }
 
   // Expose Ollama internal URL so the backend's /v1/models can discover
-  // locally-running models dynamically (no restart needed — env is read once
-  // at boot and cached; model list fetched fresh per /v1/models request).
+  // locally-running models dynamically (env is read once at boot; the model
+  // list is fetched fresh per /v1/models request).
   const ollamaProvider = providers.find(p => p.id === 'ollama');
   if (ollamaProvider) {
-    const ollamaUrl = secrets?.inference?.ollamaUrl ?? 'http://eve-brain-ollama:11434';
-    envLines.push(`OLLAMA_BASE_URL=${ollamaUrl}`);
+    entries.OLLAMA_BASE_URL = secrets?.inference?.ollamaUrl ?? 'http://eve-brain-ollama:11434';
   }
 
-  // Append to existing .env, replacing any prior eve-managed block
-  const envPath = join(deployDir, '.env');
-  let existing = '';
-  try {
-    existing = readFileSync(envPath, 'utf-8');
-  } catch { /* missing — start fresh */ }
-
-  // Strip any previous eve-managed block (everything from our marker to the end of that section)
-  const marker = '# AI provider keys — managed by eve ai apply';
-  const before = existing.includes(marker) ? existing.split(marker)[0].trimEnd() : existing.trimEnd();
-  const merged = (before ? before + '\n\n' : '') + envLines.join('\n') + '\n';
-
-  try {
-    writeFileSync(envPath, merged, { mode: 0o600 });
-  } catch (err) {
+  const written = synapConfigSetAt(deployDir, entries);
+  if (!written.ok) {
     return {
       id: 'synap',
       outcome: 'failed',
-      summary: 'could not write Synap IS env',
-      detail: err instanceof Error ? err.message : String(err),
+      summary: 'synap config refused the Synap AI env',
+      detail: (written.stderr || written.stdout).trim(),
     };
   }
+  const envPath = join(deployDir, '.env');
 
-  // Restart the Synap IS container if it's running
-  // (synap-backend's intelligence-hub service — find by compose label)
-  try {
-    const out = execSync(
-      `docker ps --filter "label=com.docker.compose.project=synap-backend" --filter "label=com.docker.compose.service=intelligence-hub" --format "{{.Names}}"`,
-      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
-    ).trim();
-    const isContainer = out.split('\n')[0]?.trim();
-    if (isContainer) dockerRestart(isContainer);
-  } catch { /* IS may not be running — that's ok */ }
+  // The backend reads these at boot: recreate it through the pod's CLI when
+  // anything changed (`synap apply` — pinned project, update lock, guard).
+  if (written.changed.length > 0) synapApplyAt(deployDir);
 
   // Report what was actually WIRED, not how many providers exist. The old
   // count included providers this bootstrap path had just dropped, so the

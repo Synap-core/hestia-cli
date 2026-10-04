@@ -15,7 +15,7 @@ import {
   provisionAllAgents,
 } from '@eve/lifecycle';
 import { findPodDeployDir, entityStateManager, readEveSecrets } from '@eve/dna';
-import { runSynapCli } from '@eve/brain';
+import { runSynapCli, synapApply, synapConfigSet, synapUpdateArgs } from '@eve/brain';
 import { installDashboardContainer, dashboardIsRunning } from '@eve/legs';
 import { probeAdminStatus } from '../setup-admin.js';
 import { randomBytes } from 'node:crypto';
@@ -206,7 +206,7 @@ async function tryPostUpdateProvision(_deployDir: string): Promise<{ subLines: s
   return { subLines };
 }
 
-async function buildUpdateTargets(deployDir: string | undefined): Promise<UpdateTarget[]> {
+async function buildUpdateTargets(deployDir: string | undefined, synapRelease?: string): Promise<UpdateTarget[]> {
   const targets: UpdateTarget[] = [];
 
   // Read installed component set once — guards all optional targets below.
@@ -249,8 +249,10 @@ async function buildUpdateTargets(deployDir: string | undefined): Promise<Update
         // whose DOMAIN= line was written before eve enforced the pod FQDN.
         const secrets = await readEveSecrets().catch(() => null);
         const bareDomain = secrets?.domain?.primary;
-        const result = runSynapCli('update', ['--from-image'], {
-          refreshGit: true,
+        // `synap update [--release <ref>]` — the one engine: release
+        // manifest, verified backup, canary, automatic rollback. No git
+        // refresh of the pod checkout (update-door plan P4).
+        const result = runSynapCli('update', synapUpdateArgs(synapRelease), {
           domain: bareDomain,
         });
         if (!result.ok) {
@@ -335,26 +337,19 @@ async function buildUpdateTargets(deployDir: string | undefined): Promise<Update
       await execFileAsync('docker', runArgs, { timeout: 30_000 });
       const ownerEmail = secrets?.synap?.userSession?.email ?? (secrets?.builder?.openwebui as Record<string, unknown> | undefined)?.adminEmail as string | undefined;
       await nangoAutoSignup(secretKey, ownerEmail);
-      // Write updated NANGO_HOST to deploy/.env (use top-level import, not re-import)
+      // NANGO_HOST / NANGO_SECRET_KEY → the pod's .env through its ONE
+      // validated writer, then `synap apply` recreates what reads them. (A
+      // `docker restart` here never re-read .env — the new key never landed.)
       const dDir = findPodDeployDir() ?? undefined;
       if (dDir) {
-        const { readFile, writeFile } = await import('node:fs/promises');
-        const { join: pj } = await import('node:path');
-        const envPath = pj(dDir, '.env');
-        let envContent = await readFile(envPath, 'utf8').catch(() => '');
-        const setVar = (c: string, k: string, v: string) => {
-          const re = new RegExp(`^${k}=.*$`, 'm');
-          return re.test(c) ? c.replace(re, `${k}=${v}`) : `${c}\n${k}=${v}`;
-        };
-        envContent = setVar(envContent, 'NANGO_HOST', nangoHost);
-        envContent = setVar(envContent, 'NANGO_SECRET_KEY', secretKey);
-        await writeFile(envPath, envContent.trimStart(), 'utf8');
-        // Restart synap-backend to pick up any env changes
-        const container = getSynapBackendContainer();
-        if (container) {
-          await execFileAsync('docker', ['restart', container], { timeout: 60_000 });
-          connectToEveNetwork(container);
+        const written = synapConfigSet({ NANGO_HOST: nangoHost, NANGO_SECRET_KEY: secretKey }, { deployDir: dDir });
+        if (!written.ok) throw new Error(`synap config refused the Nango keys: ${(written.stderr || written.stdout).trim()}`);
+        if (written.changed.length > 0) {
+          const applied = synapApply({ deployDir: dDir });
+          if (!applied.ok) throw new Error(`synap apply failed: ${(applied.stderr || applied.stdout).trim().split('\n').slice(-2).join(' ')}`);
         }
+        const container = getSynapBackendContainer();
+        if (container) connectToEveNetwork(container);
       }
       return { subLines: [`image updated, container recreated with NANGO_DATABASE_URL`] };
     },
@@ -554,7 +549,8 @@ export function backupUpdateCommands(program: Command): void {
     .description('Update Eve components. Synap owns its bundled Pod Admin lifecycle, so `eve update pod-admin` updates the Data Pod safely.')
     .option('--only <organs>', 'Comma-separated organs to update (deprecated — use positional args)')
     .option('--skip <organs>', 'Comma-separated organs to skip, e.g. traefik')
-    .action(async (components: string[] | undefined, opts: { only?: string; skip?: string }) => {
+    .option('--release <ref>', 'Synap release to apply: a release id (v1.2.3, main-<sha7>) or a channel (fast|stable). Default: the pod\'s SYNAP_UPDATE_CHANNEL, else stable')
+    .action(async (components: string[] | undefined, opts: { only?: string; skip?: string; release?: string }) => {
       // Use findPodDeployDir() — the canonical resolver used everywhere else
       // (preflight, doctor, lifecycle). It checks SYNAP_DEPLOY_DIR env var
       // first, then walks candidate paths including /opt/synap-backend/deploy
@@ -562,7 +558,7 @@ export function backupUpdateCommands(program: Command): void {
       // subdirectory layout and couldn't be overridden without changing code.
       const deployDir = findPodDeployDir() ?? undefined;
 
-      const targets = await buildUpdateTargets(deployDir);
+      const targets = await buildUpdateTargets(deployDir, opts.release);
 
       // Positional args take precedence over `--only`. If the user passes
       // both, positional wins (more specific intent).

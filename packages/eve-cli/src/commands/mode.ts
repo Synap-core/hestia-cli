@@ -16,8 +16,8 @@
  *  - Idempotent: `on`/`off` skip the recreate step when both flags
  *    already match the requested state. `eve mode multi-user on`
  *    twice never spuriously bounces traffic.
- *  - Atomic env writes via `@eve/lifecycle/writeEnvVar` so Ctrl-C
- *    can't leave a half-written file.
+ *  - Atomic env writes: the Synap pod's .env through its validated
+ *    `synap config` door, other components via `@eve/lifecycle/writeEnvVar`.
  *  - Container state-of-the-world reported by cross-checking the
  *    `.env` file against `docker inspect` — drift means the file says
  *    one thing but the running container has a different env (last
@@ -45,6 +45,7 @@ import {
   reconcileOpenclawConfig,
 } from '@eve/lifecycle';
 import { entityStateManager, readEveSecrets } from '@eve/dna';
+import { synapConfigSet, synapConfigUnset } from '@eve/brain';
 import {
   colors,
   printInfo,
@@ -307,6 +308,28 @@ interface SetResult {
   fileTouched: boolean;
 }
 
+/**
+ * Write one env key for a slot. The Synap pod's .env goes through its ONE
+ * validated writer (`synap config set|unset`, update-door plan P4) — eve
+ * never edits it directly. Other components' .env files keep writeEnvVar.
+ */
+function writeSlotEnv(
+  slot: ComponentSlot,
+  deployDir: string,
+  key: string,
+  value: string | null,
+): { changed: boolean; previous: string | null } {
+  if (slot.id !== 'synap') return writeEnvVar(deployDir, key, value);
+  const previous = readEnvVar(deployDir, key);
+  const r = value === null
+    ? synapConfigUnset([key], { deployDir })
+    : synapConfigSet({ [key]: value }, { deployDir });
+  if (!r.ok) {
+    throw new Error(`synap config refused ${key}: ${(r.stderr || r.stdout).trim()}`);
+  }
+  return { changed: r.changed.includes(key), previous };
+}
+
 function applyDesiredState(
   slot: ComponentSlot,
   state: SlotState,
@@ -320,7 +343,7 @@ function applyDesiredState(
   let changed = false;
 
   const want = desired ? slot.flagOn : slot.flagOff;
-  const r = writeEnvVar(state.deployDir, slot.flagKey, want);
+  const r = writeSlotEnv(slot, state.deployDir, slot.flagKey, want);
   if (r.changed) {
     touched = true;
     changed = true;
@@ -328,7 +351,7 @@ function applyDesiredState(
 
   for (const e of slot.extras ?? []) {
     const targetValue = desired ? e.on : e.off;
-    const er = writeEnvVar(state.deployDir, e.key, targetValue);
+    const er = writeSlotEnv(slot, state.deployDir, e.key, targetValue);
     if (er.changed) touched = true;
   }
 
@@ -466,7 +489,7 @@ async function modeStrategy(strategy: Strategy): Promise<void> {
   let touched = false;
   for (const e of extras) {
     const targetValue = state.fileOn ? e.on : e.off;
-    const r = writeEnvVar(state.deployDir, e.key, targetValue);
+    const r = writeSlotEnv(synapSlot, state.deployDir, e.key, targetValue);
     if (r.changed) {
       touched = true;
       printInfo(

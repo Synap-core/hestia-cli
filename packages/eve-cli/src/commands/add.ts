@@ -239,7 +239,7 @@ async function isBrainReady(): Promise<boolean> {
   await entityStateManager.updateOrgan('brain', 'ready');
   return true;
 }
-import { runBrainInit, runInferenceInit, resolveSynapDelegate } from '@eve/brain';
+import { runBrainInit, runInferenceInit, resolveSynapDelegate, synapApply, synapConfigSet } from '@eve/brain';
 import { runLegsProxySetup, verifyComponent, installDashboardContainer } from '@eve/legs';
 import { materializeTargets, normalizeBareDomain } from '@eve/lifecycle';
 import {
@@ -495,7 +495,6 @@ async function addNango(): Promise<void> {
   }
 
   const { randomUUID } = await import('node:crypto');
-  const { readFile, writeFile } = await import('node:fs/promises');
   const { existsSync } = await import('node:fs');
   const { join: pathJoin } = await import('node:path');
 
@@ -705,46 +704,31 @@ async function addNango(): Promise<void> {
     },
   }, process.cwd());
 
-  // Write NANGO_HOST + NANGO_SECRET_KEY to pod deploy/.env
+  // Write NANGO_HOST + NANGO_SECRET_KEY to the pod's .env through its ONE
+  // validated writer (`synap config set`, values on stdin), then let the
+  // pod's CLI recreate what reads them (`synap apply`: pinned compose project,
+  // update lock, pgdata guard). The old bare `docker compose --project-directory`
+  // here had no project name — in an unpinned deploy dir that is a second stack.
   if (deployDir) {
-    const envPath = pathJoin(deployDir, '.env');
-    let envContent = '';
-    try { envContent = await readFile(envPath, 'utf8'); } catch { /* new file */ }
-
-    const setEnvVar = (content: string, key: string, value: string): string => {
-      const re = new RegExp(`^${key}=.*$`, 'm');
-      const line = `${key}=${value}`;
-      return re.test(content) ? content.replace(re, line) : `${content}\n${line}`;
-    };
-
-    // Write NANGO_HOST as the internal Docker URL — the backend calls Nango's API
+    // NANGO_HOST is the internal Docker URL — the backend calls Nango's API
     // directly, not through the reverse proxy (which strips the Authorization header).
     // The public URLs (NANGO_SERVER_URL, NANGO_CONNECT_URL) are for browser redirects only.
-    envContent = setEnvVar(envContent, 'NANGO_HOST', 'http://eve-arms-nango:3003');
-    envContent = setEnvVar(envContent, 'NANGO_SECRET_KEY', effectiveSecretKey);
-    if (connectUrl) envContent = setEnvVar(envContent, 'NANGO_CONNECT_URL', connectUrl);
-    await writeFile(envPath, envContent.trimStart(), 'utf8');
-    printInfo(`  Wrote NANGO_HOST=${nangoHost} + NANGO_SECRET_KEY${connectUrl ? ` + NANGO_CONNECT_URL=${connectUrl}` : ''} to ${envPath}`);
-
-    // Recreate synap-backend so it picks up the new env vars from .env.
-    // `docker restart` keeps the original env — `compose up --force-recreate`
-    // re-reads .env and creates a fresh container with updated vars.
-    const backendContainer = await findSynapBackendContainer();
-    if (backendContainer) {
-      printInfo(`  Recreating ${backendContainer} to apply NANGO_SECRET_KEY...`);
-      // Derive the compose service name from the container label
-      const { stdout: svcOut } = await execFileAsync('docker', [
-        'inspect', backendContainer,
-        '--format', '{{index .Config.Labels "com.docker.compose.service"}}',
-      ], { timeout: 4000 }).catch(() => ({ stdout: 'backend' }));
-      const serviceName = svcOut.trim() || 'backend';
-      await execFileAsync('docker', [
-        'compose', '--project-directory', deployDir,
-        'up', '-d', '--no-deps', '--force-recreate', serviceName,
-      ], { timeout: 120_000 });
-      printInfo('  Backend recreated with updated env.');
+    const entries: Record<string, string> = {
+      NANGO_HOST: 'http://eve-arms-nango:3003',
+      NANGO_SECRET_KEY: effectiveSecretKey,
+    };
+    if (connectUrl) entries.NANGO_CONNECT_URL = connectUrl;
+    const written = synapConfigSet(entries, { deployDir });
+    if (!written.ok) {
+      printWarning(`  synap config refused the Nango keys: ${(written.stderr || written.stdout).trim()}`);
     } else {
-      printWarning('  Could not find synap-backend container — run `docker compose up -d --force-recreate backend` in your deploy dir to apply NANGO_SECRET_KEY.');
+      printInfo(`  Set NANGO_HOST=${nangoHost} + NANGO_SECRET_KEY${connectUrl ? ` + NANGO_CONNECT_URL=${connectUrl}` : ''} via synap config`);
+      if (written.changed.length > 0) {
+        printInfo('  Recreating the services that read them (synap apply)...');
+        const applied = synapApply({ deployDir });
+        if (applied.ok) printInfo('  Backend recreated with updated env.');
+        else printWarning(`  synap apply failed — run it on the pod host: ${(applied.stderr || applied.stdout).trim().split('\n').slice(-2).join(' ')}`);
+      }
     }
   } else {
     printWarning('  Could not locate deploy/.env — set SYNAP_DEPLOY_DIR and rerun to write env vars.');

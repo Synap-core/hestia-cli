@@ -8,6 +8,7 @@
 import { existsSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { join } from "node:path";
+import { synapApplyAt } from "./synap-config-door.js";
 
 // ---------------------------------------------------------------------------
 // Pod deploy directory resolution
@@ -68,51 +69,24 @@ export const SYNAP_BACKEND_CONTAINERS: ReadonlyArray<string> = [
  * Restart the synap-backend container so it reloads its env.
  *
  * Strategy (first success wins, failures are non-fatal):
- *   1. `docker compose -f docker-compose.yml up -d backend`
- *   2. `docker compose -f docker-compose.standalone.yml up -d backend`
- *   3. `docker restart <container>` for each known container name
+ *   1. the pod's synap CLI: `synap apply` (or `synap start backend` on a
+ *      pre-`apply` CLI) — pinned project, update lock, pgdata guard
+ *   2. `docker restart <container>` for each known container name
  *
  * Returns `true` if any strategy succeeded, `false` if all failed.
  * Never throws.
  */
 export function restartBackendContainer(deployDir: string): boolean {
-  const mainFile = join(deployDir, "docker-compose.yml");
-  const standaloneFile = join(deployDir, "docker-compose.standalone.yml");
-  const overrideFile = join(deployDir, "docker-compose.override.yml");
-  const hasOverride = existsSync(overrideFile);
+  // A Synap pod is recreated through its OWN CLI — `synap apply` (pinned
+  // compose project, update lock, pgdata guard), or `synap start backend` on a
+  // pod whose CLI predates `apply`. Never a bare `docker compose up` here: in
+  // a deploy dir with no COMPOSE_PROJECT_NAME pin it ran under the directory's
+  // name ("deploy") — a second, empty stack beside the real one (update-door
+  // plan §1.1). The eve-only standalone compose layout is retired.
+  if (synapApplyAt(deployDir).ok) return true;
 
-  // For docker-compose.yml: run WITHOUT -f so Docker Compose auto-discovers
-  // docker-compose.override.yml in the same directory. Specifying -f
-  // explicitly suppresses the override — the port mapping never gets applied.
-  if (existsSync(mainFile)) {
-    try {
-      execSync("docker compose up -d backend", {
-        cwd: deployDir,
-        stdio: ["ignore", "ignore", "ignore"],
-        timeout: 30_000,
-      });
-      return true;
-    } catch {
-      // fall through to standalone path
-    }
-  }
-
-  // For standalone (non-default filename): compose won't auto-discover it,
-  // so we must specify both files explicitly when the override exists.
-  if (existsSync(standaloneFile)) {
-    try {
-      const overrideArg = hasOverride ? ` -f ${overrideFile}` : "";
-      execSync(`docker compose -f ${standaloneFile}${overrideArg} up -d backend`, {
-        cwd: deployDir,
-        stdio: ["ignore", "ignore", "ignore"],
-        timeout: 30_000,
-      });
-      return true;
-    } catch {
-      // fall through to docker restart
-    }
-  }
-
+  // Last resort: a plain restart keeps the old env, but brings a stuck
+  // backend back.
   for (const container of SYNAP_BACKEND_CONTAINERS) {
     try {
       execSync(`docker restart ${container}`, {

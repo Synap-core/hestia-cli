@@ -11,9 +11,19 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import {
+  readSynapEnvValue,
+  synapApplyAt,
+  synapConfigSetAt,
+  synapConfigUnsetAt,
+  type SynapConfigDoorOptions,
+  type SynapConfigResult,
+} from '@eve/dna';
 import { resolveSynapDelegate, type SynapDelegatePaths } from './synap-delegate.js';
+
+export type { SynapConfigResult };
 
 /**
  * Eve convention: the synap pod is reachable at `pod.<root>` where `<root>`
@@ -32,29 +42,12 @@ export function toPodFqdn(input: string): string {
   return `pod.${trimmed}`;
 }
 
-/**
- * Rewrite (or append) a `DOMAIN=...` line in a `.env` file. Used to repair
- * existing installs whose .env was written with the bare root instead of the
- * pod FQDN before this fix landed.
- */
-function rewriteEnvDomain(envPath: string, fqdn: string): boolean {
-  if (!existsSync(envPath)) return false;
-  const current = readFileSync(envPath, 'utf-8');
-  const existing = current.match(/^DOMAIN=(.*)$/m)?.[1]?.trim();
-  if (existing === fqdn) return false;
-  const next = current.match(/^DOMAIN=.*$/m)
-    ? current.replace(/^DOMAIN=.*$/m, `DOMAIN=${fqdn}`)
-    : `${current}${current.endsWith('\n') ? '' : '\n'}DOMAIN=${fqdn}\n`;
-  writeFileSync(envPath, next, { encoding: 'utf-8', mode: 0o600 });
-  return true;
-}
+/** `KEY=` from a deploy .env (last assignment, one pair of quotes removed), or undefined. Read-only. */
+export const readEnvValue = readSynapEnvValue;
 
 /** `COMPOSE_PROJECT_NAME=` from a deploy .env, or undefined. */
 export function readEnvPin(envPath: string): string | undefined {
-  if (!existsSync(envPath)) return undefined;
-  const raw = readFileSync(envPath, 'utf-8').match(/^COMPOSE_PROJECT_NAME=(.*)$/m)?.[1];
-  const value = raw?.trim().replace(/^["']|["']$/g, '');
-  return value || undefined;
+  return readEnvValue(envPath, 'COMPOSE_PROJECT_NAME');
 }
 
 export type SynapCliSubcommand =
@@ -86,13 +79,6 @@ export interface RunSynapCliOptions {
   /** Stream child stdout/stderr to the parent (default true). */
   inherit?: boolean;
   /**
-   * Pull the latest synap-backend git checkout before invoking the CLI.
-   * Keeps the bash binary in lockstep with the docker images. Logs a warning
-   * if the repo has uncommitted edits (`git pull --ff-only` rejects); skipped
-   * silently when the deploy dir is not a git checkout.
-   */
-  refreshGit?: boolean;
-  /**
    * Explicit synap-backend git repo root. Bypasses `resolveSynapDelegate`
    * — required when installing into a non-default path (e.g. `/srv/...`).
    * Must contain `synap` script and `deploy/docker-compose.yml`.
@@ -112,58 +98,16 @@ export interface SynapCliResult {
 
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 
-function refreshGitCheckout(repoRoot: string): void {
-  if (!existsSync(`${repoRoot}/.git`)) return;
-
-  const git = (args: string[]) =>
-    spawnSync('git', ['-C', repoRoot, ...args], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf-8' });
-
-  git(['fetch', '--quiet']);
-
-  // Happy path: a clean checkout fast-forwards.
-  const ff = git(['pull', '--ff-only']);
-  if (ff.status === 0) return;
-
-  // ff-only failed. The usual cause on a pod is a shallow clone whose upstream
-  // advanced past the merge base — the checkout then silently regenerates
-  // stale config (e.g. a kratos.yml with an outdated CORS list) on every
-  // update. The pod deploy checkout is meant to MIRROR upstream: all pod state
-  // lives in docker volumes + gitignored files (deploy/.env, kratos/kratos.yml,
-  // overrides), none of which `git reset --hard` touches. So we recover by
-  // hard-resetting tracked files to upstream — UNLESS the operator has local
-  // commits, which we refuse to discard.
-  const ref = (git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']).stdout ?? '').toString().trim();
-
-  // A pod checkout is a `--depth 1` snapshot (see ensureSynapBackendCheckout):
-  // it has no local history to preserve by design, so resetting to upstream is
-  // always safe. For a full (dev-style) checkout, only reset when there are no
-  // local commits to discard.
-  const isShallow = (git(['rev-parse', '--is-shallow-repository']).stdout ?? '').toString().trim() === 'true';
-  let hasLocalCommits = false;
-  if (!isShallow) {
-    const aheadOut = ref ? git(['rev-list', '--count', `${ref}..HEAD`]) : null;
-    hasLocalCommits = !aheadOut || aheadOut.status !== 0 || parseInt((aheadOut.stdout ?? '').toString().trim(), 10) > 0;
-  }
-
-  if (ref && !hasLocalCommits) {
-    const reset = git(['reset', '--hard', ref]);
-    if (reset.status === 0) {
-      console.warn(
-        `  Note: synap-backend at ${repoRoot} had drifted from ${ref} (couldn't fast-forward); ` +
-        `hard-reset to upstream to keep deploy logic + kratos.yml generation current. ` +
-        `Gitignored .env/kratos.yml/overrides and docker volumes were untouched.`,
-      );
-      return;
-    }
-  }
-
-  const detail = (ff.stderr ?? '').toString().trim() || 'rejected (non-fast-forward).';
-  console.warn(
-    `  Warning: could not refresh synap-backend at ${repoRoot} — ${detail}\n` +
-    (hasLocalCommits
-      ? `  The checkout has local commits; refusing to discard them. To force it to upstream (safe — data lives in volumes + gitignored files):\n      git -C ${repoRoot} fetch && git -C ${repoRoot} reset --hard @{u}\n`
-      : `  Continuing with the on-disk version (may regenerate stale config). Fix: git -C ${repoRoot} fetch && git -C ${repoRoot} reset --hard @{u}\n`),
-  );
+/**
+ * The ONE argv for `synap update` from eve (dashboard lifecycle and
+ * `eve update synap` alike — they used to disagree: `--from-image` vs `[]`).
+ * `synap update` applies a RELEASE: an explicit id / channel when given, else
+ * the pod's own SYNAP_UPDATE_CHANNEL (default stable) — eve never re-derives
+ * the channel rule itself.
+ */
+export function synapUpdateArgs(release?: string): string[] {
+  const ref = release?.trim();
+  return ref ? ['--release', ref] : [];
 }
 
 function resolveExplicitRepo(repoRoot: string): SynapDelegatePaths | null {
@@ -204,17 +148,21 @@ export function runSynapCli(
     };
   }
 
-  if (options.refreshGit) {
-    refreshGitCheckout(paths.repoRoot);
-  }
-
-  // When the caller supplies a domain, ensure the value matches eve's pod
-  // FQDN convention (pod.<root>) and rewrite the .env's DOMAIN= line to
-  // match. The CLI's `cmd_update` regenerates kratos.yml from .env every
-  // run, so a wrong DOMAIN= here yields wrong kratos URLs.
+  // The pod's code is never refreshed from git here any more: `synap update`
+  // applies a RELEASE (manifest + deploy bundle) — update-door plan P4.
+  //
+  // When the caller supplies a domain, heal a DOMAIN= written with the bare
+  // root instead of eve's pod FQDN (pod.<root>) — through the pod's ONE
+  // validated .env writer, never a direct file write. The CLI regenerates
+  // kratos.yml from .env, so a wrong DOMAIN yields wrong Kratos URLs.
   if (options.domain) {
     const fqdn = toPodFqdn(options.domain);
-    rewriteEnvDomain(join(paths.deployDir, '.env'), fqdn);
+    if (readEnvValue(join(paths.deployDir, '.env'), 'DOMAIN') !== fqdn) {
+      const healed = synapConfigSet({ DOMAIN: fqdn }, { deployDir: paths.deployDir });
+      if (!healed.ok) {
+        console.warn(`  Warning: could not set DOMAIN=${fqdn} through synap config: ${healed.stderr.trim() || healed.stdout.trim()}`);
+      }
+    }
   }
 
   const env: NodeJS.ProcessEnv = {
@@ -293,4 +241,39 @@ function diagnoseMissingSynapCli(): string {
   }
 
   return 'synap CLI not found at ' + candidate + '/synap — set SYNAP_REPO_ROOT, or run `eve install synap`.';
+}
+
+// ── The pod's ONE .env writer ────────────────────────────────────────────────
+// Implementation: @eve/dna synap-config-door.ts (shared with dna callers).
+// These wrappers only resolve a default deploy dir.
+
+export interface SynapConfigOptions extends SynapConfigDoorOptions {
+  /** The pod's deploy dir (`<root>/deploy`); default: resolveSynapDelegate(). */
+  deployDir?: string;
+}
+
+function resolveDeployDir(deployDir?: string): string | null {
+  return deployDir ?? resolveSynapDelegate()?.deployDir ?? null;
+}
+const noPod: SynapConfigResult = {
+  ok: false, changed: [], exitCode: -1, stdout: '',
+  stderr: 'synap CLI not found — set SYNAP_REPO_ROOT, or run `eve install synap`',
+};
+
+/** `synap config set` — KEY=VALUE pairs on stdin, all-or-nothing. */
+export function synapConfigSet(entries: Record<string, string>, options: SynapConfigOptions = {}): SynapConfigResult {
+  const dir = resolveDeployDir(options.deployDir);
+  return dir ? synapConfigSetAt(dir, entries, options) : noPod;
+}
+
+/** `synap config unset` — removes keys through the same validated door. */
+export function synapConfigUnset(keys: string[], options: SynapConfigOptions = {}): SynapConfigResult {
+  const dir = resolveDeployDir(options.deployDir);
+  return dir ? synapConfigUnsetAt(dir, keys, options) : noPod;
+}
+
+/** `synap apply` — guarded recreate of the running services whose config changed. */
+export function synapApply(options: SynapConfigOptions = {}): SynapConfigResult {
+  const dir = resolveDeployDir(options.deployDir);
+  return dir ? synapApplyAt(dir) : noPod;
 }
