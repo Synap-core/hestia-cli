@@ -378,6 +378,7 @@ async function removeLegacyRemotion(): Promise<void> {
   } catch {
     spinner.fail('Remotion removal failed');
     printWarning('Check manually: docker rm -f eve-builder-remotion');
+    process.exitCode = 1; // a failed removal must not exit 0
     return;
   }
   // Drop the retired component from entity state so `eve status` stops listing it.
