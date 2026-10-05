@@ -43,16 +43,14 @@ const EXTERNAL_CALL_TIMEOUT_MS = 6000;
 /**
  * The external URL a component is configured to use, or null for container mode.
  *
- * DERIVED from a small explicit table rather than read generically: today exactly
- * one component can run in external mode, and a generic "any component with a
+ * DERIVED from a small explicit table rather than read generically: no component
+ * currently runs in external mode (Remotion, the only one, was retired), and a generic "any component with a
  * `secrets.*.url`" rule would silently change health semantics for components
  * that happen to store a URL for a different purpose. Adding a second external
  * component means adding a row HERE, which is the point — it is a decision, not a
  * coincidence.
  */
-const EXTERNAL_SERVICES: Record<string, { section: 'builder'; key: string }> = {
-  remotion: { section: 'builder', key: 'remotion' },
-};
+const EXTERNAL_SERVICES: Record<string, { section: 'builder'; key: string }> = {};
 
 async function resolveExternalServiceUrl(componentId: string): Promise<string | null> {
   const spec = EXTERNAL_SERVICES[componentId];
