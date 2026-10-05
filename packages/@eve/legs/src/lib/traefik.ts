@@ -458,67 +458,103 @@ export class TraefikService {
       `          - url: "${s.upstream}"`
     ).join('\n');
 
-    // Socket.IO / realtime — needs a dedicated higher-priority router so WebSocket
-    // upgrade requests reach the realtime container (port 4001), not the API backend (4000).
-    const synapRealtimeContainer = findComposeContainer('realtime');
-    const synapService = services.find(s => s.id === 'synap');
-    let realtimeRouterYaml = '';
-    let realtimeServiceYaml = '';
-    if (synapService && synapRealtimeContainer) {
-      connectToEveNetwork(synapRealtimeContainer);
-      const rHost = `${synapService.subdomain}.${domain}`;
-      const rRule = `Host(\`${rHost}\`) && (PathPrefix(\`/socket.io/\`) || PathPrefix(\`/realtime/\`))`;
-      const rUpstream = `http://${synapRealtimeContainer}:4001`;
+    // Path-scoped routers on the pod host that must beat the catch-all `synap`
+    // router (priority 100). Each = one (router, service) pair in the same
+    // behind-proxy / ssl / plain shape as the host routers above.
+    const buildPriorityPathRoute = (id: string, rule: string, upstream: string) => {
+      let router: string;
       if (behindProxy) {
-        realtimeRouterYaml =
-          `\n    synap-realtime:\n` +
-          `      rule: "${rRule}"\n` +
+        router =
+          `\n    ${id}:\n` +
+          `      rule: "${rule}"\n` +
           `      priority: 100\n` +
           `      entryPoints:\n` +
           `        - web\n` +
           `      middlewares:\n` +
           `        - forward-https\n` +
-          `      service: synap-realtime-svc`;
+          `      service: ${id}-svc`;
       } else if (ssl) {
-        realtimeRouterYaml =
-          `\n    synap-realtime-http:\n` +
-          `      rule: "${rRule}"\n` +
+        router =
+          `\n    ${id}-http:\n` +
+          `      rule: "${rule}"\n` +
           `      priority: 100\n` +
           `      entryPoints:\n` +
           `        - web\n` +
           `      middlewares:\n` +
           `        - redirect-to-https\n` +
-          `      service: synap-realtime-svc\n` +
-          `    synap-realtime:\n` +
-          `      rule: "${rRule}"\n` +
+          `      service: ${id}-svc\n` +
+          `    ${id}:\n` +
+          `      rule: "${rule}"\n` +
           `      priority: 100\n` +
           `      entryPoints:\n` +
           `        - websecure\n` +
           `      tls:\n` +
           `        certResolver: letsencrypt\n` +
-          `      service: synap-realtime-svc`;
+          `      service: ${id}-svc`;
       } else {
-        realtimeRouterYaml =
-          `\n    synap-realtime-http:\n` +
-          `      rule: "${rRule}"\n` +
+        router =
+          `\n    ${id}-http:\n` +
+          `      rule: "${rule}"\n` +
           `      priority: 100\n` +
           `      entryPoints:\n` +
           `        - web\n` +
-          `      service: synap-realtime-svc\n` +
-          `    synap-realtime-https:\n` +
-          `      rule: "${rRule}"\n` +
+          `      service: ${id}-svc\n` +
+          `    ${id}-https:\n` +
+          `      rule: "${rule}"\n` +
           `      priority: 100\n` +
           `      entryPoints:\n` +
           `        - websecure\n` +
           `      tls: {}\n` +
-          `      service: synap-realtime-svc`;
+          `      service: ${id}-svc`;
       }
-      realtimeServiceYaml =
-        `\n    synap-realtime-svc:\n` +
+      // passHostHeader is Traefik's default (true) — pinned explicitly because
+      // SigV4 signs the Host header: a rewritten Host fails every presigned URL.
+      const service =
+        `\n    ${id}-svc:\n` +
         `      loadBalancer:\n` +
-        (behindProxy ? `        passHostHeader: true\n` : '') +
+        `        passHostHeader: true\n` +
         `        servers:\n` +
-        `          - url: "${rUpstream}"`;
+        `          - url: "${upstream}"`;
+      return { router, service };
+    };
+
+    const synapService = services.find(s => s.id === 'synap');
+    let realtimeRouterYaml = '';
+    let realtimeServiceYaml = '';
+    let storageRouterYaml = '';
+    let storageServiceYaml = '';
+    if (synapService) {
+      const podHost = `${synapService.subdomain}.${domain}`;
+
+      // Socket.IO / realtime — needs a dedicated higher-priority router so WebSocket
+      // upgrade requests reach the realtime container (port 4001), not the API backend (4000).
+      const synapRealtimeContainer = findComposeContainer('realtime');
+      if (synapRealtimeContainer) {
+        connectToEveNetwork(synapRealtimeContainer);
+        const r = buildPriorityPathRoute(
+          'synap-realtime',
+          `Host(\`${podHost}\`) && (PathPrefix(\`/socket.io/\`) || PathPrefix(\`/realtime/\`))`,
+          `http://${synapRealtimeContainer}:4001`,
+        );
+        realtimeRouterYaml = r.router;
+        realtimeServiceYaml = r.service;
+      }
+
+      // Presigned-URL storage — `pod.<domain>/synap-storage/*` → MinIO S3 API (:9000),
+      // Host preserved. Mirrors the Caddyfile `handle /synap-storage/*` route; the
+      // backend signs URLs for MINIO_PUBLIC_URL (= the pod origin). Bucket name
+      // must match the compose MINIO_BUCKET (synap-storage).
+      const minioContainer = findComposeContainer('minio');
+      if (minioContainer) {
+        connectToEveNetwork(minioContainer);
+        const r = buildPriorityPathRoute(
+          'synap-storage',
+          `Host(\`${podHost}\`) && PathPrefix(\`/synap-storage/\`)`,
+          `http://${minioContainer}:9000`,
+        );
+        storageRouterYaml = r.router;
+        storageServiceYaml = r.service;
+      }
     }
 
     const middlewaresYaml = behindProxy
@@ -578,8 +614,8 @@ export class TraefikService {
       `# Domain: ${domain} | Mode: ${modeComment}\n` +
       `http:\n` +
       `${middlewaresYaml}` +
-      `  routers:\n${routersYaml}${realtimeRouterYaml}${pathRoutesYaml}\n` +
-      `  services:\n${servicesYaml}${realtimeServiceYaml}${pathServicesYaml}\n`;
+      `  routers:\n${routersYaml}${realtimeRouterYaml}${storageRouterYaml}${pathRoutesYaml}\n` +
+      `  services:\n${servicesYaml}${realtimeServiceYaml}${storageServiceYaml}${pathServicesYaml}\n`;
 
     // Write static config (proxy mode skips SSL/cert sections)
     if (!existsSync(this.configDir)) mkdirSync(this.configDir, { recursive: true });
