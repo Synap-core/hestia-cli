@@ -479,6 +479,18 @@ export const SecretsSchema = z.object({
       installedAt: z.string().optional(),
     })
     .optional(),
+  /**
+   * Written by `eve add omniroute`. `initialPassword` is passed to the image as
+   * INITIAL_PASSWORD on its FIRST boot (it completes setup headlessly and lets
+   * eve mint the gateway API key through `/api/cli/connect` + `/api/keys`). It
+   * is also the dashboard login, so it is kept rather than discarded.
+   */
+  omniroute: z
+    .object({
+      initialPassword: z.string().optional(),
+      installedAt: z.string().optional(),
+    })
+    .optional(),
   /** Eve web dashboard config */
   dashboard: z
     .object({
@@ -770,6 +782,10 @@ export async function writeEveSecrets(
     current.stalwart as Record<string, unknown> | undefined,
     partial.stalwart as Record<string, unknown> | undefined,
   );
+  const mergedOmniRoute = mergeNested(
+    current.omniroute as Record<string, unknown> | undefined,
+    partial.omniroute as Record<string, unknown> | undefined,
+  );
   const mergedDashboard = mergeNested(
     current.dashboard as Record<string, unknown> | undefined,
     partial.dashboard as Record<string, unknown> | undefined,
@@ -796,6 +812,7 @@ export async function writeEveSecrets(
     builder: mergedBuilder as EveSecrets['builder'],
     arms: mergedArms as EveSecrets['arms'],
     stalwart: mergedStalwart as EveSecrets['stalwart'],
+    omniroute: mergedOmniRoute as EveSecrets['omniroute'],
     dashboard: mergedDashboard as EveSecrets['dashboard'],
     domain: mergedDomain as EveSecrets['domain'],
     cp: mergedCp as EveSecrets['cp'],

@@ -1150,46 +1150,39 @@ volumes:
           // never ran — a healthy container with no route, and a 404 on the
           // dashboard. The CLI is the only layer with a terminal, so the only
           // layer that may ask.
-          //
-          // Collected BEFORE the install rather than after, so the operator is
-          // not asked mid-spinner — and skipped entirely when a key is already
-          // stored, so a re-run is non-interactive.
-          let apiKey: string | undefined;
-          const stored = await readEveSecrets(process.cwd())
-            .then((s) => s?.ai?.providers?.find((p) => p.id === 'omniroute')?.apiKey ?? null)
-            .catch(() => null);
 
-          if (stored) {
-            console.log('  Reusing the OmniRoute API key already stored in secrets.');
-          } else if (getGlobalCliFlags().nonInteractive || !process.stdin.isTTY) {
-            // No terminal, or `-y`. Installing and routing must still happen —
-            // that is the part that was silently broken — so say plainly that
-            // the provider is NOT registered and how to finish later.
-            console.log(
-              '  Non-interactive: skipping the API key. OmniRoute will be installed and routed, ' +
-              'but NOT registered as a provider until you re-run: eve add omniroute',
-            );
-          } else {
-            console.log(await omniRouteKeyInstructions());
-            // `node:readline`, NOT `@clack`. Measured on this pod: clack's
-            // `text()` renders and then NEVER resolves — with a pty and with a
-            // plain pipe both, `Promise.race` against an 8s timer returned the
-            // timeout every time, and the t3code prompt on the same pod has the
-            // same exposure. readline resolves correctly under the same pty
-            // (verified: "TESTKEY" back in ~1.2s). A prompt that can hang is not
-            // usable in an install path, because a hung prompt is what left the
-            // dashboard 404ing in the first place.
-            const answer = await promptLine('Paste the OmniRoute API key (blank to skip — the provider will NOT be registered):');
-            const trimmed = answer.trim();
-            apiKey = trimmed.length > 0 ? trimmed : undefined;
-          }
+          const storedKey = () =>
+            readEveSecrets(process.cwd())
+              .then((s) => s?.ai?.providers?.find((p) => p.id === 'omniroute')?.apiKey ?? null)
+              .catch(() => null);
 
-          const result = await runActionToCompletion('omniroute', 'install', { omnirouteApiKey: apiKey });
-          // Print the transcript on FAILURE too — docker's actual complaint is
-          // the only thing that makes this debuggable, and runCommand captures
-          // it in result.logs. Same contract as freellmapi below.
+          // Install FIRST, with no key: on a fresh volume the recipe mints one
+          // headlessly from the generated INITIAL_PASSWORD, so the common path
+          // never prompts. Only when that failed (a gateway bootstrapped before
+          // eve managed its password) do we fall back to asking.
+          let result = await runActionToCompletion('omniroute', 'install');
           for (const line of result.logs) console.log('  ' + line);
           if (!result.ok) throw new Error(result.error ?? 'OmniRoute install failed');
+
+          if (!(await storedKey())) {
+            if (getGlobalCliFlags().nonInteractive || !process.stdin.isTTY) {
+              console.log(
+                '  Non-interactive: OmniRoute is installed and routed, but NOT registered as a ' +
+                'provider. Create a key in its dashboard, then re-run: eve add omniroute',
+              );
+              return;
+            }
+            console.log(await omniRouteKeyInstructions());
+            // `node:readline`, NOT `@clack` — clack's text() never resolves on
+            // this pod (measured with a pty and a pipe); readline does.
+            const answer = (await promptLine(
+              'Paste the OmniRoute API key (blank to skip — the provider will NOT be registered):',
+            )).trim();
+            if (!answer) return;
+            result = await runActionToCompletion('omniroute', 'install', { omnirouteApiKey: answer });
+            for (const line of result.logs) console.log('  ' + line);
+            if (!result.ok) throw new Error(result.error ?? 'OmniRoute install failed');
+          }
         },
       };
 
