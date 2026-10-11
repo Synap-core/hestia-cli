@@ -24,7 +24,7 @@
     "@heroui/theme": "^2.4.0",
     "@internationalized/date": "^3.5.0",
     "@synap-core/auth": "^1.1.0",
-    "@synap-core/chat-ui": "workspace:*",
+    "@synap-core/web": "workspace:*",
 "@synap-core/types": "^1.11.3",
     "@types/qrcode": "^1.5.0",
     "@xterm/addon-fit": "^0.10.0",

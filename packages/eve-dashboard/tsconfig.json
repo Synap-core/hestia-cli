@@ -25,9 +25,6 @@
     "paths": {
       "@/*": [
         "./*"
-      ],
-      "@synap-core/chat-ui": [
-        "../../@synap-core/chat-ui/src/index.ts"
       ]
     }
   },
