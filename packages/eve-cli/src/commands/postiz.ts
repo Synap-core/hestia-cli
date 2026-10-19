@@ -21,6 +21,13 @@
  * The key is never printed. It is kept in ~/.eve secrets (`postiz.apiKey`,
  * 0600) only after the pod accepted it, so re-running `eve postiz connect`
  * with no key (after a pod rebuild, say) re-applies the stored one.
+ *
+ * Then the way back: Postiz tells the pod when a post goes out through a
+ * webhook. Its public API cannot create one, so connect asks the pod for the
+ * URL (`POST /api/hub/tools/:id/webhook` — the same URL on every run) and
+ * prints it with the one step to do in Postiz. Postiz only calls a public
+ * https address (its SSRF guard), so a pod URL that resolves to a private
+ * address is flagged.
  */
 
 import type { Command } from 'commander';
@@ -40,7 +47,14 @@ import {
   printSuccess,
   printWarning,
 } from '../lib/ui.js';
-import { postApply, resolvePodConnection } from './capabilities.js';
+import {
+  postApply,
+  postToolWebhook,
+  resolvePodConnection,
+  type ApplyCapabilityResponse,
+  type PodConnection,
+  type ToolWebhookResponse,
+} from './capabilities.js';
 
 /**
  * Read one line from the TTY without echoing it.
@@ -93,6 +107,90 @@ async function checkPostizKey(publicUrl: string, apiKey: string): Promise<KeyChe
   } catch (err) {
     return { verdict: 'unknown', detail: err instanceof Error ? err.message : String(err) };
   }
+}
+
+/**
+ * The ranges Postiz refuses to call (gitroomhq/postiz-app
+ * libraries/nestjs-libraries/src/dtos/webhooks/webhook.url.validator.ts).
+ */
+function isPrivateAddress(ip: string): boolean {
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(ip);
+  const v4 = mapped ? mapped[1]! : ip;
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(v4)) {
+    const [a, b] = v4.split('.').map(Number) as [number, number];
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 100 && b >= 64 && b <= 127) ||
+      (a === 198 && (b === 18 || b === 19)) ||
+      a >= 224
+    );
+  }
+  const v6 = ip.toLowerCase();
+  return (
+    v6 === '::1' ||
+    v6 === '::' ||
+    v6.startsWith('fe80:') ||
+    v6.startsWith('fc') ||
+    v6.startsWith('fd') ||
+    v6.startsWith('ff')
+  );
+}
+
+type LookupAll = (host: string) => Promise<string[]>;
+
+const lookupAll: LookupAll = async (host) => {
+  const { lookup } = await import('node:dns/promises');
+  return (await lookup(host, { all: true })).map((r) => r.address);
+};
+
+/**
+ * Why Postiz will refuse to call this URL, or null when it looks public. Same
+ * rule as Postiz: https only, no localhost, no address in a private or
+ * reserved range after DNS.
+ */
+export async function postizUnreachableReason(
+  url: string,
+  lookup: LookupAll = lookupAll,
+): Promise<string | null> {
+  const parsed = new URL(url);
+  if (parsed.protocol !== 'https:') return 'it is not https';
+  const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (host === 'localhost') return `${host} is this machine`;
+  let addresses: string[];
+  try {
+    addresses = /^[\d.]+$|:/.test(host) ? [host] : await lookup(host);
+  } catch (err) {
+    return `${host} does not resolve (${err instanceof Error ? err.message : String(err)})`;
+  }
+  const blocked = addresses.find(isPrivateAddress);
+  return blocked ? `${host} resolves to the private address ${blocked}` : null;
+}
+
+export type PostizWebhookOutcome =
+  /** The URL to paste in Postiz. */
+  | { kind: 'ready'; webhook: ToolWebhookResponse; unreachable: string | null }
+  /** The postiz tool waits on a proposal; it has no id to hang a URL on yet. */
+  | { kind: 'pending' };
+
+/**
+ * After the apply: ask the pod for the postiz tool's webhook URL. Throws when
+ * the apply named no postiz tool or the pod refused — never guesses a URL.
+ */
+export async function connectPostizWebhook(
+  conn: PodConnection,
+  applied: ApplyCapabilityResponse,
+  lookup: LookupAll = lookupAll,
+): Promise<PostizWebhookOutcome> {
+  const tool = applied.created.tools.find((t) => t.name === 'postiz');
+  if (!tool) throw new Error('The pod applied the capability but reported no postiz tool.');
+  if (typeof tool.toolId !== 'string' || !tool.toolId) return { kind: 'pending' };
+  const webhook = await postToolWebhook(conn, tool.toolId);
+  return { kind: 'ready', webhook, unreachable: await postizUnreachableReason(webhook.url, lookup) };
 }
 
 interface ConnectOptions {
@@ -185,6 +283,30 @@ async function runConnect(opts: ConnectOptions): Promise<void> {
     printInfo(`  ${result.proposals.length} proposal(s) to approve in Synap before agents can post.`);
   } else {
     printInfo('  Applied directly — agents can draft and schedule posts now. You approve every send.');
+  }
+  console.log();
+
+  let outcome: PostizWebhookOutcome;
+  try {
+    outcome = await connectPostizWebhook(conn, result);
+  } catch (err) {
+    printError(`The pod did not give a webhook URL: ${err instanceof Error ? err.message : String(err)}`);
+    printInfo('  Without it Synap does not hear when Postiz publishes a post. Run `eve postiz connect` again.');
+    process.exitCode = 1;
+    return;
+  }
+  if (outcome.kind === 'pending') {
+    printInfo('Approve the proposals in Synap, then run `eve postiz connect` again for the webhook URL.');
+    console.log();
+    return;
+  }
+  printInfo('One step left in Postiz, so Synap marks a post Published when it goes out:');
+  printInfo(`  ${outcome.webhook.setupStep ?? 'Add this URL as a webhook in Postiz.'}`);
+  console.log(`    ${colors.info(outcome.webhook.url)}`);
+  printInfo('  Keep this URL private, like a password. Running connect again shows the same URL.');
+  if (outcome.unreachable) {
+    printWarning(`Postiz will refuse this URL: ${outcome.unreachable}.`);
+    printInfo('  Postiz only calls public https addresses. Give the pod a public domain (PUBLIC_URL).');
   }
   console.log();
 }

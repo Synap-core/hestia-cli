@@ -301,6 +301,34 @@ export async function postApply(
   );
 }
 
+/** Response shape from POST /api/hub/tools/:id/webhook. */
+export interface ToolWebhookResponse {
+  provider: string;
+  /** Carries a secret token: show it to the person, never log it. */
+  url: string;
+  rotated: boolean;
+  missingConfig: string[];
+  setupStep: string | null;
+}
+
+/**
+ * Mint (or read back) the inbound webhook URL of a tool the pod's provider
+ * calls back — the pod's one door for it. Idempotent: the same URL every time
+ * unless `rotate`.
+ */
+export async function postToolWebhook(
+  conn: PodConnection,
+  toolId: string,
+  body: { rotate?: boolean } = {},
+): Promise<ToolWebhookResponse> {
+  return postJson<ToolWebhookResponse>(
+    conn,
+    `/api/hub/tools/${encodeURIComponent(toolId)}/webhook`,
+    body,
+    'webhook',
+  );
+}
+
 // ---------------------------------------------------------------------------
 // `eve capabilities apply <template>`
 // ---------------------------------------------------------------------------
