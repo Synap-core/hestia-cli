@@ -278,6 +278,7 @@ async function buildUpdateTargets(deployDir: string | undefined, synapRelease?: 
   if (has('ollama'))              targets.push(lifecycleUpdate('ollama', '🤖 Ollama'));
   if (has('freellmapi'))          targets.push(lifecycleUpdate('freellmapi', '🎰 FreeLLMAPI'));
   if (has('omniroute'))            targets.push(lifecycleUpdate('omniroute', '🧭 OmniRoute'));
+  if (has('postiz'))              targets.push(lifecycleUpdate('postiz', '📣 Postiz'));
   if (has('openclaw'))            targets.push(lifecycleUpdate('openclaw', '🦾 OpenClaw'));
   if (has('nango'))               targets.push({
     id: 'nango',

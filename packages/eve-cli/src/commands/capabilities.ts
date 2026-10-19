@@ -80,7 +80,7 @@ export interface CapabilityDefinition {
 }
 
 /** Response shape from POST /api/hub/capabilities/apply. */
-interface ApplyCapabilityResponse {
+export interface ApplyCapabilityResponse {
   capabilityKey: string;
   created: {
     vault: Record<string, unknown>[];
@@ -94,7 +94,7 @@ interface ApplyCapabilityResponse {
 // Pod connection (reuses eve's existing pod-connection auth — no new auth)
 // ---------------------------------------------------------------------------
 
-interface PodConnection {
+export interface PodConnection {
   synapUrl: string;
   apiKey: string;
 }
@@ -104,7 +104,7 @@ interface PodConnection {
  * secrets. Mirrors the resolution `eve auth` uses: loopback-on-host URL +
  * per-agent Hub key (legacy `synap.apiKey` fallback for the eve agent).
  */
-async function resolvePodConnection(agentType: string): Promise<PodConnection | null> {
+export async function resolvePodConnection(agentType: string): Promise<PodConnection | null> {
   const secrets = await readEveSecrets(process.cwd());
   const synapUrl = await resolveSynapUrlOnHost(secrets);
   if (!synapUrl) return null;
@@ -284,7 +284,7 @@ async function postJson<T>(
   return JSON.parse(rawText) as T;
 }
 
-async function postApply(
+export async function postApply(
   conn: PodConnection,
   body: {
     templateKey?: string;

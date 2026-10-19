@@ -491,6 +491,25 @@ export const SecretsSchema = z.object({
       installedAt: z.string().optional(),
     })
     .optional(),
+  /**
+   * Written by `eve add postiz`. The three generated secrets are created ONCE
+   * and never rotated: the database passwords are baked into the Postgres
+   * volumes at first boot (a new value locks the app out of its own data), and
+   * a new JWT secret signs every user out. `/opt/postiz/.env` is rendered from
+   * these on every install and update.
+   *
+   * `apiKey` is the Postiz public API key the owner created in the Postiz UI,
+   * stored by `eve postiz connect` after the pod accepted it.
+   */
+  postiz: z
+    .object({
+      jwtSecret: z.string().optional(),
+      dbPassword: z.string().optional(),
+      temporalDbPassword: z.string().optional(),
+      apiKey: z.string().optional(),
+      installedAt: z.string().optional(),
+    })
+    .optional(),
   /** Eve web dashboard config */
   dashboard: z
     .object({
@@ -786,6 +805,10 @@ export async function writeEveSecrets(
     current.omniroute as Record<string, unknown> | undefined,
     partial.omniroute as Record<string, unknown> | undefined,
   );
+  const mergedPostiz = mergeNested(
+    current.postiz as Record<string, unknown> | undefined,
+    partial.postiz as Record<string, unknown> | undefined,
+  );
   const mergedDashboard = mergeNested(
     current.dashboard as Record<string, unknown> | undefined,
     partial.dashboard as Record<string, unknown> | undefined,
@@ -813,6 +836,7 @@ export async function writeEveSecrets(
     arms: mergedArms as EveSecrets['arms'],
     stalwart: mergedStalwart as EveSecrets['stalwart'],
     omniroute: mergedOmniRoute as EveSecrets['omniroute'],
+    postiz: mergedPostiz as EveSecrets['postiz'],
     dashboard: mergedDashboard as EveSecrets['dashboard'],
     domain: mergedDomain as EveSecrets['domain'],
     cp: mergedCp as EveSecrets['cp'],

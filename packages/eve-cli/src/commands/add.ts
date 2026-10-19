@@ -1207,6 +1207,23 @@ volumes:
           if (!result.ok) throw new Error(result.error ?? 'FreeLLMAPI install failed');
         },
       };
+    // Thin delegate to the ONE install recipe in @eve/lifecycle, like the
+    // gateways above. The recipe needs no input; the API key is created later in
+    // the Postiz UI and registered with `eve postiz connect`.
+    case 'postiz':
+      return {
+        label: 'Installing Postiz (social scheduler)…',
+        async fn() {
+          const comp = COMPONENTS.find(c => c.id === 'postiz');
+          if (comp?.selfHostedHint) {
+            console.log(`  ${colors.info(comp.selfHostedHint)}`);
+          }
+          const { runActionToCompletion } = await import('@eve/lifecycle');
+          const result = await runActionToCompletion('postiz', 'install');
+          for (const line of result.logs) console.log('  ' + line);
+          if (!result.ok) throw new Error(result.error ?? 'Postiz install failed');
+        },
+      };
     case 'hermes':
       return {
         label: 'Installing Hermes AI agent…',
@@ -1316,6 +1333,7 @@ async function updateStateAfterAdd(componentId: string, finalState: 'ready' | 'e
     ollama: 'brain',
     openclaw: 'arms',
     hermes: 'arms',   // Hermes is the primary agent, same organ as OpenClaw
+    postiz: 'arms',
     rsshub: 'eyes',
     traefik: 'legs',
     openwebui: 'eyes',
@@ -1441,6 +1459,7 @@ export function addCommand(program: Command): void {
           { heading: 'AI agents',      ids: ['hermes', 'openclaw'] },
           { heading: 'Data & inference', ids: ['synap', 'ollama', 'openwebui', 'openwebui-pipelines', 'rsshub'] },
           { heading: 'Builders',        ids: ['opencode', 'openclaude', 'dokploy', 't3code'] },
+          { heading: 'Publishing',      ids: ['postiz'] },
           { heading: 'Infrastructure',  ids: ['traefik', 'eve-dashboard'] },
         ];
 

@@ -356,6 +356,28 @@ async function removeOmniRoute(): Promise<void> {
 }
 
 /**
+ * Remove Postiz through the lifecycle remove — the one place that knows its
+ * compose dir and that its volumes must survive (`KEEP_VOLUMES_ON_REMOVE`).
+ * A second inline `compose down` here would be a second copy of that rule, and
+ * the copy that forgets it deletes every scheduled post and connected account.
+ */
+async function removePostiz(): Promise<void> {
+  const spinner = createSpinner('Stopping Postiz...');
+  spinner.start();
+  const { runActionToCompletion } = await import('@eve/lifecycle');
+  const result = await runActionToCompletion('postiz', 'remove');
+  if (result.ok) {
+    spinner.succeed('Postiz removed (data kept)');
+  } else {
+    spinner.fail('Postiz removal failed — check manually.');
+    for (const line of result.logs.slice(-6)) console.log('  ' + line);
+    if (result.error) printWarning(`  ${result.error}`);
+  }
+  printInfo('  Its posts, accounts and uploads were KEPT in the eve-postiz-* volumes.');
+  printInfo('  The pod keeps its postiz capability; its calls fail until Postiz is back (eve add postiz).');
+}
+
+/**
  * DEPRECATED (Content x Brand W4): Remotion was retired in favour of HyperFrames
  * and is no longer a registered component. This standalone path exists for ONE
  * release so pods that installed it can still clean up; it deliberately depends
@@ -525,6 +547,8 @@ function buildRemoveStep(componentId: string): () => Promise<void> {
       return removeOmniRoute;
     case 'freellmapi':
       return removeFreellmapi;
+    case 'postiz':
+      return removePostiz;
     case 'openwebui-pipelines':
       return removeOpenwebuiPipelines;
     case 'eve-dashboard':
@@ -556,6 +580,7 @@ async function updateStateAfterRemove(componentId: string): Promise<void> {
     openclaw: 'arms',
     hermes: 'arms',
     nango: 'arms',
+    postiz: 'arms',
     rsshub: 'eyes',
     traefik: 'legs',
     openwebui: 'eyes',

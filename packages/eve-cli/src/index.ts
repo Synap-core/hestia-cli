@@ -38,6 +38,7 @@ import { lsCommand } from './commands/ls.js';
 import { synapCommand } from './commands/synap.js';
 import { connectorsCommand } from './commands/connectors.js';
 import { capabilitiesCommand } from './commands/capabilities.js';
+import { postizCommand } from './commands/postiz.js';
 import { colors, emojis } from './lib/ui.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -116,6 +117,7 @@ deployCommand(program);
 synapCommand(program);
 connectorsCommand(program);
 capabilitiesCommand(program);
+postizCommand(program);
 loginCommand(program);
 lsCommand(program);
 

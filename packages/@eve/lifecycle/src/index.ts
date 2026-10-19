@@ -13,7 +13,8 @@
  * translates them into UI toasts.
  */
 
-import { execSync, spawn } from "node:child_process";
+import { execFile, execSync, spawn } from "node:child_process";
+import { promisify } from "node:util";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -72,6 +73,7 @@ import {
 } from "./components/openclaw/reconcile.js";
 import { ensureBuilderWorkspace } from "./builder-workspace.js";
 import { materializeTargets } from "./materialize.js";
+import { readEnvFile } from "./env-files.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -246,6 +248,13 @@ interface UpdatePlan {
   };
 }
 
+/**
+ * Postiz's compose project dir. One definition: install, update and remove
+ * read it. Declared here, above UPDATE_PLAN, because that table reads it at
+ * module load.
+ */
+const POSTIZ_DIR = "/opt/postiz";
+
 const UPDATE_PLAN: Record<string, UpdatePlan> = {
   traefik: { imagePull: "traefik:v3.0" },
   ollama: { imagePull: "ollama/ollama:latest" },
@@ -266,6 +275,16 @@ const UPDATE_PLAN: Record<string, UpdatePlan> = {
       cwd: "/opt/openwebui",
       regenerate: () => writeOpenwebuiCompose("/opt/openwebui"),
       reconcileEnv: () => reconcileOpenwebuiEnv("/opt/openwebui"),
+    },
+  },
+  // Postiz: the compose file carries the pinned version, so regenerating it IS
+  // the version bump; the .env is re-rendered so a domain change since install
+  // lands in MAIN_URL / FRONTEND_URL / NEXT_PUBLIC_BACKEND_URL.
+  postiz: {
+    compose: {
+      cwd: POSTIZ_DIR,
+      regenerate: () => writePostizCompose(POSTIZ_DIR),
+      reconcileEnv: () => reconcilePostizEnv(POSTIZ_DIR),
     },
   },
   synap: {
@@ -320,6 +339,8 @@ function removePlanFor(comp: ComponentInfo): RemovePlan {
       return { composeDir: "/opt/freellmapi", containerNames };
     case "omniroute":
       return { composeDir: "/opt/omniroute", containerNames };
+    case "postiz":
+      return { composeDir: POSTIZ_DIR, containerNames };
     case "openwebui-pipelines":
       return { composeDir: "/opt/openwebui-pipelines", containerNames };
     case "traefik":
@@ -1897,6 +1918,7 @@ const HAS_INSTALL_RECIPE: ReadonlySet<string> = new Set([
   "eve-dashboard",
   "stalwart",
   "bulwark",
+  "postiz",
 ]);
 
 /**
@@ -1966,6 +1988,14 @@ async function containerExists(name: string): Promise<boolean> {
   });
 }
 
+/**
+ * Components whose compose volumes hold the user's data, so `remove` runs
+ * `compose down` WITHOUT `--volumes`. Postiz's volumes hold every scheduled
+ * post, the connected social accounts' tokens and the owner account; removing
+ * the component to reinstall it must not erase them.
+ */
+const KEEP_VOLUMES_ON_REMOVE: ReadonlySet<string> = new Set(["synap", "postiz"]);
+
 async function* removeOne(comp: ComponentInfo): AsyncGenerator<LifecycleEvent> {
   if (comp.alwaysInstall) {
     yield { type: "error", message: `${comp.label} is always-installed and cannot be removed.` };
@@ -1980,14 +2010,19 @@ async function* removeOne(comp: ComponentInfo): AsyncGenerator<LifecycleEvent> {
     // 2026-10-02 incident wiped a pod through a routine recreate, and
     // `--volumes` here is the same loss behind a softer verb. Volumes stay;
     // deleting them is `eve purge`, which says so and asks first.
-    const keepVolumes = comp.id === "synap";
+    const keepVolumes = KEEP_VOLUMES_ON_REMOVE.has(comp.id);
     const code = yield* runCommand(
       "docker",
       keepVolumes ? ["compose", "down"] : ["compose", "down", "--volumes"],
       { cwd: plan.composeDir },
     );
     if (keepVolumes) {
-      yield { type: "log", line: "Synap data volumes kept (database, files, search). `eve purge` deletes them." };
+      yield {
+        type: "log",
+        line: comp.id === "synap"
+          ? "Synap data volumes kept (database, files, search). `eve purge` deletes them."
+          : `${comp.label} data volumes kept. Delete them by hand with \`docker volume rm\` if you mean to.`,
+      };
     }
     if (code !== 0) {
       yield { type: "log", line: `compose down exited ${code} — falling back to docker rm` };
@@ -2209,6 +2244,11 @@ async function* runInstallRecipe(
 
     case "omniroute": {
       yield* installOmniRoute(opts);
+      return;
+    }
+
+    case "postiz": {
+      yield* installPostiz();
       return;
     }
 
@@ -3603,6 +3643,399 @@ async function* decommissionLegacyPipelines(): AsyncGenerator<LifecycleEvent> {
 }
 
 // ---------------------------------------------------------------------------
+// Postiz — upstream social scheduler (official image, unmodified)
+// ---------------------------------------------------------------------------
+
+/**
+ * Pinned upstream release — never `:latest`. An unpinned pull on a restart
+ * would move the app, and the schema of the database it owns, to whatever
+ * upstream shipped that day. Bump it here; `eve update postiz` regenerates the
+ * compose file and applies it.
+ */
+export const POSTIZ_VERSION = "v2.25.1";
+
+/**
+ * The Postiz API origin as the pod reaches it: by container name over
+ * eve-network (the pod backend is `eve-brain-synap` on the same network), on
+ * the image's Caddy port, under the `/api` prefix that Caddy strips before the
+ * backend. The `postiz` capability appends `/public/v1/...` to it.
+ */
+export function postizInternalApiUrl(): string {
+  const svc = resolveComponent("postiz").service!;
+  return `http://${svc.containerName}:${svc.internalPort}/api`;
+}
+
+/**
+ * Postiz compose template — single source of truth, adapted from the official
+ * https://github.com/gitroomhq/postiz-docker-compose with these deviations:
+ *  - Every container is named `eve-arms-postiz*` and every volume
+ *    `eve-postiz-*` (explicit `name:`), so they read as Eve's in `docker ps`,
+ *    `eve backup` and doctor, and never collide with another project.
+ *  - Postgres, Redis and the Temporal stack sit on a PRIVATE network. Only the
+ *    app also joins the external `eve-network`, which is how Traefik serves
+ *    postiz.<domain> and how the pod calls its API. Services address each other
+ *    by container name, which is unique host-wide, so no name on eve-network
+ *    can shadow `postgres` or `temporal`.
+ *  - No published host ports (upstream publishes 4007, 7233 and 8080).
+ *  - Dropped: `temporal-admin-tools` and `temporal-ui` (operator consoles, not
+ *    needed to run) and `spotlight` (a debug profile).
+ *  - Secrets are generated per install and substituted from `.env` (0600);
+ *    nothing secret is in this file.
+ *  - `API_LIMIT` 90 (upstream 30): the public API's hourly request cap, and the
+ *    pod's agents are its only caller.
+ */
+export const POSTIZ_COMPOSE_YAML = `# Postiz — generated by @eve/lifecycle (regenerated on every install/update)
+# Values come from .env (0600), rendered from ~/.eve secrets by eve add / eve update postiz.
+services:
+  postiz:
+    image: ghcr.io/gitroomhq/postiz-app:${POSTIZ_VERSION}
+    container_name: eve-arms-postiz
+    restart: unless-stopped
+    environment:
+      MAIN_URL: \${POSTIZ_MAIN_URL:?run eve add postiz}
+      FRONTEND_URL: \${POSTIZ_MAIN_URL:?run eve add postiz}
+      NEXT_PUBLIC_BACKEND_URL: \${POSTIZ_BACKEND_URL:?run eve add postiz}
+      BACKEND_INTERNAL_URL: http://localhost:3000
+      JWT_SECRET: \${POSTIZ_JWT_SECRET:?run eve add postiz}
+      DATABASE_URL: postgresql://postiz:\${POSTIZ_DB_PASSWORD:?run eve add postiz}@eve-arms-postiz-postgres:5432/postiz
+      REDIS_URL: redis://eve-arms-postiz-redis:6379
+      TEMPORAL_ADDRESS: eve-arms-postiz-temporal:7233
+      IS_GENERAL: "true"
+      DISABLE_REGISTRATION: "false"
+      NOT_SECURED: \${POSTIZ_NOT_SECURED:-}
+      RUN_CRON: "true"
+      STORAGE_PROVIDER: local
+      UPLOAD_DIRECTORY: /uploads
+      NEXT_PUBLIC_UPLOAD_DIRECTORY: /uploads
+      API_LIMIT: "90"
+      NX_ADD_PLUGINS: "false"
+    volumes:
+      - postiz-config:/config/
+      - postiz-uploads:/uploads/
+    networks:
+      - postiz-internal
+      - eve-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "const r=require('http').get('http://localhost:5000/',res=>process.exit(res.statusCode<500?0:1));r.on('error',()=>process.exit(1));r.setTimeout(4000,()=>{r.destroy();process.exit(1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    depends_on:
+      postiz-postgres:
+        condition: service_healthy
+      postiz-redis:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+
+  postiz-postgres:
+    image: postgres:17-alpine
+    container_name: eve-arms-postiz-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postiz
+      POSTGRES_PASSWORD: \${POSTIZ_DB_PASSWORD:?run eve add postiz}
+      POSTGRES_DB: postiz
+    volumes:
+      - postiz-postgres:/var/lib/postgresql/data
+    networks:
+      - postiz-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postiz -d postiz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  postiz-redis:
+    image: redis:7.2
+    container_name: eve-arms-postiz-redis
+    restart: unless-stopped
+    volumes:
+      - postiz-redis:/data
+    networks:
+      - postiz-internal
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  temporal-elasticsearch:
+    image: elasticsearch:7.17.27
+    container_name: eve-arms-postiz-temporal-elasticsearch
+    restart: unless-stopped
+    environment:
+      - cluster.routing.allocation.disk.threshold_enabled=true
+      - cluster.routing.allocation.disk.watermark.low=512mb
+      - cluster.routing.allocation.disk.watermark.high=256mb
+      - cluster.routing.allocation.disk.watermark.flood_stage=128mb
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms256m -Xmx256m
+      - xpack.security.enabled=false
+    volumes:
+      - temporal-elasticsearch:/usr/share/elasticsearch/data
+    networks:
+      - postiz-internal
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS \\"http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s\\" || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  temporal-postgresql:
+    image: postgres:16
+    container_name: eve-arms-postiz-temporal-postgresql
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: \${POSTIZ_TEMPORAL_DB_PASSWORD:?run eve add postiz}
+    volumes:
+      - temporal-postgres:/var/lib/postgresql/data
+    networks:
+      - postiz-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  temporal:
+    image: temporalio/auto-setup:1.28.1
+    container_name: eve-arms-postiz-temporal
+    restart: unless-stopped
+    depends_on:
+      temporal-postgresql:
+        condition: service_healthy
+      temporal-elasticsearch:
+        condition: service_healthy
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=\${POSTIZ_TEMPORAL_DB_PASSWORD:?run eve add postiz}
+      - POSTGRES_SEEDS=eve-arms-postiz-temporal-postgresql
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
+      - ENABLE_ES=true
+      - ES_SEEDS=eve-arms-postiz-temporal-elasticsearch
+      - ES_VERSION=v7
+      - TEMPORAL_NAMESPACE=default
+    volumes:
+      - ./dynamicconfig:/etc/temporal/config/dynamicconfig
+    networks:
+      - postiz-internal
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "eve-arms-postiz-temporal:7233"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+networks:
+  postiz-internal:
+    name: eve-postiz-internal
+  eve-network:
+    external: true
+
+volumes:
+  postiz-config:
+    name: eve-postiz-config
+  postiz-uploads:
+    name: eve-postiz-uploads
+  postiz-postgres:
+    name: eve-postiz-postgres
+  postiz-redis:
+    name: eve-postiz-redis
+  temporal-postgres:
+    name: eve-postiz-temporal-postgres
+  temporal-elasticsearch:
+    name: eve-postiz-temporal-elasticsearch
+`;
+
+/**
+ * Temporal dynamic config, verbatim from upstream's
+ * `dynamicconfig/development-sql.yaml` (the temporal service mounts it).
+ * Upstream flags the second key "dev setup only" yet ships it in the compose
+ * Postiz documents for self-hosting; Postiz registers search attributes at boot
+ * and reads them back at once, which is what that refresh is for. Kept as
+ * upstream runs it rather than tuned blind.
+ */
+const POSTIZ_TEMPORAL_DYNAMIC_CONFIG = `limit.maxIDLength:
+  - value: 255
+    constraints: {}
+system.forceSearchAttributesCacheRefreshOnRead:
+  - value: true # Dev setup only. Please don't turn this on in production.
+    constraints: {}
+`;
+
+const POSTIZ_NEEDS_DOMAIN =
+  "Postiz needs a public domain: its URLs are baked into its config. " +
+  "Run `eve domain set <your-domain>` first, then `eve add postiz`.";
+
+/** The three secrets generated once per install. */
+export interface PostizGeneratedSecrets {
+  jwtSecret: string;
+  dbPassword: string;
+  temporalDbPassword: string;
+}
+
+/**
+ * Render `/opt/postiz/.env` from the generated secrets and the CURRENT domain.
+ *
+ * Postiz bakes its public URL into its config (cookies, OAuth callbacks, the
+ * frontend's API origin), so there is no working install without a domain:
+ * this throws instead of writing `localhost` URLs that would fail silently
+ * behind Traefik. `NOT_SECURED` is set only when SSL is off — Postiz reads it
+ * by truthiness, so it is omitted (not "false") on an HTTPS install.
+ */
+export function renderPostizEnv(
+  domain: string | undefined | null,
+  ssl: boolean,
+  secrets: PostizGeneratedSecrets,
+): string {
+  const mainUrl = publicComponentUrl("postiz", domain, ssl);
+  if (!mainUrl) {
+    throw new Error(POSTIZ_NEEDS_DOMAIN);
+  }
+  const lines = [
+    "# Postiz — rendered by @eve/lifecycle from ~/.eve secrets + the current domain.",
+    "# Do not edit: `eve update postiz` rewrites it. The secrets below are never rotated.",
+    `POSTIZ_MAIN_URL=${mainUrl}`,
+    `POSTIZ_BACKEND_URL=${mainUrl}/api`,
+    `POSTIZ_JWT_SECRET=${secrets.jwtSecret}`,
+    `POSTIZ_DB_PASSWORD=${secrets.dbPassword}`,
+    `POSTIZ_TEMPORAL_DB_PASSWORD=${secrets.temporalDbPassword}`,
+  ];
+  if (!ssl) lines.push("POSTIZ_NOT_SECURED=true");
+  return lines.join("\n") + "\n";
+}
+
+/** Write the compose file and the Temporal dynamic config (always overwrites). */
+function writePostizCompose(deployDir: string): void {
+  mkdirSync(join(deployDir, "dynamicconfig"), { recursive: true });
+  writeFileSync(join(deployDir, "docker-compose.yml"), POSTIZ_COMPOSE_YAML);
+  writeFileSync(join(deployDir, "dynamicconfig", "development-sql.yaml"), POSTIZ_TEMPORAL_DYNAMIC_CONFIG);
+}
+
+/**
+ * Reuse the stored Postiz secrets, or generate them once and persist them.
+ *
+ * Never rotates: the database passwords are written into the Postgres volumes
+ * at their first boot, so a new value locks the app out of its own data, and a
+ * new JWT secret signs every user out. If `~/.eve` lost the block but the
+ * install dir still has its `.env`, the values are recovered from there rather
+ * than regenerated — the volumes still hold the old ones.
+ */
+async function ensurePostizSecrets(deployDir: string): Promise<PostizGeneratedSecrets> {
+  const stored = await readEveSecrets().then((s) => s?.postiz).catch(() => undefined);
+  const onDisk = readEnvFile(deployDir);
+  const secrets: PostizGeneratedSecrets = {
+    jwtSecret: stored?.jwtSecret || onDisk.get("POSTIZ_JWT_SECRET") || randomBytes(32).toString("hex"),
+    dbPassword: stored?.dbPassword || onDisk.get("POSTIZ_DB_PASSWORD") || randomBytes(24).toString("hex"),
+    temporalDbPassword:
+      stored?.temporalDbPassword || onDisk.get("POSTIZ_TEMPORAL_DB_PASSWORD") || randomBytes(24).toString("hex"),
+  };
+  if (
+    stored?.jwtSecret !== secrets.jwtSecret ||
+    stored?.dbPassword !== secrets.dbPassword ||
+    stored?.temporalDbPassword !== secrets.temporalDbPassword
+  ) {
+    await writeEveSecrets({
+      postiz: { ...secrets, installedAt: stored?.installedAt ?? new Date().toISOString() },
+    });
+  }
+  return secrets;
+}
+
+/** Render `.env` (0600) from the stored secrets and the current domain. */
+async function reconcilePostizEnv(deployDir: string): Promise<void> {
+  const generated = await ensurePostizSecrets(deployDir);
+  const eve = await readEveSecrets();
+  const env = renderPostizEnv(eve?.domain?.primary, eve?.domain?.ssl ?? false, generated);
+  mkdirSync(deployDir, { recursive: true });
+  writeFileSync(join(deployDir, ".env"), env, { mode: 0o600 });
+}
+
+/** Docker's view of the app container's healthcheck, or null when unknown. */
+async function postizHealth(): Promise<string | null> {
+  try {
+    const { stdout } = await promisify(execFile)(
+      "docker",
+      ["inspect", "-f", "{{if .State.Health}}{{.State.Health.Status}}{{end}}", "eve-arms-postiz"],
+      { encoding: "utf-8", timeout: 10_000 },
+    );
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+async function* installPostiz(): AsyncGenerator<LifecycleEvent> {
+  const deployDir = POSTIZ_DIR;
+
+  // Domain check FIRST, before anything is written: without one the URLs in
+  // .env would be wrong, and a half-written install dir is worse than none.
+  const eve = await readEveSecrets();
+  const mainUrl = publicComponentUrl("postiz", eve?.domain?.primary, eve?.domain?.ssl ?? false);
+  if (!mainUrl) {
+    throw new Error(POSTIZ_NEEDS_DOMAIN);
+  }
+
+  writePostizCompose(deployDir);
+  await reconcilePostizEnv(deployDir);
+  yield { type: "log", line: `Wrote ${deployDir}/docker-compose.yml (Postiz ${POSTIZ_VERSION}) and .env (0600)` };
+
+  yield* ensureEveNetwork();
+
+  let code = yield* runCommand("docker", ["compose", "up", "-d"], { cwd: deployDir });
+  // Same self-heal as FreeLLMAPI: a stale ghcr.io credential makes docker fail
+  // the pull of this PUBLIC image with "denied" instead of falling back.
+  if (code !== 0) {
+    const image = `ghcr.io/gitroomhq/postiz-app:${POSTIZ_VERSION}`;
+    const denied = yield* dockerRegistryDenied(image);
+    if (denied) {
+      yield {
+        type: "log",
+        line: "Registry refused the pull of a PUBLIC image — dropping the stale ghcr.io credential and retrying anonymously.",
+      };
+      yield* runCommand("docker", ["logout", "ghcr.io"]);
+      code = yield* runCommand("docker", ["compose", "up", "-d"], { cwd: deployDir });
+    }
+  }
+  if (code !== 0) {
+    throw new Error(`docker compose up exited ${code} — see the transcript above for docker's own error.`);
+  }
+
+  // First boot runs migrations and waits on Temporal; upstream's own
+  // healthcheck allows 120s before it even starts counting.
+  yield { type: "step", label: "Waiting for Postiz to report healthy (first boot takes a few minutes)…" };
+  let status: string | null = null;
+  for (let i = 0; i < 72; i++) {
+    status = await postizHealth();
+    if (status === "healthy") break;
+    if (i > 0 && i % 12 === 0) yield { type: "log", line: `  still starting (${i * 5}s, status: ${status ?? "unknown"})` };
+    await new Promise((r) => setTimeout(r, 5000));
+  }
+  if (status !== "healthy") {
+    yield {
+      type: "log",
+      line: `Postiz is not healthy after 6 minutes (status: ${status ?? "unknown"}). Check: docker logs eve-arms-postiz`,
+    };
+  } else {
+    yield { type: "log", line: "Postiz is up" };
+  }
+
+  yield { type: "log", line: "Next — finish setup in the browser:" };
+  yield { type: "log", line: `  1. Open ${mainUrl} and create the owner account NOW: registration is open until you close it.` };
+  yield { type: "log", line: "  2. Connect your social accounts, then Settings → Public API → copy the API key." };
+  yield { type: "log", line: "  3. Run: eve postiz connect   (paste the key when asked — it is never printed)" };
+}
+
+// ---------------------------------------------------------------------------
 // OpenClaw — agent runtime, drives off secrets.json so config changes apply
 // on recreate. Mirrors the env shape of @eve/arms's OpenClawService but
 // reads from secrets directly so the dashboard's channels page can
@@ -3766,6 +4199,7 @@ const ORGAN_MAP: Record<string, "brain" | "arms" | "builder" | "eyes" | "legs"> 
   ollama: "brain",
   openclaw: "arms",
   hermes: "arms",
+  postiz: "arms",
   rsshub: "eyes",
   traefik: "legs",
   openwebui: "eyes",

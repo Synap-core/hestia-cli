@@ -230,6 +230,40 @@ Requires Postgres (already part of the Brain). Listens on port 3003, accessible 
     doctor: { critical: false },
   },
   {
+    id: 'postiz',
+    organ: 'arms',
+    label: 'Postiz',
+    emoji: '📣',
+    description: 'Self-hosted social media scheduler. Lets your agents draft and schedule posts on your social accounts — you approve every send.',
+    selfHostedHint: 'Self-hosted via Eve — `eve add postiz`, then `eve postiz connect`. Upstream docs below.',
+    longDescription: `Postiz is an open-source social media scheduler (AGPL). It connects to X, LinkedIn, Bluesky, Mastodon, Threads and others, and publishes on a schedule from one calendar. Eve runs the official upstream image, unmodified.
+
+Why a sovereign stack wants it: the OAuth tokens for your social accounts stay in Postiz on your server. Your pod never holds them — it holds one Postiz API key, and the Synap \`postiz\` capability uses it to draft and schedule posts that you approve.
+
+Setup is three steps: \`eve add postiz\` brings up the app and its databases at postiz.<your-domain>; you create the owner account there and copy an API key from Settings → Public API; \`eve postiz connect\` registers that key with your pod. Registration stays open until you close it, so create the owner account right away.`,
+    homepage: 'https://postiz.com',
+    category: 'add-on',
+    requires: ['traefik', 'synap'],
+    service: {
+      // The app container. Its databases and Temporal stack run beside it as
+      // eve-arms-postiz-* on a private compose network; only this one joins
+      // eve-network, which is how Traefik and the pod reach it.
+      containerName: 'eve-arms-postiz',
+      // The image's internal Caddy: serves the frontend and proxies /api to the
+      // backend on 3000. One port for the UI and the public API.
+      internalPort: 5000,
+      hostPort: null,
+      subdomain: 'postiz',
+      healthPath: '/',
+    },
+    // The image boots slowly (migrations + Temporal), and its own compose
+    // healthcheck is what the installer waits on; doctor treats docker-level
+    // liveness as the check.
+    health: { kind: 'docker' },
+    lifecycle: { restartStrategy: 'compose-up' },
+    doctor: { critical: false },
+  },
+  {
     id: 'ollama',
     organ: 'brain',
     label: 'Ollama',
