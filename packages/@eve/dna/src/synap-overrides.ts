@@ -105,7 +105,7 @@ const OVERRIDE_CONTENT = `# Eve-managed docker-compose override — DO NOT edit 
 # To opt out: delete the marker line above and Eve will leave the file
 # alone (CLI silently falls back to public URL, Traefik routing broken).
 #
-# See: synap-team-docs/content/team/devops/eve-cli-transports.mdx
+# See: https://github.com/Synap-core/hestia-cli/blob/main/docs/architecture.md
 
 networks:
   eve-network:

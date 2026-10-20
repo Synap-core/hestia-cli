@@ -759,7 +759,7 @@ export const SYNAP_HOST_LOOPBACK_PORT = 14000;
  * `http://127.0.0.1:14000` when reachable — same-host, sub-millisecond,
  * doesn't depend on DNS or certs. It falls back to this function when
  * the loopback isn't there. See
- * `synap-team-docs/content/team/devops/eve-cli-transports.mdx` for the
+ * `docs/architecture.md` ("Which URL the CLI uses") for the
  * full transport-selection design.
  *
  * Resolution order (first match wins):

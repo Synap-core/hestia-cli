@@ -21,7 +21,8 @@
  *   3. **connections**      — `relations.getConnections` (protectedProcedure
  *                              — works without workspace)
  *
- * Spec: synap-team-docs/content/team/platform/profile-renderer.mdx
+ * Contract: `RendererRefSchema` in Synap-core/backend
+ * (`packages/api/src/routers/capabilities.ts`).
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";

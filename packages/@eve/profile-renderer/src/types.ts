@@ -7,7 +7,8 @@
  * is set by the backend's `RendererRefSchema` (Zod) — both this file and
  * the Synap mirror are downstream of that contract.
  *
- * Spec: synap-team-docs/content/team/platform/profile-renderer.mdx
+ * Contract: `RendererRefSchema` in Synap-core/backend
+ * (`packages/api/src/routers/capabilities.ts`).
  */
 
 /**
