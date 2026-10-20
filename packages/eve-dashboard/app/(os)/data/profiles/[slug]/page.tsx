@@ -8,7 +8,8 @@
  * `<EntityRenderer slot="list">` and dispatches to a registered Eve
  * list-slot renderer (`list` cards / `table`).
  *
- * Spec: synap-app docs/architecture/profile-renderer.md
+ * Contract: `RendererRefSchema` in Synap-core/backend
+ * (`packages/api/src/routers/capabilities.ts`).
  */
 
 import { useCallback, useMemo, useState } from "react";

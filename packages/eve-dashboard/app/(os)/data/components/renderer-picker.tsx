@@ -15,7 +15,8 @@
  * renderer choice per-workspace (mirroring the sidebar pattern); per-user
  * overrides would be a future addition.
  *
- * Spec: synap-app docs/architecture/profile-renderer.md
+ * Contract: `RendererRefSchema` in Synap-core/backend
+ * (`packages/api/src/routers/capabilities.ts`).
  */
 
 import { useState, useTransition } from "react";

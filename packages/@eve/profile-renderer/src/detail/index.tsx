@@ -24,8 +24,6 @@
  *   4. constraints.enum     → select with options
  *   5. valueType            → boolean/date/number/entity_id/array/...
  *   6. classifyValue fallback when no def is supplied (AI-added keys etc.)
- *
- * Spec: synap-app docs/architecture/profile-renderer.md
  */
 
 import { useMemo } from "react";

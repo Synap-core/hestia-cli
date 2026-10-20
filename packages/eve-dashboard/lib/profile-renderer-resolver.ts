@@ -11,7 +11,8 @@
  * Resolution semantics happen entirely on the pod — Eve just unwraps the
  * envelope and picks the slot the caller asked for.
  *
- * Spec: synap-app docs/architecture/profile-renderer.md
+ * Contract: `RendererRefSchema` in Synap-core/backend
+ * (`packages/api/src/routers/capabilities.ts`).
  */
 
 import type {
