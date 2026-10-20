@@ -29,7 +29,8 @@ const execFileAsync = promisify(execFile);
  *     Docker DNS (file-based dynamic config from the component registry). It is
  *     intentionally NOT published on the host.
  *
- * @see docs/stalwart-mail-implementation-plan.md
+ * @see docs/stalwart-mail-operations-guide.md (design history: team pod,
+ *   synap ask "Stalwart mail Eve")
  */
 
 export const STALWART_IMAGE = 'stalwartlabs/stalwart:v0.16';

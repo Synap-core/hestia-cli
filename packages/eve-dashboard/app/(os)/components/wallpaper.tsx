@@ -15,7 +15,7 @@
  * The wallpaper renders ONCE in the OS layout and never unmounts during
  * route changes — it is the persistent background of the whole OS.
  *
- * See: synap-team-docs/content/team/platform/eve-os-shell.mdx §3
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS shell")
  */
 
 export function Wallpaper() {

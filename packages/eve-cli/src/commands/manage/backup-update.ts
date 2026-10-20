@@ -239,7 +239,7 @@ async function buildUpdateTargets(deployDir: string | undefined, synapRelease?: 
   // canary-first update flow, kratos-migrate force-recreate, CREATE DATABASE
   // idempotency, and migration sequencing. Eve still handles the cross-project
   // plumbing (eve-network attach, agent provisioning) afterwards.
-  // See: hestia-cli/.docs/synap-cli-as-source-of-truth.md
+  // See: docs/architecture.md ("The pod, through the backend's CLI")
   if (deployDir) {
     targets.push({
       id: 'synap',

@@ -17,7 +17,7 @@
  * running — they handle their own auth gracefully and the OS should
  * still feel "alive" while the setup card is shown.
  *
- * See: synap-team-docs/content/team/platform/eve-auth-architecture.mdx
+ * See: docs/architecture.md ("Agents and keys")
  */
 
 import { usePodAuthState } from "./use-pod-auth-state";

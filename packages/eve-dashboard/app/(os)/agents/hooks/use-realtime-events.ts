@@ -17,8 +17,8 @@
  * reconnects via Socket.IO's built-in retry; on hard error it surfaces
  * a recoverable state so the UI can show a "retry" affordance.
  *
- * See: synap-team-docs/content/team/platform/eve-agents-design.mdx
- *      synap-team-docs/content/team/platform/eve-os-vision.mdx
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve agents design")
+ *      the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS vision")
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";

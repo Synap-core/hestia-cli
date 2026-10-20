@@ -16,7 +16,7 @@
  * component just owns the LEFT half (greeting) and a compact stat pill
  * row that the page composes alongside the auth + settings buttons.
  *
- * See: synap-team-docs/content/team/platform/eve-os-home-design.mdx §3
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS home design")
  */
 
 import Link from "next/link";

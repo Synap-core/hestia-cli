@@ -12,7 +12,7 @@
  * Selecting a tab pushes a route — the page below renders the content
  * for that route normally.
  *
- * See: synap-team-docs/content/team/platform/eve-os-shell.mdx §6
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS shell")
  */
 
 import { Tabs, Tab } from "@heroui/react";

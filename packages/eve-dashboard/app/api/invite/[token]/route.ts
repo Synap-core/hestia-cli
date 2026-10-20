@@ -23,7 +23,7 @@
  * public tRPC URL directly. The procedure is `publicProcedure` so no
  * Authorization header is needed.
  *
- * See: synap-team-docs/content/team/platform/eve-credentials.mdx §6
+ * See: the team pod document "Vault, credentials and per-agent keys" (synap ask "Eve credentials two-channel rule")
  */
 
 import { NextResponse } from "next/server";

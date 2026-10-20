@@ -12,8 +12,7 @@
  * Auth is the dashboard's normal `eve-session` JWT — the WhatsApp
  * session itself is bound to the running Eve process, not the CP.
  *
- * See: synap-team-docs/content/team/platform/eve-agents-design.mdx §M3
- *      synap-team-docs/content/team/platform/whatsapp-integration.mdx (TBD)
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve agents design")
  */
 
 import { NextResponse } from "next/server";

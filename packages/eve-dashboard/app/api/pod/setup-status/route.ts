@@ -17,7 +17,7 @@
  * No auth on this route — the home page hits it before the operator
  * has signed in to the pod, and the upstream procedure is public.
  *
- * See: synap-team-docs/content/team/platform/eve-auth-architecture.mdx
+ * See: docs/architecture.md ("Agents and keys")
  */
 
 import { NextResponse } from "next/server";

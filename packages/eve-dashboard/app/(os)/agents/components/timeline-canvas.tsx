@@ -29,7 +29,7 @@
  * 200 (the default buffer size) means we render ~6 lanes × ~30 markers
  * = ~200 elements. Below the threshold where Canvas would beat SVG.
  *
- * See: synap-team-docs/content/team/platform/eve-agents-design.mdx §M3
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve agents design")
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";

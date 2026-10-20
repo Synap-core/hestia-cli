@@ -10,7 +10,7 @@
  * Routes outside this group (`/login`, `/auth/callback`) deliberately
  * skip the shell — they predate it and need their own chrome.
  *
- * See: synap-team-docs/content/team/platform/eve-os-shell.mdx §6
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS shell")
  */
 
 import type { ReactNode } from "react";

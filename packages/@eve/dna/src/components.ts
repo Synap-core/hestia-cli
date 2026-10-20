@@ -352,7 +352,7 @@ Eve wires OpenClaw against Synap as its OpenAI-compatible provider, so the agent
     category: 'agent',
     requires: ['synap'],
     deprecated: true,
-    deprecationNotice: 'Prefer Hermes for new installs — it has native memory plugin integration with Synap, better security, and true multi-agent orchestration. OpenClaw stays fully functional and is the right choice for MCP bridge or iMessage. See docs/openclaw-vs-hermes.md.',
+    deprecationNotice: 'Prefer Hermes for new installs — it has native memory plugin integration with Synap, better security, and true multi-agent orchestration. OpenClaw stays fully functional and is the right choice for MCP bridge or iMessage. See docs/architecture.md.',
     replacedBy: 'hermes',
     service: {
       containerName: 'eve-arms-openclaw',

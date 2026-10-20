@@ -11,7 +11,7 @@
  * apps stay in their pin slot but carry a `running: true` flag so the dock
  * can render the running dot indicator.
  *
- * See: synap-team-docs/content/team/platform/eve-os-shell.mdx §5
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS shell")
  */
 
 import { useMemo } from "react";

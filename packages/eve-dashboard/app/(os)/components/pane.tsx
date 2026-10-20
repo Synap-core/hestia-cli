@@ -20,7 +20,7 @@
  * pane container itself does not reanimate, the wallpaper and dock are
  * untouched, the operator experiences the OS, not the website.
  *
- * See: synap-team-docs/content/team/platform/eve-os-shell.mdx §4
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS shell")
  */
 
 import { usePathname } from "next/navigation";

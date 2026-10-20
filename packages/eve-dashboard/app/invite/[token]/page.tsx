@@ -21,7 +21,7 @@
  * Lives outside the `(os)` group on purpose: no shell, no dock — just
  * a centred card. Clean signup affordance.
  *
- * See: synap-team-docs/content/team/platform/eve-credentials.mdx §6
+ * See: the team pod document "Vault, credentials and per-agent keys" (synap ask "Eve credentials two-channel rule")
  */
 
 import { useEffect, useMemo, useState, use } from "react";

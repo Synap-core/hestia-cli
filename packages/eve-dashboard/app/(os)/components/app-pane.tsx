@@ -25,7 +25,7 @@
  *   - Unrecognised message types are silently ignored.
  *
  * Child-side receiver lives in `@synap-core/auth` (or per-app shims).
- * See: synap-team-docs/content/team/platform/eve-os-shell.mdx — iFrame auth
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS shell") — iFrame auth
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";

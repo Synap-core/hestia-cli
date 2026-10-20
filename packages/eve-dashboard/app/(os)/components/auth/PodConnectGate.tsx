@@ -25,7 +25,7 @@
  * authenticated through SOMETHING; `PodConnectGate` ensures the local
  * pod is in a usable state before the OS lights up.
  *
- * See: synap-team-docs/content/team/platform/eve-auth-architecture.mdx
+ * See: docs/architecture.md ("Agents and keys")
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";

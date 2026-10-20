@@ -24,7 +24,7 @@
  * we deliberately do NOT auto-retry, since a botched handshake is
  * usually a sign of stale state, not a transient blip.
  *
- * See: synap-team-docs/content/team/platform/eve-os-vision.mdx §6
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS vision")
  */
 
 import { Suspense, useEffect, useRef, useState } from "react";

@@ -10,7 +10,7 @@
  * here as the Settings app's chrome. Sign-out moves to a discrete
  * action inside the General tab where it logically belongs.
  *
- * See: synap-team-docs/content/team/platform/eve-os-shell.mdx §6 —
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS shell") —
  *   "Settings as a popup app".
  */
 

@@ -20,7 +20,7 @@
  * code change needed. Brand color reuses an existing slug from
  * `brand-colors.ts`, or fallback hashing kicks in.
  *
- * See: synap-team-docs/content/team/platform/eve-agents-design.mdx §M2
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve agents design")
  */
 
 import type { LucideIcon } from "lucide-react";

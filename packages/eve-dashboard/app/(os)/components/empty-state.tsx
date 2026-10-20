@@ -10,7 +10,7 @@
  * synap.live/marketplace exists for SEO/sharing only — installs all
  * happen inside Eve).
  *
- * See: synap-team-docs/content/team/platform/eve-os-home-design.mdx §8
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS home design")
  */
 
 import Link from "next/link";

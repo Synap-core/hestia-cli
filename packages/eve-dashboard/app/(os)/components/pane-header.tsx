@@ -14,7 +14,7 @@
  * the actions slot — pass HeroUI components there, not raw <button>s,
  * so contrast and motion are consistent with the rest of the OS.
  *
- * See: synap-team-docs/content/team/platform/eve-os-shell.mdx §4
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS shell")
  */
 
 import { Button } from "@heroui/react";

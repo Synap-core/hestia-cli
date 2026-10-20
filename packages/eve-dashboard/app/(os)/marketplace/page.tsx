@@ -30,8 +30,8 @@
  *
  * Concentric radii: pane 32 → outer gutter 20 → card 12 → glyph 8.
  *
- * See: synap-team-docs/content/team/platform/eve-os-roadmap.mdx M5
- *      synap-team-docs/content/team/platform/marketplace-landing-design.mdx §7.1
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS roadmap")
+ *      the team pod document "Artboard canvas capability and the view-renderer marketplace" (synap ask "marketplace landing design")
  */
 
 import {

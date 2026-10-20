@@ -16,7 +16,7 @@
  * Auto-collapses to a "Connect a channel" CTA when zero channels exist.
  * Otherwise shows everything inline — no modal, no drawer.
  *
- * See: synap-team-docs/content/team/platform/eve-agents-design.mdx §M3
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve agents design")
  */
 
 import { Button, Chip, Spinner } from "@heroui/react";

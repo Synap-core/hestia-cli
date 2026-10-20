@@ -36,7 +36,7 @@
  *   • 503 `{ error: "no-bootstrap-token" }` — token can't be resolved
  *     anywhere; UI then shows the CLI fallback prominently.
  *
- * See: synap-team-docs/content/team/platform/eve-auth-architecture.mdx
+ * See: docs/architecture.md ("Agents and keys")
  *      synap-backend/apps/api/src/routers/admin.ts
  */
 

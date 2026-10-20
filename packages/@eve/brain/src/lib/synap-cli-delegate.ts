@@ -7,7 +7,7 @@
  * source of truth — eve invokes it and layers eve-specific concerns
  * (eve-network, agent provisioning, AI wiring cascade, kratos webhook) on top.
  *
- * See: hestia-cli/.docs/synap-cli-as-source-of-truth.md
+ * See: docs/architecture.md ("The pod, through the backend's CLI")
  */
 
 import { spawnSync } from 'node:child_process';

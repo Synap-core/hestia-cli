@@ -30,8 +30,8 @@
  *   502 `{ error: "handshake-failed", detail }`   — CP unreachable / rejected.
  *   502 `{ error: "pod-exchange-failed", detail }` — Pod issuer exchange rejected.
  *
- * See: synap-team-docs/content/team/platform/eve-credentials.mdx
- *      synap-team-docs/content/team/platform/eve-os-vision.mdx
+ * See: the team pod document "Vault, credentials and per-agent keys" (synap ask "Eve credentials two-channel rule")
+ *      the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS vision")
  */
 
 import { NextResponse } from "next/server";

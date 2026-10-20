@@ -23,7 +23,7 @@
  * the corresponding value falls back to 0 — the pill never disappears,
  * calm is the point.
  *
- * See: synap-team-docs/content/team/platform/eve-os-home-design.mdx §4
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS home design")
  */
 
 import { useCallback, useEffect, useState } from "react";

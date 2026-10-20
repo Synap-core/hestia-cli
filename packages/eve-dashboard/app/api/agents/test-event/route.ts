@@ -18,7 +18,7 @@
  * Optional body: `{ name: EventName }` to pin the event name. Omitted
  * → server picks one at random from the canonical 6.
  *
- * See: synap-team-docs/content/team/platform/eve-agents-design.mdx §M5
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve agents design")
  */
 
 import { NextResponse } from "next/server";

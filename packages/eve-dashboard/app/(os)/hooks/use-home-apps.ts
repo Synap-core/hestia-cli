@@ -18,7 +18,7 @@
  *     this). Marketplace 5xx / network ⇒ `bannerState: "error"`. Either
  *     way the local-components fallback still populates the grid.
  *
- * See: synap-team-docs/content/team/platform/eve-os-home-design.mdx §4
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS home design")
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";

@@ -24,7 +24,7 @@
  * target from every workspace the operator can manage. The backend
  * enforces self-removal and last-owner guards.
  *
- * See: synap-team-docs/content/team/platform/eve-credentials.mdx §6
+ * See: the team pod document "Vault, credentials and per-agent keys" (synap ask "Eve credentials two-channel rule")
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";

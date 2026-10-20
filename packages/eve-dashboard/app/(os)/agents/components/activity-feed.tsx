@@ -18,7 +18,7 @@
  * the lane that event animates on the graph above. The graph picks up
  * the cross-reference and brightens the corresponding edge for ~1.5s.
  *
- * See: synap-team-docs/content/team/platform/eve-agents-design.mdx §M2
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve agents design")
  */
 
 import { useEffect, useMemo, useState } from "react";

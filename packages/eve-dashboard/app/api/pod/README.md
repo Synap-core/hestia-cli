@@ -1,7 +1,7 @@
 # `/api/pod/*` — Eve's USER channel proxy
 
-This is the user-channel half of Eve's two-channel rule (see
-[`eve-credentials.mdx`](../../../../../synap-team-docs/content/team/platform/eve-credentials.mdx)).
+This is the user-channel half of Eve's two-channel rule (see the team pod document "Vault, credentials and per-agent keys":
+`synap ask "Eve credentials two-channel rule"`).
 
 | Path on Eve | Forwards to | Auth attached |
 |---|---|---|

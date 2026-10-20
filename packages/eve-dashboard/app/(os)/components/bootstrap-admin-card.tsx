@@ -26,8 +26,8 @@
  *   • Concentric radii: pane 32 → body gutter 20 → card 12 (radius="md").
  *   • Foreground opacity tiers: 100 / 65 / 55 / 40.
  *
- * See: synap-team-docs/content/team/platform/eve-auth-architecture.mdx
- *      synap-team-docs/content/team/platform/eve-os-home-design.mdx
+ * See: docs/architecture.md ("Agents and keys")
+ *      the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS home design")
  */
 
 import { useMemo, useState } from "react";

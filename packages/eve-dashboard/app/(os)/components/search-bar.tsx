@@ -12,7 +12,7 @@
  * sits in `endContent` so the search icon and shortcut share the same
  * input chrome.
  *
- * See: synap-team-docs/content/team/platform/eve-os-home-design.mdx §6
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS home design")
  */
 
 import { Input, Kbd } from "@heroui/react";

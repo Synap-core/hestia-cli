@@ -6,7 +6,7 @@
  * sync by hand for now — when `@synap/events` is publishable as an
  * npm package, swap this module for the import.
  *
- * See: synap-team-docs/content/team/platform/eve-agents-design.mdx
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve agents design")
  *      Synap-core/backend docs/architecture/event-chain.md
  */
 

@@ -529,7 +529,7 @@ export const SecretsSchema = z.object({
    * by the dashboard's server-side route handlers — it is never
    * exposed to client-side React state in plaintext.
    *
-   * See: synap-team-docs/content/team/platform/eve-os-vision.mdx §6
+   * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS vision")
    */
   cp: z
     .object({

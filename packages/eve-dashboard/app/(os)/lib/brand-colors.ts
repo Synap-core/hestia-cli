@@ -12,8 +12,8 @@
  * `glyph` is a Lucide icon name. When `null`, the renderer falls back
  * to the app's `iconUrl` over the same gradient.
  *
- * See: synap-team-docs/content/team/platform/eve-os-home-design.mdx §11
- *      synap-team-docs/content/team/platform/eve-os-shell.mdx §5
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS home design")
+ *      the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS shell")
  */
 
 export interface BrandColor {

@@ -9,7 +9,7 @@
  * UI — the catalog page is on the marketing site so it has SEO equity
  * and the design system without us re-implementing it under cp.synap.sh.
  *
- * See: synap-team-docs/content/team/platform/marketplace-landing-design.mdx
+ * See: the team pod document "Artboard canvas capability and the view-renderer marketplace" (synap ask "marketplace landing design")
  */
 
 export const MARKETPLACE_URL: string =

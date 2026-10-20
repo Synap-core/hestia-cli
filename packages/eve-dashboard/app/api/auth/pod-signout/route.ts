@@ -14,7 +14,7 @@
  *   401 `{ error: "Unauthorized" }`        — eve-session missing.
  *   503 `{ error: "no-pod-url" }`           — pod URL not configured.
  *
- * See: synap-team-docs/content/team/platform/eve-credentials.mdx
+ * See: the team pod document "Vault, credentials and per-agent keys" (synap ask "Eve credentials two-channel rule")
  */
 
 import { NextResponse } from "next/server";

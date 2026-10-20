@@ -12,7 +12,7 @@
  *
  * The whole panel is fed by the registry — no hand-rolled actor maps.
  *
- * See: synap-team-docs/content/team/platform/eve-agents-design.mdx §M2
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve agents design")
  */
 
 import { Button, Chip } from "@heroui/react";

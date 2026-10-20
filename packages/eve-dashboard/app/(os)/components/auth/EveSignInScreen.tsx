@@ -24,8 +24,8 @@
  *   • Foreground opacity tiers: 100 / 65 / 55 / 40.
  *
  * See:
- *   synap-team-docs/content/team/platform/eve-auth-architecture.mdx
- *   synap-team-docs/content/team/platform/eve-credentials.mdx
+ *   docs/architecture.md ("Agents and keys")
+ *   the team pod document "Vault, credentials and per-agent keys" (synap ask "Eve credentials two-channel rule")
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";

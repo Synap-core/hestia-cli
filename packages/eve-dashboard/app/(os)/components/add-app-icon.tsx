@@ -12,7 +12,7 @@
  * either the in-OS `/marketplace` route (default) or, occasionally,
  * an external URL.
  *
- * See: synap-team-docs/content/team/platform/eve-os-home-design.mdx §5.6
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS home design")
  */
 
 import Link from "next/link";

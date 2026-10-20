@@ -40,7 +40,7 @@
  * /api/auth/cp/pods                → https://api.synap.live/pods
  * … and so on for any other CP path the auth client needs.
  *
- * See: synap-team-docs/content/team/platform/eve-auth-architecture.mdx
+ * See: docs/architecture.md ("Agents and keys")
  *      lib/synap-auth.ts  (ProxyTransport wiring)
  */
 

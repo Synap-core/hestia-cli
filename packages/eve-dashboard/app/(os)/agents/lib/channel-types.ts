@@ -12,7 +12,7 @@
  * endpoint, we can replace the local fan-out with one fetch and the
  * client code won't need to change.
  *
- * See: synap-team-docs/content/team/platform/eve-agents-design.mdx §M3
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve agents design")
  */
 
 import type { AgentId } from "./agent-registry";

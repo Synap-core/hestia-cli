@@ -10,7 +10,7 @@
  * top/bottom (the visionOS-style ratio). All icons are identical sized
  * — including the `+` terminator — for a tidy aligned row.
  *
- * See: synap-team-docs/content/team/platform/eve-os-shell.mdx §5
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS shell")
  */
 
 import { usePathname } from "next/navigation";

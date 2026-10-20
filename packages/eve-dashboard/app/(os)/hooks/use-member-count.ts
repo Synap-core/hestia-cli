@@ -9,7 +9,7 @@
  * pod session isn't ready or the procedure is unreachable the count
  * falls back to 0 (calm is the point — the pill never disappears).
  *
- * See: synap-team-docs/content/team/platform/eve-os-home-design.mdx §4
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS home design")
  */
 
 import { useCallback, useEffect, useState } from "react";

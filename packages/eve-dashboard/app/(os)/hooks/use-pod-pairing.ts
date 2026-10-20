@@ -21,7 +21,7 @@
  * (post sign-in / sign-out / settings changes). No interval — the
  * states above are user-driven, not time-driven.
  *
- * See: synap-team-docs/content/team/platform/eve-credentials.mdx
+ * See: the team pod document "Vault, credentials and per-agent keys" (synap ask "Eve credentials two-channel rule")
  */
 
 import { useCallback, useEffect, useState } from "react";

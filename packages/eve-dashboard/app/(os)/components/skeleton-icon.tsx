@@ -5,7 +5,7 @@
  * + local components are still loading. Same dimensions as the live
  * icon so the grid never reflows on resolve.
  *
- * See: synap-team-docs/content/team/platform/eve-os-home-design.mdx §9
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS home design")
  */
 
 export function SkeletonIcon() {

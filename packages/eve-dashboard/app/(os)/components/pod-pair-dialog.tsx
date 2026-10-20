@@ -18,8 +18,8 @@
  * (already humanized inside `eve-kratos-client`).
  *
  * See:
- *   synap-team-docs/content/team/platform/eve-credentials.mdx
- *   synap-team-docs/content/team/platform/eve-os-home-design.mdx
+ *   the team pod document "Vault, credentials and per-agent keys" (synap ask "Eve credentials two-channel rule")
+ *   the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS home design")
  */
 
 import { useEffect, useRef, useState } from "react";

@@ -167,4 +167,4 @@ queue/route. This is the pragmatic 80/20 for most homelab/VPS setups.
 - Google sender guidelines: https://support.google.com/mail/answer/81126
 - Spamhaus IP check: https://check.spamhaus.org
 - Google Postmaster Tools: https://postmaster.google.com
-- This setup's design: `stalwart-mail-integration-strategy.md`, `stalwart-mail-implementation-plan.md`
+- This setup's design and its history: the team's Synap pod (`synap ask "Stalwart mail Eve"`)

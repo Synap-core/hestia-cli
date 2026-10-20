@@ -23,7 +23,7 @@
  * recipe (1px white inner ring + top-edge specular). Selection ring is
  * a CSS box-shadow on the icon — pixel-perfect alignment.
  *
- * See: synap-team-docs/content/team/platform/eve-agents-design.mdx
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve agents design")
  */
 
 import { useCallback, useEffect, useMemo, useRef } from "react";

@@ -17,7 +17,7 @@
  *
  * No drop shadow. Depth comes from the dock's frosted pill behind.
  *
- * See: synap-team-docs/content/team/platform/eve-os-shell.mdx §5
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS shell")
  */
 
 import Link from "next/link";

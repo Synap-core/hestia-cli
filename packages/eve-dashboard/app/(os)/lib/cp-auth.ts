@@ -18,7 +18,7 @@
  * marketplace calls go through the same-origin `/api/marketplace/*`
  * proxies, so no CORS regardless of which flow signed the user in.
  *
- * See: synap-team-docs/content/team/platform/eve-os-vision.mdx §6
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS vision")
  */
 
 import { initiateCpOAuth } from "./cp-oauth";

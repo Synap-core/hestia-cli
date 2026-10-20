@@ -44,7 +44,7 @@
  *   401 `{ error: "Unauthorized" }`                         — missing eve-session.
  *   500 `{ error: "write_failed", message }`                — disk failure.
  *
- * See: synap-team-docs/content/team/platform/eve-credentials.mdx
+ * See: the team pod document "Vault, credentials and per-agent keys" (synap ask "Eve credentials two-channel rule")
  */
 
 import { NextResponse } from "next/server";

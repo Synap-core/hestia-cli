@@ -17,7 +17,7 @@
  *
  * The token itself is NEVER returned. Only metadata the UI needs.
  *
- * See: synap-team-docs/content/team/platform/eve-credentials.mdx
+ * See: the team pod document "Vault, credentials and per-agent keys" (synap ask "Eve credentials two-channel rule")
  */
 
 import { NextResponse } from "next/server";

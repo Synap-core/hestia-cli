@@ -292,7 +292,7 @@ const UPDATE_PLAN: Record<string, UpdatePlan> = {
     // canary-first update flow, kratos-migrate force-recreate, CREATE DATABASE
     // idempotency, and migration sequencing. Eve still owns: loopback override,
     // eve-network attach, post-update hooks (Traefik/agent/AI wiring).
-    // See: hestia-cli/.docs/synap-cli-as-source-of-truth.md
+    // See: docs/architecture.md ("The pod, through the backend's CLI")
     delegate: {
       // Compose dir: synap-backend uses a git-checkout layout where the
       // compose file lives in `<repoRoot>/deploy/`. Eve clones into

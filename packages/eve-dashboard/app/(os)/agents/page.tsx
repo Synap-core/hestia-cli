@@ -22,7 +22,7 @@
  * complementary, not alternatives. Side panel slides in over the graph
  * when an agent node is clicked; closes on Esc or backdrop click.
  *
- * See: synap-team-docs/content/team/platform/eve-agents-design.mdx
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve agents design")
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";

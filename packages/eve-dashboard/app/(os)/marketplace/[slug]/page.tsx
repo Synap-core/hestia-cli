@@ -18,8 +18,8 @@
  *   workspace_pack →  opens app.synap.live/templates/install?slug=<slug>.
  *   url            →  opens appUrl in a new tab.
  *
- * See: synap-team-docs/content/team/platform/eve-os-roadmap.mdx M5.2
- *      synap-team-docs/content/team/platform/marketplace-landing-design.mdx §4.4
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS roadmap")
+ *      the team pod document "Artboard canvas capability and the view-renderer marketplace" (synap ask "marketplace landing design")
  */
 
 import { useCallback, useEffect, useState } from "react";

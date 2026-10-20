@@ -19,7 +19,7 @@
  * Labels are always single-line truncated within `max-w-[112px]` so the
  * grid never reflows.
  *
- * See: synap-team-docs/content/team/platform/eve-os-home-design.mdx §5
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS home design")
  */
 
 import {

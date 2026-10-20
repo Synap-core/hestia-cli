@@ -24,7 +24,7 @@
  * The pane chrome (frosted glass, dock, wallpaper) is owned by the
  * shell at `app/(os)/layout.tsx`. This page just fills the body.
  *
- * See: synap-team-docs/content/team/platform/eve-os-home-design.mdx
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS home design")
  */
 
 import { useMemo, useState } from "react";

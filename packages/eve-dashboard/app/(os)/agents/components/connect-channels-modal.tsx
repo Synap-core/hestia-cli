@@ -18,7 +18,7 @@
  * /api/components/openclaw/messaging, WhatsApp via the new Baileys
  * routes).
  *
- * See: synap-team-docs/content/team/platform/eve-agents-design.mdx §M3
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve agents design")
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";

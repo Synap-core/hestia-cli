@@ -26,8 +26,8 @@
  *
  * Two-channel rule: never route a service action through here. The
  * proxy attaches the user-channel credential. Service actions belong
- * in `/api/hub/*`. See: synap-team-docs/content/team/platform/
- * eve-credentials.mdx.
+ * in `/api/hub/*`. See the team pod document
+ * "Vault, credentials and per-agent keys" (synap ask "Eve credentials two-channel rule").
  */
 
 import { NextRequest, NextResponse } from "next/server";

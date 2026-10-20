@@ -20,7 +20,7 @@
  *
  * All three verbs are gated by the dashboard cookie (`requireAuth`).
  *
- * See: synap-team-docs/content/team/platform/eve-os-vision.mdx §6
+ * See: the team pod document "Eve (hestia-cli), Hermes and the Eve OS: design history" (synap ask "Eve OS vision")
  */
 
 import { NextResponse } from "next/server";
