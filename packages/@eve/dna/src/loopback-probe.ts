@@ -8,7 +8,7 @@
  * present, the on-host CLI can talk to the backend with plain HTTP, no
  * Traefik, no TLS, no public DNS — the same fast path Vault, Consul,
  * Caddy admin and the K8s apiserver use locally. See
- * `synap-team-docs/content/team/devops/eve-cli-transports.mdx` for the
+ * `docs/architecture.md` ("Which URL the CLI uses") for the
  * full architecture.
  *
  * # Why this is a probe, not a config flag

@@ -11,7 +11,7 @@
  * Resolution semantics happen entirely on the pod — Eve just unwraps the
  * envelope and picks the slot the caller asked for.
  *
- * Spec: synap-team-docs/content/team/platform/profile-renderer.mdx
+ * Spec: synap-app docs/architecture/profile-renderer.md
  */
 
 import type {

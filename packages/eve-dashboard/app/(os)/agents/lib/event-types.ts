@@ -7,7 +7,7 @@
  * npm package, swap this module for the import.
  *
  * See: synap-team-docs/content/team/platform/eve-agents-design.mdx
- *      synap-team-docs/content/team/platform/event-chain.mdx
+ *      Synap-core/backend docs/architecture/event-chain.md
  */
 
 export const EVENT_NAMES = [

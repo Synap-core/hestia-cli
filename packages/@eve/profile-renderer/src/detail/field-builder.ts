@@ -14,7 +14,7 @@
  * builder falls back to `classifyValue()` so the field still renders
  * sensibly. This keeps the system robust as schemas evolve.
  *
- * Spec: synap-team-docs/content/team/platform/profile-renderer.mdx
+ * Spec: synap-app docs/architecture/profile-renderer.md
  */
 
 import { classifyValue } from "@eve/fields";

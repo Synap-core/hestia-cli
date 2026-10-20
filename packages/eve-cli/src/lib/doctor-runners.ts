@@ -729,7 +729,7 @@ export { FetchRunner, isFetchTransportError };
  * break-glass diagnostic ("can the synap container respond on its own
  * loopback even when host loopback fails?"). Don't wire it back into
  * the happy path. See
- * `synap-team-docs/content/team/devops/eve-cli-transports.mdx` for the
+ * `docs/architecture.md` ("Which URL the CLI uses") for the
  * full transport-selection design.
  *
  * `onTransportNote` is an optional hook so callers can surface which

@@ -146,7 +146,7 @@ deploy, Eve's `ensureSynapLoopbackOverride` won't clobber it (it looks
 for a magic marker comment) — the CLI silently falls back to the
 public URL. Drop the marker line in if you want both your overrides
 and Eve's loopback port. Full design:
-[`team/devops/eve-cli-transports.mdx`](https://github.com/synap-app/synap-team-docs/blob/main/content/team/devops/eve-cli-transports.mdx).
+[`docs/architecture.md`](../../docs/architecture.md).
 
 ### Image pruning on update
 
