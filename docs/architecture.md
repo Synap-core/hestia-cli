@@ -1,8 +1,7 @@
 # Eve architecture
 
 > Verified against code on 2026-10-20 (hestia-cli@c63846f, with the backend
-> side checked in Synap-core/backend@cc4b2d81). Migrated from Synap's internal
-> team docs on 2026-10-20.
+> side checked in Synap-core/backend@cc4b2d81).
 
 Eve (`eve`, this repository) installs and operates a self-hosted stack around
 a Synap pod: the pod itself, an edge proxy, local models, agents, chat UIs,
