@@ -1,23 +1,20 @@
 "use client";
 
 /**
- * `ChatCompanion` — Eve's AI chat body, now powered by `@synap-core/web/chat-ui`.
+ * `ChatCompanion` — Eve's AI chat body, now powered by `@synap-core/chat-ui`.
  *
  * The shell (`companion.tsx`) owns the header and slide-in animation.
  * This component renders the body: message list, streaming bubble, and
  * composer. All data plumbing lives in `useEveChat`.
  *
- * UI is delegated to `CompanionLayout` from `@synap-core/web/chat-ui`, themed
+ * UI is delegated to `CompanionLayout` from `@synap-core/chat-ui`, themed
  * via CSS custom properties injected on the wrapper div (Eve dark glass palette).
  * The `AgentPicker` is rendered below `CompanionLayout` as a slot not
  * covered by the shared component.
  */
 
-import { CompanionLayout } from "@synap-core/web/chat-ui";
-import type { CompanionLayoutProps } from "@synap-core/web/chat-ui";
-
-// @synap-core/web/chat-ui does not export CompanionMessage (the retired package did).
-type CompanionMessage = CompanionLayoutProps["messages"][number];
+import { CompanionLayout } from "@synap-core/chat-ui";
+import type { CompanionMessage } from "@synap-core/chat-ui";
 import { useActiveWorkspace } from "../../hooks/use-active-workspace";
 import { useEveChat } from "../../lib/chat/use-eve-chat";
 import type { ChatMessage } from "../../lib/chat/types";
