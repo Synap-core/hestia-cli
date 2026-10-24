@@ -48,6 +48,45 @@ function findComposeContainer(service: string): string | null {
   }
 }
 
+// The backend's own default (synap-backend packages/core config.ts) and the
+// literal the pod compose file sets.
+const DEFAULT_STORAGE_BUCKET = 'synap-storage';
+// S3 bucket naming rule. Also keeps the value safe to interpolate into a
+// Traefik rule.
+const S3_BUCKET_NAME = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
+
+/**
+ * The bucket the pod backend signs file links for: its MINIO_BUCKET_NAME ||
+ * MINIO_BUCKET (the backend's precedence), else the backend's default. Read
+ * from the running container's environment, the value the backend really uses.
+ * `null` = the name it reports is not a valid bucket name (no route is safer
+ * than a route built from it).
+ */
+function readPodStorageBucket(backendContainer: string | null): string | null {
+  if (!backendContainer) {
+    console.warn(`  Warning: Synap backend container not found — assuming storage bucket "${DEFAULT_STORAGE_BUCKET}"`);
+    return DEFAULT_STORAGE_BUCKET;
+  }
+  let env: string[];
+  try {
+    env = JSON.parse(execSync(
+      `docker inspect --format "{{json .Config.Env}}" ${backendContainer}`,
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] },
+    ).trim()) as string[];
+  } catch {
+    console.warn(`  Warning: could not read ${backendContainer}'s environment — assuming storage bucket "${DEFAULT_STORAGE_BUCKET}"`);
+    return DEFAULT_STORAGE_BUCKET;
+  }
+  const value = (key: string) =>
+    env.find(e => e.startsWith(`${key}=`))?.slice(key.length + 1);
+  const bucket = value('MINIO_BUCKET_NAME') || value('MINIO_BUCKET') || DEFAULT_STORAGE_BUCKET;
+  if (!S3_BUCKET_NAME.test(bucket)) {
+    console.warn(`  Warning: the pod's storage bucket "${bucket}" is not a valid bucket name — no /${bucket}/ route`);
+    return null;
+  }
+  return bucket;
+}
+
 /**
  * Connect a container to eve-network with an optional DNS alias.
  *
@@ -461,60 +500,73 @@ export class TraefikService {
     // Path-scoped routers on the pod host that must beat the catch-all `synap`
     // router (priority 100). Each = one (router, service) pair in the same
     // behind-proxy / ssl / plain shape as the host routers above.
-    const buildPriorityPathRoute = (id: string, rule: string, upstream: string) => {
+    // `middlewares` apply to the routers that serve the request (not to the
+    // HTTP→HTTPS redirect router). `service` names an existing service (e.g.
+    // `noop@internal`) instead of building one for `upstream`.
+    const buildPriorityPathRoute = (
+      id: string,
+      rule: string,
+      opts: { upstream?: string; service?: string; middlewares?: string[]; priority?: number },
+    ) => {
+      const { middlewares = [], priority = 100 } = opts;
+      const serviceName = opts.service ?? `${id}-svc`;
+      const middlewaresBlock = (names: string[]) =>
+        names.length === 0 ? '' : `      middlewares:\n` + names.map(n => `        - ${n}\n`).join('');
       let router: string;
       if (behindProxy) {
         router =
           `\n    ${id}:\n` +
           `      rule: "${rule}"\n` +
-          `      priority: 100\n` +
+          `      priority: ${priority}\n` +
           `      entryPoints:\n` +
           `        - web\n` +
-          `      middlewares:\n` +
-          `        - forward-https\n` +
-          `      service: ${id}-svc`;
+          middlewaresBlock(['forward-https', ...middlewares]) +
+          `      service: ${serviceName}`;
       } else if (ssl) {
         router =
           `\n    ${id}-http:\n` +
           `      rule: "${rule}"\n` +
-          `      priority: 100\n` +
+          `      priority: ${priority}\n` +
           `      entryPoints:\n` +
           `        - web\n` +
           `      middlewares:\n` +
           `        - redirect-to-https\n` +
-          `      service: ${id}-svc\n` +
+          `      service: ${serviceName}\n` +
           `    ${id}:\n` +
           `      rule: "${rule}"\n` +
-          `      priority: 100\n` +
+          `      priority: ${priority}\n` +
           `      entryPoints:\n` +
           `        - websecure\n` +
+          middlewaresBlock(middlewares) +
           `      tls:\n` +
           `        certResolver: letsencrypt\n` +
-          `      service: ${id}-svc`;
+          `      service: ${serviceName}`;
       } else {
         router =
           `\n    ${id}-http:\n` +
           `      rule: "${rule}"\n` +
-          `      priority: 100\n` +
+          `      priority: ${priority}\n` +
           `      entryPoints:\n` +
           `        - web\n` +
-          `      service: ${id}-svc\n` +
+          middlewaresBlock(middlewares) +
+          `      service: ${serviceName}\n` +
           `    ${id}-https:\n` +
           `      rule: "${rule}"\n` +
-          `      priority: 100\n` +
+          `      priority: ${priority}\n` +
           `      entryPoints:\n` +
           `        - websecure\n` +
+          middlewaresBlock(middlewares) +
           `      tls: {}\n` +
-          `      service: ${id}-svc`;
+          `      service: ${serviceName}`;
       }
       // passHostHeader is Traefik's default (true) — pinned explicitly because
       // SigV4 signs the Host header: a rewritten Host fails every presigned URL.
-      const service =
+      const service = opts.service ? '' :
         `\n    ${id}-svc:\n` +
         `      loadBalancer:\n` +
         `        passHostHeader: true\n` +
         `        servers:\n` +
-        `          - url: "${upstream}"`;
+        `          - url: "${opts.upstream}"`;
       return { router, service };
     };
 
@@ -523,6 +575,7 @@ export class TraefikService {
     let realtimeServiceYaml = '';
     let storageRouterYaml = '';
     let storageServiceYaml = '';
+    let storageMiddlewareYaml = '';
     if (synapService) {
       const podHost = `${synapService.subdomain}.${domain}`;
 
@@ -534,33 +587,77 @@ export class TraefikService {
         const r = buildPriorityPathRoute(
           'synap-realtime',
           `Host(\`${podHost}\`) && (PathPrefix(\`/socket.io/\`) || PathPrefix(\`/realtime/\`))`,
-          `http://${synapRealtimeContainer}:4001`,
+          { upstream: `http://${synapRealtimeContainer}:4001` },
         );
         realtimeRouterYaml = r.router;
         realtimeServiceYaml = r.service;
       }
 
-      // Presigned-URL storage — `pod.<domain>/synap-storage/*` → MinIO S3 API (:9000),
-      // Host preserved. Mirrors the Caddyfile `handle /synap-storage/*` route; the
-      // backend signs URLs for MINIO_PUBLIC_URL (= the pod origin). Bucket name
-      // must match the compose MINIO_BUCKET (synap-storage).
+      // Signed file links — `pod.<domain>/<bucket>/*` → MinIO S3 API (:9000),
+      // Host preserved. Mirrors the pod Caddyfile's `handle /synap-storage/*`:
+      // the backend signs links for MINIO_PUBLIC_URL (= the pod origin), path
+      // /<bucket>/<key> — downloads (getSignedUrl, GET) and uploads
+      // (getSignedUploadUrl, PUT). Without this router the catch-all `synap`
+      // router sends them to the backend, which answers 404.
+      //
+      // Methods: GET/HEAD read, PUT uploads, OPTIONS is the browser's CORS
+      // preflight for a cross-origin PUT (MinIO answers it). The backend signs
+      // no POST: multipart uploads are server-side, on the internal endpoint.
+      //
+      // MinIO CVE-2026-41145 / CVE-2026-40344 (never fixed in the free builds):
+      // an upload declaring an UNSIGNED trailer is written without its signature
+      // being checked, so anyone holding a presigned URL could write any object.
+      // As the Caddyfile does, a higher-priority router refuses the two request
+      // shapes (that trailer mode, and any Snowball auto-extract header) with a
+      // 403: `ipAllowList` on a range no client has, then `noop@internal`, so
+      // the request never reaches MinIO. Header() is an exact match on any value
+      // of the header; HeaderRegexp(`.*`) matches the header with any value.
+      //
+      // The sandbox CSP mirrors the Caddyfile: a blob is served with its upload
+      // Content-Type on the pod origin, so an SVG opened directly would run as
+      // the pod. `sandbox` gives it an opaque origin and no script.
+      //
+      // minio reaches eve-network through the Eve compose override (alias
+      // eve-brain-minio, survives recreates); the connect below covers a pod
+      // whose override is user-owned, until its next recreate.
       const minioContainer = findComposeContainer('minio');
-      if (minioContainer) {
-        connectToEveNetwork(minioContainer);
+      const bucket = minioContainer ? readPodStorageBucket(synapContainer) : null;
+      if (minioContainer && bucket) {
+        connectToEveNetwork(minioContainer, 'eve-brain-minio');
+        const storagePath = `Host(\`${podHost}\`) && PathPrefix(\`/${bucket}/\`)`;
+        const guard = buildPriorityPathRoute(
+          'synap-storage-cve-guard',
+          `${storagePath} && (Header(\`X-Amz-Content-Sha256\`, \`STREAMING-UNSIGNED-PAYLOAD-TRAILER\`) || HeaderRegexp(\`X-Amz-Meta-Snowball-Auto-Extract\`, \`.*\`))`,
+          { service: 'noop@internal', middlewares: ['synap-storage-refuse'], priority: 200 },
+        );
         const r = buildPriorityPathRoute(
           'synap-storage',
-          `Host(\`${podHost}\`) && PathPrefix(\`/synap-storage/\`)`,
-          `http://${minioContainer}:9000`,
+          `${storagePath} && (Method(\`GET\`) || Method(\`HEAD\`) || Method(\`PUT\`) || Method(\`OPTIONS\`))`,
+          { upstream: `http://${minioContainer}:9000`, middlewares: ['synap-storage-csp'] },
         );
-        storageRouterYaml = r.router;
+        storageRouterYaml = guard.router + r.router;
         storageServiceYaml = r.service;
+        storageMiddlewareYaml =
+          `    synap-storage-csp:\n` +
+          `      headers:\n` +
+          // customResponseHeaders overwrite a same-named upstream header (Caddy's `header`)
+          `        customResponseHeaders:\n` +
+          `          Content-Security-Policy: "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:"\n` +
+          // No client has this address: every request through it gets a 403.
+          `    synap-storage-refuse:\n` +
+          `      ipAllowList:\n` +
+          `        sourceRange:\n` +
+          `          - "255.255.255.255/32"\n`;
       }
     }
 
-    const middlewaresYaml = behindProxy
+    const modeMiddlewareYaml = behindProxy
       // In proxy mode: inject X-Forwarded-Proto so backend apps see "https"
-      ? `  middlewares:\n    forward-https:\n      headers:\n        customRequestHeaders:\n          X-Forwarded-Proto: "https"\n`
-      : (!ssl ? '' : `  middlewares:\n    redirect-to-https:\n      redirectScheme:\n        scheme: https\n        permanent: true\n`);
+      ? `    forward-https:\n      headers:\n        customRequestHeaders:\n          X-Forwarded-Proto: "https"\n`
+      : (!ssl ? '' : `    redirect-to-https:\n      redirectScheme:\n        scheme: https\n        permanent: true\n`);
+    const middlewaresYaml = modeMiddlewareYaml || storageMiddlewareYaml
+      ? `  middlewares:\n${modeMiddlewareYaml}${storageMiddlewareYaml}`
+      : '';
 
     // Path-proxy routes: high-priority routers for specific paths on additional subdomains
     // (e.g. connect./env.js → API port 3003, all other connect. → SPA port 3009)

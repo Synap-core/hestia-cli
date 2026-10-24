@@ -71,14 +71,17 @@ import { SYNAP_HOST_LOOPBACK_PORT } from "./components.js";
  * decide "is this file ours, can we refresh it?" — long enough that an
  * accidental match in a hand-written override would be deeply unlikely.
  */
-const OVERRIDE_MARKER = "eve-managed:synap-loopback-override:v3";
+const OVERRIDE_MARKER = "eve-managed:synap-loopback-override:v4";
 // Older markers we still recognise as Eve-managed so pre-existing override
 // files from earlier installs get refreshed on upgrade rather than left
 // behind as "user-owned". v2 omitted the `realtime` service from eve-network,
-// which broke socket.io routing (Traefik 502) — v3 adds it.
+// which broke socket.io routing (Traefik 502) — v3 adds it. v3 omitted
+// `minio`, so the pod's signed file links (pod.<domain>/synap-storage/…) had
+// no reachable upstream once minio was recreated — v4 adds it.
 const LEGACY_MARKERS = [
   "eve-managed:synap-loopback-override:v1",
   "eve-managed:synap-loopback-override:v2",
+  "eve-managed:synap-loopback-override:v3",
 ];
 
 const OVERRIDE_CONTENT = `# Eve-managed docker-compose override — DO NOT edit by hand.
@@ -145,6 +148,18 @@ services:
       eve-network:
         aliases:
           - eve-brain-realtime
+  # MinIO — the backend signs file links on MINIO_PUBLIC_URL (= the pod origin),
+  # path /synap-storage/<key>?X-Amz-…. On a Caddy-edge pod the Caddyfile sends
+  # that path to minio:9000; on an Eve pod eve-legs-traefik does, by container
+  # name, so minio must sit on eve-network. A runtime \`docker network connect\`
+  # is lost on every container recreate (\`eve update synap\`, \`synap update\`)
+  # and every file link then fails (502); declaring it here survives recreates.
+  minio:
+    networks:
+      synap-net: {}
+      eve-network:
+        aliases:
+          - eve-brain-minio
 `;
 
 export interface EnsureOverrideResult {
