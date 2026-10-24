@@ -620,7 +620,9 @@ export class TraefikService {
         storageMiddlewareYaml =
           `    synap-storage-csp:\n` +
           `      headers:\n` +
-          `        contentSecurityPolicy: "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:"\n`;
+          // customResponseHeaders overwrite a same-named upstream header (Caddy's `header`)
+          `        customResponseHeaders:\n` +
+          `          Content-Security-Policy: "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:"\n`;
       }
     }
 

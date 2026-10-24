@@ -58,7 +58,7 @@ interface Routes {
   http: {
     routers: Record<string, Router>;
     services: Record<string, { loadBalancer: { passHostHeader?: boolean; servers: Array<{ url: string }> } }>;
-    middlewares?: Record<string, { headers?: { contentSecurityPolicy?: string } }>;
+    middlewares?: Record<string, { headers?: { customResponseHeaders?: Record<string, string> } }>;
   };
 }
 
@@ -133,7 +133,7 @@ describe('TraefikService.configureSubdomains: signed file links (storage route)'
     // SigV4 signs the Host header: a rewritten Host fails every signed link
     expect(svc.passHostHeader).toBe(true);
 
-    expect(middlewares?.['synap-storage-csp']?.headers?.contentSecurityPolicy).toBe(CSP);
+    expect(middlewares?.['synap-storage-csp']?.headers?.customResponseHeaders).toEqual({ 'Content-Security-Policy': CSP });
   });
 
   it("takes the bucket from the backend's environment, with the backend's precedence", async () => {
