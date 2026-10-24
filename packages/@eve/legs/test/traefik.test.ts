@@ -58,7 +58,10 @@ interface Routes {
   http: {
     routers: Record<string, Router>;
     services: Record<string, { loadBalancer: { passHostHeader?: boolean; servers: Array<{ url: string }> } }>;
-    middlewares?: Record<string, { headers?: { customResponseHeaders?: Record<string, string> } }>;
+    middlewares?: Record<string, {
+      headers?: { customResponseHeaders?: Record<string, string> };
+      ipAllowList?: { sourceRange: string[] };
+    }>;
   };
 }
 
@@ -98,33 +101,48 @@ describe('TraefikService.configureSubdomains: signed file links (storage route)'
   }
 
   const CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:";
-  const READ_ONLY_RULE =
-    'Host(`pod.example.com`) && PathPrefix(`/synap-storage/`) && (Method(`GET`) || Method(`HEAD`))';
+  const STORAGE_PATH = 'Host(`pod.example.com`) && PathPrefix(`/synap-storage/`)';
+  // what the backend signs (GET download, PUT upload) + HEAD + the CORS preflight
+  const STORAGE_RULE =
+    `${STORAGE_PATH} && (Method(\`GET\`) || Method(\`HEAD\`) || Method(\`PUT\`) || Method(\`OPTIONS\`))`;
+  // the Caddyfile's MinIO unsigned-trailer CVE guard (CVE-2026-41145 / CVE-2026-40344)
+  const GUARD_RULE =
+    `${STORAGE_PATH} && (Header(\`X-Amz-Content-Sha256\`, \`STREAMING-UNSIGNED-PAYLOAD-TRAILER\`) || HeaderRegexp(\`X-Amz-Meta-Snowball-Auto-Extract\`, \`.*\`))`;
   // Traefik's default priority is the rule's length; the pod host router sets none.
   const effectivePriority = (r: Router) => r.priority ?? r.rule.length;
 
-  // [mode, routers that serve MinIO, router that only redirects to https]
+  // [mode, routers that serve the request, router that only redirects to https]
   it.each([
-    ['behind-proxy', { ssl: false, behindProxy: true }, ['synap-storage'], null],
-    ['ssl', { ssl: true, behindProxy: false }, ['synap-storage'], 'synap-storage-http'],
-    ['plain', { ssl: false, behindProxy: false }, ['synap-storage-http', 'synap-storage-https'], null],
-  ] as const)('routes GET/HEAD pod.<domain>/synap-storage/ to minio:9000, Host kept, sandbox CSP (%s)', async (_n, mode, serving, redirect) => {
+    ['behind-proxy', { ssl: false, behindProxy: true }, [''], null],
+    ['ssl', { ssl: true, behindProxy: false }, [''], '-http'],
+    ['plain', { ssl: false, behindProxy: false }, ['-http', '-https'], null],
+  ] as const)('routes GET/HEAD/PUT/OPTIONS pod.<domain>/synap-storage/ to minio:9000 behind the CVE guard (%s)', async (_n, mode, serving, redirect) => {
     const { routes } = await render(mode);
     const { routers, services, middlewares } = routes.http;
+    const hostRouter = routers.synap ?? routers['synap-http'];
 
-    for (const id of serving) {
-      const r = routers[id];
-      expect(r, id).toBeDefined();
-      // reads only: no presigned upload goes through the edge (no CVE guard here)
-      expect(r.rule).toBe(READ_ONLY_RULE);
+    for (const suffix of serving) {
+      const r = routers[`synap-storage${suffix}`];
+      expect(r, `synap-storage${suffix}`).toBeDefined();
+      expect(r.rule).toBe(STORAGE_RULE);
       // must outrank the catch-all pod host router
-      expect(effectivePriority(r)).toBeGreaterThan(effectivePriority(routers.synap ?? routers['synap-http']));
+      expect(effectivePriority(r)).toBeGreaterThan(effectivePriority(hostRouter));
       expect(r.middlewares).toContain('synap-storage-csp');
       expect(r.service).toBe('synap-storage-svc');
+
+      const g = routers[`synap-storage-cve-guard${suffix}`];
+      expect(g, `synap-storage-cve-guard${suffix}`).toBeDefined();
+      expect(g.rule).toBe(GUARD_RULE);
+      // must outrank the storage router, so a CVE-shaped upload never reaches MinIO
+      expect(effectivePriority(g)).toBeGreaterThan(effectivePriority(r));
+      expect(g.entryPoints).toEqual(r.entryPoints);
+      expect(g.middlewares).toContain('synap-storage-refuse');
+      expect(g.service).toBe('noop@internal');
     }
     if (redirect) {
-      expect(routers[redirect].rule).toBe(READ_ONLY_RULE);
-      expect(routers[redirect].middlewares).toEqual(['redirect-to-https']);
+      expect(routers[`synap-storage${redirect}`].rule).toBe(STORAGE_RULE);
+      expect(routers[`synap-storage${redirect}`].middlewares).toEqual(['redirect-to-https']);
+      expect(routers[`synap-storage-cve-guard${redirect}`].middlewares).toEqual(['redirect-to-https']);
     }
     if (mode.behindProxy) expect(routers['synap-storage'].middlewares).toContain('forward-https');
 
@@ -132,8 +150,12 @@ describe('TraefikService.configureSubdomains: signed file links (storage route)'
     expect(svc.servers).toEqual([{ url: 'http://synap-backend-minio-1:9000' }]);
     // SigV4 signs the Host header: a rewritten Host fails every signed link
     expect(svc.passHostHeader).toBe(true);
+    // the guard has no upstream of its own
+    expect(Object.keys(services).filter(k => k.includes('cve-guard'))).toEqual([]);
 
     expect(middlewares?.['synap-storage-csp']?.headers?.customResponseHeaders).toEqual({ 'Content-Security-Policy': CSP });
+    // Traefik 3.0 ipAllowList answers 403 to a client outside sourceRange: no client is this address
+    expect(middlewares?.['synap-storage-refuse']?.ipAllowList).toEqual({ sourceRange: ['255.255.255.255/32'] });
   });
 
   it("takes the bucket from the backend's environment, with the backend's precedence", async () => {
@@ -146,7 +168,7 @@ describe('TraefikService.configureSubdomains: signed file links (storage route)'
 
   it('falls back to the backend default bucket when the backend sets none', async () => {
     const { routes } = await render({ ssl: false, behindProxy: true }, { backendEnv: ['PATH=/usr/bin'] });
-    expect(routes.http.routers['synap-storage'].rule).toBe(READ_ONLY_RULE);
+    expect(routes.http.routers['synap-storage'].rule).toBe(STORAGE_RULE);
   });
 
   it('adds no storage route for a bucket name that is not a valid bucket name', async () => {
