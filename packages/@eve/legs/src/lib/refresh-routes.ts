@@ -1,8 +1,10 @@
 /**
  * Refresh Traefik routes to match the current installed-components list.
  *
- * Called from `eve add` / `eve remove` so installing a new component
- * automatically wires up its subdomain (and removing one tears it down).
+ * Called (through the `traefik-routes` materializer) from `eve add` /
+ * `eve remove`, `eve domain set|apply|repair` and after every component
+ * update, so a route the generator gained in an Eve release reaches the pod
+ * on its next `eve update`, and installing a component wires its subdomain.
  *
  * No-op if no domain has been configured yet — the user hasn't asked for
  * external routing, so we leave Traefik alone.
@@ -14,6 +16,8 @@ import { TraefikService } from './traefik.js';
 export interface RefreshResult {
   refreshed: boolean;
   domain: string | null;
+  /** The routes files differed from what was on disk (Traefik restarted). */
+  changed?: boolean;
   reason?: string;
 }
 
@@ -28,16 +32,23 @@ export async function refreshTraefikRoutes(cwd?: string): Promise<RefreshResult>
     return { refreshed: false, domain: null, reason: 'no domain configured' };
   }
 
-  let installedComponents: string[] = [];
+  // Routes are generated for the INSTALLED components only. An unreadable
+  // state file is not "nothing installed": generating from an empty list would
+  // drop every component route on the pod, so leave the routes as they are.
+  let installedComponents: string[];
   try {
     installedComponents = await entityStateManager.getInstalledComponents();
-  } catch {
-    // State unreadable — fall back to routing everything
+  } catch (err) {
+    return {
+      refreshed: false,
+      domain,
+      reason: `installed components unreadable (${err instanceof Error ? err.message : String(err)}) — routes left as they were`,
+    };
   }
 
   try {
     const traefik = new TraefikService();
-    await traefik.configureSubdomains(
+    const { changed } = await traefik.configureSubdomains(
       domain,
       secrets?.domain?.ssl !== false,
       secrets?.domain?.email,
@@ -45,7 +56,7 @@ export async function refreshTraefikRoutes(cwd?: string): Promise<RefreshResult>
       !!secrets?.domain?.behindProxy,
       secrets?.domain?.customRoutes,
     );
-    return { refreshed: true, domain };
+    return { refreshed: true, domain, changed };
   } catch (err) {
     return {
       refreshed: false,

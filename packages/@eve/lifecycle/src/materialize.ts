@@ -127,10 +127,12 @@ export async function materializeTargets(
             ok,
             changed: refresh.refreshed,
             summary: refresh.refreshed
-              ? `Traefik routes refreshed for ${refresh.domain}`
+              ? refresh.changed === false
+                ? `Traefik routes already current for ${refresh.domain}`
+                : `Traefik routes refreshed for ${refresh.domain}`
               : refresh.reason ?? 'Traefik routes unchanged',
             error: ok ? undefined : refresh.reason,
-            details: { domain: refresh.domain },
+            details: { domain: refresh.domain, routesChanged: refresh.changed ?? false },
           };
           break;
         }
@@ -202,4 +204,32 @@ export async function materializeTargets(
   }
 
   return out;
+}
+
+/**
+ * Regenerate the Traefik routes after a component update — the one step every
+ * update door runs (`runAction(_, 'update')`, which the dashboard's update
+ * button and `eve update <component>` both reach, and the `eve update` targets
+ * that do not go through it). It is the same `traefik-routes` materializer
+ * `eve domain set|apply|repair` and `eve add|remove` use: the INSTALLED
+ * components and the saved domain, SSL and proxy settings. So a route an Eve
+ * release adds (e.g. /synap-storage) reaches the pod on its next update, with
+ * no `eve domain apply` by hand.
+ *
+ * Never throws and never fails the update: the component did update. Returns
+ * the one line to show the operator, which says when routes were NOT
+ * regenerated and why.
+ */
+export async function refreshRoutesAfterUpdate(): Promise<string> {
+  let refresh: MaterializeResult;
+  try {
+    [refresh] = await materializeTargets(null, ['traefik-routes']);
+  } catch (err) {
+    return `⚠ Traefik routes NOT regenerated: ${err instanceof Error ? err.message : String(err)} — run: eve domain apply`;
+  }
+  if (refresh.ok) return refresh.summary;
+  if (refresh.details && refresh.details.domain === null) {
+    return 'Traefik routes not regenerated: no domain configured (`eve domain set <domain>` routes components by URL)';
+  }
+  return `⚠ Traefik routes NOT regenerated: ${refresh.error ?? refresh.summary} — run: eve domain apply`;
 }

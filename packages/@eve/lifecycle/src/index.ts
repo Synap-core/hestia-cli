@@ -72,7 +72,7 @@ import {
   type OpenclawReconcileResult,
 } from "./components/openclaw/reconcile.js";
 import { ensureBuilderWorkspace } from "./builder-workspace.js";
-import { materializeTargets } from "./materialize.js";
+import { materializeTargets, refreshRoutesAfterUpdate } from "./materialize.js";
 import { readEnvFile } from "./env-files.js";
 
 // ---------------------------------------------------------------------------
@@ -411,6 +411,10 @@ async function* updateContainer(comp: ComponentInfo): AsyncGenerator<LifecycleEv
   // caller's stream stays unified.
   if (lastDone && !lastErr) {
     yield* runPostUpdateHooks(comp);
+    // Regenerate the routes from the installed components + saved domain:
+    // an update is how a route the generator gained in an Eve release (and a
+    // container a compose recreate moved) reaches this pod's Traefik.
+    yield { type: "log", line: await refreshRoutesAfterUpdate() };
   }
 }
 
@@ -4454,6 +4458,7 @@ export async function runRepair(request: RepairRequest): Promise<RepairResult> {
 
 export {
   materializeTargets,
+  refreshRoutesAfterUpdate,
   type MaterializeOptions,
   type MaterializeResult,
 } from "./materialize.js";

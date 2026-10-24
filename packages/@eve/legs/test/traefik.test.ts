@@ -196,3 +196,61 @@ describe('TraefikService.configureSubdomains: signed file links (storage route)'
     expect(routes.http.middlewares).toBeUndefined();
   });
 });
+
+// Every `eve update` regenerates the routes now; a Traefik restart there would
+// drop every route on the pod for nothing when the files did not move.
+describe('TraefikService.configureSubdomains: restarts Traefik only when the routes changed', () => {
+  async function run(onDisk: { static?: string; routes?: string }) {
+    vi.resetModules();
+    const commands: string[] = [];
+    const written: Record<string, string> = {};
+    vi.mocked(execSync).mockImplementation(((cmd: string) => {
+      commands.push(cmd);
+      return '';
+    }) as never);
+    const fs = await import('fs');
+    const disk = (p: string) =>
+      p.endsWith('traefik.yml') ? onDisk.static : p.endsWith('eve-routes.yml') ? onDisk.routes : undefined;
+    vi.mocked(fs.existsSync).mockImplementation(((p: string) => disk(String(p)) !== undefined) as never);
+    vi.mocked(fs.readFileSync).mockImplementation(((p: string) => disk(String(p)) ?? '') as never);
+    vi.mocked(fs.writeFileSync).mockImplementation(((p: string, c: string) => {
+      written[String(p)] = String(c);
+    }) as never);
+    const { TraefikService } = await import('../src/lib/traefik');
+    const result = await new TraefikService('/tmp/eve-test-traefik').configureSubdomains(
+      'example.com', true, 'ops@example.com', ['synap'], false,
+    );
+    const restarted = commands.includes('docker restart eve-legs-traefik');
+    return { result, restarted, written };
+  }
+
+  it('writes both files and restarts when nothing is on disk yet', async () => {
+    const { result, restarted, written } = await run({});
+    expect(result).toEqual({ changed: true });
+    expect(restarted).toBe(true);
+    expect(Object.keys(written).some(k => k.endsWith('eve-routes.yml'))).toBe(true);
+  });
+
+  it('neither writes nor restarts when both files already hold what it generates', async () => {
+    const first = await run({});
+    const onDisk = {
+      static: Object.entries(first.written).find(([k]) => k.endsWith('traefik.yml'))?.[1],
+      routes: Object.entries(first.written).find(([k]) => k.endsWith('eve-routes.yml'))?.[1],
+    };
+    expect(onDisk.static && onDisk.routes).toBeTruthy(); // non-vacuity
+    const { result, restarted, written } = await run(onDisk);
+    expect(result).toEqual({ changed: false });
+    expect(restarted).toBe(false);
+    expect(written).toEqual({});
+  });
+
+  it('writes and restarts when only the routes changed', async () => {
+    const first = await run({});
+    const { result, restarted } = await run({
+      static: Object.entries(first.written).find(([k]) => k.endsWith('traefik.yml'))?.[1],
+      routes: '# an older eve-routes.yml\n',
+    });
+    expect(result).toEqual({ changed: true });
+    expect(restarted).toBe(true);
+  });
+});

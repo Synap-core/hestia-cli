@@ -257,6 +257,15 @@ function allowDockerToHostPorts(ports: number[]): void {
   } catch { /* UFW not available or not running */ }
 }
 
+/** A file's content, or null when it is absent or unreadable (then it differs from anything we write). */
+function readFileOrNull(path: string): string | null {
+  try {
+    return existsSync(path) ? readFileSync(path, 'utf-8') : null;
+  } catch {
+    return null;
+  }
+}
+
 export class TraefikService {
   private configDir: string;
   private traefikConfigPath: string;
@@ -329,7 +338,15 @@ export class TraefikService {
     console.log('Using Dokploy-managed Traefik');
   }
 
-  async configureSubdomains(domain: string, ssl: boolean, email?: string, installedComponents?: string[], behindProxy = false, customRoutes?: Array<{ subdomain: string; port: number; domain?: string }>): Promise<void> {
+  /**
+   * Regenerate the static config and `dynamic/eve-routes.yml` for `domain`.
+   *
+   * Traefik is restarted only when one of the two files actually changed:
+   * every `eve update` regenerates the routes, and a restart there would drop
+   * every route on the pod for a few seconds even though nothing moved.
+   * Returns whether anything changed.
+   */
+  async configureSubdomains(domain: string, ssl: boolean, email?: string, installedComponents?: string[], behindProxy = false, customRoutes?: Array<{ subdomain: string; port: number; domain?: string }>): Promise<{ changed: boolean }> {
     // Synap backend runs in its own docker-compose project. Connect it to
     // eve-network so Traefik (also on eve-network) can resolve it by name.
     const synapContainer = getSynapBackendContainer();
@@ -714,13 +731,23 @@ export class TraefikService {
       `  routers:\n${routersYaml}${realtimeRouterYaml}${storageRouterYaml}${pathRoutesYaml}\n` +
       `  services:\n${servicesYaml}${realtimeServiceYaml}${storageServiceYaml}${pathServicesYaml}\n`;
 
+    const staticConfig = behindProxy ? buildProxyModeStaticConfig() : buildStaticConfig(ssl, email);
+    const routesPath = join(this.dynamicConfigDir, 'eve-routes.yml');
+    const changed =
+      readFileOrNull(this.traefikConfigPath) !== staticConfig ||
+      readFileOrNull(routesPath) !== dynamicConfig;
+    if (!changed) {
+      console.log('  Traefik routes already current — no restart');
+      return { changed: false };
+    }
+
     // Write static config (proxy mode skips SSL/cert sections)
     if (!existsSync(this.configDir)) mkdirSync(this.configDir, { recursive: true });
-    writeFileSync(this.traefikConfigPath, behindProxy ? buildProxyModeStaticConfig() : buildStaticConfig(ssl, email));
+    writeFileSync(this.traefikConfigPath, staticConfig);
 
     // Write dynamic routes config
     if (!existsSync(this.dynamicConfigDir)) mkdirSync(this.dynamicConfigDir, { recursive: true });
-    writeFileSync(join(this.dynamicConfigDir, 'eve-routes.yml'), dynamicConfig, 'utf-8');
+    writeFileSync(routesPath, dynamicConfig, 'utf-8');
 
     // Restart Traefik so it picks up the updated static config + new volumes
     try {
@@ -729,6 +756,7 @@ export class TraefikService {
     } catch {
       console.warn('  Could not restart Traefik automatically — run: docker restart eve-legs-traefik');
     }
+    return { changed: true };
   }
 
   // ---------------------------------------------------------------------------
