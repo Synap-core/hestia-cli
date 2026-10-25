@@ -63,6 +63,11 @@ function getSynapBackendContainer(): string | null {
   }
 }
 
+/** The Eve home (`.eve/` lives here): EVE_HOME, which the CLI entry sets to its install root, else the cwd. */
+function eveHome(): string {
+  return process.env.EVE_HOME || process.cwd();
+}
+
 function connectToEveNetwork(name: string): void {
   try {
     execSync(`docker network connect eve-network ${name}`, { stdio: ['pipe', 'pipe', 'ignore'] });
@@ -177,7 +182,10 @@ function findSelfUpdateScript(): string | null {
  */
 async function tryPostUpdateProvision(_deployDir: string): Promise<{ subLines: string[] }> {
   const subLines: string[] = [];
-  const eveCwd = process.cwd(); // Eve home — where secrets.json lives
+  // Eve home — where secrets.json lives. The CLI entry sets EVE_HOME to its
+  // install root; the cwd is only a fallback (a second `.eve/` there may hold
+  // another pod's settings).
+  const eveCwd = eveHome();
   try {
     const preflight = await runBackendPreflight({ cwd: eveCwd });
     const adminStatus = await probeAdminStatus();
@@ -313,7 +321,7 @@ export async function buildUpdateTargets(deployDir: string | undefined, synapRel
       const { readEveSecrets } = await import('@eve/dna');
       const { randomUUID } = await import('node:crypto');
       const { writeEveSecrets } = await import('@eve/dna');
-      const secrets = await readEveSecrets(process.cwd()).catch(() => null);
+      const secrets = await readEveSecrets(eveHome()).catch(() => null);
       let secretKey = secrets?.connectors?.nango?.secretKey as string | undefined;
       if (!secretKey) throw new Error('No Nango secret key found in secrets.json — run: eve add nango');
       // Nango requires UUID v4 — regenerate if the stored key is a legacy hex string
@@ -413,11 +421,13 @@ export async function buildUpdateTargets(deployDir: string | undefined, synapRel
       id: 'eve-dashboard',
       label: '📊 Eve Dashboard',
       update: async () => {
-        const secrets = await readEveSecrets(process.cwd());
+        const secrets = await readEveSecrets(eveHome());
         const secret = secrets?.dashboard?.secret
           ?? randomBytes(24).toString('hex');
         installDashboardContainer({
-          workspaceRoot: process.cwd(),
+          // the dashboard container's EVE_HOME: the Eve home, never the
+          // directory `eve update` happened to run from
+          workspaceRoot: eveHome(),
           secret,
           rebuild: true,
         });
