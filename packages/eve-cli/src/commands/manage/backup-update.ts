@@ -13,8 +13,9 @@ import {
   runActionToCompletion,
   runBackendPreflight,
   provisionAllAgents,
+  refreshRoutesAfterUpdate,
 } from '@eve/lifecycle';
-import { findPodDeployDir, entityStateManager, readEveSecrets } from '@eve/dna';
+import { findPodDeployDir, entityStateManager, readEveSecrets, ensureSynapLoopbackOverride } from '@eve/dna';
 import { runSynapCli, synapApply, synapConfigSet, synapUpdateArgs } from '@eve/brain';
 import { installDashboardContainer, dashboardIsRunning } from '@eve/legs';
 import { probeAdminStatus } from '../setup-admin.js';
@@ -60,6 +61,11 @@ function getSynapBackendContainer(): string | null {
   } catch {
     return null;
   }
+}
+
+/** The Eve home (`.eve/` lives here): EVE_HOME, which the CLI entry sets to its install root, else the cwd. */
+function eveHome(): string {
+  return process.env.EVE_HOME || process.cwd();
 }
 
 function connectToEveNetwork(name: string): void {
@@ -176,7 +182,10 @@ function findSelfUpdateScript(): string | null {
  */
 async function tryPostUpdateProvision(_deployDir: string): Promise<{ subLines: string[] }> {
   const subLines: string[] = [];
-  const eveCwd = process.cwd(); // Eve home — where secrets.json lives
+  // Eve home — where secrets.json lives. The CLI entry sets EVE_HOME to its
+  // install root; the cwd is only a fallback (a second `.eve/` there may hold
+  // another pod's settings).
+  const eveCwd = eveHome();
   try {
     const preflight = await runBackendPreflight({ cwd: eveCwd });
     const adminStatus = await probeAdminStatus();
@@ -206,7 +215,14 @@ async function tryPostUpdateProvision(_deployDir: string): Promise<{ subLines: s
   return { subLines };
 }
 
-async function buildUpdateTargets(deployDir: string | undefined, synapRelease?: string, synapFromSource = false): Promise<UpdateTarget[]> {
+/**
+ * The `eve update` targets. Each one that updates a component ends by
+ * regenerating the Traefik routes (`refreshRoutesAfterUpdate`): the ones
+ * delegating to `runActionToCompletion(id, 'update')` get it from the
+ * lifecycle door, the others (synap, nango, the dashboard) call it here.
+ * Exported for tests.
+ */
+export async function buildUpdateTargets(deployDir: string | undefined, synapRelease?: string, synapFromSource = false): Promise<UpdateTarget[]> {
   const targets: UpdateTarget[] = [];
 
   // Read installed component set once — guards all optional targets below.
@@ -217,6 +233,9 @@ async function buildUpdateTargets(deployDir: string | undefined, synapRelease?: 
 
   // Eve CLI self-update — runs scripts/self-update.sh which does:
   //   git pull + pnpm install + build + re-link /usr/local/bin/eve
+  // No route regeneration here: this process still runs the PREVIOUS Eve code,
+  // so a route the new release adds would not be in what it generates. The
+  // next `eve update <component>` (a new process) regenerates with it.
   targets.push({
     id: 'eve',
     label: '🌿 Eve CLI',
@@ -245,6 +264,18 @@ async function buildUpdateTargets(deployDir: string | undefined, synapRelease?: 
       id: 'synap',
       label: '🧠 Synap Data Pod',
       update: async () => {
+        const subLines: string[] = [];
+        // Refresh the Eve compose override BEFORE `synap update`, as the
+        // lifecycle's synap delegate does: the update's `compose up` then
+        // recreates the services whose override changed (v4 puts minio on
+        // eve-network, which the /synap-storage route needs). Writing it only
+        // afterwards left it unapplied until some later recreate.
+        try {
+          const r = ensureSynapLoopbackOverride(deployDir);
+          if (r.outcome === 'kept') subLines.push(`Left ${r.path} alone — ${r.reason ?? 'user-owned'}`);
+        } catch (err) {
+          subLines.push(`Could not ensure compose override: ${err instanceof Error ? err.message : String(err)} (continuing)`);
+        }
         // Resolve the bare root domain so the CLI heals an existing .env
         // whose DOMAIN= line was written before eve enforced the pod FQDN.
         const secrets = await readEveSecrets().catch(() => null);
@@ -267,7 +298,10 @@ async function buildUpdateTargets(deployDir: string | undefined, synapRelease?: 
         // Post-update: mint agent keys for any new agents added in this
         // release, and verify existing ones are still valid. Best-effort
         // — a provision failure never blocks the update itself.
-        return tryPostUpdateProvision(deployDir);
+        const provision = await tryPostUpdateProvision(deployDir);
+        subLines.push(...provision.subLines);
+        subLines.push(await refreshRoutesAfterUpdate('eve update synap'));
+        return { subLines };
       },
     });
   }
@@ -287,7 +321,7 @@ async function buildUpdateTargets(deployDir: string | undefined, synapRelease?: 
       const { readEveSecrets } = await import('@eve/dna');
       const { randomUUID } = await import('node:crypto');
       const { writeEveSecrets } = await import('@eve/dna');
-      const secrets = await readEveSecrets(process.cwd()).catch(() => null);
+      const secrets = await readEveSecrets(eveHome()).catch(() => null);
       let secretKey = secrets?.connectors?.nango?.secretKey as string | undefined;
       if (!secretKey) throw new Error('No Nango secret key found in secrets.json — run: eve add nango');
       // Nango requires UUID v4 — regenerate if the stored key is a legacy hex string
@@ -352,7 +386,9 @@ async function buildUpdateTargets(deployDir: string | undefined, synapRelease?: 
         const container = getSynapBackendContainer();
         if (container) connectToEveNetwork(container);
       }
-      return { subLines: [`image updated, container recreated with NANGO_DATABASE_URL`] };
+      return {
+        subLines: [`image updated, container recreated with NANGO_DATABASE_URL`, await refreshRoutesAfterUpdate('eve update nango')],
+      };
     },
   });
   if (has('rsshub'))              targets.push(lifecycleUpdate('rsshub', '👁️  RSSHub'));
@@ -385,15 +421,17 @@ async function buildUpdateTargets(deployDir: string | undefined, synapRelease?: 
       id: 'eve-dashboard',
       label: '📊 Eve Dashboard',
       update: async () => {
-        const secrets = await readEveSecrets(process.cwd());
+        const secrets = await readEveSecrets(eveHome());
         const secret = secrets?.dashboard?.secret
           ?? randomBytes(24).toString('hex');
         installDashboardContainer({
-          workspaceRoot: process.cwd(),
+          // the dashboard container's EVE_HOME: the Eve home, never the
+          // directory `eve update` happened to run from
+          workspaceRoot: eveHome(),
           secret,
           rebuild: true,
         });
-        return { subLines: ['image rebuilt from updated source'] };
+        return { subLines: ['image rebuilt from updated source', await refreshRoutesAfterUpdate('eve update eve-dashboard')] };
       },
     });
   }

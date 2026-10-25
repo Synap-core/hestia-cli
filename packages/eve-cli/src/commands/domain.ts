@@ -111,7 +111,8 @@ export function domainCommand(program: Command): void {
 
       let writeOk = false;
       try {
-        const results = await materializeTargets(null, ['backend-env', 'traefik-routes']);
+        // Setting the domain IS the deliberate domain change the route guard allows.
+        const results = await materializeTargets(null, ['backend-env', 'traefik-routes'], { allowDomainChange: true });
         const routeResult = results.find(r => r.target === 'traefik-routes');
         if (!routeResult?.ok) throw new Error(routeResult?.error ?? routeResult?.summary ?? 'unknown Traefik error');
         writeOk = routeResult.changed;
@@ -539,17 +540,16 @@ export function domainCommand(program: Command): void {
       }
 
       printInfo(`Applying routes for domain: ${domainName}`);
-      
-      const traefik = new TraefikService();
-      await traefik.configureSubdomains(
-        domainName,
-        secrets?.domain?.ssl !== false,
-        secrets?.domain?.email,
-        undefined, // installedComponents - will be resolved internally
-        !!secrets?.domain?.behindProxy,
-        secrets?.domain?.customRoutes,
-      );
 
-      printSuccess('Traefik routes updated successfully');
+      // The one route generator door: the INSTALLED components + the saved
+      // domain settings. Passing no component list here routed every
+      // component of the registry, installed or not.
+      const [result] = await materializeTargets(null, ['traefik-routes']);
+      if (!result.ok) {
+        printError(`Could not apply Traefik routes: ${result.error ?? result.summary}`);
+        process.exit(1);
+      }
+
+      printSuccess(result.summary);
     });
 }

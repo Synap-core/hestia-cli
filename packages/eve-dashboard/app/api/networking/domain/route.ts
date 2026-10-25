@@ -47,7 +47,8 @@ export async function POST(req: Request) {
   // reads this back as the "what the user wanted" state.
   await writeEveSecrets({ domain: { primary, ssl, email } });
 
-  const results = await materializeTargets(null, ["backend-env", "traefik-routes"]);
+  // Setting the domain IS the deliberate domain change the route guard allows.
+  const results = await materializeTargets(null, ["backend-env", "traefik-routes"], { allowDomainChange: true });
   const routeResult = results.find((r) => r.target === "traefik-routes");
   if (!routeResult?.ok) {
     return NextResponse.json(
