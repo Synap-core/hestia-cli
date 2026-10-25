@@ -106,6 +106,13 @@ update. Traefik is restarted only when the generated files changed. With no
 domain configured, the update says so and leaves Traefik alone. `eve update eve`
 alone does not regenerate them: that process still runs the previous Eve code.
 
+Eve reads its settings from `EVE_HOME`, else the current directory, so a host
+can hold two `.eve/` homes on different domains. When the live `eve-routes.yml`
+was generated for another primary domain than the settings in use (its
+`# Domain:` header), every regeneration except `eve domain set` and the
+dashboard's domain form leaves it alone and names both domains and the settings
+path: run eve from the Eve home, or set `EVE_HOME`.
+
 The file carries the marker `eve-managed:synap-loopback-override:v4` (older
 `v1` to `v3` markers are still recognised). Delete the marker line to keep a
 hand-written override; Eve then leaves the file alone, the CLI falls back to the

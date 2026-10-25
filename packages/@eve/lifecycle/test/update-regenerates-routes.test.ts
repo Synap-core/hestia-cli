@@ -68,6 +68,7 @@ vi.mock("@eve/dna", async (importOriginal) => {
 
 describe("update regenerates the Traefik routes", () => {
   let configure: MockInstance;
+  let live: MockInstance;
   beforeEach(() => {
     state.pullExit = 0;
     state.installed = ["traefik", "synap", "rsshub"];
@@ -75,8 +76,12 @@ describe("update regenerates the Traefik routes", () => {
     configure = vi
       .spyOn(TraefikService.prototype, "configureSubdomains")
       .mockResolvedValue({ changed: true });
+    live = vi.spyOn(TraefikService.prototype, "readRoutesDomain").mockReturnValue({ state: "missing" });
   });
-  afterEach(() => configure.mockRestore());
+  afterEach(() => {
+    configure.mockRestore();
+    live.mockRestore();
+  });
 
   it("with the installed components and the saved domain, after the update succeeded", async () => {
     const { runActionToCompletion } = await import("../src/index.js");
@@ -123,5 +128,21 @@ describe("update regenerates the Traefik routes", () => {
     expect(result.ok).toBe(true);
     expect(configure).not.toHaveBeenCalled();
     expect(result.logs.some((l) => l.includes("NOT regenerated: installed components unreadable"))).toBe(true);
+  });
+
+  // CT101: the live routes come from /opt/hestia-cli/.eve, a stale /root/.eve
+  // names another domain. An update run from /root must not move the pod there.
+  it("leaves routes generated for another domain alone, says why, and the update still succeeds", async () => {
+    live.mockReturnValue({ state: "found", domain: "antoinesrvt.synap.live", path: "/opt/traefik/dynamic/eve-routes.yml" });
+    const { runActionToCompletion } = await import("../src/index.js");
+
+    const result = await runActionToCompletion("rsshub", "update");
+
+    expect(result.ok).toBe(true);
+    expect(configure).not.toHaveBeenCalled();
+    const line = result.logs.find((l) => l.includes("NOT regenerated"));
+    expect(line).toContain("serves antoinesrvt.synap.live");
+    expect(line).toContain("say example.com");
+    expect(line).not.toContain("run: eve domain apply");
   });
 });

@@ -111,7 +111,8 @@ export function domainCommand(program: Command): void {
 
       let writeOk = false;
       try {
-        const results = await materializeTargets(null, ['backend-env', 'traefik-routes']);
+        // Setting the domain IS the deliberate domain change the route guard allows.
+        const results = await materializeTargets(null, ['backend-env', 'traefik-routes'], { allowDomainChange: true });
         const routeResult = results.find(r => r.target === 'traefik-routes');
         if (!routeResult?.ok) throw new Error(routeResult?.error ?? routeResult?.summary ?? 'unknown Traefik error');
         writeOk = routeResult.changed;

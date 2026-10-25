@@ -16,6 +16,8 @@ export interface MaterializeOptions {
   cwd?: string;
   components?: string[];
   dryRun?: boolean;
+  /** `traefik-routes`: the caller is changing the primary domain on purpose (see RefreshOptions). */
+  allowDomainChange?: boolean;
 }
 
 export interface MaterializeResult {
@@ -115,7 +117,7 @@ export async function materializeTargets(
         }
 
         case 'traefik-routes': {
-          const refresh = await refreshTraefikRoutes(options.cwd);
+          const refresh = await refreshTraefikRoutes(options.cwd, { allowDomainChange: options.allowDomainChange });
           // "no domain configured" is NOT a success. It is the single most
           // likely reason a freshly added component is unreachable by URL, and
           // reporting ok+unchanged made it invisible: the caller prints nothing
@@ -132,7 +134,7 @@ export async function materializeTargets(
                 : `Traefik routes refreshed for ${refresh.domain}`
               : refresh.reason ?? 'Traefik routes unchanged',
             error: ok ? undefined : refresh.reason,
-            details: { domain: refresh.domain, routesChanged: refresh.changed ?? false },
+            details: { domain: refresh.domain, routesChanged: refresh.changed ?? false, refusal: refresh.refusal },
           };
           break;
         }
@@ -231,5 +233,7 @@ export async function refreshRoutesAfterUpdate(): Promise<string> {
   if (refresh.details && refresh.details.domain === null) {
     return 'Traefik routes not regenerated: no domain configured (`eve domain set <domain>` routes components by URL)';
   }
-  return `⚠ Traefik routes NOT regenerated: ${refresh.error ?? refresh.summary} — run: eve domain apply`;
+  // A refusal carries its own instructions; `eve domain apply` would refuse too.
+  const hint = refresh.details?.refusal ? '' : ' — run: eve domain apply';
+  return `⚠ Traefik routes NOT regenerated: ${refresh.error ?? refresh.summary}${hint}`;
 }

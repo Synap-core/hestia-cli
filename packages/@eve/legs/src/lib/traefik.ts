@@ -912,6 +912,33 @@ export class TraefikService {
     }
   }
 
+  /**
+   * The primary domain the current `eve-routes.yml` was generated for, from
+   * its `# Domain: <domain> | Mode: …` header (written since 2026-04), else
+   * from its first `Host(...)` rule minus the subdomain, as `getStatus` reads
+   * it. `missing` = no file yet (first install). `unreadable` = the file is
+   * there but could not be read: a different fact from "no domain in it".
+   */
+  readRoutesDomain():
+    | { state: 'missing' }
+    | { state: 'unreadable'; error: string }
+    | { state: 'found'; domain: string | null; path: string } {
+    const path = join(this.dynamicConfigDir, 'eve-routes.yml');
+    if (!existsSync(path)) return { state: 'missing' };
+    let content: string;
+    try {
+      content = readFileSync(path, 'utf-8');
+    } catch (err) {
+      return { state: 'unreadable', error: err instanceof Error ? err.message : String(err) };
+    }
+    const header = content.match(/^# Domain: (\S+) \|/m)?.[1];
+    if (header) return { state: 'found', domain: header, path };
+    const host = content.match(/Host\(`([^`]+)`\)/)?.[1];
+    if (!host) return { state: 'found', domain: null, path };
+    const parts = host.split('.');
+    return { state: 'found', domain: parts.length > 2 ? parts.slice(1).join('.') : host, path };
+  }
+
   getStatus(): { installed: boolean; running: boolean; domain: string | null; ssl: boolean; behindProxy: boolean; routes: Route[] } {
     const installed = existsSync(this.traefikConfigPath);
     let running = false;
