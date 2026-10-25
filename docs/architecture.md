@@ -106,6 +106,14 @@ update. Traefik is restarted only when the generated files changed. With no
 domain configured, the update says so and leaves Traefik alone. `eve update eve`
 alone does not regenerate them: that process still runs the previous Eve code.
 
+An update (and `eve synap deploy`) never changes which hostnames are public: it
+regenerates only the hosts the current `eve-routes.yml` already routes, with
+their path routes (e.g. the storage route on the pod host) and the custom
+routes, and names each installed component it left unrouted ("not exposed:
+openclaw, nango — run `eve domain apply` to publish them"). Publishing a host
+stays explicit: `eve domain set|apply`, `eve add`. With no routes file yet
+(first install), every installed component is routed.
+
 Eve reads its settings from `EVE_HOME`, else the current directory, so a host
 can hold two `.eve/` homes on different domains. When the live `eve-routes.yml`
 was generated for another primary domain than the settings in use (its

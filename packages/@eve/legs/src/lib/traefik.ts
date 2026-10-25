@@ -345,8 +345,14 @@ export class TraefikService {
    * every `eve update` regenerates the routes, and a restart there would drop
    * every route on the pod for a few seconds even though nothing moved.
    * Returns whether anything changed.
+   *
+   * `keepPublicHosts`: route only hostnames the current `eve-routes.yml`
+   * already routes (an update must never publish a new host: CT101 runs
+   * openclaw with no gateway auth, installed but never routed). What is left
+   * out is returned as `notExposed` (component ids, else hostnames). With no
+   * routes file yet (first install) every installed component is routed.
    */
-  async configureSubdomains(domain: string, ssl: boolean, email?: string, installedComponents?: string[], behindProxy = false, customRoutes?: Array<{ subdomain: string; port: number; domain?: string }>): Promise<{ changed: boolean }> {
+  async configureSubdomains(domain: string, ssl: boolean, email?: string, installedComponents?: string[], behindProxy = false, customRoutes?: Array<{ subdomain: string; port: number; domain?: string }>, opts: { keepPublicHosts?: boolean } = {}): Promise<{ changed: boolean; notExposed?: string[] }> {
     // Synap backend runs in its own docker-compose project. Connect it to
     // eve-network so Traefik (also on eve-network) can resolve it by name.
     const synapContainer = getSynapBackendContainer();
@@ -379,8 +385,8 @@ export class TraefikService {
     // Build routes from the component registry — single source of truth.
     // Every routed service (including the Eve dashboard) is a Docker container
     // on eve-network, addressable by its container name.
-    const services: Array<{ id: string; subdomain: string; upstream: string; requires: string | null; domain?: string; priority?: number }> = [];
-    const pathRoutes: Array<{ id: string; subdomain: string; path: string; upstream: string; requires: string | null }> = [];
+    let services: Array<{ id: string; subdomain: string; upstream: string; requires: string | null; domain?: string; priority?: number }> = [];
+    let pathRoutes: Array<{ id: string; subdomain: string; path: string; upstream: string; requires: string | null }> = [];
 
     for (const comp of COMPONENTS) {
       if (!comp.service || !comp.service.subdomain) continue;
@@ -441,6 +447,24 @@ export class TraefikService {
         
         console.log(`  Added custom route: ${subdomain}.${routeDomain} → ${upstream}`);
       }
+    }
+
+    // Keep the set of public hostnames as it is: drop every host the current
+    // routes file does not route (and the path routes on it), and name them.
+    let notExposed: string[] | undefined;
+    const routedHosts = opts.keepPublicHosts ? this.readRoutedHosts() : null;
+    if (routedHosts) {
+      const isRouted = (subdomain: string, routeDomain: string) =>
+        routedHosts.has(`${subdomain}.${routeDomain}`.toLowerCase());
+      const dropped = services.filter(s => !isRouted(s.subdomain, s.domain || domain));
+      // A component by its id (its extra subdomains go with it); an extra
+      // subdomain of a component that stays routed, or a custom route, by host.
+      const droppedIds = new Set(dropped.map(s => s.id));
+      notExposed = [...new Set(dropped
+        .filter(s => s.id === s.requires || !s.requires || !droppedIds.has(s.requires))
+        .map(s => s.id === s.requires ? s.id : `${s.subdomain}.${s.domain || domain}`))];
+      services = services.filter(s => isRouted(s.subdomain, s.domain || domain));
+      pathRoutes = pathRoutes.filter(p => isRouted(p.subdomain, domain));
     }
 
     // Build routers:
@@ -738,7 +762,7 @@ export class TraefikService {
       readFileOrNull(routesPath) !== dynamicConfig;
     if (!changed) {
       console.log('  Traefik routes already current — no restart');
-      return { changed: false };
+      return notExposed ? { changed: false, notExposed } : { changed: false };
     }
 
     // Write static config (proxy mode skips SSL/cert sections)
@@ -756,7 +780,7 @@ export class TraefikService {
     } catch {
       console.warn('  Could not restart Traefik automatically — run: docker restart eve-legs-traefik');
     }
-    return { changed: true };
+    return notExposed ? { changed: true, notExposed } : { changed: true };
   }
 
   // ---------------------------------------------------------------------------
@@ -937,6 +961,19 @@ export class TraefikService {
     if (!host) return { state: 'found', domain: null, path };
     const parts = host.split('.');
     return { state: 'found', domain: parts.length > 2 ? parts.slice(1).join('.') : host, path };
+  }
+
+  /**
+   * Every hostname the current `eve-routes.yml` routes (its `Host(...)`
+   * rules, lower-cased), or null when there is no routes file yet. A file
+   * that is there but cannot be read throws: it must never be taken for a
+   * first install, which routes every installed component.
+   */
+  readRoutedHosts(): Set<string> | null {
+    const path = join(this.dynamicConfigDir, 'eve-routes.yml');
+    if (!existsSync(path)) return null;
+    const content = readFileSync(path, 'utf-8');
+    return new Set([...content.matchAll(/Host\(`([^`]+)`\)/g)].map(m => m[1].toLowerCase()));
   }
 
   getStatus(): { installed: boolean; running: boolean; domain: string | null; ssl: boolean; behindProxy: boolean; routes: Route[] } {

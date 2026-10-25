@@ -21,6 +21,8 @@ export interface RefreshResult {
   reason?: string;
   /** Set when the routes were left alone because they belong to another domain. */
   refusal?: 'domain-mismatch' | 'routes-unreadable';
+  /** `keepPublicHosts`: installed components (else hostnames) left unrouted because they were not public yet. */
+  notExposed?: string[];
 }
 
 export interface RefreshOptions {
@@ -30,6 +32,14 @@ export interface RefreshOptions {
    * expected to be replaced. Every other caller leaves this off.
    */
   allowDomainChange?: boolean;
+  /**
+   * Never change which hostnames are public: regenerate only the hosts the
+   * current routes already serve (with their path routes, e.g. the pod
+   * storage route), and name the installed components left out. An update
+   * sets this; publishing a host stays explicit (`eve domain set|apply`,
+   * `eve add`). No routes file yet (first install): every installed component.
+   */
+  keepPublicHosts?: boolean;
 }
 
 export async function refreshTraefikRoutes(cwd?: string, opts: RefreshOptions = {}): Promise<RefreshResult> {
@@ -90,15 +100,16 @@ export async function refreshTraefikRoutes(cwd?: string, opts: RefreshOptions = 
   }
 
   try {
-    const { changed } = await traefik.configureSubdomains(
+    const { changed, notExposed } = await traefik.configureSubdomains(
       domain,
       secrets?.domain?.ssl !== false,
       secrets?.domain?.email,
       installedComponents,
       !!secrets?.domain?.behindProxy,
       secrets?.domain?.customRoutes,
+      { keepPublicHosts: opts.keepPublicHosts },
     );
-    return { refreshed: true, domain, changed };
+    return notExposed?.length ? { refreshed: true, domain, changed, notExposed } : { refreshed: true, domain, changed };
   } catch (err) {
     return {
       refreshed: false,

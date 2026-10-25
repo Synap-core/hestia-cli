@@ -95,7 +95,22 @@ describe("update regenerates the Traefik routes", () => {
     expect(ssl).toBe(true);
     // the installed list — `undefined` would route every registry component
     expect(installed).toEqual(["traefik", "synap", "rsshub"]);
+    // and an update never publishes a host the routes did not serve
+    expect(configure.mock.calls[0][6]).toEqual({ keepPublicHosts: true });
     expect(result.logs).toContain("Traefik routes refreshed for example.com");
+  });
+
+  // CT101: openclaw (no gateway auth) and nango are installed, never routed.
+  it("names the installed components it left unrouted, and how to publish them", async () => {
+    configure.mockResolvedValue({ changed: true, notExposed: ["openclaw", "nango"] });
+    const { runActionToCompletion } = await import("../src/index.js");
+
+    const result = await runActionToCompletion("rsshub", "update");
+
+    expect(result.ok).toBe(true);
+    expect(result.logs).toContain(
+      "Traefik routes refreshed for example.com; not exposed: openclaw, nango — run `eve domain apply` to publish them",
+    );
   });
 
   it("does not touch the routes when the update failed", async () => {

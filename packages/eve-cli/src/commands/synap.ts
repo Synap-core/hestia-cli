@@ -411,7 +411,8 @@ function startAllPm2Apps(): void {
 async function applyRoutes(): Promise<void> {
   // The one route generator door (installed components + saved domain); a
   // bare configureSubdomains with no component list routed the whole registry.
-  const [result] = await materializeTargets(null, ['traefik-routes']);
+  // A deploy publishes no new host, as an update does not (keepPublicHosts).
+  const [result] = await materializeTargets(null, ['traefik-routes'], { keepPublicHosts: true });
   if (result.ok) printSuccess(result.summary);
   else if (result.details && result.details.domain === null) {
     printWarning('No primary domain configured — skipping Traefik route refresh');

@@ -98,6 +98,15 @@ describe('refreshTraefikRoutes', () => {
     expect(configure.mock.calls[0][3]).toEqual(['traefik', 'synap', 'openwebui']);
   });
 
+  it('passes keepPublicHosts to the generator and returns what it left unrouted', async () => {
+    configure.mockResolvedValue({ changed: true, notExposed: ['openclaw', 'nango'] });
+
+    const result = await refreshTraefikRoutes(undefined, { keepPublicHosts: true });
+
+    expect(configure.mock.calls[0][6]).toEqual({ keepPublicHosts: true });
+    expect(result).toEqual({ refreshed: true, domain: 'example.com', changed: true, notExposed: ['openclaw', 'nango'] });
+  });
+
   it('leaves the routes alone when the installed components cannot be read', async () => {
     getInstalledComponents.mockRejectedValue(new Error('Invalid state JSON: Unexpected token'));
 

@@ -18,6 +18,8 @@ export interface MaterializeOptions {
   dryRun?: boolean;
   /** `traefik-routes`: the caller is changing the primary domain on purpose (see RefreshOptions). */
   allowDomainChange?: boolean;
+  /** `traefik-routes`: never change which hostnames are public — an update (see RefreshOptions). */
+  keepPublicHosts?: boolean;
 }
 
 export interface MaterializeResult {
@@ -117,7 +119,13 @@ export async function materializeTargets(
         }
 
         case 'traefik-routes': {
-          const refresh = await refreshTraefikRoutes(options.cwd, { allowDomainChange: options.allowDomainChange });
+          const refresh = await refreshTraefikRoutes(options.cwd, {
+            allowDomainChange: options.allowDomainChange,
+            keepPublicHosts: options.keepPublicHosts,
+          });
+          const notExposed = refresh.notExposed?.length
+            ? `; not exposed: ${refresh.notExposed.join(', ')} — run \`eve domain apply\` to publish them`
+            : '';
           // "no domain configured" is NOT a success. It is the single most
           // likely reason a freshly added component is unreachable by URL, and
           // reporting ok+unchanged made it invisible: the caller prints nothing
@@ -130,11 +138,16 @@ export async function materializeTargets(
             changed: refresh.refreshed,
             summary: refresh.refreshed
               ? refresh.changed === false
-                ? `Traefik routes already current for ${refresh.domain}`
-                : `Traefik routes refreshed for ${refresh.domain}`
+                ? `Traefik routes already current for ${refresh.domain}${notExposed}`
+                : `Traefik routes refreshed for ${refresh.domain}${notExposed}`
               : refresh.reason ?? 'Traefik routes unchanged',
             error: ok ? undefined : refresh.reason,
-            details: { domain: refresh.domain, routesChanged: refresh.changed ?? false, refusal: refresh.refusal },
+            details: {
+              domain: refresh.domain,
+              routesChanged: refresh.changed ?? false,
+              refusal: refresh.refusal,
+              notExposed: refresh.notExposed,
+            },
           };
           break;
         }
@@ -218,6 +231,10 @@ export async function materializeTargets(
  * release adds (e.g. /synap-storage) reaches the pod on its next update, with
  * no `eve domain apply` by hand.
  *
+ * An update never changes which hostnames are public (`keepPublicHosts`): an
+ * installed component the current routes do not serve stays unrouted, and the
+ * line names it. Publishing it is `eve domain apply` / `eve add`.
+ *
  * Never throws and never fails the update: the component did update. Returns
  * the one line to show the operator, which says when routes were NOT
  * regenerated and why.
@@ -225,7 +242,7 @@ export async function materializeTargets(
 export async function refreshRoutesAfterUpdate(): Promise<string> {
   let refresh: MaterializeResult;
   try {
-    [refresh] = await materializeTargets(null, ['traefik-routes']);
+    [refresh] = await materializeTargets(null, ['traefik-routes'], { keepPublicHosts: true });
   } catch (err) {
     return `⚠ Traefik routes NOT regenerated: ${err instanceof Error ? err.message : String(err)} — run: eve domain apply`;
   }
