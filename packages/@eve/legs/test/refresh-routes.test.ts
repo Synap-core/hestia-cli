@@ -58,6 +58,10 @@ describe('refreshTraefikRoutes', () => {
     expect(result.reason).toContain('say example.com');
     expect(result.reason).toContain('.eve/secrets/secrets.json');
     expect(result.reason).toContain('EVE_HOME');
+    expect(result.reason).toContain('Re-run the same command from the Eve home that holds antoinesrvt.synap.live');
+    // the deliberate move is named with what it does: it publishes every installed component
+    expect(result.reason).toContain('`eve domain set example.com`, which publishes every installed component');
+    expect(result.reason).not.toContain('eve domain apply');
   });
 
   it('replaces them when the caller is changing the domain on purpose', async () => {

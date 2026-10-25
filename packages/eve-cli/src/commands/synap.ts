@@ -16,7 +16,7 @@ import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readEveSecrets } from '@eve/dna';
-import { materializeTargets } from '@eve/lifecycle';
+import { refreshRoutesAfterUpdate } from '@eve/lifecycle';
 import { colors, printSuccess, printInfo, printWarning, printError, printHeader } from '../lib/ui.js';
 import { syncRepo } from '../lib/git.js';
 
@@ -411,12 +411,9 @@ function startAllPm2Apps(): void {
 async function applyRoutes(): Promise<void> {
   // The one route generator door (installed components + saved domain); a
   // bare configureSubdomains with no component list routed the whole registry.
-  // A deploy publishes no new host, as an update does not (keepPublicHosts).
-  const [result] = await materializeTargets(null, ['traefik-routes'], { keepPublicHosts: true });
-  if (result.ok) printSuccess(result.summary);
-  else if (result.details && result.details.domain === null) {
-    printWarning('No primary domain configured — skipping Traefik route refresh');
-  } else printWarning(`Traefik route update failed: ${result.error ?? result.summary}`);
+  // A deploy publishes no new host, as an update does not, and its line says
+  // what to re-run when the routes were not regenerated: the update's door.
+  printInfo(await refreshRoutesAfterUpdate('eve synap deploy --no-build'));
 }
 
 function printStagingUrls(): void {

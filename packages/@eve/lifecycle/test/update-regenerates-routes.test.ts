@@ -101,7 +101,7 @@ describe("update regenerates the Traefik routes", () => {
   });
 
   // CT101: openclaw (no gateway auth) and nango are installed, never routed.
-  it("names the installed components it left unrouted, and how to publish them", async () => {
+  it("names the installed components it left unrouted, and what publishing them would do", async () => {
     configure.mockResolvedValue({ changed: true, notExposed: ["openclaw", "nango"] });
     const { runActionToCompletion } = await import("../src/index.js");
 
@@ -109,7 +109,8 @@ describe("update regenerates the Traefik routes", () => {
 
     expect(result.ok).toBe(true);
     expect(result.logs).toContain(
-      "Traefik routes refreshed for example.com; not exposed: openclaw, nango — run `eve domain apply` to publish them",
+      "Traefik routes refreshed for example.com; not exposed: openclaw, nango " +
+        "(`eve domain apply` publishes every installed component, including: openclaw, nango)",
     );
   });
 
@@ -142,7 +143,11 @@ describe("update regenerates the Traefik routes", () => {
 
     expect(result.ok).toBe(true);
     expect(configure).not.toHaveBeenCalled();
-    expect(result.logs.some((l) => l.includes("NOT regenerated: installed components unreadable"))).toBe(true);
+    const line = result.logs.find((l) => l.includes("NOT regenerated: installed components unreadable"));
+    // the way out is the same update once the cause is fixed — never a door that publishes new hosts
+    expect(line).toContain("— fix that, then re-run: eve update rsshub");
+    expect(line).toContain("(`eve domain apply` publishes every installed component, including any not public yet)");
+    expect(line).not.toContain("run: eve domain apply");
   });
 
   // CT101: the live routes come from /opt/hestia-cli/.eve, a stale /root/.eve
@@ -158,6 +163,8 @@ describe("update regenerates the Traefik routes", () => {
     const line = result.logs.find((l) => l.includes("NOT regenerated"));
     expect(line).toContain("serves antoinesrvt.synap.live");
     expect(line).toContain("say example.com");
-    expect(line).not.toContain("run: eve domain apply");
+    expect(line).toContain("EVE_HOME");
+    expect(line).toMatch(/— re-run: eve update rsshub$/);
+    expect(line).not.toContain("eve domain apply");
   });
 });

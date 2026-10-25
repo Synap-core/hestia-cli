@@ -124,7 +124,7 @@ export async function materializeTargets(
             keepPublicHosts: options.keepPublicHosts,
           });
           const notExposed = refresh.notExposed?.length
-            ? `; not exposed: ${refresh.notExposed.join(', ')} — run \`eve domain apply\` to publish them`
+            ? `; not exposed: ${refresh.notExposed.join(', ')} (${publishesEveryComponent(refresh.notExposed)})`
             : '';
           // "no domain configured" is NOT a success. It is the single most
           // likely reason a freshly added component is unreachable by URL, and
@@ -222,6 +222,18 @@ export async function materializeTargets(
 }
 
 /**
+ * What `eve domain apply` does, said wherever it is named: it publishes every
+ * installed component, not only the route a hint is about. A hint after a
+ * failed or refused refresh never sends the operator there (CT101 runs
+ * openclaw, installed and unrouted, with no gateway auth).
+ */
+export function publishesEveryComponent(notExposed?: string[]): string {
+  return notExposed?.length
+    ? `\`eve domain apply\` publishes every installed component, including: ${notExposed.join(', ')}`
+    : '`eve domain apply` publishes every installed component, including any not public yet';
+}
+
+/**
  * Regenerate the Traefik routes after a component update — the one step every
  * update door runs (`runAction(_, 'update')`, which the dashboard's update
  * button and `eve update <component>` both reach, and the `eve update` targets
@@ -237,20 +249,26 @@ export async function materializeTargets(
  *
  * Never throws and never fails the update: the component did update. Returns
  * the one line to show the operator, which says when routes were NOT
- * regenerated and why.
+ * regenerated, why, and to fix that and re-run `rerun` (the same update,
+ * e.g. `eve update synap`) — never `eve domain apply`, which would publish
+ * every installed component.
  */
-export async function refreshRoutesAfterUpdate(): Promise<string> {
+export async function refreshRoutesAfterUpdate(rerun: string): Promise<string> {
   let refresh: MaterializeResult;
   try {
     [refresh] = await materializeTargets(null, ['traefik-routes'], { keepPublicHosts: true });
   } catch (err) {
-    return `⚠ Traefik routes NOT regenerated: ${err instanceof Error ? err.message : String(err)} — run: eve domain apply`;
+    const cause = err instanceof Error ? err.message : String(err);
+    return `⚠ Traefik routes NOT regenerated: ${cause} — fix that, then re-run: ${rerun} (${publishesEveryComponent()})`;
   }
   if (refresh.ok) return refresh.summary;
   if (refresh.details && refresh.details.domain === null) {
     return 'Traefik routes not regenerated: no domain configured (`eve domain set <domain>` routes components by URL)';
   }
-  // A refusal carries its own instructions; `eve domain apply` would refuse too.
-  const hint = refresh.details?.refusal ? '' : ' — run: eve domain apply';
-  return `⚠ Traefik routes NOT regenerated: ${refresh.error ?? refresh.summary}${hint}`;
+  // The domain-mismatch refusal says which Eve home to run from; `eve domain
+  // apply` would refuse too, so it is not named there.
+  const cause = refresh.error ?? refresh.summary;
+  return refresh.details?.refusal === 'domain-mismatch'
+    ? `⚠ Traefik routes NOT regenerated: ${cause} — re-run: ${rerun}`
+    : `⚠ Traefik routes NOT regenerated: ${cause} — fix that, then re-run: ${rerun} (${publishesEveryComponent()})`;
 }

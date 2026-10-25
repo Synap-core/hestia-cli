@@ -79,8 +79,9 @@ export async function refreshTraefikRoutes(cwd?: string, opts: RefreshOptions = 
         refusal: 'domain-mismatch',
         reason:
           `${live.path} serves ${live.domain}, but the Eve settings read here (${settings}) say ${domain} — ` +
-          `routes left as they were. Run eve from the Eve home that holds ${live.domain} (cd into it, or set EVE_HOME); ` +
-          `to move the pod to ${domain} on purpose, run: eve domain set ${domain}`,
+          `routes left as they were. Re-run the same command from the Eve home that holds ${live.domain} ` +
+          `(cd into it, or set EVE_HOME). Moving the pod to ${domain} on purpose is \`eve domain set ${domain}\`, ` +
+          `which publishes every installed component`,
       };
     }
   }

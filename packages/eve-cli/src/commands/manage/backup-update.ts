@@ -300,7 +300,7 @@ export async function buildUpdateTargets(deployDir: string | undefined, synapRel
         // — a provision failure never blocks the update itself.
         const provision = await tryPostUpdateProvision(deployDir);
         subLines.push(...provision.subLines);
-        subLines.push(await refreshRoutesAfterUpdate());
+        subLines.push(await refreshRoutesAfterUpdate('eve update synap'));
         return { subLines };
       },
     });
@@ -387,7 +387,7 @@ export async function buildUpdateTargets(deployDir: string | undefined, synapRel
         if (container) connectToEveNetwork(container);
       }
       return {
-        subLines: [`image updated, container recreated with NANGO_DATABASE_URL`, await refreshRoutesAfterUpdate()],
+        subLines: [`image updated, container recreated with NANGO_DATABASE_URL`, await refreshRoutesAfterUpdate('eve update nango')],
       };
     },
   });
@@ -431,7 +431,7 @@ export async function buildUpdateTargets(deployDir: string | undefined, synapRel
           secret,
           rebuild: true,
         });
-        return { subLines: ['image rebuilt from updated source', await refreshRoutesAfterUpdate()] };
+        return { subLines: ['image rebuilt from updated source', await refreshRoutesAfterUpdate('eve update eve-dashboard')] };
       },
     });
   }

@@ -12,6 +12,7 @@
  *      its line under the spinner.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { refreshRoutesAfterUpdate } from '@eve/lifecycle';
 
 const order = vi.hoisted(() => [] as string[]);
 const synapOk = vi.hoisted(() => ({ value: true }));
@@ -76,6 +77,8 @@ describe('eve update synap', () => {
 
     expect(order).toEqual(['override /opt/synap-backend/deploy', 'synap update', 'routes']);
     expect(outcome?.subLines).toContain('Traefik routes refreshed for example.com');
+    // a line that says routes were not regenerated names this update to re-run
+    expect(vi.mocked(refreshRoutesAfterUpdate)).toHaveBeenCalledWith('eve update synap');
   });
 
   it('does not regenerate the routes when the synap update failed', async () => {

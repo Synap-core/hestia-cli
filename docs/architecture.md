@@ -110,9 +110,12 @@ An update (and `eve synap deploy`) never changes which hostnames are public: it
 regenerates only the hosts the current `eve-routes.yml` already routes, with
 their path routes (e.g. the storage route on the pod host) and the custom
 routes, and names each installed component it left unrouted ("not exposed:
-openclaw, nango — run `eve domain apply` to publish them"). Publishing a host
-stays explicit: `eve domain set|apply`, `eve add`. With no routes file yet
-(first install), every installed component is routed.
+openclaw, nango (`eve domain apply` publishes every installed component,
+including: openclaw, nango)"). Publishing a host stays explicit:
+`eve domain set|apply`, `eve add`. With no routes file yet (first install),
+every installed component is routed. When the routes are not regenerated, the
+line names the cause and says to fix it and re-run the same command (e.g.
+`eve update synap`); it never sends the operator to `eve domain apply`.
 
 Eve reads its settings from `EVE_HOME`, else the current directory, so a host
 can hold two `.eve/` homes on different domains. When the live `eve-routes.yml`

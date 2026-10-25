@@ -414,7 +414,7 @@ async function* updateContainer(comp: ComponentInfo): AsyncGenerator<LifecycleEv
     // Regenerate the routes from the installed components + saved domain:
     // an update is how a route the generator gained in an Eve release (and a
     // container a compose recreate moved) reaches this pod's Traefik.
-    yield { type: "log", line: await refreshRoutesAfterUpdate() };
+    yield { type: "log", line: await refreshRoutesAfterUpdate(`eve update ${comp.id}`) };
   }
 }
 
@@ -4459,6 +4459,7 @@ export async function runRepair(request: RepairRequest): Promise<RepairResult> {
 export {
   materializeTargets,
   refreshRoutesAfterUpdate,
+  publishesEveryComponent,
   type MaterializeOptions,
   type MaterializeResult,
 } from "./materialize.js";
