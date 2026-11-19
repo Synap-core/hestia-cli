@@ -2,7 +2,7 @@
 title: Synap Channel Sync
 author: Eve
 version: 0.4.0
-license: MIT
+license: PolyForm-Noncommercial-1.0.0
 description: |
   Mirrors every Open WebUI conversation into a Synap channel via the Hub
   Protocol. Each chat becomes a thread; each user / assistant message is
