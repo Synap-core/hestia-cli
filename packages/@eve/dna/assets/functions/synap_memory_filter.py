@@ -2,7 +2,7 @@
 title: Synap Memory Injection
 author: Eve
 version: 0.3.0
-license: MIT
+license: PolyForm-Noncommercial-1.0.0
 description: |
   Pre-prompt filter that pulls relevant memories + entities from your Synap
   pod via the Hub Protocol REST API and injects them as a system message

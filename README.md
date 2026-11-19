@@ -628,4 +628,4 @@ eve ai sync --workspace <workspace-uuid>
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+PolyForm Noncommercial 1.0.0 — see [LICENSE](LICENSE). Free for personal and non-commercial use; commercial use needs a license.

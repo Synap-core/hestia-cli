@@ -485,4 +485,4 @@ sudo bash src/install.sh all
 
 **Status:** Production Ready ✅  
 **Version:** 2.0.0  
-**License:** MIT
+**License:** PolyForm Noncommercial 1.0.0
